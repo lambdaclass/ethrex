@@ -44,6 +44,38 @@ pub struct DeployerOptions {
     pub private_key: SecretKey,
     #[arg(
         long,
+        default_value = "10",
+        value_name = "UINT64",
+        env = "ETHREX_ETH_MAX_NUMBER_OF_RETRIES",
+        help_heading = "Eth options"
+    )]
+    pub max_number_of_retries: u64,
+    #[arg(
+        long,
+        default_value = "2",
+        value_name = "UINT64",
+        env = "ETHREX_ETH_BACKOFF_FACTOR",
+        help_heading = "Eth options"
+    )]
+    pub backoff_factor: u64,
+    #[arg(
+        long,
+        default_value = "96",
+        value_name = "UINT64",
+        env = "ETHREX_ETH_MIN_RETRY_DELAY",
+        help_heading = "Eth options"
+    )]
+    pub min_retry_delay: u64,
+    #[arg(
+        long,
+        default_value = "1800",
+        value_name = "UINT64",
+        env = "ETHREX_ETH_MAX_RETRY_DELAY",
+        help_heading = "Eth options"
+    )]
+    pub max_retry_delay: u64,
+    #[arg(
+        long,
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_ENV_FILE_PATH",
         help_heading = "Deployer options",
@@ -173,6 +205,22 @@ pub struct DeployerOptions {
         help = "If set to true, initializes the committer in validium mode."
     )]
     pub validium: bool,
+    #[arg(
+        long,
+        value_name = "ADDRESS",
+        env = "ETHREX_ON_CHAIN_PROPOSER_OWNER",
+        help_heading = "Deployer options",
+        help = "Address of the owner of the OnChainProposer contract, who can upgrade the contract."
+    )]
+    pub on_chain_proposer_owner: Address,
+    #[arg(
+        long,
+        value_name = "ADDRESS",
+        env = "ETHREX_BRIDGE_OWNER",
+        help_heading = "Deployer options",
+        help = "Address of the owner of the CommonBridge contract, who can upgrade the contract."
+    )]
+    pub bridge_owner: Address,
 }
 
 impl Default for DeployerOptions {
@@ -181,6 +229,10 @@ impl Default for DeployerOptions {
             rpc_url: "http://localhost:8545".to_string(),
             maximum_allowed_max_fee_per_gas: 10_000_000_000,
             maximum_allowed_max_fee_per_blob_gas: 10_000_000_000,
+            max_number_of_retries: 10,
+            backoff_factor: 2,
+            min_retry_delay: 96,
+            max_retry_delay: 1800,
             #[allow(clippy::unwrap_used)]
             private_key: SecretKey::from_slice(
                 H256([
@@ -222,6 +274,16 @@ impl Default for DeployerOptions {
             sp1_deploy_verifier: false,
             randomize_contract_deployment: false,
             validium: false,
+            // 0x03d0a0aee676cc45bf7032649e0871927c947c8e
+            on_chain_proposer_owner: H160([
+                0x03, 0xd0, 0xa0, 0xae, 0xe6, 0x76, 0xcc, 0x45, 0xbf, 0x70, 0x32, 0x64, 0x9e, 0x08,
+                0x71, 0x92, 0x7c, 0x94, 0x7c, 0x8e,
+            ]),
+            // 0x03d0a0aee676cc45bf7032649e0871927c947c8e
+            bridge_owner: H160([
+                0x03, 0xd0, 0xa0, 0xae, 0xe6, 0x76, 0xcc, 0x45, 0xbf, 0x70, 0x32, 0x64, 0x9e, 0x08,
+                0x71, 0x92, 0x7c, 0x94, 0x7c, 0x8e,
+            ]),
         }
     }
 }

@@ -2,6 +2,8 @@ mod api;
 
 mod account_update;
 mod cache;
+
+#[cfg(any(feature = "libmdbx", feature = "redb"))]
 mod rlp;
 mod snapshot;
 mod store;
