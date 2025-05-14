@@ -184,11 +184,19 @@ impl<'a> VM<'a> {
     }
 
     pub fn execute_precompile(&mut self) -> Result<ExecutionReport, VMError> {
-        let precompile_result = execute_precompile(self.current_call_frame_mut()?);
+        let callframe = self.current_call_frame_mut()?;
+
+        let precompile_address = callframe.code_address;
+        let calldata = &callframe.calldata;
+        let gas_used = &mut callframe.gas_used;
+        let gas_limit = callframe.gas_limit;
+
+        let precompile_result =
+            execute_precompile(precompile_address, calldata, gas_used, gas_limit);
 
         let report = self.handle_precompile_result(precompile_result)?;
 
-        return Ok(report);
+        Ok(report)
     }
 
     pub fn is_precompile(&self) -> Result<bool, VMError> {

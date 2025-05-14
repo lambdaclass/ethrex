@@ -12,14 +12,14 @@ use bytes::Bytes;
 impl<'a> VM<'a> {
     pub fn handle_precompile_result(
         &mut self,
-        precompile_result: Result<(), VMError>,
+        precompile_result: Result<Bytes, VMError>,
     ) -> Result<ExecutionReport, VMError> {
         match precompile_result {
-            Ok(_) => Ok(ExecutionReport {
+            Ok(output) => Ok(ExecutionReport {
                 result: TxResult::Success,
                 gas_used: self.current_call_frame()?.gas_used,
                 gas_refunded: self.accrued_substate.refunded_gas,
-                output: self.current_call_frame()?.output.clone(),
+                output,
                 logs: vec![],
             }),
             Err(error) => {
