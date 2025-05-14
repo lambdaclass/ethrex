@@ -9,14 +9,14 @@ use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
 
-pub type NodeMap = Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>;
+pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
@@ -557,8 +557,8 @@ impl StoreEngine for Store {
         Ok(self.inner().chain_data.is_synced)
     }
 
-    async fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
-        self.inner().chain_data.is_synced = status;
+    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
+        self.inner().chain_data.is_synced = is_synced;
         Ok(())
     }
 

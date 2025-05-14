@@ -6,8 +6,8 @@ permissions:
   id-token: write
 
 on:
-  push:
-    branches: ["main"]
+  # push:
+  #   branches: ["main"]
   workflow_dispatch:
 
 env:
@@ -237,7 +237,7 @@ jobs:
           cargo build --release --bin ethrex --features dev
           CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
           --bin ethrex --release --features dev -- \
-          --dev --network /home/runner/work/ethrex/ethrex/test_data/genesis-l1-dev.json --http.port 1729 >/dev/null &
+          --dev --network /home/runner/work/ethrex/ethrex/test_data/genesis-perf-ci.json --http.port 1729 >/dev/null &
           sleep 10
           echo "Executing load test..."
           bash /home/runner/work/ethrex/ethrex/.github/scripts/flamegraph_watcher.sh &&
@@ -352,7 +352,7 @@ jobs:
           rm -rf target/profiling/reth
           cargo build --bin reth --profile profiling
           CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" --bin reth --profile profiling -- \
-          node --chain /home/runner/work/ethrex/ethrex/test_data/genesis-l1-dev.json --dev \
+          node --chain /home/runner/work/ethrex/ethrex/test_data/genesis-perf-ci.json --dev \
           --dev.block-time 1000ms --http.port 1729  --txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 \
           --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 \
           --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000 >/dev/null &
@@ -428,6 +428,9 @@ jobs:
           cp -r flamegraph_revm.svg flamegraphs/
           cp -r flamegraph_ethrex.svg flamegraphs/
           cp -r flamegraph_reth.svg flamegraphs/
+
+          # Fix flamegraphs width
+          sed -i 's|frames.attributes.width.value = |// |' flamegraphs/flamegraph_*.svg
 
           # ETHREX HTML
           sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" templates/index.html

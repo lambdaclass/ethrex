@@ -6,25 +6,23 @@ For a high level overview of the L2:
 
 For more detailed documentation on each part of the system:
 
-- [Sequencer](./sequencer.md)
-- [Contracts](./contracts.md)
-- [Execution program](./program.md)
-- [Proposer](./proposer.md)
-- [Prover](./prover.md)
-- [State Diffs](./state_diffs.md)
-- [Withdrawals](./withdrawals.md)
+- [Sequencer](./sequencer.md): Describes the components and configuration of the L2 sequencer node.
+- [Contracts](./contracts.md): Explains the L1 and L2 smart contracts used by the system.
+- [Prover](./prover.md): Details how block execution proofs are generated and verified using zkVMs.
+- [State Diffs](./state_diffs.md): Specifies the format for state changes published for data availability.
+- [Withdrawals](./withdrawals.md): Explains the mechanism for withdrawing funds from L2 back to L1.
 
+- [Rust](https://www.rust-lang.org/tools/install)
+- [Solc 0.29](https://docs.soliditylang.org/en/latest/installing-solidity.html)
+- [Docker](https://docs.docker.com/engine/install/)
+  
 ## Quick HandsOn
+
+Make sure docker is running!
 
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
-3. `cp configs/sequencer_config_example.toml configs/sequencer_config.toml` &rarr; check if you want to change any config.
-   - The `salt_is_zero` can be set to:
-     - `false` &rarr; randomizes the SALT to allow multiple deployments with random addresses.
-     - `true` &rarr; uses SALT equal to `H256::zero()` to deploy to deterministic addresses.
-     - The `L1` has to be restarted to use the `salt_is_zero = true`. 
-     - Set it to `false` if not using the CI or running a deterministic test.
 4. `make init`
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
@@ -33,9 +31,86 @@ For more detailed documentation on each part of the system:
 
 For more information on how to run the L2 node with the prover attached to it, the [Prover Docs](./prover.md) provides more insight.
 
+## Bridge Assets
+
+### Funding an L2 Account from L1
+
+To transfer ETH from Ethereum L1 to your L2 account:
+
+1. Prerequisites:
+   - An L1 account with sufficient ETH balance, for developing purpose you can use:
+      - Address: `0x8943545177806ed17b9f23f0a21ee5948ecaa776`
+      - Private Key: `0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31`
+   - The address of the deployed CommonBridge contract. 
+   - An Ethereum utility tool like [Rex](https://github.com/lambdaclass/rex)
+
+2. Make a deposit:
+
+   Using Rex is as simple as:
+   ```Shell
+   # Format: rex l2 deposit <AMOUNT> <PRIVATE_KEY> <BRIDGE_ADDRESS> [L2_RPC_URL]
+   rex l2 deposit 50000000 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 0x65dd6dc5df74b7e08e92c910122f91d7b2d5184f
+   ```
+
+3. Verification:
+
+   Once the deposit is made you can verify the balance has increase with:
+   ```Shell
+   # Format: rex l2 balance <Address> [RPC_URL]
+   rex l2 balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776
+   ```
+
+For more information on what you can do with the CommonBridge see [here](./contracts.md).
+
+### Withdrawing funds from the L2 to L1
+
+1. Prerequisites:
+   - An L2 account with sufficient ETH balance, for developing purpose you can use:
+      - Address: `0x8943545177806ed17b9f23f0a21ee5948ecaa776`
+      - Private Key: `0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31`
+   - The address of the deployed CommonBridge L2 contract (note here that we are calling the L2 contract instead of the L1 as in the deposit case). You can use:
+      - CommonBridge L2: `0x000000000000000000000000000000000000ffff`
+   - An Ethereum utility tool like [Rex](https://github.com/lambdaclass/rex).
+
+2. Make the Withdraw:
+
+    Using Rex we simply use the `rex l2 withdraw` command (it uses the default CommonBridge address).
+    ```Shell
+    # Format: rex l2 withdraw <AMOUNT> <PRIVATE_KEY> [RPC_URL]
+    rex l2 withdraw 5000 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+    ```
+
+    If the withdraw is successful, the hash will be printed in the format:
+
+    ```
+    Withdrawal sent: <L2_WITHDRAWAL_TX_HASH>
+    ...
+    ```
+
+3. Claim the Withdraw:
+
+   After making the withdraw it has to be claimed in the L1. This is done with the L1 CommonBridge contract. We can use the Rex command `rex l2 claim-withdraw`. Here we have to use the tx hash obtained in the previous step. Also, it is necessary to wait for the block that includes the withdraw to be verified.
+
+   ```Shell
+   # Format: rex l2 claim-withdraw <L2_WITHDRAWAL_TX_HASH> <PRIVATE_KEY> <BRIDGE_ADDRESS>
+   rex l2 claim-withdraw <L2_WITHDRAWAL_TX_HASH> 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 0x65dd6dc5df74b7e08e92c910122f91d7b2d5184f
+   ```
+
+4. Verification:
+
+   Once the withdrawal is made you can verify the balance has decrease with:
+   ```Shell
+   rex l2 balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776
+   ```
+
+   And also increased in the L1:
+   ```Shell
+   rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776
+   ```
+
 ## Configuration
 
-Configuration consists of two steps, the parsing of a `.toml` config file and the creation and modification of a `.env` file, then each component reads the `.env` to load the environment variables. A detailed list is available in each part documentation.
+Configuration consists of the creation and modification of a `.env` file done automatically by the contract deployer, then each component reads the `.env` to load the environment variables. A detailed list is available in each part documentation.
 
 ## Testing
 

@@ -49,6 +49,7 @@ pub struct BuildPayloadArgs {
     pub withdrawals: Option<Vec<Withdrawal>>,
     pub beacon_root: Option<H256>,
     pub version: u8,
+    pub elasticity_multiplier: u64,
 }
 
 impl BuildPayloadArgs {
@@ -111,6 +112,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
             parent_block.gas_limit,
             parent_block.gas_used,
             parent_block.base_fee_per_gas.unwrap_or_default(),
+            args.elasticity_multiplier,
         ),
         withdrawals_root: chain_config
             .is_shanghai_activated(args.timestamp)
@@ -259,6 +261,7 @@ impl Blockchain {
         let gas_limit = payload.header.gas_limit;
 
         debug!("Building payload");
+        let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
         let mut context = PayloadBuildContext::new(payload, self.evm_engine, &self.storage)?;
 
         #[cfg(not(feature = "l2"))]
@@ -269,7 +272,10 @@ impl Blockchain {
         self.finalize_payload(&mut context).await?;
 
         let interval = Instant::now().duration_since(since).as_millis();
-        tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
+        tracing::info!(
+            "[METRIC] BUILDING PAYLOAD TOOK: {interval} ms, base fee {}",
+            base_fee
+        );
         if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
             let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
 
@@ -294,7 +300,7 @@ impl Blockchain {
             .unwrap_or(&binding);
         context
             .vm
-            .process_withdrawals(withdrawals, &context.payload.header)
+            .process_withdrawals(withdrawals)
             .map_err(EvmError::from)
     }
 
@@ -527,9 +533,7 @@ impl Blockchain {
         &self,
         context: &mut PayloadBuildContext,
     ) -> Result<(), ChainError> {
-        let chain_config = &context.store.get_chain_config()?;
-        let fork = chain_config.fork(context.payload.header.timestamp);
-        let account_updates = context.vm.get_state_transitions(fork)?;
+        let account_updates = context.vm.get_state_transitions()?;
 
         context.payload.header.state_root = context
             .store
@@ -573,7 +577,7 @@ impl std::ops::Deref for HeadTransaction {
 
 impl From<HeadTransaction> for Transaction {
     fn from(val: HeadTransaction) -> Self {
-        val.tx.into()
+        val.tx.transaction().clone()
     }
 }
 
@@ -583,7 +587,7 @@ impl TransactionQueue {
         mut txs: HashMap<Address, Vec<MempoolTransaction>>,
         base_fee: Option<u64>,
     ) -> Result<Self, ChainError> {
-        let mut heads = Vec::new();
+        let mut heads = Vec::with_capacity(100);
         for (_, txs) in txs.iter_mut() {
             // Pull the first tx from each list and add it to the heads list
             // This should be a newly filtered tx list so we are guaranteed to have a first element

@@ -14,6 +14,8 @@ use tracing::info;
 
 #[cfg(any(feature = "l2", feature = "based"))]
 use ethrex::l2::L2Options;
+#[cfg(feature = "l2")]
+use ethrex_storage_rollup::StoreRollup;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -55,10 +57,14 @@ async fn main() -> eyre::Result<()> {
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
+        #[cfg(feature = "l2")]
+        StoreRollup::default(),
     )
     .await;
 
-    init_metrics(&opts, tracker.clone());
+    if opts.metrics_enabled {
+        init_metrics(&opts, tracker.clone());
+    }
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "dev")] {

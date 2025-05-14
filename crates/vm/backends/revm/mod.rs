@@ -1,7 +1,5 @@
 pub mod db;
 pub mod helpers;
-#[cfg(feature = "l2")]
-mod mods;
 
 use super::BlockExecutionResult;
 use crate::constants::{
@@ -18,6 +16,7 @@ use ethrex_storage::{error::StoreError, AccountUpdate};
 
 use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;
+use revm::Database;
 use revm::{
     db::AccountState as RevmAccountState,
     inspectors::TracerEip3155,
@@ -97,13 +96,7 @@ impl REVM {
             }
         }
 
-        let account_updates = Self::get_state_transitions(state);
-
-        Ok(BlockExecutionResult {
-            receipts,
-            requests,
-            account_updates,
-        })
+        Ok(BlockExecutionResult { receipts, requests })
     }
 
     pub fn execute_tx(
@@ -193,42 +186,96 @@ impl REVM {
         )?;
         Ok(())
     }
+    fn system_contract_account_info(
+        addr: Address,
+        state: &mut EvmState,
+    ) -> Result<revm_primitives::AccountInfo, EvmError> {
+        let revm_addr = RevmAddress::from_slice(addr.as_bytes());
+        let account_info = match state {
+            EvmState::Store(db) => db.basic(revm_addr)?,
+            EvmState::Execution(cache_db) => cache_db.basic(revm_addr)?,
+        }
+        .ok_or(EvmError::DB(StoreError::Custom(
+            "System contract address was not found after deployment".to_string(),
+        )))?;
+        Ok(account_info)
+    }
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
         state: &mut EvmState,
-    ) -> Option<Vec<u8>> {
+    ) -> Result<Vec<u8>, EvmError> {
         let tx_result = generic_system_contract_revm(
             block_header,
             Bytes::new(),
             state,
             *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
-        )
-        .ok()?;
+        )?;
 
-        if tx_result.is_success() {
-            Some(tx_result.output().into())
-        } else {
-            None
+        // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
+        // has any code after being deployed. If not, the whole block becomes invalid.
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
+        let account_info =
+            Self::system_contract_account_info(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, state)?;
+        if account_info.is_empty_code_hash() {
+            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
+        }
+
+        match tx_result {
+            ExecutionResult::Success {
+                gas_used: _,
+                gas_refunded: _,
+                logs: _,
+                output,
+            } => Ok(output.into()),
+            // EIP-7002 specifies that a failed system call invalidates the entire block.
+            ExecutionResult::Halt { reason, gas_used } => {
+                let err_str = format!("Transaction HALT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
+                Err(EvmError::Custom(err_str))
+            }
+            ExecutionResult::Revert { gas_used, output } => {
+                let err_str = format!("Transaction REVERT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
+                Err(EvmError::Custom(err_str))
+            }
         }
     }
     pub(crate) fn dequeue_consolidation_requests(
         block_header: &BlockHeader,
         state: &mut EvmState,
-    ) -> Option<Vec<u8>> {
+    ) -> Result<Vec<u8>, EvmError> {
         let tx_result = generic_system_contract_revm(
             block_header,
             Bytes::new(),
             state,
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
-        )
-        .ok()?;
+        )?;
 
-        if tx_result.is_success() {
-            Some(tx_result.output().into())
-        } else {
-            None
+        // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
+        // has any code after being deployed. If not, the whole block becomes invalid.
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
+        let account_info =
+            Self::system_contract_account_info(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, state)?;
+        if account_info.is_empty_code_hash() {
+            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
+        }
+
+        match tx_result {
+            ExecutionResult::Success {
+                gas_used: _,
+                gas_refunded: _,
+                logs: _,
+                output,
+            } => Ok(output.into()),
+            // EIP-7251 specifies that a failed system call invalidates the entire block.
+            ExecutionResult::Halt { reason, gas_used } => {
+                let err_str = format!("Transaction HALT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
+                Err(EvmError::Custom(err_str))
+            }
+            ExecutionResult::Revert { gas_used, output } => {
+                let err_str = format!("Transaction REVERT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
+                Err(EvmError::Custom(err_str))
+            }
         }
     }
 
@@ -418,21 +465,6 @@ fn run_evm(
             .with_external_context(
                 TracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
             );
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "l2")] {
-                use revm::{Handler, primitives::{CancunSpec, HandlerCfg}};
-                use std::sync::Arc;
-
-                evm_builder = evm_builder.with_handler({
-                    let mut evm_handler = Handler::new(HandlerCfg::new(SpecId::LATEST));
-                    evm_handler.pre_execution.deduct_caller = Arc::new(mods::deduct_caller::<CancunSpec, _, _>);
-                    evm_handler.validation.tx_against_state = Arc::new(mods::validate_tx_against_state::<CancunSpec, _, _>);
-                    // TODO: Override `end` function. We should deposit even if we revert.
-                    // evm_handler.pre_execution.end
-                    evm_handler
-                });
-            }
-        }
 
         match state {
             EvmState::Store(db) => {
@@ -716,11 +748,11 @@ pub fn extract_all_requests(
     }
 
     let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts);
-    let withdrawals_data = REVM::read_withdrawal_requests(header, state);
-    let consolidation_data = REVM::dequeue_consolidation_requests(header, state);
+    let withdrawals_data = REVM::read_withdrawal_requests(header, state)?;
+    let consolidation_data = REVM::dequeue_consolidation_requests(header, state)?;
 
-    let withdrawals = Requests::from_withdrawals_data(withdrawals_data.unwrap_or_default());
-    let consolidation = Requests::from_consolidation_data(consolidation_data.unwrap_or_default());
+    let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
+    let consolidation = Requests::from_consolidation_data(consolidation_data);
 
     Ok(vec![deposits, withdrawals, consolidation])
 }

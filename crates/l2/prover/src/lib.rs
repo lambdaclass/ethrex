@@ -1,12 +1,12 @@
 pub mod backends;
-pub mod errors;
-pub mod prover_client;
+pub mod prover;
 
-use ethrex_l2::utils::config::prover_client::ProverClientConfig;
+pub mod config;
+use config::ProverConfig;
 use tracing::warn;
 
-pub async fn init_client(config: ProverClientConfig) {
-    prover_client::start_proof_data_client(config).await;
+pub async fn init_client(config: ProverConfig) {
+    prover::start_prover(config).await;
     warn!("Prover finished!");
 }
 

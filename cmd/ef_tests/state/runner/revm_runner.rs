@@ -6,13 +6,10 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    types::{Fork, TxKind},
+    types::{Account, Fork, TxKind},
     Address, H256,
 };
-use ethrex_levm::{
-    errors::{ExecutionReport, TxResult},
-    Account, StorageSlot,
-};
+use ethrex_levm::errors::{ExecutionReport, TxResult};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use ethrex_vm::{
     self,
@@ -115,10 +112,10 @@ pub fn prepare_revm_for_tx<'state>(
     let blob_excess_gas_and_price = if test.env.current_excess_blob_gas.is_none() {
         None
     } else {
-        Some(BlobExcessGasAndPrice {
-            blob_gasprice: 0,
-            excess_blob_gas: test.env.current_excess_blob_gas.unwrap().as_u64(),
-        })
+        Some(BlobExcessGasAndPrice::new(
+            test.env.current_excess_blob_gas.unwrap().as_u64(),
+            *fork == Fork::Prague,
+        ))
     };
     let block_env = RevmBlockEnv {
         number: RevmU256::from_limbs(test.env.current_number.0),
@@ -186,8 +183,8 @@ pub fn prepare_revm_for_tx<'state>(
         },
         value: RevmU256::from_limbs(tx.value.0),
         data: tx.data.to_vec().into(),
-        nonce: Some(tx.nonce.as_u64()),
-        chain_id: Some(chain_spec.chain_id), //TODO: See what to do with this... ChainId test fails IDK why.
+        nonce: Some(tx.nonce),
+        chain_id: Some(chain_spec.chain_id),
         access_list: revm_access_list,
         gas_priority_fee: tx
             .max_priority_fee_per_gas
@@ -325,7 +322,7 @@ pub async fn ensure_post_state(
         None => {
             let mut db = load_initial_state_levm(test).await;
             db.cache = levm_cache;
-            let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db, *fork)
+            let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db)
                 .map_err(|_| {
                     InternalError::Custom("Error at LEVM::get_state_transitions()".to_owned())
                 })?;
@@ -362,18 +359,12 @@ pub async fn compare_levm_revm_account_updates(
             let account_storage = pre_state_value
                 .storage
                 .iter()
-                .map(|(key, value)| {
-                    let storage_slot = StorageSlot {
-                        original_value: *value,
-                        current_value: *value,
-                    };
-                    (H256::from_slice(&key.to_big_endian()), storage_slot)
-                })
+                .map(|(key, value)| (H256::from_slice(&key.to_big_endian()), *value))
                 .collect();
             let account = Account::new(
                 pre_state_value.balance,
                 pre_state_value.code.clone(),
-                pre_state_value.nonce.as_u64(),
+                pre_state_value.nonce,
                 account_storage,
             );
             (*account_address, account)
@@ -382,14 +373,11 @@ pub async fn compare_levm_revm_account_updates(
     initial_accounts
         .entry(test.env.current_coinbase)
         .or_default();
-    let levm_updated_accounts = levm_account_updates
-        .iter()
-        .map(|account_update| account_update.address)
-        .collect::<HashSet<Address>>();
-    let revm_updated_accounts = revm_account_updates
-        .iter()
-        .map(|account_update| account_update.address)
-        .collect::<HashSet<Address>>();
+
+    let (levm_updated_accounts, revm_updated_accounts): (HashSet<_>, HashSet<_>) = (
+        levm_account_updates.iter().map(|u| u.address).collect(),
+        revm_account_updates.iter().map(|u| u.address).collect(),
+    );
 
     ComparisonReport {
         levm_post_state_root,
@@ -398,18 +386,9 @@ pub async fn compare_levm_revm_account_updates(
         expected_post_state_root: test.post.vector_post_value(vector, *fork).hash,
         levm_account_updates: levm_account_updates.to_vec(),
         revm_account_updates: revm_account_updates.to_vec(),
-        levm_updated_accounts_only: levm_updated_accounts
-            .difference(&revm_updated_accounts)
-            .cloned()
-            .collect::<HashSet<Address>>(),
-        revm_updated_accounts_only: revm_updated_accounts
-            .difference(&levm_updated_accounts)
-            .cloned()
-            .collect::<HashSet<Address>>(),
-        shared_updated_accounts: levm_updated_accounts
-            .intersection(&revm_updated_accounts)
-            .cloned()
-            .collect::<HashSet<Address>>(),
+        levm_updated_accounts_only: &levm_updated_accounts - &revm_updated_accounts,
+        revm_updated_accounts_only: &revm_updated_accounts - &levm_updated_accounts,
+        shared_updated_accounts: &levm_updated_accounts & &revm_updated_accounts,
     }
 }
 
@@ -527,12 +506,7 @@ pub async fn _ensure_post_state_revm(
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
                     if expected_post_state_root_hash != pos_state_root {
-                        println!(
-                            "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
-                        );
-                        let error_reason = format!(
-                            "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
-                        );
+                        println!("Post-state root mismatch",);
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             ExecutionReport {
                                 result: TxResult::Success,
@@ -542,7 +516,7 @@ pub async fn _ensure_post_state_revm(
                                 output: Bytes::new(),
                             },
                             //TODO: This is not a TransactionReport because it is REVM
-                            error_reason,
+                            "Post-state root mismatch".to_string(),
                             HashMap::new(),
                         ));
                     }

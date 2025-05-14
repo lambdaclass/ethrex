@@ -19,7 +19,7 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, NodeHash, Trie};
 use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
 use libmdbx::{
     dupsort,
@@ -768,8 +768,8 @@ impl StoreEngine for Store {
         }
     }
 
-    async fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
-        self.write::<ChainData>(ChainDataIndex::IsSynced, status.encode_to_vec())
+    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
+        self.write::<ChainData>(ChainDataIndex::IsSynced, is_synced.encode_to_vec())
             .await
     }
 
@@ -1150,7 +1150,7 @@ table!(
 
 table!(
     /// state trie nodes
-    ( StateTrieNodes ) Vec<u8> => Vec<u8>
+    ( StateTrieNodes ) NodeHash => Vec<u8>
 );
 
 // Local Blocks

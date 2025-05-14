@@ -45,10 +45,44 @@ jobs:
           name: buildx-cache
           path: /tmp/buildx-cache
 
-  integration-test:
-    # "Integration Test" is a required check, don't change the name
-    name: Integration Test
+  lint:
+    # "Lint" is a required check, don't change the name
+    name: Lint
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run cargo check
+        run: cargo check --workspace --exclude ethrex-prover-bench
+
+      - name: Run cargo clippy
+        run: |
+          cargo clippy --workspace --exclude ethrex-prover-bench -- -D warnings
+          make lint
+
+      - name: Run cargo fmt
+        run: |
+          cargo fmt --all -- --check
+
+  integration-test:
+    name: Integration Test - ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: "Validium"
+            validium: true
+          - name: "Vanilla"
+            validium: false
     needs: [docker-bake]
     steps:
       - name: Checkout sources
@@ -89,17 +123,32 @@ jobs:
         run: |
           cargo test l2 --no-run --release
 
+      - name: Deploy L1 Contracts
+        run: |
+          cd crates/l2
+          touch .env
+          CI_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          docker compose -f docker-compose-l2.yaml up contract_deployer
+
+      - name: Start Sequencer
+        run: |
+          cd crates/l2
+          CI_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_COMMITTER_VALIDIUM=${{ matrix.validium }} \
+          docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
+
       - name: Run test
         run: |
           cd crates/l2
-          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
-          cp configs/sequencer_config_example.toml configs/sequencer_config.toml
-          sed -i 's/listen_ip = "127.0.0.1"/listen_ip = "0.0.0.0"/' configs/sequencer_config.toml
-
-          make integration-test
+          RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+          killall ethrex_prover -s SIGINT
 
   state-diff-test:
-    # "State Reconstruction Tests" is a required check, don't change the name
     name: State Reconstruction Tests
     runs-on: ubuntu-latest
     needs: [docker-bake]
@@ -138,11 +187,34 @@ jobs:
           sudo add-apt-repository ppa:ethereum/ethereum
           sudo apt-get update && sudo apt-get -y install solc
 
+      - name: Deploy L1 Contracts
+        run: |
+          cd crates/l2
+          touch .env
+          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up --detach contract_deployer
+
       - name: Run tests
         run: |
           cd crates/l2
-          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
-          cp configs/sequencer_config_example.toml configs/sequencer_config.toml
-          sed -i 's/listen_ip = "127.0.0.1"/listen_ip = "0.0.0.0"/' configs/sequencer_config.toml
-
           make state-diff-test
+
+  # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
+  all-tests:
+    # "Integration Test" is a required check, don't change the name
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: [integration-test, state-diff-test]
+    # Make sure this job runs even if the previous jobs failed or were skipped
+    if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' }}
+    steps:
+      - name: Check if any job failed
+        run: |
+          if [ "${{ needs.integration-test.result }}" != "success" ]; then
+            echo "Job Integration Tests failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.state-diff-test.result }}" != "success" ]; then
+            echo "Job State Reconstruction Tests failed"
+            exit 1
+          fi

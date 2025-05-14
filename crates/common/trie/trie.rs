@@ -11,14 +11,13 @@ mod trie_iter;
 mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
-use node_hash::NodeHash;
 use sha3::{Digest, Keccak256};
 use std::collections::HashSet;
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::nibbles::Nibbles;
 pub use self::verify_range::verify_range;
-pub use self::{node::Node, state::TrieState};
+pub use self::{node::Node, node_hash::NodeHash, state::TrieState};
 
 pub use self::error::TrieError;
 use self::{node::LeafNode, trie_iter::TrieIterator};
@@ -73,7 +72,7 @@ impl Trie {
         if let Some(root) = &self.root {
             let root_node = self
                 .state
-                .get_node(root.clone())?
+                .get_node(*root)?
                 .ok_or(TrieError::InconsistentTree)?;
             root_node.get(&self.state, Nibbles::from_bytes(path))
         } else {
@@ -128,7 +127,7 @@ impl Trie {
         Ok(self
             .root
             .as_ref()
-            .map(|root| root.clone().finalize())
+            .map(|root| root.finalize())
             .unwrap_or(*EMPTY_TRIE_HASH))
     }
 
@@ -137,7 +136,7 @@ impl Trie {
     pub fn hash_no_commit(&self) -> H256 {
         self.root
             .as_ref()
-            .map(|root| root.clone().finalize())
+            .map(|root| root.finalize())
             .unwrap_or(*EMPTY_TRIE_HASH)
     }
 
@@ -158,10 +157,10 @@ impl Trie {
             return Ok(node_path);
         };
         // If the root is inlined, add it to the node_path
-        if let NodeHash::Inline(node) = root {
-            node_path.push(node.to_vec());
+        if let NodeHash::Inline(_) = root {
+            node_path.push(root.as_ref().to_vec());
         }
-        if let Some(root_node) = self.state.get_node(root.clone())? {
+        if let Some(root_node) = self.state.get_node(*root)? {
             root_node.get_path(&self.state, Nibbles::from_bytes(path), &mut node_path)?;
         }
         Ok(node_path)
@@ -177,7 +176,7 @@ impl Trie {
         let Some(root_node) = self
             .root
             .as_ref()
-            .map(|root| self.state.get_node(root.clone()))
+            .map(|root| self.state.get_node(*root))
             .transpose()?
             .flatten()
         else {
@@ -230,7 +229,7 @@ impl Trie {
         }
         trie.root
             .as_ref()
-            .map(|root| root.clone().finalize())
+            .map(|root| root.finalize())
             .unwrap_or(*EMPTY_TRIE_HASH)
     }
 
@@ -241,15 +240,15 @@ impl Trie {
         struct NullTrieDB;
 
         impl TrieDB for NullTrieDB {
-            fn get(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
+            fn get(&self, _key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
                 Ok(None)
             }
 
-            fn put(&self, _key: Vec<u8>, _value: Vec<u8>) -> Result<(), TrieError> {
+            fn put(&self, _key: NodeHash, _value: Vec<u8>) -> Result<(), TrieError> {
                 Ok(())
             }
 
-            fn put_batch(&self, _key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
+            fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
                 Ok(())
             }
         }
@@ -274,7 +273,7 @@ impl Trie {
         let Some(root_node) = self
             .root
             .as_ref()
-            .map(|root| self.state.get_node(root.clone()))
+            .map(|root| self.state.get_node(*root))
             .transpose()?
             .flatten()
         else {
@@ -295,7 +294,7 @@ impl Trie {
                     if child_hash.is_valid() {
                         let child_node = self
                             .state
-                            .get_node(child_hash.clone())?
+                            .get_node(*child_hash)?
                             .ok_or(TrieError::InconsistentTree)?;
                         self.get_node_inner(child_node, partial_path)
                     } else {
@@ -310,7 +309,7 @@ impl Trie {
                 {
                     let child_node = self
                         .state
-                        .get_node(extension_node.child.clone())?
+                        .get_node(extension_node.child)?
                         .ok_or(TrieError::InconsistentTree)?;
                     self.get_node_inner(child_node, partial_path)
                 } else {
@@ -340,7 +339,7 @@ impl Trie {
         use std::sync::Arc;
         use std::sync::Mutex;
 
-        let hmap: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+        let hmap: HashMap<NodeHash, Vec<u8>> = HashMap::new();
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
         Trie::new(Box::new(db))

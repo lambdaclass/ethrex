@@ -6,10 +6,15 @@ use crate::{
     utils::get_valid_jump_destinations,
 };
 use bytes::Bytes;
-use ethrex_common::{types::Log, Address, U256};
-use std::collections::HashSet;
+use ethrex_common::{
+    types::{Account, Log},
+    Address, U256,
+};
+use keccak_hash::H256;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// The EVM uses a stack-based architecture and does not use registers like some other VMs.
 pub struct Stack {
     pub stack: Vec<U256>,
 }
@@ -51,6 +56,8 @@ impl Stack {
 #[derive(Debug, Clone, Default, PartialEq)]
 /// A call frame, or execution environment, is the context in which
 /// the EVM is currently executing.
+/// One context can trigger another with opcodes like CALL or CREATE.
+/// Call frames relationships can be thought of as a parent-child relation.
 pub struct CallFrame {
     /// Max gas a callframe can use
     pub gas_limit: u64,
@@ -76,7 +83,7 @@ pub struct CallFrame {
     pub output: Bytes,
     /// Return data of the SUB-CONTEXT (see docs for more details)
     pub sub_return_data: Bytes,
-    /// Indicates if current context is static (if it is, it can't change state)
+    /// Indicates if current context is static (if it is, it can't alter state)
     pub is_static: bool,
     pub logs: Vec<Log>,
     /// Call stack current depth
@@ -85,19 +92,23 @@ pub struct CallFrame {
     pub valid_jump_destinations: HashSet<usize>,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub create_op_called: bool,
+    /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
+    pub call_frame_backup: CallFrameBackup,
+    /// Return data offset
+    pub ret_offset: U256,
+    /// Return data size
+    pub ret_size: usize,
+    /// If true then transfer value from caller to callee
+    pub should_transfer_value: bool,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct CallFrameBackup {
+    pub original_accounts_info: HashMap<Address, Account>,
+    pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
 }
 
 impl CallFrame {
-    pub fn new_from_bytecode(bytecode: Bytes) -> Self {
-        let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
-        Self {
-            gas_limit: u64::MAX,
-            bytecode,
-            valid_jump_destinations,
-            ..Default::default()
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         msg_sender: Address,
@@ -108,9 +119,11 @@ impl CallFrame {
         calldata: Bytes,
         is_static: bool,
         gas_limit: u64,
-        gas_used: u64,
         depth: usize,
+        should_transfer_value: bool,
         create_op_called: bool,
+        ret_offset: U256,
+        ret_size: usize,
     ) -> Self {
         let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
@@ -123,9 +136,11 @@ impl CallFrame {
             calldata,
             is_static,
             depth,
-            gas_used,
             valid_jump_destinations,
+            should_transfer_value,
             create_op_called,
+            ret_offset,
+            ret_size,
             ..Default::default()
         }
     }
@@ -143,10 +158,6 @@ impl CallFrame {
             .checked_add(count)
             .ok_or(VMError::Internal(InternalError::PCOverflowed))?;
         Ok(())
-    }
-
-    pub fn increment_pc(&mut self) -> Result<(), VMError> {
-        self.increment_pc_by(1)
     }
 
     pub fn pc(&self) -> usize {

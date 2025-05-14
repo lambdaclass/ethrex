@@ -50,22 +50,25 @@ impl RLPDecode for Capability {
 pub(crate) struct HelloMessage {
     pub(crate) capabilities: Vec<(Capability, u8)>,
     pub(crate) node_id: PublicKey,
+    pub(crate) client_id: String,
 }
 
 impl HelloMessage {
-    pub fn new(capabilities: Vec<(Capability, u8)>, node_id: PublicKey) -> Self {
+    pub fn new(capabilities: Vec<(Capability, u8)>, node_id: PublicKey, client_id: String) -> Self {
         Self {
             capabilities,
             node_id,
+            client_id,
         }
     }
 }
 
 impl RLPxMessage for HelloMessage {
+    const CODE: u8 = 0x00;
     fn encode(&self, mut buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         Encoder::new(&mut buf)
             .encode_field(&5_u8) // protocolVersion
-            .encode_field(&"Ethrex/0.1.0") // clientId
+            .encode_field(&self.client_id) // clientId
             .encode_field(&self.capabilities) // capabilities
             .encode_field(&0u8) // listenPort (ignored)
             .encode_field(&pubkey2id(&self.node_id)) // nodeKey
@@ -80,8 +83,7 @@ impl RLPxMessage for HelloMessage {
 
         assert_eq!(protocol_version, 5, "only protocol version 5 is supported");
 
-        let (_client_id, decoder): (String, _) = decoder.decode_field("clientId")?;
-        // TODO: store client id for debugging purposes
+        let (client_id, decoder): (String, _) = decoder.decode_field("clientId")?;
 
         // [[cap1, capVersion1], [cap2, capVersion2], ...]
         let (capabilities, decoder): (Vec<(Capability, u8)>, _) =
@@ -98,6 +100,7 @@ impl RLPxMessage for HelloMessage {
         Ok(Self::new(
             capabilities,
             id2pubkey(node_id).ok_or(RLPDecodeError::MalformedData)?,
+            client_id,
         ))
     }
 }
@@ -195,6 +198,7 @@ impl DisconnectMessage {
 }
 
 impl RLPxMessage for DisconnectMessage {
+    const CODE: u8 = 0x01;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         // Disconnect msg_data is reason or none
@@ -237,13 +241,8 @@ impl RLPxMessage for DisconnectMessage {
 #[derive(Debug)]
 pub(crate) struct PingMessage {}
 
-impl PingMessage {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
 impl RLPxMessage for PingMessage {
+    const CODE: u8 = 0x02;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         // Ping msg_data is only []
@@ -260,20 +259,15 @@ impl RLPxMessage for PingMessage {
         let result = decoder.finish_unchecked();
         let empty: &[u8] = &[];
         assert_eq!(result, empty, "Ping msg_data should be &[]");
-        Ok(Self::new())
+        Ok(Self {})
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct PongMessage {}
 
-impl PongMessage {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
 impl RLPxMessage for PongMessage {
+    const CODE: u8 = 0x03;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         // Pong msg_data is only []
@@ -290,6 +284,6 @@ impl RLPxMessage for PongMessage {
         let result = decoder.finish_unchecked();
         let empty: &[u8] = &[];
         assert_eq!(result, empty, "Pong msg_data should be &[]");
-        Ok(Self::new())
+        Ok(Self {})
     }
 }

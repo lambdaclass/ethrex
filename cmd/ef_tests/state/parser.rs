@@ -2,10 +2,8 @@ use crate::{
     report::format_duration_as_mm_ss,
     runner::EFTestRunnerOptions,
     types::{EFTest, EFTests},
-    utils::{spinner_success_or_print, spinner_update_text_or_print},
 };
 use colored::Colorize;
-use spinoff::{spinners::Dots, Color, Spinner};
 use std::fs::DirEntry;
 
 #[derive(Debug, thiserror::Error)]
@@ -20,9 +18,12 @@ pub enum EFTestParseError {
     FailedToParseTestFile(String),
 }
 
-const IGNORED_TESTS: [&str; 8] = [
-    "ValueOverflowParis.json",                 // Skip because of errors
-    "loopMul.json",                            // Skip because it takes too long to run
+const IGNORED_TESTS: [&str; 11] = [
+    "static_Call50000_sha256.json", // Skip because it takes longer to run than some tests, but not a huge deal.
+    "CALLBlake2f_MaxRounds.json",   // Skip because it takes extremely long to run, but passes.
+    "ValueOverflow.json",           // Skip because it tries to deserialize number > U256::MAX
+    "ValueOverflowParis.json",      // Skip because it tries to deserialize number > U256::MAX
+    "loopMul.json",                 // Skip because it takes too long to run
     "dynamicAccountOverwriteEmpty_Paris.json", // Skip because it fails on REVM
     "RevertInCreateInInitCreate2Paris.json", // Skip because it fails on REVM. See https://github.com/lambdaclass/ethrex/issues/1555
     "RevertInCreateInInit_Paris.json", // Skip because it fails on REVM. See https://github.com/lambdaclass/ethrex/issues/1555
@@ -31,14 +32,17 @@ const IGNORED_TESTS: [&str; 8] = [
     "InitCollision.json",              // Skip because it fails on REVM
 ];
 
+// One .json can have multiple tests, sometimes we want to skip one of those.
+pub const SPECIFIC_IGNORED_TESTS: [&str; 1] = [
+    "test_set_code_to_non_empty_storage[fork_Prague-state_test-zero_nonce]", // Skip because EIP-7702 has changed. See https://github.com/ethereum/EIPs/pull/9710
+];
+
 pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestParseError> {
     let parsing_time = std::time::Instant::now();
     let cargo_manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let ef_general_state_tests_path = cargo_manifest_dir.join("vectors");
-    let mut spinner = Spinner::new(Dots, "Parsing EF Tests".bold().to_string(), Color::Cyan);
-    if !opts.spinner {
-        spinner.stop();
-    }
+    println!("{}", "Parsing EF Tests".bold().cyan());
+
     let mut tests = Vec::new();
     for test_dir in std::fs::read_dir(ef_general_state_tests_path.clone())
         .map_err(|err| {
@@ -49,17 +53,13 @@ pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestP
         })?
         .flatten()
     {
-        let directory_tests = parse_ef_test_dir(test_dir, opts, &mut spinner)?;
+        let directory_tests = parse_ef_test_dir(test_dir, opts)?;
         tests.extend(directory_tests);
     }
 
-    spinner_success_or_print(
-        &mut spinner,
-        format!(
-            "Parsed EF Tests in {}",
-            format_duration_as_mm_ss(parsing_time.elapsed())
-        ),
-        opts.spinner,
+    println!(
+        "Parsed EF Tests in {}",
+        format_duration_as_mm_ss(parsing_time.elapsed())
     );
 
     Ok(tests)
@@ -68,13 +68,8 @@ pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestP
 pub fn parse_ef_test_dir(
     test_dir: DirEntry,
     opts: &EFTestRunnerOptions,
-    directory_parsing_spinner: &mut Spinner,
 ) -> Result<Vec<EFTest>, EFTestParseError> {
-    spinner_update_text_or_print(
-        directory_parsing_spinner,
-        format!("Parsing directory {:?}", test_dir.file_name()),
-        opts.spinner,
-    );
+    println!("Parsing directory {:?}", test_dir.file_name());
 
     let mut directory_tests = Vec::new();
     for test in std::fs::read_dir(test_dir.path())
@@ -90,7 +85,7 @@ pub fn parse_ef_test_dir(
             })?
             .is_dir()
         {
-            let sub_directory_tests = parse_ef_test_dir(test, opts, directory_parsing_spinner)?;
+            let sub_directory_tests = parse_ef_test_dir(test, opts)?;
             directory_tests.extend(sub_directory_tests);
             continue;
         }
@@ -132,13 +127,9 @@ pub fn parse_ef_test_dir(
             .skip
             .contains(&test_dir.file_name().to_str().unwrap().to_owned())
         {
-            spinner_update_text_or_print(
-                directory_parsing_spinner,
-                format!(
-                    "Skipping test {:?} as it is in the folder of tests to skip",
-                    test.path().file_name().unwrap()
-                ),
-                opts.spinner,
+            println!(
+                "Skipping test {:?} as it is in the folder of tests to skip",
+                test.path().file_name().unwrap()
             );
             continue;
         }
@@ -153,13 +144,9 @@ pub fn parse_ef_test_dir(
                 .unwrap()
                 .to_owned(),
         ) {
-            spinner_update_text_or_print(
-                directory_parsing_spinner,
-                format!(
-                    "Skipping test {:?} as it is in the list of tests to skip",
-                    test.path().file_name().unwrap()
-                ),
-                opts.spinner,
+            println!(
+                "Skipping test file {:?} as it is in the list of tests to skip",
+                test.path().file_name().unwrap()
             );
             continue;
         }
@@ -173,6 +160,24 @@ pub fn parse_ef_test_dir(
         for test in tests.0.iter_mut() {
             test.dir = test_dir.file_name().into_string().unwrap();
         }
+
+        // We only want to include tests that have post states from the specified forks in EFTestsRunnerOptions.
+        if let Some(forks) = &opts.forks {
+            for test in tests.0.iter_mut() {
+                let test_forks_numbers: Vec<u8> = forks.iter().map(|fork| *fork as u8).collect();
+
+                test.post.forks = test
+                    .post
+                    .forks
+                    .iter()
+                    .filter(|a| test_forks_numbers.contains(&(*a.0 as u8)))
+                    .map(|(k, v)| (*k, v.clone()))
+                    .collect();
+            }
+
+            tests.0.retain(|test| !test.post.forks.is_empty());
+        }
+
         directory_tests.extend(tests.0);
     }
     Ok(directory_tests)

@@ -2,7 +2,7 @@
 #![allow(clippy::expect_used)]
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::{Block, Genesis};
+use ethrex_common::types::{Block, Genesis, ELASTICITY_MULTIPLIER};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::Evm;
@@ -58,6 +58,7 @@ pub async fn generate_rlp(
     Ok(())
 }
 
+// Unused. Generates the program input for a batch of only one block.
 pub async fn generate_program_input(
     genesis: Genesis,
     chain: Vec<Block>,
@@ -83,12 +84,15 @@ pub async fn generate_program_input(
     let parent_block_header = store
         .get_block_header_by_hash(block.header.parent_hash)?
         .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
-    let db = Evm::to_execution_db(&store, &block).await?;
+    let elasticity_multiplier = ELASTICITY_MULTIPLIER;
+    let blocks = vec![block];
+    let db = Evm::to_prover_db(&store, &blocks).await?;
 
     Ok(ProgramInput {
         db,
-        block,
+        blocks,
         parent_block_header,
+        elasticity_multiplier,
     })
 }
 

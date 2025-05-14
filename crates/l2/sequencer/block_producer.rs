@@ -17,23 +17,26 @@ use payload_builder::build_payload;
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 
-use crate::utils::config::{block_producer::BlockProducerConfig, errors::ConfigError};
+use crate::{BlockProducerConfig, SequencerConfig};
 
-use super::{errors::BlockProducerError, execution_cache::ExecutionCache};
+use super::{
+    errors::{BlockProducerError, SequencerError},
+    execution_cache::ExecutionCache,
+};
 
 pub struct BlockProducer {
     block_time_ms: u64,
     coinbase_address: Address,
+    elasticity_multiplier: u64,
 }
 
 pub async fn start_block_producer(
     store: Store,
     blockchain: Arc<Blockchain>,
     execution_cache: Arc<ExecutionCache>,
-) -> Result<(), ConfigError> {
-    let proposer_config = BlockProducerConfig::from_env()?;
-    let proposer = BlockProducer::new_from_config(proposer_config).map_err(ConfigError::from)?;
-
+    cfg: SequencerConfig,
+) -> Result<(), SequencerError> {
+    let proposer = BlockProducer::new_from_config(&cfg.block_producer);
     proposer
         .run(store.clone(), blockchain, execution_cache)
         .await;
@@ -41,15 +44,17 @@ pub async fn start_block_producer(
 }
 
 impl BlockProducer {
-    pub fn new_from_config(config: BlockProducerConfig) -> Result<Self, BlockProducerError> {
+    pub fn new_from_config(config: &BlockProducerConfig) -> Self {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
+            elasticity_multiplier,
         } = config;
-        Ok(Self {
-            block_time_ms,
-            coinbase_address,
-        })
+        Self {
+            block_time_ms: *block_time_ms,
+            coinbase_address: *coinbase_address,
+            elasticity_multiplier: *elasticity_multiplier,
+        }
     }
 
     pub async fn run(
@@ -101,6 +106,7 @@ impl BlockProducer {
             withdrawals: Default::default(),
             beacon_root: Some(head_beacon_block_root),
             version,
+            elasticity_multiplier: self.elasticity_multiplier,
         };
         let payload = create_payload(&args, &store)?;
 
@@ -114,22 +120,28 @@ impl BlockProducer {
         // Blockchain stores block
         let block = payload_build_result.payload;
         let chain_config = store.get_chain_config()?;
-        validate_block(&block, &head_header, &chain_config)?;
+        validate_block(
+            &block,
+            &head_header,
+            &chain_config,
+            self.elasticity_multiplier,
+        )?;
+
+        let account_updates = payload_build_result.account_updates;
 
         let execution_result = BlockExecutionResult {
-            account_updates: payload_build_result.account_updates,
             receipts: payload_build_result.receipts,
             requests: Vec::new(),
         };
 
         blockchain
-            .store_block(&block, execution_result.clone())
+            .store_block(&block, execution_result.clone(), &account_updates)
             .await?;
         info!("Stored new block {:x}", block.hash());
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         // Cache execution result
-        execution_cache.push(block.hash(), execution_result.account_updates)?;
+        execution_cache.push(block.hash(), account_updates)?;
 
         // Make the new head be part of the canonical chain
         apply_fork_choice(&store, block.hash(), block.hash(), block.hash()).await?;

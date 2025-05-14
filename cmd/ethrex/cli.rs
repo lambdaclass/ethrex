@@ -12,18 +12,16 @@ use tracing::{info, warn, Level};
 
 use crate::{
     initializers::{init_blockchain, init_store},
-    utils::{self, set_datadir},
+    utils::{self, get_client_version, set_datadir},
     DEFAULT_DATADIR,
 };
 
 #[cfg(any(feature = "l2", feature = "based"))]
 use crate::l2;
 
-pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
-
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author = "Lambdaclass", version=VERSION_STRING, about, about = "ethrex Execution client")]
+#[command(name="ethrex", author = "Lambdaclass", version=get_client_version(), about = "ethrex Execution client")]
 pub struct CLI {
     #[command(flatten)]
     pub opts: Options,
@@ -81,6 +79,13 @@ pub struct Options {
     )]
     pub metrics_port: String,
     #[arg(
+        long = "metrics",
+        action = ArgAction::SetTrue,
+        help = "Enable metrics collection and exposition",
+        help_heading = "Node options"
+    )]
+    pub metrics_enabled: bool,
+    #[arg(
         long = "dev",
         action = ArgAction::SetTrue,
         help = "Used to create blocks without requiring a Consensus Client",
@@ -90,7 +95,7 @@ pub struct Options {
     pub dev: bool,
     #[arg(
         long = "evm",
-        default_value = "revm",
+        default_value_t = EvmEngine::default(),
         value_name = "EVM_BACKEND",
         help = "Has to be `levm` or `revm`",
         value_parser = utils::parse_evm_engine,
@@ -201,6 +206,7 @@ impl Default for Options {
             syncmode: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
+            metrics_enabled: Default::default(),
             dev: Default::default(),
             evm: Default::default(),
             force: false,

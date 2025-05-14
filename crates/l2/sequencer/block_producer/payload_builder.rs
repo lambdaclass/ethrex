@@ -20,25 +20,15 @@ use tokio::time::Instant;
 use tracing::debug;
 
 use crate::{
-    sequencer::{errors::BlockProducerError, state_diff::get_nonce_diff},
+    sequencer::{
+        errors::BlockProducerError,
+        state_diff::{
+            get_nonce_diff, L2_DEPOSIT_SIZE, L2_WITHDRAWAL_SIZE, LAST_HEADER_FIELDS_SIZE,
+            TX_STATE_DIFF_SIZE,
+        },
+    },
     utils::helpers::{is_deposit_l2, is_withdrawal_l2},
 };
-
-// transactions_root(H256) + receipts_root(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64) + base_fee_per_gas(u64).
-// 32bytes + 32bytes + 8bytes + 8bytes + 8bytes + 8bytes
-const HEADER_FIELDS_SIZE: usize = 96;
-
-// address(H160) + amount(U256) + tx_hash(H256).
-// 20bytes + 32bytes + 32bytes.
-const L2_WITHDRAWAL_SIZE: usize = 84;
-
-// address(H160) + amount(U256).
-// 20bytes + 32bytes
-const L2_DEPOSIT_SIZE: usize = 52;
-
-// State diff size for a simple transfer.
-// Two `AccountUpdates` with new_balance, one of which also has nonce_diff.
-const TX_STATE_DIFF_SIZE: usize = 116;
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -251,7 +241,7 @@ async fn update_state_diff_size(
     }
     let modified_accounts_size = calc_modified_accounts_size(context, accounts_info_cache).await?;
 
-    let current_state_diff_size = 1 /* version (u8) */ + HEADER_FIELDS_SIZE + *acc_withdrawals_size + *acc_deposits_size + modified_accounts_size;
+    let current_state_diff_size = 1 /* version (u8) */ + LAST_HEADER_FIELDS_SIZE + *acc_withdrawals_size + *acc_deposits_size + modified_accounts_size;
 
     if current_state_diff_size > SAFE_BYTES_PER_BLOB {
         // Restore the withdrawals and deposits counters.
@@ -280,9 +270,7 @@ async fn calc_modified_accounts_size(
     // We use a temporary_context because `get_state_transitions` mutates it.
     let mut temporary_context = context.clone();
 
-    let chain_config = &context.store.get_chain_config()?;
-    let fork = chain_config.fork(context.payload.header.timestamp);
-    let account_updates = temporary_context.vm.get_state_transitions(fork)?;
+    let account_updates = temporary_context.vm.get_state_transitions()?;
     for account_update in account_updates {
         modified_accounts_size += 1 + 20; // 1byte + 20bytes | r#type(u8) + address(H160)
         if account_update.info.is_some() {
