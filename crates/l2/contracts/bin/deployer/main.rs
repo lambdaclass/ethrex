@@ -29,7 +29,7 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,address,address[])";
+    "initialize(bool,address,address,address,address,address,address,address[])";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 
 #[tokio::main]
@@ -56,6 +56,7 @@ async fn main() -> Result<(), DeployerError> {
         sp1_verifier_address,
         pico_verifier_address,
         risc0_verifier_address,
+        sequencer_registry_address,
     ) = deploy_contracts(&eth_client, &opts).await?;
 
     initialize_contracts(
@@ -64,6 +65,7 @@ async fn main() -> Result<(), DeployerError> {
         risc0_verifier_address,
         sp1_verifier_address,
         pico_verifier_address,
+        sequencer_registry_address,
         &eth_client,
         &opts,
     )
@@ -79,6 +81,7 @@ async fn main() -> Result<(), DeployerError> {
         sp1_verifier_address,
         pico_verifier_address,
         risc0_verifier_address,
+        sequencer_registry_address,
         opts.env_file_path,
     )
 }
@@ -153,6 +156,11 @@ fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
     compile_contract(&opts.contracts_path, "src/l1/CommonBridge.sol", false)?;
     compile_contract(
         &opts.contracts_path,
+        "src/l1/based/SequencerRegistry.sol",
+        false,
+    )?;
+    compile_contract(
+        &opts.contracts_path,
         "lib/sp1-contracts/contracts/src/v4.0.0-rc.3/SP1VerifierGroth16.sol",
         false,
     )?;
@@ -171,7 +179,7 @@ lazy_static::lazy_static! {
 async fn deploy_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
-) -> Result<(Address, Address, Address, Address, Address), DeployerError> {
+) -> Result<(Address, Address, Address, Address, Address, Address), DeployerError> {
     let deploy_frames = spinner!(["📭❱❱", "❱📬❱", "❱❱📫"], 220);
 
     let mut spinner = Spinner::new(
@@ -231,6 +239,41 @@ async fn deploy_contracts(
         format!("{:#x}", bridge_deployment.implementation_tx_hash).bright_cyan(),
         format!("{:#x}", bridge_deployment.proxy_address).bright_green(),
         format!("{:#x}", bridge_deployment.proxy_tx_hash).bright_cyan()
+    ));
+
+    let mut spinner = Spinner::new(
+        deploy_frames.clone(),
+        "Deploying SequencerRegistry",
+        Color::Cyan,
+    );
+
+    let sequencer_registry_deployment = deploy_with_proxy(
+        opts.private_key,
+        eth_client,
+        &opts.contracts_path.join("solc_out"),
+        "SequencerRegistry.bin",
+        &salt,
+    )
+    .await?;
+
+    spinner.success(&format!(
+        r#"SequencerRegistry:
+    Deployed implementation at address {}
+    With tx hash {},
+    Deployed proxy at address {}
+    With tx hash {}"#,
+        format!(
+            "{:#x}",
+            sequencer_registry_deployment.implementation_address
+        )
+        .bright_green(),
+        format!(
+            "{:#x}",
+            sequencer_registry_deployment.implementation_tx_hash
+        )
+        .bright_cyan(),
+        format!("{:#x}", sequencer_registry_deployment.proxy_address).bright_green(),
+        format!("{:#x}", sequencer_registry_deployment.proxy_tx_hash).bright_cyan()
     ));
 
     let sp1_verifier_address = if opts.sp1_deploy_verifier {
@@ -295,6 +338,7 @@ async fn deploy_contracts(
         sp1_verifier_address,
         pico_verifier_address,
         risc0_verifier_address,
+        sequencer_registry_deployment.proxy_address,
     ))
 }
 
@@ -305,6 +349,7 @@ async fn initialize_contracts(
     risc0_verifier_address: Address,
     sp1_verifier_address: Address,
     pico_verifier_address: Address,
+    sequencer_registry_address: Address,
     eth_client: &EthClient,
     opts: &DeployerOptions,
 ) -> Result<(), DeployerError> {
@@ -324,6 +369,7 @@ async fn initialize_contracts(
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
+            Value::Address(sequencer_registry_address),
             Value::Array(vec![
                 Value::Address(opts.committer_l1_address),
                 Value::Address(opts.proof_sender_l1_address),
@@ -370,6 +416,31 @@ async fn initialize_contracts(
 
     spinner.success(&format!(
         "CommonBridge:\n\tInitialized with tx hash {}",
+        format!("{initialize_tx_hash:#x}").bright_cyan()
+    ));
+
+    let mut spinner = Spinner::new(
+        initialize_frames,
+        "Initializing SequencerRegistry",
+        Color::Cyan,
+    );
+
+    let initialize_tx_hash = {
+        let calldata_values = vec![Value::Address(on_chain_proposer_address)];
+        let sequencer_registry_initialization_calldata =
+            encode_calldata("initialize(address)", &calldata_values)?;
+
+        initialize_contract(
+            sequencer_registry_address,
+            sequencer_registry_initialization_calldata,
+            &opts.private_key,
+            eth_client,
+        )
+        .await?
+    };
+
+    spinner.success(&format!(
+        "SequencerRegistry:\n\tInitialized with tx hash {}",
         format!("{initialize_tx_hash:#x}").bright_cyan()
     ));
     Ok(())
@@ -462,6 +533,7 @@ fn write_contract_addresses_to_env(
     sp1_verifier_address: Address,
     pico_verifier_address: Address,
     risc0_verifier_address: Address,
+    sequencer_registry_address: Address,
     env_file_path: Option<PathBuf>,
 ) -> Result<(), DeployerError> {
     let env_file_path =
@@ -498,6 +570,10 @@ fn write_contract_addresses_to_env(
     writeln!(
         writer,
         "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={risc0_verifier_address:#x}"
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_DEPLOYER_SEQUENCER_REGISTRY={sequencer_registry_address:#x}"
     )?;
     Ok(())
 }

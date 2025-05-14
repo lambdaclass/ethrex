@@ -63,6 +63,7 @@ contract OnChainProposer is
     address public PICOVERIFIER;
     address public R0VERIFIER;
     address public SP1VERIFIER;
+    address public SEQUENCER_REGISTRY;
 
     /// @notice Address used to avoid the verification process.
     /// @dev If the `R0VERIFIER` or the `SP1VERIFIER` contract address is set to this address,
@@ -97,6 +98,7 @@ contract OnChainProposer is
         address r0verifier,
         address sp1verifier,
         address picoverifier,
+        address sequencer_registry,
         address[] calldata sequencerAddresses
     ) public initializer {
         VALIDIUM = _validium;
@@ -160,6 +162,21 @@ contract OnChainProposer is
             "OnChainProposer: sp1verifier is the contract address"
         );
         SP1VERIFIER = sp1verifier;
+
+        // Set the SequencerRegistry address
+        require(
+            SEQUENCER_REGISTRY == address(0),
+            "OnChainProposer: contract already initialized"
+        );
+        require(
+            sequencer_registry != address(0),
+            "OnChainProposer: sequencer_registry is the zero address"
+        );
+        require(
+            sequencer_registry != address(this),
+            "OnChainProposer: sequencer_registry is the contract address"
+        );
+        SEQUENCER_REGISTRY = sequencer_registry;
 
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
