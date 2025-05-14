@@ -530,7 +530,7 @@ impl Discv4Server {
     async fn try_add_peer_and_ping<'a>(&self, node: Node) -> Result<(), DiscoveryError> {
         // sanity check to make sure we are not storing ourselves
         // a case that may happen in a neighbor message for example
-        if node.public_key == self.ctx.local_node.public_key {
+        if node.node_id == self.ctx.local_node.node_id {
             return Ok(());
         }
 
