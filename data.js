@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747251625507,
+  "lastUpdate": 1747256343620,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7015,6 +7015,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 216845771775,
             "range": "± 626773854",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e77e18db5b13cc888f1d7e29ec1cd898b3322e1f",
+          "message": "fix(core): remove hardcoded gas_limits use eth_estimateGas (#2793)\n\n**Motivation**\n\nGas limit was hardcoded in some cases because we didn't have\neth_estimateGas implemented now we do so we want to use it when possible\n**Description**\n\n- Replace instances of hardcoded gas_limit and remove it as\n`build_xxxx_transaction` functions already estimate gas if the override\ndoes not include it\n- Set nonce to none when estimating the gas so that doesn't fail when\nsending multiple txs at the same time\n\n\nCloses #2782",
+          "timestamp": "2025-05-14T20:04:57Z",
+          "tree_id": "377ba81f14d36a331cac222a127f75e683e5eb4f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e77e18db5b13cc888f1d7e29ec1cd898b3322e1f"
+        },
+        "date": 1747256341133,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212074008379,
+            "range": "± 1026379321",
             "unit": "ns/iter"
           }
         ]
