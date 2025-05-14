@@ -1,5 +1,5 @@
 use clap::Parser;
-use ethrex_l2::utils::config::prover::ProverConfig;
+use ethrex_prover_lib::config::ProverConfig;
 use tracing::Level;
 
 #[derive(Parser)]
