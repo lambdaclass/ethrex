@@ -17,6 +17,7 @@ spinoff = "0.8.0"
 colored = "2.1.0"
 lazy_static = "1.5.0"
 tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 thiserror.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
