@@ -69,6 +69,3 @@ services:
       --proof-coordinator-listen-ip 0.0.0.0 
       --bridge-address ${ETHREX_WATCHER_BRIDGE_ADDRESS}
       --on-chain-proposer-address ${ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS}
-    depends_on:
-      contract_deployer:
-        condition: service_completed_successfully
