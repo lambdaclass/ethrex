@@ -115,7 +115,7 @@ pub struct DeployerOptions {
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_GENESIS_L2_PATH",
         help_heading = "Deployer options",
-        help = "Path to the l1 genesis file. The default is ../../test_data/genesis-l2.json"
+        help = "Path to the l2 genesis file. The default is ../../test_data/genesis-l2.json"
     )]
     pub genesis_l2_path: String,
     #[arg(
