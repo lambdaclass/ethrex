@@ -1,9 +1,6 @@
 use std::{collections::HashMap, str::FromStr};
 
-use ethrex_common::{
-    types::signer::{LocalSigner, Signer},
-    Address, H160, H256, U256,
-};
+use ethrex_common::{types::signer::Signer, Address, H160, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::{
     clients::{eth::WrappedTransaction, Overrides},
@@ -53,17 +50,6 @@ impl L1ProofSender {
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new(&eth_cfg.rpc_url);
 
-        let signer = if let Some(remote_signer_url) = &cfg.remote_signer_url {
-            RemoteSigner::new(
-                remote_signer_url.clone(),
-                cfg.remote_signer_public_key
-                    .ok_or(ProofSenderError::RemoteSignerWithoutPubkey),
-            )
-            .into()
-        } else {
-            LocalSigner::new(cfg.l1_private_key).into()
-        };
-
         let mut needed_proof_types = vec![];
         if !cfg.dev_mode {
             for prover_type in ProverType::all() {
@@ -99,7 +85,7 @@ impl L1ProofSender {
 
         Ok(Self {
             eth_client,
-            signer,
+            signer: cfg.signer.clone(),
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,

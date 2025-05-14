@@ -6,9 +6,8 @@ use ethrex_p2p::{kademlia::KademliaTable, sync::SyncMode, types::Node};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_vm::EvmEngine;
 use hex::FromHexError;
-use secp256k1::PublicKey;
 #[cfg(feature = "l2")]
-use secp256k1::SecretKey;
+use secp256k1::{PublicKey, SecretKey};
 use std::{
     fs::File,
     io,
@@ -130,6 +129,7 @@ pub fn parse_private_key(s: &str) -> eyre::Result<SecretKey> {
     Ok(SecretKey::from_slice(&parse_hex(s)?)?)
 }
 
+#[cfg(feature = "l2")]
 pub fn parse_public_key(s: &str) -> eyre::Result<PublicKey> {
     Ok(PublicKey::from_slice(&parse_hex(s)?)?)
 }

@@ -91,8 +91,6 @@ pub enum ProofSenderError {
     InternalError(String),
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
-    #[error("Remote signer URL passed without public key")]
-    RemoteSignerWithoutPubkey,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -4,7 +4,7 @@ use keccak_hash::keccak;
 use reqwest::{Client, Url};
 use secp256k1::{Message, PublicKey, SecretKey, SECP256K1};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Signer {
     Local(LocalSigner),
     Remote(RemoteSigner),
@@ -38,7 +38,7 @@ impl From<RemoteSigner> for Signer {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LocalSigner {
     private_key: SecretKey,
     pub address: Address,
@@ -66,7 +66,7 @@ impl LocalSigner {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RemoteSigner {
     pub url: Url,
     pub public_key: PublicKey,

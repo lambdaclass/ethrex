@@ -1,11 +1,13 @@
 use crate::{cli::Options as NodeOptions, utils};
 use clap::Parser;
-use ethrex_common::Address;
+use ethrex_common::{
+    types::signer::{LocalSigner, RemoteSigner},
+    Address,
+};
 use ethrex_l2::{
     BlockProducerConfig, CommitterConfig, EthConfig, L1WatcherConfig, ProofCoordinatorConfig,
     SequencerConfig,
 };
-use ethrex_rpc::clients::eth::get_address_from_secret_key;
 use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
 use std::net::{IpAddr, Ipv4Addr};
@@ -46,6 +48,25 @@ pub struct SequencerOptions {
 
 impl From<SequencerOptions> for SequencerConfig {
     fn from(opts: SequencerOptions) -> Self {
+        let committer_signer = match opts.committer_opts.remote_signer_url {
+            Some(url) => {
+                RemoteSigner::new(url, opts.committer_opts.remote_signer_public_key.unwrap()).into()
+            }
+            None => LocalSigner::new(opts.committer_opts.committer_l1_private_key).into(),
+        };
+
+        let proof_coordinator_signer = match opts.proof_coordinator_opts.remote_signer_url {
+            Some(url) => RemoteSigner::new(
+                url,
+                opts.proof_coordinator_opts
+                    .remote_signer_public_key
+                    .unwrap(),
+            )
+            .into(),
+            None => LocalSigner::new(opts.proof_coordinator_opts.proof_coordinator_l1_private_key)
+                .into(),
+        };
+
         Self {
             block_producer: BlockProducerConfig {
                 block_time_ms: opts.proposer_opts.block_time_ms,
@@ -54,16 +75,10 @@ impl From<SequencerOptions> for SequencerConfig {
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts.committer_opts.on_chain_proposer_address,
-                l1_address: get_address_from_secret_key(
-                    &opts.committer_opts.committer_l1_private_key,
-                )
-                .unwrap(),
-                l1_private_key: opts.committer_opts.committer_l1_private_key,
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
                 validium: opts.committer_opts.validium,
-                remote_signer_url: opts.committer_opts.remote_signer_url,
-                remote_signer_public_key: opts.committer_opts.remote_signer_public_key,
+                signer: committer_signer,
             },
             eth: EthConfig {
                 rpc_url: opts.eth_opts.rpc_url,
@@ -83,17 +98,11 @@ impl From<SequencerOptions> for SequencerConfig {
                 l2_proposer_private_key: opts.watcher_opts.l2_proposer_private_key,
             },
             proof_coordinator: ProofCoordinatorConfig {
-                l1_address: get_address_from_secret_key(
-                    &opts.proof_coordinator_opts.proof_coordinator_l1_private_key,
-                )
-                .unwrap(),
-                l1_private_key: opts.proof_coordinator_opts.proof_coordinator_l1_private_key,
-                remote_signer_url: opts.proof_coordinator_opts.remote_signer_url,
-                remote_signer_public_key: opts.proof_coordinator_opts.remote_signer_public_key,
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
                 listen_port: opts.proof_coordinator_opts.listen_port,
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
                 dev_mode: opts.proof_coordinator_opts.dev_mode,
+                signer: proof_coordinator_signer,
             },
         }
     }

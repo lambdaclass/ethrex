@@ -9,10 +9,9 @@ use crate::{
 
 use ethrex_common::{
     types::{
-        blobs_bundle, fake_exponential_checked,
-        signer::{LocalSigner, RemoteSigner, Signer},
-        BlobsBundle, BlobsBundleError, Block, BlockHeader, BlockNumber, PrivilegedL2Transaction,
-        Receipt, Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
+        blobs_bundle, fake_exponential_checked, signer::Signer, BlobsBundle, BlobsBundleError,
+        Block, BlockHeader, BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
+        BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
 };
@@ -76,18 +75,6 @@ impl Committer {
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
     ) -> Self {
-        let signer = if let Some(remote_signer_url) = &committer_config.remote_signer_url {
-            RemoteSigner::new(
-                remote_signer_url.clone(),
-                committer_config
-                    .l1_private_key
-                    .public_key(secp256k1::SECP256K1),
-            )
-            .into()
-        } else {
-            LocalSigner::new(committer_config.l1_private_key).into()
-        };
-
         Self {
             eth_client: EthClient::new_with_config(
                 &eth_config.rpc_url,
@@ -105,7 +92,7 @@ impl Committer {
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
             validium: committer_config.validium,
-            signer,
+            signer: committer_config.signer.clone(),
         }
     }
 
