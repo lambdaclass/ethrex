@@ -24,6 +24,7 @@ members = [
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/bench/revm_comparison",
+  "crates/tools"
 ]
 resolver = "2"
 

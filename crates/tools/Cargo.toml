@@ -1,0 +1,16 @@
+[package]
+name = "tools"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ethrex-common.workspace = true
+serde_json.workspace = true
+
+[lib]
+name = "tools"
+path = "./src/lib.rs"
+
+[[bin]]
+name = "genesis-sorter"
+path = "./src/genesis.rs"
