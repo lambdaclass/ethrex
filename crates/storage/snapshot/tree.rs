@@ -47,8 +47,6 @@ impl SnapshotTree {
 
     /// Rebuilds the tree, marking all current layers stale, creating a new base disk layer from the given root.
     pub fn rebuild(&self, block_hash: BlockHash, state_root: H256) {
-        // TODO: mark all layers stale
-
         let mut layers = self.layers.write().unwrap();
 
         for layer in layers.values() {

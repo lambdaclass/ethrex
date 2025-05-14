@@ -13,10 +13,13 @@ use ethrex_common::{
     H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
-use tracing::debug;
 
 use super::{difflayer::DiffLayer, error::SnapshotError, tree::Layers};
 
+/// A disk layer is the bottom most layer.
+///
+/// It looks into the database for the account or storage data,
+/// using in addition a fast concurrent cache to store the results.
 #[derive(Clone)]
 pub struct DiskLayer {
     pub(super) db: Arc<dyn StoreEngine>,
@@ -59,10 +62,13 @@ impl DiskLayer {
         hash: H256,
         _layers: &Layers,
     ) -> Result<Option<AccountState>, SnapshotError> {
+        // Try to get the account from the cache.
         if let Some(value) = self.cache.accounts.get(&hash) {
             return Ok(value.clone());
         }
 
+        // TODO: Right now we use the state trie, but the disk layer should use
+        // it's own database table of snapshots for faster lookup.
         let state_trie = self.db.open_state_trie(self.state_root);
 
         let value = if let Some(value) = state_trie
@@ -90,21 +96,10 @@ impl DiskLayer {
         storage_hash: H256,
         layers: &Layers,
     ) -> Result<Option<U256>, SnapshotError> {
-        debug!(
-            "get_storage disk layer hit for {} / {}",
-            account_hash, storage_hash
-        );
+        // Look into the cache first.
         if let Some(value) = self.cache.storages.get(&(account_hash, storage_hash)) {
-            debug!(
-                "get_storage disk layer cache hit for {} / {}",
-                account_hash, storage_hash
-            );
             return Ok(value);
         }
-        debug!(
-            "get_storage disk layer cache miss for {} / {}",
-            account_hash, storage_hash
-        );
 
         let account = if let Some(account) = self.get_account(account_hash, layers)? {
             account
@@ -114,6 +109,9 @@ impl DiskLayer {
                 .insert((account_hash, storage_hash), None);
             return Ok(None);
         };
+
+        // TODO: Right now we use the storage trie, but the disk layer should use
+        // it's own database table of snapshots for faster lookup.
 
         let storage_trie = self
             .db

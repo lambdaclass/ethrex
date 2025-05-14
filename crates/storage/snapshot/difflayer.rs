@@ -48,6 +48,7 @@ impl DiffLayer {
 }
 
 impl DiffLayer {
+    /// Recreates the bloom filter of this layer, either using the parent diff filter as base or a new one.
     pub fn rebloom(&mut self, origin: Arc<DiskLayer>, parent_diffed: Option<Bloom>) {
         // Set the new origin that triggered a rebloom.
         self.origin = origin;
