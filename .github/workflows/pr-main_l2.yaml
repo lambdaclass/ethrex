@@ -114,10 +114,12 @@ jobs:
             ethrex_l2.cache-from=type=local,src=/tmp/buildx-cache/ethrex_l2
             contract_deployer.cache-from=type=local,src=/tmp/buildx-cache/contract_deployer
 
+      # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
         run: |
           cd crates/l2
           make build-prover
+          touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
 
       - name: Build test
         run: |
@@ -193,6 +195,7 @@ jobs:
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           touch .env
+          touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
           CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up --detach contract_deployer
 
       - name: Run tests
