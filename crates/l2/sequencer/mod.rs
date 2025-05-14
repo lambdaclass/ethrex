@@ -9,6 +9,8 @@ use execution_cache::ExecutionCache;
 use tokio::task::JoinSet;
 use tracing::{error, info};
 
+pub use ethrex_vm::state_diff;
+
 pub mod block_producer;
 pub mod l1_committer;
 pub mod l1_proof_sender;
@@ -16,7 +18,6 @@ pub mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
-pub mod state_diff;
 
 pub mod execution_cache;
 

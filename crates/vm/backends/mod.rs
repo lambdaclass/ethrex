@@ -168,6 +168,8 @@ impl Evm {
         remaining_gas: &mut u64,
         sender: Address,
         acc_state_diff_size: &mut Option<usize>,
+        payload: &[Transaction],
+        receipts: &[Receipt],
     ) -> Result<(Receipt, u64), EvmError> {
         match self {
             Evm::REVM { state } => {
@@ -192,8 +194,15 @@ impl Evm {
                 Ok((receipt, execution_result.gas_used()))
             }
             Evm::LEVM { db } => {
-                let execution_report =
-                    LEVM::execute_tx_l2(tx, sender, block_header, db, acc_state_diff_size)?;
+                let execution_report = LEVM::execute_tx_l2(
+                    tx,
+                    sender,
+                    block_header,
+                    db,
+                    acc_state_diff_size,
+                    payload,
+                    receipts,
+                )?;
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
 

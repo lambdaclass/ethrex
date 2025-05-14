@@ -12,11 +12,12 @@ use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
 use ethrex_storage::Store;
+use ethrex_vm::state_diff::TX_STATE_DIFF_SIZE;
 use std::ops::Div;
 use tokio::time::Instant;
 use tracing::debug;
 
-use crate::sequencer::{errors::BlockProducerError, state_diff::TX_STATE_DIFF_SIZE};
+use crate::sequencer::errors::BlockProducerError;
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value

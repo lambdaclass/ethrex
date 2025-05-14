@@ -517,6 +517,8 @@ impl Blockchain {
             &mut context.remaining_gas,
             head.tx.sender(),
             &mut context.acc_state_diff_size,
+            &context.payload.body.transactions, // accumulated txs
+            &context.receipts,                  // accumulated receipts
         )?;
         context.block_value += U256::from(gas_used) * head.tip;
         Ok(report)

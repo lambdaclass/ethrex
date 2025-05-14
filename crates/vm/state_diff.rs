@@ -5,9 +5,31 @@ use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{code_hash, AccountInfo, AccountState, BlockHeader, BlockNumber};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{error::StoreError, hash_address, AccountUpdate, Store};
-use ethrex_trie::Trie;
+use ethrex_trie::{Trie, TrieError};
 
-use super::errors::StateDiffError;
+#[derive(Debug, thiserror::Error)]
+pub enum StateDiffError {
+    #[error("StateDiff failed to deserialize: {0}")]
+    FailedToDeserializeStateDiff(String),
+    #[error("StateDiff failed to serialize: {0}")]
+    FailedToSerializeStateDiff(String),
+    #[error("StateDiff invalid account state diff type: {0}")]
+    InvalidAccountStateDiffType(u8),
+    #[error("StateDiff unsupported version: {0}")]
+    UnsupportedVersion(u8),
+    #[error("Both bytecode and bytecode hash are set")]
+    BytecodeAndBytecodeHashSet,
+    #[error("Empty account diff")]
+    EmptyAccountDiff,
+    #[error("The length of the vector is too big to fit in u16: {0}")]
+    LengthTooBig(#[from] core::num::TryFromIntError),
+    #[error("DB Error: {0}")]
+    DbError(#[from] TrieError),
+    #[error("Store Error: {0}")]
+    StoreError(#[from] StoreError),
+    #[error("New nonce is lower than the previous one")]
+    FailedToCalculateNonce,
+}
 
 // transactions_root(H256) + receipts_root(H256) + parent_hash(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64)
 // block_number(u64) + base_fee_per_gas(u64)

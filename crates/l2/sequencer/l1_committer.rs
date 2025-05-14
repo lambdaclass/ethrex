@@ -1,10 +1,6 @@
 use crate::{
-    sequencer::{
-        errors::CommitterError,
-        state_diff::{get_nonce_diff, AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
-    },
-    utils::helpers::is_withdrawal_l2,
-    CommitterConfig, EthConfig, SequencerConfig,
+    sequencer::errors::CommitterError, utils::helpers::is_withdrawal_l2, CommitterConfig,
+    EthConfig, SequencerConfig,
 };
 
 use ethrex_common::{
@@ -25,7 +21,10 @@ use ethrex_rpc::{
 };
 use ethrex_storage::{AccountUpdate, Store};
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::Evm;
+use ethrex_vm::{
+    state_diff::{get_nonce_diff, AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
+    Evm,
+};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};

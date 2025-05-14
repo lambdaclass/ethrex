@@ -154,6 +154,8 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         acc_state_diff_size: &mut Option<usize>,
+        payload: &[Transaction],
+        receipts: &[Receipt],
     ) -> Result<ExecutionReport, EvmError> {
         let chain_config = db.store.get_chain_config();
         let gas_price: U256 = tx
@@ -200,7 +202,9 @@ impl LEVM {
             .ok_or(VMError::OutOfBounds)?
             .call_frame_backup;
 
-        if let Err(e) = update_state_diff_size(acc_state_diff_size, tx, &report.logs, db) {
+        if let Err(e) =
+            update_state_diff_size(acc_state_diff_size, tx, &report.logs, db, payload, receipts)
+        {
             for (address, account) in call_frame_backup.original_accounts_info {
                 if let Some(current_account) = db.cache.get_mut(&address) {
                     current_account.info = account.info;

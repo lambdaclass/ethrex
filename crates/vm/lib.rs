@@ -4,6 +4,7 @@ mod errors;
 mod execution_result;
 mod helpers;
 mod prover_db;
+pub mod state_diff;
 
 pub mod backends;
 

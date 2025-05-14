@@ -9,6 +9,7 @@ use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_storage::error::StoreError;
 use ethrex_trie::TrieError;
+use ethrex_vm::state_diff::StateDiffError;
 use ethrex_vm::EvmError;
 use tokio::task::JoinError;
 
@@ -176,30 +177,6 @@ pub enum BlobEstimationError {
     NonFiniteResult,
     #[error("{0}")]
     FakeExponentialError(#[from] FakeExponentialError),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum StateDiffError {
-    #[error("StateDiff failed to deserialize: {0}")]
-    FailedToDeserializeStateDiff(String),
-    #[error("StateDiff failed to serialize: {0}")]
-    FailedToSerializeStateDiff(String),
-    #[error("StateDiff invalid account state diff type: {0}")]
-    InvalidAccountStateDiffType(u8),
-    #[error("StateDiff unsupported version: {0}")]
-    UnsupportedVersion(u8),
-    #[error("Both bytecode and bytecode hash are set")]
-    BytecodeAndBytecodeHashSet,
-    #[error("Empty account diff")]
-    EmptyAccountDiff,
-    #[error("The length of the vector is too big to fit in u16: {0}")]
-    LengthTooBig(#[from] core::num::TryFromIntError),
-    #[error("DB Error: {0}")]
-    DbError(#[from] TrieError),
-    #[error("Store Error: {0}")]
-    StoreError(#[from] StoreError),
-    #[error("New nonce is lower than the previous one")]
-    FailedToCalculateNonce,
 }
 
 #[derive(Debug, thiserror::Error)]
