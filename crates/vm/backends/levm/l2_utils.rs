@@ -2,16 +2,12 @@ use std::{collections::HashMap, str::FromStr};
 
 use ethrex_common::{
     types::{BlockHeader, Log, Receipt, Transaction, TxKind, SAFE_BYTES_PER_BLOB},
-    Address, H256,
+    H256,
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_storage::AccountUpdate;
 
-use crate::{
-    constants::COMMON_BRIDGE_L2_ADDRESS,
-    state_diff::{AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
-    EvmError,
-};
+use crate::{constants::COMMON_BRIDGE_L2_ADDRESS, state_diff::prepare_state_diff, EvmError};
 
 use super::LEVM;
 
@@ -112,71 +108,38 @@ pub fn update_state_diff_size(
     let mut deposits = vec![];
     for (payload_tx, receipt) in payload.iter().zip(receipts.iter()) {
         if is_withdrawal_l2(payload_tx, &receipt.logs)? {
-            withdrawals.push((payload_tx.compute_hash(), payload_tx));
+            withdrawals.push((payload_tx.compute_hash(), payload_tx.clone()));
         }
         if let Transaction::PrivilegedL2Transaction(privileged_tx) = payload_tx {
-            deposits.push(privileged_tx)
+            deposits.push(privileged_tx.clone())
         }
     }
     if is_withdrawal_l2(tx, logs)? {
-        withdrawals.push((tx.compute_hash(), tx));
+        withdrawals.push((tx.compute_hash(), tx.clone()));
     }
     if let Transaction::PrivilegedL2Transaction(privileged_tx) = tx {
-        deposits.push(privileged_tx)
+        deposits.push(privileged_tx.clone())
     }
 
     let account_updates = LEVM::get_state_transitions_no_drain(db)?;
 
-    let mut modified_accounts = HashMap::new();
-    for account_update in account_updates {
-        // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
-        // and we may have to keep track of the latestCommittedBlock (last block of the batch),
-        // the batch_size and the latestCommittedBatch in the contract.
-        let nonce_diff = get_nonce_diff(&account_update, db)?;
-
-        modified_accounts.insert(
-            account_update.address,
-            AccountStateDiff {
-                new_balance: account_update.info.clone().map(|info| info.balance),
-                nonce_diff,
-                storage: account_update.added_storage.clone().into_iter().collect(),
-                bytecode: account_update.code.clone(),
-                bytecode_hash: None,
-            },
-        );
+    let mut nonce_diffs = HashMap::new();
+    for account_update in account_updates.iter() {
+        let nonce_diff = get_nonce_diff(account_update, db)?;
+        nonce_diffs.insert(account_update.address, nonce_diff);
     }
 
-    let state_diff = StateDiff {
-        modified_accounts,
-        version: StateDiff::default().version,
-        last_header: BlockHeader::default(), // CHECK THIS
-        withdrawal_logs: withdrawals
-            .iter()
-            .map(|(hash, tx)| WithdrawalLog {
-                address: match tx.to() {
-                    TxKind::Call(address) => address,
-                    TxKind::Create => Address::zero(),
-                },
-                amount: tx.value(),
-                tx_hash: *hash,
-            })
-            .collect(),
-        deposit_logs: deposits
-            .iter()
-            .map(|tx| DepositLog {
-                address: match tx.to {
-                    TxKind::Call(address) => address,
-                    TxKind::Create => Address::zero(),
-                },
-                amount: tx.value,
-                nonce: tx.nonce,
-            })
-            .collect(),
-    };
-    let new_state_diff_size = state_diff
-        .encode()
-        .map_err(|_| EvmError::Custom("Failed to encode state diff".to_string()))?
-        .len();
+    let new_state_diff_size = prepare_state_diff(
+        BlockHeader::default(),
+        &withdrawals,
+        &deposits,
+        account_updates,
+        nonce_diffs,
+    )
+    .map_err(|_| EvmError::Custom("Error on creating state diff".to_owned()))?
+    .encode()
+    .map_err(|e| EvmError::Custom(format!("Encoding error: {}", e)))?
+    .len();
     if new_state_diff_size > SAFE_BYTES_PER_BLOB {
         return Err(EvmError::StateDiffSizeError);
     }
