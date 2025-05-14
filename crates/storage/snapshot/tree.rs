@@ -206,9 +206,7 @@ impl SnapshotTree {
                 if let Some(layer) = layers.get(&root) {
                     match layer {
                         Layer::DiskLayer(_) => {}
-                        Layer::DiffLayer(layer) => {
-                            layer.write().unwrap().rebloom(None, base.clone())
-                        }
+                        Layer::DiffLayer(layer) => layer.write().unwrap().rebloom(base.clone()),
                     }
                 }
                 if let Some(childs) = children.get(&root) {
@@ -431,15 +429,18 @@ impl SnapshotTree {
         parent_value.add_accounts(layer_value.accounts());
         parent_value.add_storage(layer_value.storage());
 
-        // Return new parent
-        // TODO: new reblooms always, maybe we dont need in this case?
-        Ok(Layer::DiffLayer(Arc::new(RwLock::new(DiffLayer::new(
+        // Return new combo parent
+
+        let mut layer = DiffLayer::new(
             parent_value.parent(),
             parent_value.origin().clone(),
             layer_value.root(),
             parent_value.accounts(),
             parent_value.storage(),
-            Some(layer_value.diffed()),
-        )))))
+        );
+
+        layer.diffed = layer_value.diffed();
+
+        Ok(Layer::DiffLayer(Arc::new(RwLock::new(layer))))
     }
 }

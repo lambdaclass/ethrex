@@ -18,7 +18,7 @@ pub struct DiffLayer {
     accounts: HashMap<H256, Option<AccountState>>, // None if deleted
     storage: HashMap<H256, HashMap<H256, U256>>,
     /// tracks all diffed items up to disk layer
-    diffed: Bloom,
+    pub(crate) diffed: Bloom,
 }
 
 impl DiffLayer {
@@ -28,30 +28,25 @@ impl DiffLayer {
         root: H256,
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
-        diffed: Option<Bloom>,
     ) -> Self {
-        let mut layer = DiffLayer {
+        let layer = DiffLayer {
             origin: origin.clone(),
             parent,
             root,
             stale: false,
             accounts,
             storage,
-            diffed: diffed.unwrap_or_default(),
+            diffed: Bloom::default(),
         };
-
-        layer.rebloom(diffed, origin);
 
         layer
     }
 }
 
 impl DiffLayer {
-    pub fn rebloom(&mut self, parent_diffed: Option<Bloom>, new_origin: Arc<DiskLayer>) {
-        self.diffed = parent_diffed.unwrap_or_default();
-
+    pub fn rebloom(&mut self, origin: Arc<DiskLayer>) {
         // Set the new origin that triggered a rebloom.
-        self.origin = new_origin;
+        self.origin = origin;
 
         {
             for hash in self.accounts.keys() {
@@ -137,14 +132,11 @@ impl DiffLayer {
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> DiffLayer {
-        DiffLayer::new(
-            self.root,
-            self.origin.clone(),
-            block,
-            accounts,
-            storage,
-            Some(self.diffed),
-        )
+        let mut layer = DiffLayer::new(self.root, self.origin.clone(), block, accounts, storage);
+
+        layer.rebloom(self.origin.clone());
+
+        layer
     }
 
     pub fn origin(&self) -> Arc<DiskLayer> {

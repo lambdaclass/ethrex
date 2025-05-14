@@ -121,19 +121,16 @@ impl DiskLayer {
     }
 
     pub fn update(
-        &self,
+        self: Arc<Self>, // import self is like this
         block: H256,
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> DiffLayer {
-        DiffLayer::new(
-            self.root,
-            Arc::new(self.clone()),
-            block,
-            accounts,
-            storage,
-            None,
-        )
+        let mut layer = DiffLayer::new(self.root, self.clone(), block, accounts, storage);
+
+        layer.rebloom(self.clone());
+
+        layer
     }
 
     pub fn stale(&self) -> bool {
