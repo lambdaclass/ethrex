@@ -37,6 +37,7 @@ impl<'a> VM<'a> {
             }
         }
     }
+    
     pub fn execute_opcode(&mut self, opcode: Opcode) -> Result<OpcodeResult, VMError> {
         match opcode {
             Opcode::STOP => Ok(OpcodeResult::Halt),
@@ -249,5 +250,26 @@ impl<'a> VM<'a> {
             output,
             logs: vec![],
         })
+    }
+
+    pub fn handle_create_transaction(&mut self) -> Result<Option<ExecutionReport>, VMError> {
+        let new_contract_address = self.current_call_frame()?.to;
+        let new_account = self.get_account_mut(new_contract_address)?;
+
+        if new_account.has_code_or_nonce() {
+            return Ok(Some(ExecutionReport {
+                result: TxResult::Revert(VMError::AddressAlreadyOccupied),
+                gas_used: self.env.gas_limit,
+                gas_refunded: 0,
+                logs: vec![],
+                output: Bytes::new(),
+            }));
+        }
+
+        self.increase_account_balance(new_contract_address, self.current_call_frame()?.msg_value)?;
+
+        self.increment_account_nonce(new_contract_address)?;
+
+        Ok(None)
     }
 }

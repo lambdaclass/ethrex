@@ -2,12 +2,11 @@ use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
-    errors::{ExecutionReport, OpcodeResult, TxResult, VMError},
+    errors::{ExecutionReport, OpcodeResult, VMError},
     hooks::hook::Hook,
     precompiles::execute_precompile,
     TransientStorage,
 };
-use bytes::Bytes;
 use ethrex_common::{
     types::{Transaction, TxKind},
     Address, H256, U256,
@@ -59,7 +58,7 @@ impl<'a> VM<'a> {
         }
     }
 
-    /// Initializes substate and creates first callframe.
+    /// Initializes substate and creates first execution callframe.
     pub fn setup_vm(&mut self) -> Result<(), VMError> {
         self.initialize_substate()?;
 
@@ -179,27 +178,6 @@ impl<'a> VM<'a> {
         // Restore the cache to its original state
         self.db.cache = cache_backup;
         Ok(report)
-    }
-
-    fn handle_create_transaction(&mut self) -> Result<Option<ExecutionReport>, VMError> {
-        let new_contract_address = self.current_call_frame()?.to;
-        let new_account = self.get_account_mut(new_contract_address)?;
-
-        if new_account.has_code_or_nonce() {
-            return Ok(Some(ExecutionReport {
-                result: TxResult::Revert(VMError::AddressAlreadyOccupied),
-                gas_used: self.env.gas_limit,
-                gas_refunded: 0,
-                logs: vec![],
-                output: Bytes::new(),
-            }));
-        }
-
-        self.increase_account_balance(new_contract_address, self.current_call_frame()?.msg_value)?;
-
-        self.increment_account_nonce(new_contract_address)?;
-
-        Ok(None)
     }
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {

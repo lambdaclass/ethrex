@@ -616,28 +616,21 @@ impl<'a> VM<'a> {
         self.substate_backups.push(self.substate.clone());
     }
 
+    /// Initializes the VM substate, mainly adding addresses to the "touched_addresses" field and the same with storage slots
     pub fn initialize_substate(&mut self) -> Result<(), VMError> {
-        // Add sender and recipient (in the case of a Call) to cache [https://www.evm.codes/about#access_list]
-        let mut default_touched_accounts = HashSet::from_iter([self.env.origin].iter().cloned());
+        // Add sender and recipient to touched accounts [https://www.evm.codes/about#access_list]
+        let mut initial_touched_accounts = HashSet::new();
+        let mut initial_touched_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
 
-        // [EIP-3651] - Add coinbase to cache if the spec is SHANGHAI or higher
+        // Add Tx sender to touched accounts
+        initial_touched_accounts.insert(self.env.origin);
+
+        // [EIP-3651] - Add coinbase to touched accounts after Shanghai
         if self.env.config.fork >= Fork::Shanghai {
-            default_touched_accounts.insert(self.env.coinbase);
+            initial_touched_accounts.insert(self.env.coinbase);
         }
 
-        let mut default_touched_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
-
-        // Add access lists contents to cache
-        for (address, keys) in self.tx.access_list() {
-            default_touched_accounts.insert(address);
-            let mut warm_slots = BTreeSet::new();
-            for slot in keys {
-                warm_slots.insert(slot);
-            }
-            default_touched_storage_slots.insert(address, warm_slots);
-        }
-
-        // Add precompiled contracts addresses to cache.
+        // Add precompiled contracts addresses to touched accounts.
         let max_precompile_address = match self.env.config.fork {
             spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
             spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
@@ -645,13 +638,23 @@ impl<'a> VM<'a> {
             _ => return Err(VMError::Internal(InternalError::InvalidSpecId)),
         };
         for i in 1..=max_precompile_address {
-            default_touched_accounts.insert(Address::from_low_u64_be(i));
+            initial_touched_accounts.insert(Address::from_low_u64_be(i));
+        }
+
+        // Add access lists contents to touched accounts and touched storage slots.
+        for (address, keys) in self.tx.access_list() {
+            initial_touched_accounts.insert(address);
+            let mut warm_slots = BTreeSet::new();
+            for slot in keys {
+                warm_slots.insert(slot);
+            }
+            initial_touched_storage_slots.insert(address, warm_slots);
         }
 
         self.substate = Substate {
             selfdestruct_set: HashSet::new(),
-            touched_accounts: default_touched_accounts,
-            touched_storage_slots: default_touched_storage_slots,
+            touched_accounts: initial_touched_accounts,
+            touched_storage_slots: initial_touched_storage_slots,
             created_accounts: HashSet::new(),
             refunded_gas: 0,
             transient_storage: HashMap::new(),
