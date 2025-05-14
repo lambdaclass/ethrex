@@ -183,7 +183,7 @@ impl<'a> VM<'a> {
         })
     }
 
-    /// Main function for executing an external transaction
+    /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
@@ -204,14 +204,13 @@ impl<'a> VM<'a> {
         }
 
         self.backup_substate();
-
         let mut report = self.run_execution()?;
 
         self.finalize_execution(&mut report)?;
         Ok(report)
     }
 
-    /// Callframe execution logic: Precompiles and Opcodes.
+    /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
         if self.is_precompile()? {
             return self.execute_precompile();

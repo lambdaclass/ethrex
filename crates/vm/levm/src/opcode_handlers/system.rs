@@ -827,9 +827,11 @@ impl<'a> VM<'a> {
         self.call_frames.push(new_call_frame);
 
         if self.is_precompile()? {
+            // Execute precompile immediately and handle result.
             let report = self.execute_precompile()?;
             self.handle_return(&report)?;
         } else {
+            // Backup Substate before executing opcodes of new callframe.
             self.backup_substate();
         }
 
@@ -907,6 +909,7 @@ impl<'a> VM<'a> {
         }
         Ok(())
     }
+    
     pub fn handle_return_create(
         &mut self,
         executed_call_frame: &CallFrame,
