@@ -240,25 +240,34 @@ impl Committer {
             // Accumulate block data with the rest of the batch.
             acc_withdrawals.extend(withdrawals.clone());
             acc_deposits.extend(deposits.clone());
+            let mut nonce_diffs = HashMap::new();
             for account in account_updates {
                 let address = account.address;
                 if let Some(existing) = acc_account_updates.get_mut(&address) {
-                    existing.merge(account);
+                    existing.merge(account.clone());
                 } else {
-                    acc_account_updates.insert(address, account);
+                    acc_account_updates.insert(address, account.clone());
                 }
+
+                // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
+                // and we may have to keep track of the latestCommittedBlock (last block of the batch),
+                // the batch_size and the latestCommittedBatch in the contract.
+                let nonce_diff = get_nonce_diff(&account, &self.store, None, first_block_of_batch)
+                    .await
+                    .map_err(CommitterError::from)?;
+
+                nonce_diffs.insert(address, nonce_diff);
             }
 
             let result = if !self.validium {
                 // Prepare current state diff.
                 let state_diff = self
                     .prepare_state_diff(
-                        first_block_of_batch,
                         block_to_commit_header,
-                        self.store.clone(),
                         &acc_withdrawals,
                         &acc_deposits,
                         acc_account_updates.clone().into_values().collect(),
+                        nonce_diffs,
                     )
                     .await?;
                 self.generate_blobs_bundle(&state_diff)
@@ -381,21 +390,17 @@ impl Committer {
     /// Prepare the state diff for the block.
     async fn prepare_state_diff(
         &self,
-        first_block_number: BlockNumber,
         last_header: BlockHeader,
-        store: Store,
         withdrawals: &[(H256, Transaction)],
         deposits: &[PrivilegedL2Transaction],
         account_updates: Vec<AccountUpdate>,
+        nonce_diffs: HashMap<Address, u16>,
     ) -> Result<StateDiff, CommitterError> {
         let mut modified_accounts = HashMap::new();
         for account_update in account_updates {
-            // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
-            // and we may have to keep track of the latestCommittedBlock (last block of the batch),
-            // the batch_size and the latestCommittedBatch in the contract.
-            let nonce_diff = get_nonce_diff(&account_update, &store, None, first_block_number)
-                .await
-                .map_err(CommitterError::from)?;
+            let nonce_diff = nonce_diffs.get(&account_update.address).copied().ok_or(
+                CommitterError::InternalError("This nonce should be present".to_owned()),
+            )?;
 
             modified_accounts.insert(
                 account_update.address,
