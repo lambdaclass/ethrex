@@ -7439,6 +7439,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "quote-pusher"
+version = "0.1.0"
+dependencies = [
+ "ethereum-types",
+ "ethrex-rpc",
+ "ethrex-sdk",
+ "hex",
+ "reqwest",
+ "secp256k1",
+ "serde_json",
+ "serial_test",
+ "thiserror 2.0.12",
+ "tokio",
+]
+
+[[package]]
 name = "r-efi"
 version = "5.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
