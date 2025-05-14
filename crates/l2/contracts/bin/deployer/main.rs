@@ -29,7 +29,7 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,address,address[])";
+    "initialize(bool,address,address,address,address,address,bytes32,address[])";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 
 #[tokio::main]
@@ -316,6 +316,8 @@ async fn initialize_contracts(
         Color::Cyan,
     );
 
+    let genesis = read_genesis_file(&opts.genesis_l2_path);
+
     let initialize_tx_hash = {
         let calldata_values = vec![
             Value::Bool(opts.validium),
@@ -324,6 +326,7 @@ async fn initialize_contracts(
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
+            Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Array(vec![
                 Value::Address(opts.committer_l1_address),
                 Value::Address(opts.proof_sender_l1_address),
