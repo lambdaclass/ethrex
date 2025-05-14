@@ -150,7 +150,7 @@ impl From<RpcErr> for RpcErrorMetadata {
             RpcErr::SignerError => RpcErrorMetadata {
                 code: -39001,
                 data: None,
-                message: format!("Failed to sign data"),
+                message: "Failed to sign data".to_string(),
             },
         }
     }
