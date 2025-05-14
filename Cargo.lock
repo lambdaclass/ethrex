@@ -3203,7 +3203,6 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
- "toml 0.8.20",
  "tracing",
  "zkvm_interface",
 ]
@@ -3288,6 +3287,7 @@ name = "ethrex-prover"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "clap 4.5.36",
  "ethereum-types",
  "ethrex-blockchain",
  "ethrex-common",
@@ -7390,6 +7390,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1885c039570dc00dcb4ff087a89e185fd56bae234ddc7f056a945bf36467248d"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "quote-pusher"
+version = "0.1.0"
+dependencies = [
+ "ethereum-types",
+ "ethrex-rpc",
+ "ethrex-sdk",
+ "hex",
+ "reqwest",
+ "secp256k1",
+ "serde_json",
+ "serial_test",
+ "thiserror 2.0.12",
+ "tokio",
 ]
 
 [[package]]
