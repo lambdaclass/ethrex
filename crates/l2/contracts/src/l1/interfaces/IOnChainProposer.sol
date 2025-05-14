@@ -29,12 +29,14 @@ interface IOnChainProposer {
     /// @param bridge the address of the bridge contract.
     /// @param r0verifier the address of the risc0 groth16 verifier.
     /// @param sp1verifier the address of the sp1 groth16 verifier.
+    /// @param alignedProofAggregator the address of the alignedProofAggregatorService contract.
     function initialize(
         address bridge,
         address r0verifier,
         address sp1verifier,
         address picoverifier,
-        address[] calldata sequencerAddress
+        address alignedProofAggregator,
+        address[] calldata sequencerAddresses
     ) external;
 
     /// @notice Commits to a batch of L2 blocks.
@@ -88,4 +90,15 @@ interface IOnChainProposer {
     ) external;
     // TODO: imageid, programvkey and riscvvkey should be constants
     // TODO: organize each zkvm proof arguments in their own structs
+
+    /// @notice Method used to verify a batch of L2 blocks in Aligned.
+    /// @param alignedPublicInputs The public inputs bytes of the proof.
+    /// @param alignedProgramVKey The public verifying key.
+    /// @param alignedMerkleProof  The Merkle proof (sibling hashes) needed to reconstruct the Merkle root.
+    function verifyBatchAligned(
+        uint256 batchNumber,
+        bytes calldata alignedPublicInputs,
+        bytes32 alignedProgramVKey,
+        bytes32[] calldata alignedMerkleProof
+    ) external;
 }

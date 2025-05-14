@@ -7,9 +7,12 @@ use crate::{
     },
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
-use aligned_sdk::core::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData};
 use aligned_sdk::sdk::{
     aggregation::AggregationModeVerificationData, estimate_fee, get_nonce_from_ethereum, submit,
+};
+use aligned_sdk::{
+    core::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
+    sdk::aggregation::get_merkle_path_for_proof,
 };
 use ethers::prelude::*;
 use ethers::signers::Wallet;
@@ -24,7 +27,7 @@ use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, str::FromStr, time::Duration};
 use tokio::time::sleep;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -32,6 +35,8 @@ const DEV_MODE_ADDRESS: H160 = H160([
 ]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatch(uint256,bytes,bytes32,bytes,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
+const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
+    "verifyBatchAligned(uint256,bytes,bytes32,bytes32[])";
 
 static ELF: &[u8] = include_bytes!("../../../test_data/elf");
 
@@ -129,81 +134,10 @@ impl L1ProofSender {
         // }
 
         self.sent_proof_to_aligned().await?;
-        sleep(Duration::from_secs(120)).await;
-        self.verify_proof_aggregation().await?;
+        sleep(Duration::from_secs(100)).await;
+        self.verify_proof_aggregation(1).await?;
 
         Ok(())
-    }
-
-    pub async fn send_proof(&self, batch_number: u64) -> Result<H256, ProofSenderError> {
-        // TODO: change error
-        // TODO: If the proof is not needed, a default calldata is used,
-        // the structure has to match the one defined in the OnChainProposer.sol contract.
-        // It may cause some issues, but the ethrex_prover_lib cannot be imported,
-        // this approach is straight-forward for now.
-        let mut proofs = HashMap::with_capacity(self.needed_proof_types.len());
-        for prover_type in self.needed_proof_types.iter() {
-            let proof = read_proof(batch_number, StateFileType::Proof(*prover_type))?;
-            if proof.prover_type != *prover_type {
-                return Err(ProofSenderError::ProofNotPresent(*prover_type));
-            }
-            proofs.insert(prover_type, proof.calldata);
-        }
-
-        debug!("Sending proof for batch number: {batch_number}");
-
-        let calldata_values = [
-            &[Value::Uint(U256::from(batch_number))],
-            proofs
-                .get(&ProverType::RISC0)
-                .unwrap_or(&ProverType::RISC0.empty_calldata())
-                .as_slice(),
-            proofs
-                .get(&ProverType::SP1)
-                .unwrap_or(&ProverType::SP1.empty_calldata())
-                .as_slice(),
-            proofs
-                .get(&ProverType::Pico)
-                .unwrap_or(&ProverType::Pico.empty_calldata())
-                .as_slice(),
-        ]
-        .concat();
-
-        let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
-
-        let gas_price = self
-            .eth_client
-            .get_gas_price_with_extra(20)
-            .await?
-            .try_into()
-            .map_err(|_| {
-                ProofSenderError::InternalError("Failed to convert gas_price to a u64".to_owned())
-            })?;
-
-        let verify_tx = self
-            .eth_client
-            .build_eip1559_transaction(
-                self.on_chain_proposer_address,
-                self.l1_address,
-                calldata.into(),
-                Overrides {
-                    max_fee_per_gas: Some(gas_price),
-                    max_priority_fee_per_gas: Some(gas_price),
-                    ..Default::default()
-                },
-            )
-            .await?;
-
-        let mut tx = WrappedTransaction::EIP1559(verify_tx);
-
-        let verify_tx_hash = self
-            .eth_client
-            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
-            .await?;
-
-        info!("Sent proof for batch {batch_number}, with transaction hash {verify_tx_hash:#x}");
-
-        Ok(verify_tx_hash)
     }
 
     async fn sent_proof_to_aligned(&self) -> Result<(), ProofSenderError> {
@@ -251,7 +185,7 @@ impl L1ProofSender {
         Ok(())
     }
 
-    async fn verify_proof_aggregation(&self) -> Result<(), ProofSenderError> {
+    async fn verify_proof_aggregation(&self, batch_number: u64) -> Result<(), ProofSenderError> {
         info!("L1 proof sender: Verifying proof in aggregation mode");
 
         let vk = std::fs::read("../../test_data/vk")
@@ -261,26 +195,124 @@ impl L1ProofSender {
 
         let public_inputs = std::fs::read("../../test_data/pub").unwrap();
 
-        let verification_data = AggregationModeVerificationData::SP1 { vk, public_inputs };
+        let verification_data = AggregationModeVerificationData::SP1 {
+            vk,
+            public_inputs: public_inputs.clone(),
+        };
 
-        // match is_proof_verified_in_aggregation_mode(
-        //     verification_data,
-        //     Network::Devnet,
-        //     self.eth_client.url.clone(),
-        //     "http://127.0.0.1:58517".to_string(), // beacon_client
-        //     None,
-        // )
-        // .await
-        // {
-        //     Ok(res) => {
-        //         info!(
-        //             "L1 proof sender: Proof has been verified in the aggregated proof with merkle root 0x{}",
-        //             hex::encode(res)
-        //         );
-        //     }
-        //     Err(e) => error!("Error while trying to verify proof {:?}", e),
-        // };
+        let merkle_path = match get_merkle_path_for_proof(
+            Network::Devnet,
+            self.eth_client.url.clone(),
+            "http://127.0.0.1:58517".to_string(), // beacon_client
+            None,
+            &verification_data,
+        )
+        .await
+        {
+            Ok(Some(merkle_path)) => merkle_path,
+            Ok(None) => {
+                warn!("L1 proof sender: Proof not aggregated yet.");
+                return Ok(());
+            }
+            Err(e) => {
+                error!("L1 proof sender: Error getting merkle path: {:?}", e);
+                return Err(ProofSenderError::InternalError(
+                    "Error getting merkle path".to_string(),
+                ));
+            }
+        };
 
+        let merkle_path = merkle_path
+            .iter()
+            .map(|x| Value::FixedBytes(bytes::Bytes::from_owner(*x)))
+            .collect();
+
+        let calldata_values = [
+            Value::Uint(U256::from(batch_number)),
+            Value::Bytes(public_inputs.into()),
+            Value::FixedBytes(bytes::Bytes::from_owner(vk)),
+            Value::Array(merkle_path),
+        ];
+
+        let calldata = encode_calldata(ALIGNED_VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
+
+        let verify_tx_hash = self.send_verify_tx(calldata).await?;
+        info!("Sent proof for batch {batch_number}, with transaction hash {verify_tx_hash:#x}");
         Ok(())
+    }
+
+    pub async fn send_proof(&self, batch_number: u64) -> Result<H256, ProofSenderError> {
+        // TODO: change error
+        // TODO: If the proof is not needed, a default calldata is used,
+        // the structure has to match the one defined in the OnChainProposer.sol contract.
+        // It may cause some issues, but the ethrex_prover_lib cannot be imported,
+        // this approach is straight-forward for now.
+        let mut proofs = HashMap::with_capacity(self.needed_proof_types.len());
+        for prover_type in self.needed_proof_types.iter() {
+            let proof = read_proof(batch_number, StateFileType::Proof(*prover_type))?;
+            if proof.prover_type != *prover_type {
+                return Err(ProofSenderError::ProofNotPresent(*prover_type));
+            }
+            proofs.insert(prover_type, proof.calldata);
+        }
+
+        debug!("Sending proof for batch number: {batch_number}");
+
+        let calldata_values = [
+            &[Value::Uint(U256::from(batch_number))],
+            proofs
+                .get(&ProverType::RISC0)
+                .unwrap_or(&ProverType::RISC0.empty_calldata())
+                .as_slice(),
+            proofs
+                .get(&ProverType::SP1)
+                .unwrap_or(&ProverType::SP1.empty_calldata())
+                .as_slice(),
+            proofs
+                .get(&ProverType::Pico)
+                .unwrap_or(&ProverType::Pico.empty_calldata())
+                .as_slice(),
+        ]
+        .concat();
+
+        let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
+
+        let verify_tx_hash = self.send_verify_tx(calldata).await?;
+        info!("Sent proof for batch {batch_number}, with transaction hash {verify_tx_hash:#x}");
+        Ok(verify_tx_hash)
+    }
+
+    async fn send_verify_tx(&self, encoded_calldata: Vec<u8>) -> Result<H256, ProofSenderError> {
+        let gas_price = self
+            .eth_client
+            .get_gas_price_with_extra(20)
+            .await?
+            .try_into()
+            .map_err(|_| {
+                ProofSenderError::InternalError("Failed to convert gas_price to a u64".to_owned())
+            })?;
+
+        let verify_tx = self
+            .eth_client
+            .build_eip1559_transaction(
+                self.on_chain_proposer_address,
+                self.l1_address,
+                encoded_calldata.into(),
+                Overrides {
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        let mut tx = WrappedTransaction::EIP1559(verify_tx);
+
+        let verify_tx_hash = self
+            .eth_client
+            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
+            .await?;
+
+        Ok(verify_tx_hash)
     }
 }

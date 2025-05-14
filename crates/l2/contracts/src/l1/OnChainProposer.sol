@@ -57,6 +57,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     address public PICOVERIFIER;
     address public R0VERIFIER;
     address public SP1VERIFIER;
+    address public ALIGNEDPROOFAGGREGATOR;
 
     /// @notice Address used to avoid the verification process.
     /// @dev If the `R0VERIFIER` or the `SP1VERIFIER` contract address is set to this address,
@@ -88,6 +89,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         address r0verifier,
         address sp1verifier,
         address picoverifier,
+        address alignedProofAggregator,
         address[] calldata sequencerAddresses
     ) public nonReentrant {
         // Set the CommonBridge address
@@ -149,6 +151,22 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             "OnChainProposer: sp1verifier is the contract address"
         );
         SP1VERIFIER = sp1verifier;
+
+        // Set the AlignedProofAggregator address
+        require(
+            ALIGNEDPROOFAGGREGATOR == address(0),
+            "OnChainProposer: contract already initialized"
+        );
+        require(
+            alignedProofAggregator != address(0),
+            "OnChainProposer: alignedProofAggregator is the zero address"
+        );
+        require(
+            alignedProofAggregator != address(this),
+            "OnChainProposer: alignedProofAggregator is the contract address"
+        );
+
+        ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
@@ -316,6 +334,39 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
 
         // Remove previous batch commitment as it is no longer needed.
         delete batchCommitments[batchNumber - 1];
+
+        emit BatchVerified(lastVerifiedBatch);
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function verifyBatchAligned(
+        uint256 batchNumber,
+        bytes calldata alignedPublicInputs,
+        bytes32 alignedProgramVKey,
+        bytes32[] calldata alignedMerkleProof
+    ) external override onlySequencer {
+        bytes memory callData = abi.encodeWithSignature(
+            "verifyProofInclusion(bytes32[],bytes32,bytes)",
+            alignedMerkleProof,
+            alignedProgramVKey,
+            alignedPublicInputs
+        );
+
+        (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
+            .staticcall(callData);
+
+        require(
+            callResult,
+            "OnChainProposer: call to alignedProofAggregator failed"
+        );
+
+        bool proofVerified = abi.decode(response, (bool));
+        require(
+            proofVerified,
+            "OnChainProposer: aligned proof verification failed"
+        );
+
+        lastVerifiedBatch = batchNumber;
 
         emit BatchVerified(lastVerifiedBatch);
     }

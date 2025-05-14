@@ -28,7 +28,7 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(address,address,address,address,address[])";
+    "initialize(address,address,address,address,address,address[])";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
@@ -69,7 +69,7 @@ async fn main() -> Result<(), DeployerError> {
     .await?;
 
     if opts.deposit_rich {
-        make_deposits(bridge_address, &eth_client, &opts).await?;
+        let _ = make_deposits(bridge_address, &eth_client, &opts).await;
     }
 
     write_contract_addresses_to_env(
@@ -305,6 +305,9 @@ async fn initialize_contracts(
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
+            Value::Address(
+                Address::from_str("0xcbEAF3BDe82155F56486Fb5a1072cb8baAf547cc").unwrap(),
+            ),
             Value::Array(vec![
                 Value::Address(opts.committer_l1_address),
                 Value::Address(opts.proof_sender_l1_address),
