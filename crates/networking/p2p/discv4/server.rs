@@ -12,7 +12,7 @@ use crate::{
     kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
     network::{handle_peer_as_initiator, P2PContext},
     rlpx::connection::MAX_PEERS_TCP_CONNECTIONS,
-    types::{Endpoint, Node, NodeRecord},
+    types::{Endpoint, Node},
 };
 use ethrex_common::H256;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
@@ -40,6 +40,7 @@ pub enum DiscoveryError {
     PartialMessageSent,
     MessageExpired,
     InvalidMessage(String),
+    StorageAccessError(String),
 }
 
 /// Implements the discv4 protocol see: https://github.com/ethereum/devp2p/blob/master/discv4.md
@@ -202,6 +203,7 @@ impl Discv4Server {
                         debug!("Found outdated enr-seq, send an enr_request");
                         self.send_enr_request(peer.node, self.ctx.table.lock().await)
                             .await?;
+                        return Ok(());
                     }
                 }
 
@@ -338,13 +340,11 @@ impl Discv4Server {
                 if is_msg_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 }
-                let Ok(node_record) =
-                    NodeRecord::from_node(self.ctx.local_node, self.ctx.enr_seq, &self.ctx.signer)
-                else {
-                    return Err(DiscoveryError::InvalidMessage(
-                        "could not build local node record".into(),
-                    ));
-                };
+
+                // Update node_record
+                self.ctx.set_fork_id().await;
+                let node_record = self.ctx.local_node_record.lock().await.clone();
+
                 let msg =
                     Message::ENRResponse(ENRResponseMessage::new(packet.get_hash(), node_record));
                 let mut buf = vec![];
@@ -363,83 +363,157 @@ impl Discv4Server {
                 Ok(())
             }
             Message::ENRResponse(msg) => {
-                let mut table_lock = self.ctx.table.lock().await;
-                let peer = table_lock.get_by_public_key_mut(packet.get_public_key());
-                let Some(peer) = peer else {
-                    return Err(DiscoveryError::InvalidMessage("Peer not known".into()));
-                };
+                {
+                    let mut table_lock = self.ctx.table.lock().await;
+                    let peer = table_lock.get_by_public_key_mut(packet.get_public_key());
+                    let Some(peer) = peer else {
+                        return Err(DiscoveryError::InvalidMessage("Peer not known".into()));
+                    };
+                    let Some(req_hash) = peer.enr_request_hash else {
+                        return Err(DiscoveryError::InvalidMessage(
+                            "Discarding enr-response as enr-request wasn't sent".into(),
+                        ));
+                    };
+                    if req_hash != msg.request_hash {
+                        return Err(DiscoveryError::InvalidMessage(
+                            "Discarding enr-response did not match enr-request hash".into(),
+                        ));
+                    }
+                    peer.enr_request_hash = None;
 
-                let Some(req_hash) = peer.enr_request_hash else {
-                    return Err(DiscoveryError::InvalidMessage(
-                        "Discarding enr-response as enr-request wasn't sent".into(),
-                    ));
-                };
-                if req_hash != msg.request_hash {
-                    return Err(DiscoveryError::InvalidMessage(
-                        "Discarding enr-response did not match enr-request hash".into(),
-                    ));
-                }
-                peer.enr_request_hash = None;
+                    if msg.node_record.seq < peer.record.seq {
+                        return Err(DiscoveryError::InvalidMessage(
+                            "msg node record is lower than the one we have".into(),
+                        ));
+                    }
+                    let record = msg.node_record.decode_pairs();
+                    let Some(id) = record.id else {
+                        return Err(DiscoveryError::InvalidMessage(
+                            "msg node record does not have required `id` field".into(),
+                        ));
+                    };
 
-                if msg.node_record.seq < peer.record.seq {
-                    return Err(DiscoveryError::InvalidMessage(
-                        "msg node record is lower than the one we have".into(),
-                    ));
-                }
-
-                let record = msg.node_record.decode_pairs();
-                let Some(id) = record.id else {
-                    return Err(DiscoveryError::InvalidMessage(
-                        "msg node record does not have required `id` field".into(),
-                    ));
-                };
-
-                // https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
-                let signature_valid = match id.as_str() {
-                    "v4" => {
-                        let digest = msg.node_record.get_signature_digest();
-                        let Some(public_key) = record.secp256k1 else {
-                            return Err(DiscoveryError::InvalidMessage(
+                    // https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
+                    let signature_valid = match id.as_str() {
+                        "v4" => {
+                            let digest = msg.node_record.get_signature_digest();
+                            let Some(public_key) = record.secp256k1 else {
+                                return Err(DiscoveryError::InvalidMessage(
                                 "signature could not be verified because public key was not provided".into(),
                             ));
-                        };
-                        let signature_bytes = msg.node_record.signature.as_bytes();
-                        let Ok(signature) = Signature::from_slice(&signature_bytes[0..64]) else {
-                            return Err(DiscoveryError::InvalidMessage(
-                                "signature could not be build from msg signature bytes".into(),
-                            ));
-                        };
-                        let Ok(verifying_key) =
-                            VerifyingKey::from_sec1_bytes(public_key.as_bytes())
-                        else {
-                            return Err(DiscoveryError::InvalidMessage(
-                                "public key could no be built from msg pub key bytes".into(),
-                            ));
-                        };
-                        verifying_key.verify_prehash(&digest, &signature).is_ok()
+                            };
+                            let signature_bytes = msg.node_record.signature.as_bytes();
+                            let Ok(signature) = Signature::from_slice(&signature_bytes[0..64])
+                            else {
+                                return Err(DiscoveryError::InvalidMessage(
+                                    "signature could not be build from msg signature bytes".into(),
+                                ));
+                            };
+                            let Ok(verifying_key) =
+                                VerifyingKey::from_sec1_bytes(public_key.as_bytes())
+                            else {
+                                return Err(DiscoveryError::InvalidMessage(
+                                    "public key could no be built from msg pub key bytes".into(),
+                                ));
+                            };
+                            verifying_key.verify_prehash(&digest, &signature).is_ok()
+                        }
+                        _ => false,
+                    };
+                    if !signature_valid {
+                        return Err(DiscoveryError::InvalidMessage(
+                            "Signature verification invalid".into(),
+                        ));
                     }
-                    _ => false,
+
+                    //https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
+                    if let Some(eth) = record.eth {
+                        //update node_record
+                        self.ctx.set_fork_id().await;
+                        let pairs = self.ctx.local_node_record.lock().await.decode_pairs();
+
+                        if let Some(fork_id) = pairs.eth {
+                            let Ok(block_number) = self.ctx.storage.get_latest_block_number().await
+                            else {
+                                return Err(DiscoveryError::StorageAccessError(
+                                    "Could not get last block number".into(),
+                                ));
+                            };
+                            let Ok(Some(block_header)) =
+                                self.ctx.storage.get_block_header(block_number)
+                            else {
+                                return Err(DiscoveryError::StorageAccessError(
+                                    "Could not get last block number".into(),
+                                ));
+                            };
+                            let Ok(chain_config) = self.ctx.storage.get_chain_config() else {
+                                return Err(DiscoveryError::StorageAccessError(
+                                    "Could not getchaing config".into(),
+                                ));
+                            };
+                            let Ok(Some(genesis_header)) = self.ctx.storage.get_block_header(0)
+                            else {
+                                return Err(DiscoveryError::StorageAccessError(
+                                    "Could not get genesis block number".into(),
+                                ));
+                            };
+                            if !fork_id.is_valid(
+                                eth,
+                                block_number,
+                                block_header.timestamp,
+                                chain_config,
+                                genesis_header,
+                            ) {
+                                table_lock.replace_peer(packet.get_public_key());
+                                return Err(DiscoveryError::InvalidMessage(
+                                    "Could not validate fork id from new node".into(),
+                                ));
+                            }
+                            debug!("ENR eth pair validated");
+                        }
+                    }
+
+                    if let Some(ip) = record.ip {
+                        peer.node.ip = IpAddr::from(Ipv4Addr::from_bits(ip));
+                    }
+                    if let Some(tcp_port) = record.tcp_port {
+                        peer.node.tcp_port = tcp_port;
+                    }
+                    if let Some(udp_port) = record.udp_port {
+                        peer.node.udp_port = udp_port;
+                    }
+                    peer.record = msg.node_record.clone();
+                    debug!(
+                        "Node with id {:?} record has been successfully updated",
+                        peer.node.public_key
+                    );
+                }
+                let peer = {
+                    let table = self.ctx.table.lock().await;
+                    table.get_by_public_key(packet.get_public_key()).cloned()
                 };
-                if !signature_valid {
-                    return Err(DiscoveryError::InvalidMessage(
-                        "Signature verification invalid".into(),
-                    ));
+                let Some(peer) = peer else {
+                    return Err(DiscoveryError::InvalidMessage("not known node".into()));
+                };
+                // This will typically be the case when revalidating a node.
+                if peer.is_connected {
+                    return Ok(());
                 }
 
-                if let Some(ip) = record.ip {
-                    peer.node.ip = IpAddr::from(Ipv4Addr::from_bits(ip));
+                // We won't initiate a connection if we have reached the maximum number of peers.
+                let active_connections = {
+                    let table = self.ctx.table.lock().await;
+                    table.count_connected_peers()
+                };
+                if active_connections >= MAX_PEERS_TCP_CONNECTIONS {
+                    return Ok(());
                 }
-                if let Some(tcp_port) = record.tcp_port {
-                    peer.node.tcp_port = tcp_port;
-                }
-                if let Some(udp_port) = record.udp_port {
-                    peer.node.udp_port = udp_port;
-                }
-                peer.record = msg.node_record.clone();
-                debug!(
-                    "Node with id {:?} record has been successfully updated",
-                    peer.node.public_key
-                );
+                let ctx = self.ctx.clone();
+
+                self.ctx
+                    .tracker
+                    .spawn(async move { handle_peer_as_initiator(ctx, peer.node).await });
+
                 Ok(())
             }
         }
@@ -559,8 +633,9 @@ impl Discv4Server {
             tcp_port: node.tcp_port,
         };
 
-        let ping =
-            Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(self.ctx.enr_seq));
+        let enr_seq = self.ctx.local_node_record.lock().await.seq;
+        let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
+
         ping.encode_with_header(&mut buf, &self.ctx.signer);
         let bytes_sent = self
             .udp_socket
@@ -591,9 +666,8 @@ impl Discv4Server {
             tcp_port: node.tcp_port,
         };
 
-        let pong = Message::Pong(
-            PongMessage::new(to, ping_hash, expiration).with_enr_seq(self.ctx.enr_seq),
-        );
+        let enr_seq = self.ctx.local_node_record.lock().await.seq;
+        let pong = Message::Pong(PongMessage::new(to, ping_hash, expiration).with_enr_seq(enr_seq));
         pong.encode_with_header(&mut buf, &self.ctx.signer);
 
         let bytes_sent = self
@@ -643,9 +717,15 @@ pub(super) mod tests {
     use crate::{
         network::{public_key_from_signing_key, serve_p2p_requests, MAX_MESSAGES_TO_BROADCAST},
         rlpx::message::Message as RLPxMessage,
+        types::NodeRecord,
     };
     use ethrex_blockchain::Blockchain;
-    use ethrex_storage::{EngineType, Store};
+    use ethrex_common::types::{BlockHeader, ChainConfig, ForkId};
+    use ethrex_common::H32;
+    use ethrex_storage::error::StoreError;
+    use ethrex_storage::EngineType;
+    use ethrex_storage::Store;
+
     use k256::ecdsa::SigningKey;
     use rand::rngs::OsRng;
     use std::net::{IpAddr, Ipv4Addr};
@@ -678,6 +758,7 @@ pub(super) mod tests {
 
     pub async fn start_discovery_server(
         udp_port: u16,
+        initial_blocks: Option<u64>,
         should_start_server: bool,
     ) -> Result<Discv4Server, DiscoveryError> {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
@@ -690,20 +771,26 @@ pub(super) mod tests {
             tcp_port: udp_port,
         };
 
-        let storage =
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let storage = match initial_blocks {
+            Some(blocks) => setup_storage(blocks).await.expect("Storage setup"),
+            None => Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB"),
+        };
+
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let table = Arc::new(Mutex::new(KademliaTable::new(public_key)));
         let (broadcast, _) = tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<RLPxMessage>)>(
             MAX_MESSAGES_TO_BROADCAST,
         );
         let tracker = tokio_util::task::TaskTracker::new();
-
+        let local_node_record = Arc::new(Mutex::new(
+            NodeRecord::from_node(&local_node, 1, &signer)
+                .expect("Node record could not be created from local node"),
+        ));
         let ctx = P2PContext {
             local_node,
-            enr_seq: current_unix_time(),
+            local_node_record,
             tracker: tracker.clone(),
-            signer,
+            signer: signer.clone(),
             table,
             storage,
             blockchain,
@@ -742,6 +829,32 @@ pub(super) mod tests {
         Ok(())
     }
 
+    async fn setup_storage(blocks: u64) -> Result<Store, StoreError> {
+        let store = Store::new("test", EngineType::InMemory)?;
+
+        let config = ChainConfig {
+            shanghai_time: Some(1),
+            istanbul_block: Some(1),
+            ..Default::default()
+        };
+        store.set_chain_config(&config).await?;
+
+        for i in 0..blocks {
+            let header = BlockHeader {
+                number: 0,
+                timestamp: i * 5,
+                gas_limit: 100_000_000,
+                gas_used: 0,
+                ..Default::default()
+            };
+            let block_hash = header.compute_block_hash();
+            store.add_block_header(block_hash, header).await?;
+            store.set_canonical_block(i, block_hash).await?;
+        }
+        store.update_latest_block_number(blocks - 1).await?;
+        Ok(store)
+    }
+
     #[tokio::test]
     /** This is a end to end test on the discovery server, the idea is as follows:
      * - We'll start two discovery servers (`a` & `b`) to ping between each other
@@ -753,8 +866,8 @@ pub(super) mod tests {
      * To make this run faster, we'll change the revalidation time to be every 2secs
      */
     async fn discovery_server_revalidation() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(7998, true).await?;
-        let mut server_b = start_discovery_server(7999, true).await?;
+        let mut server_a = start_discovery_server(7998, Some(1), true).await?;
+        let mut server_b = start_discovery_server(7999, Some(1), true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
 
@@ -823,20 +936,15 @@ pub(super) mod tests {
      * 5. Verify that the updated node record has been correctly received and stored.
      */
     async fn discovery_enr_message() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(8006, true).await?;
-        let mut server_b = start_discovery_server(8007, true).await?;
+        let mut server_a = start_discovery_server(8006, Some(1), true).await?;
+        let mut server_b = start_discovery_server(8007, Some(1), true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
 
         // wait some time for the enr request-response finishes
         sleep(Duration::from_millis(2500)).await;
 
-        let expected_record = NodeRecord::from_node(
-            server_b.ctx.local_node,
-            current_unix_time(),
-            &server_b.ctx.signer,
-        )
-        .expect("Node record is created from node");
+        let expected_record = server_b.ctx.local_node_record.lock().await.decode_pairs();
 
         let server_a_peer_b = server_a
             .ctx
@@ -849,7 +957,7 @@ pub(super) mod tests {
 
         // we only match the pairs, as the signature and seq will change
         // because they are calculated with the current time
-        assert!(server_a_peer_b.record.decode_pairs() == expected_record.decode_pairs());
+        assert!(server_a_peer_b.record.decode_pairs() == expected_record);
 
         // Modify server_a's record of server_b with an incorrect TCP port.
         // This simulates an outdated or incorrect entry in the node table.
@@ -865,7 +973,13 @@ pub(super) mod tests {
 
         // update the enr_seq of server_b so that server_a notices it is outdated
         // and sends a request to update it
-        server_b.ctx.enr_seq = current_unix_time();
+        server_b
+            .ctx
+            .local_node_record
+            .lock()
+            .await
+            .update_seq(&server_b.ctx.signer)
+            .unwrap();
 
         // Send a ping from server_b to server_a.
         // server_a should notice the enr_seq is outdated
@@ -882,6 +996,93 @@ pub(super) mod tests {
             .unwrap();
 
         assert!(server_a_node_b_record.node.tcp_port == server_b.ctx.local_node.tcp_port);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    /**
+     * This test verifies the exchange and validation of eth pairs in the ENR (Ethereum Node Record) messages.
+     * The test follows these steps:
+     *
+     * 1. Start three nodes.
+     * 2. Add a valid fork_id to the nodes a and b
+     * 3. Add a invalid fork_id to the node c
+     * 4. Wait until they establish a connection.
+     * 5. Validate they have exchanged the pairs and validated them
+     * 6. node a and b should be connected
+     * 7. node a and c shouldn't be connected
+     */
+    async fn discovery_eth_pair_validation() -> Result<(), DiscoveryError> {
+        let mut server_a = start_discovery_server(8086, Some(10), true).await?;
+        let mut server_b = start_discovery_server(8087, Some(10), true).await?;
+        let mut server_c = start_discovery_server(8088, None, true).await?;
+
+        let config = ChainConfig {
+            ..Default::default()
+        };
+        server_c
+            .ctx
+            .storage
+            .set_chain_config(&config)
+            .await
+            .unwrap();
+
+        let fork_id_valid = ForkId {
+            fork_hash: H32::zero(),
+            fork_next: u64::MAX,
+        };
+
+        let fork_id_invalid = ForkId {
+            fork_hash: H32::zero(),
+            fork_next: 1,
+        };
+
+        server_a
+            .ctx
+            .local_node_record
+            .lock()
+            .await
+            .set_fork_id(&fork_id_valid, &server_a.ctx.signer)
+            .unwrap();
+
+        server_b
+            .ctx
+            .local_node_record
+            .lock()
+            .await
+            .set_fork_id(&fork_id_valid, &server_b.ctx.signer)
+            .unwrap();
+
+        server_c
+            .ctx
+            .local_node_record
+            .lock()
+            .await
+            .set_fork_id(&fork_id_invalid, &server_c.ctx.signer)
+            .unwrap();
+
+        connect_servers(&mut server_a, &mut server_b).await?;
+        connect_servers(&mut server_a, &mut server_c).await?;
+
+        // wait some time for the enr request-response finishes
+        sleep(Duration::from_millis(2500)).await;
+
+        assert!(server_a
+            .ctx
+            .table
+            .lock()
+            .await
+            .get_by_public_key(server_b.ctx.local_node.public_key)
+            .is_some());
+
+        assert!(server_a
+            .ctx
+            .table
+            .lock()
+            .await
+            .get_by_public_key(server_c.ctx.local_node.public_key)
+            .is_none());
 
         Ok(())
     }
