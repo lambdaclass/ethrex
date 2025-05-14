@@ -8,7 +8,7 @@ use ethrex_rlp::{
     structs::{self, Decoder, Encoder},
 };
 use k256::ecdsa::{SigningKey, VerifyingKey};
-use serde::ser::Serializer;
+use serde::{ser::Serializer, Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{
     fmt::Display,
@@ -224,7 +224,7 @@ impl Display for Node {
 }
 
 /// Reference: [ENR records](https://github.com/ethereum/devp2p/blob/master/enr.md)
-#[derive(Debug, PartialEq, Clone, Eq, Default)]
+#[derive(Debug, PartialEq, Clone, Eq, Default, Serialize, Deserialize)]
 pub struct NodeRecord {
     pub signature: H512,
     pub seq: u64,

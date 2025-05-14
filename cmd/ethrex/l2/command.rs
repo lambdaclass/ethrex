@@ -5,7 +5,7 @@ use crate::{
         init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
     },
     l2::options::Options,
-    utils::{set_datadir, store_config_file, ConfigFile},
+    utils::{set_datadir, store_node_config_file, NodeConfigFile},
     DEFAULT_L2_DATADIR,
 };
 use clap::Subcommand;
@@ -92,7 +92,7 @@ impl Command {
                     &opts,
                     peer_table.clone(),
                     local_p2p_node,
-                    local_node_record.clone(),
+                    local_node_record.lock().await.clone(),
                     store.clone(),
                     blockchain.clone(),
                     cancel_token.clone(),
@@ -135,11 +135,11 @@ impl Command {
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {
                         info!("Server shut down started...");
-                        let config_path = PathBuf::from(data_dir + "/config.json");
-                        info!("Storing config at {:?}...", config_path);
+                        let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+                        info!("Storing config at {:?}...", node_config_path);
                         cancel_token.cancel();
-                        let config = ConfigFile::new(peer_table, local_node_record.lock().await.seq).await;
-                        store_config_file(config, config_path).await;
+                        let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
+                        store_node_config_file(node_config, node_config_path).await;
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         info!("Server shutting down!");
                     }

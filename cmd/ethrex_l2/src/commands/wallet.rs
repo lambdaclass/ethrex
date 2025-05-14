@@ -331,7 +331,6 @@ impl Command {
                             },
                             nonce,
                             from: Some(cfg.wallet.address),
-                            gas_limit: Some(21000 * 100),
                             ..Default::default()
                         },
                     )
@@ -371,7 +370,6 @@ impl Command {
                             nonce,
                             from: Some(cfg.wallet.address),
                             value: Some(amount),
-                            gas_limit: Some(21000 * 2),
                             max_fee_per_gas: Some(800000000),
                             ..Default::default()
                         },

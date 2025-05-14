@@ -2,7 +2,11 @@ use crate::decode;
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
-use ethrex_p2p::{kademlia::KademliaTable, sync::SyncMode, types::Node};
+use ethrex_p2p::{
+    kademlia::KademliaTable,
+    sync::SyncMode,
+    types::{Node, NodeRecord},
+};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_vm::EvmEngine;
 use hex::FromHexError;
@@ -20,13 +24,13 @@ use tokio::sync::Mutex;
 use tracing::{error, info};
 
 #[derive(Serialize, Deserialize)]
-pub struct ConfigFile {
+pub struct NodeConfigFile {
     pub known_peers: Vec<Node>,
-    pub enr_seq: u64,
+    pub node_record: NodeRecord,
 }
 
-impl ConfigFile {
-    pub async fn new(table: Arc<Mutex<KademliaTable>>, enr_seq: u64) -> Self {
+impl NodeConfigFile {
+    pub async fn new(table: Arc<Mutex<KademliaTable>>, node_record: NodeRecord) -> Self {
         let mut connected_peers = vec![];
 
         for peer in table.lock().await.iter_peers() {
@@ -34,9 +38,9 @@ impl ConfigFile {
                 connected_peers.push(peer.node);
             }
         }
-        ConfigFile {
+        NodeConfigFile {
             known_peers: connected_peers,
-            enr_seq,
+            node_record,
         }
     }
 }
@@ -116,7 +120,7 @@ pub fn set_datadir(datadir: &str) -> String {
         .to_owned()
 }
 
-pub async fn store_config_file(config: ConfigFile, file_path: PathBuf) {
+pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) {
     let json = match serde_json::to_string(&config) {
         Ok(json) => json,
         Err(e) => {
@@ -131,15 +135,11 @@ pub async fn store_config_file(config: ConfigFile, file_path: PathBuf) {
 }
 
 #[allow(dead_code)]
-pub fn read_config_file(file_path: PathBuf) -> Result<ConfigFile, serde_json::Error> {
-    let Ok(file) = std::fs::File::open(file_path) else {
-        return Ok(ConfigFile {
-            known_peers: vec![],
-            enr_seq: 1,
-        });
-    };
-
-    serde_json::from_reader(file)
+pub fn read_node_config_file(file_path: PathBuf) -> Result<NodeConfigFile, String> {
+    match std::fs::File::open(file_path) {
+        Ok(file) => serde_json::from_reader(file).map_err(|e| format!("Invlid config file {}", e)),
+        Err(e) => Err(format!("No config file found: {}", e)),
+    }
 }
 
 #[cfg(feature = "l2")]
