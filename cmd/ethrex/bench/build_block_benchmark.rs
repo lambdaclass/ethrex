@@ -94,11 +94,12 @@ async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u
 async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
     let mut txs = vec![];
     for sk in accounts {
-        for n in 0..10 {
+        for n in 0..1000 {
             let mut tx =
                 Transaction::EIP1559Transaction(EIP1559Transaction {
+                    nonce: n,
                     value: 1_u64.into(),
-                    gas_limit: (24000000_u64).into(),
+                    gas_limit: 250000_u64.into(),
                     max_fee_per_gas: u64::MAX.into(),
                     max_priority_fee_per_gas: 10_u64.into(),
                     chain_id: 9,
@@ -151,6 +152,9 @@ pub async fn bench_payload(input: &(&mut Blockchain, Block, &Store)) {
     // 3. engine_newPayload is called, this eventually calls Blockchain::add_block
     // which takes transactions from the mempool and fills the block with them.
     b.add_block(&block).await.unwrap();
+    // EXTRA: Sanity check to not benchmark n empty block.
+    let hash = &block.hash();
+    assert!(store.get_block_body_by_hash(*hash).await.unwrap().unwrap().transactions.len() >= 1);
 }
 
 pub fn build_block_benchmark(c: &mut Criterion) {
