@@ -5,7 +5,7 @@ use crate::node_hash::NodeHash;
 use crate::ValueRLP;
 use crate::{error::TrieError, TrieDB};
 
-use super::{BranchNode, Node, NodeRef};
+use super::{BranchNode, Node, NodeRef, ValueOrHash};
 
 /// Extension Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's prefix and a its child node hash, doesn't store any value
@@ -42,7 +42,7 @@ impl ExtensionNode {
         mut self,
         db: &dyn TrieDB,
         path: Nibbles,
-        value: ValueRLP,
+        value: ValueOrHash,
     ) -> Result<Node, TrieError> {
         /* Possible flow paths:
             * Prefix fully matches path
@@ -80,7 +80,7 @@ impl ExtensionNode {
                 choices[self.prefix.at(0)] = new_node;
                 BranchNode::new(choices)
             };
-            return branch_node.insert(db, path, value);
+            branch_node.insert(db, path, value)
         } else {
             let new_extension = ExtensionNode::new(self.prefix.offset(match_index), self.child);
             let new_node = new_extension.insert(db, path.offset(match_index), value)?;
@@ -245,7 +245,11 @@ mod test {
         };
 
         let node = node
-            .insert(trie.db.as_ref(), Nibbles::from_bytes(&[0x02]), vec![])
+            .insert(
+                trie.db.as_ref(),
+                Nibbles::from_bytes(&[0x02]),
+                Vec::new().into(),
+            )
             .unwrap();
         let node = match node {
             Node::Extension(x) => x,
@@ -265,7 +269,11 @@ mod test {
         };
 
         let node = node
-            .insert(trie.db.as_ref(), Nibbles::from_bytes(&[0x10]), vec![0x20])
+            .insert(
+                trie.db.as_ref(),
+                Nibbles::from_bytes(&[0x10]),
+                vec![0x20].into(),
+            )
             .unwrap();
         let node = match node {
             Node::Branch(x) => x,
@@ -289,7 +297,11 @@ mod test {
         };
 
         let node = node
-            .insert(trie.db.as_ref(), Nibbles::from_bytes(&[0x10]), vec![0x20])
+            .insert(
+                trie.db.as_ref(),
+                Nibbles::from_bytes(&[0x10]),
+                vec![0x20].into(),
+            )
             .unwrap();
         let node = match node {
             Node::Branch(x) => x,
@@ -316,7 +328,7 @@ mod test {
         let value = vec![0x02];
 
         let node = node
-            .insert(trie.db.as_ref(), path.clone(), value.clone())
+            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
             .unwrap();
 
         assert!(matches!(node, Node::Extension(_)));
@@ -337,7 +349,7 @@ mod test {
         let value = vec![0x04];
 
         let node = node
-            .insert(trie.db.as_ref(), path.clone(), value.clone())
+            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
             .unwrap();
 
         assert!(matches!(node, Node::Extension(_)));

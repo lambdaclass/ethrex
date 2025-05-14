@@ -97,6 +97,23 @@ impl From<NodeHash> for NodeRef {
     }
 }
 
+enum ValueOrHash {
+    Value(ValueRLP),
+    Hash(NodeHash),
+}
+
+impl From<ValueRLP> for ValueOrHash {
+    fn from(value: ValueRLP) -> Self {
+        Self::Value(value)
+    }
+}
+
+impl From<NodeHash> for ValueOrHash {
+    fn from(value: NodeHash) -> Self {
+        Self::Hash(value)
+    }
+}
+
 /// A Node in an Ethereum Compatible Patricia Merkle Trie
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
@@ -138,12 +155,12 @@ impl Node {
         self,
         db: &dyn TrieDB,
         path: Nibbles,
-        value: ValueRLP,
+        value: impl Into<ValueOrHash>,
     ) -> Result<Node, TrieError> {
         match self {
-            Node::Branch(n) => n.insert(db, path, value),
-            Node::Extension(n) => n.insert(db, path, value),
-            Node::Leaf(n) => n.insert(path, value),
+            Node::Branch(n) => n.insert(db, path, value.into()),
+            Node::Extension(n) => n.insert(db, path, value.into()),
+            Node::Leaf(n) => n.insert(path, value.into()),
         }
     }
 

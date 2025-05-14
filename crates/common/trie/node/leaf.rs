@@ -2,7 +2,7 @@ use ethrex_rlp::structs::Encoder;
 
 use crate::{error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash, ValueRLP};
 
-use super::{ExtensionNode, Node};
+use super::{ExtensionNode, Node, ValueOrHash};
 /// Leaf Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's hash, value & path
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -27,7 +27,7 @@ impl LeafNode {
     }
 
     /// Stores the received value and returns the new root of the subtrie previously consisting of self
-    pub fn insert(mut self, path: Nibbles, value: ValueRLP) -> Result<Node, TrieError> {
+    pub fn insert(mut self, path: Nibbles, value: ValueOrHash) -> Result<Node, TrieError> {
         /* Possible flow paths:
             Leaf { SelfValue } -> Leaf { Value }
             Leaf { SelfValue } -> Extension { Branch { [Self,...] Value } }
@@ -36,13 +36,19 @@ impl LeafNode {
         */
         // If the path matches the stored path, update the value and return self
         if self.partial == path {
-            self.value = value;
+            match value {
+                ValueOrHash::Value(value) => self.value = value,
+                ValueOrHash::Hash(_) => todo!("handle override case (error?)"),
+            }
             Ok(self.into())
         } else {
             let match_index = path.count_prefix(&self.partial);
             let self_choice_idx = self.partial.at(match_index);
             let new_leaf_choice_idx = path.at(match_index);
             self.partial = self.partial.offset(match_index + 1);
+
+            // self_choice_idx == 16     -> match ... { LeafNode::new(), hash.into() }
+            // new_leaf_choice_idx == 16 ->
 
             let branch_node = if self_choice_idx == 16 {
                 // Create a new leaf node and store the value in it
@@ -155,7 +161,7 @@ mod test {
         };
 
         let node = node
-            .insert(Nibbles::from_bytes(&[0x12]), vec![0x13])
+            .insert(Nibbles::from_bytes(&[0x12]), vec![0x13].into())
             .unwrap();
         let node = match node {
             Node::Leaf(x) => x,
@@ -173,7 +179,7 @@ mod test {
         };
         let path = Nibbles::from_bytes(&[0x22]);
         let value = vec![0x23];
-        let node = node.insert(path.clone(), value.clone()).unwrap();
+        let node = node.insert(path.clone(), value.clone().into()).unwrap();
         let node = match node {
             Node::Branch(x) => x,
             _ => panic!("expected a branch node"),
@@ -191,7 +197,7 @@ mod test {
         let path = Nibbles::from_bytes(&[0x13]);
         let value = vec![0x15];
 
-        let node = node.insert(path.clone(), value.clone()).unwrap();
+        let node = node.insert(path.clone(), value.clone().into()).unwrap();
 
         assert!(matches!(node, Node::Extension(_)));
         assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
@@ -207,7 +213,7 @@ mod test {
         let path = Nibbles::from_bytes(&[0x12, 0x34]);
         let value = vec![0x17];
 
-        let node = node.insert(path.clone(), value.clone()).unwrap();
+        let node = node.insert(path.clone(), value.clone().into()).unwrap();
 
         assert!(matches!(node, Node::Extension(_)));
         assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
@@ -223,7 +229,7 @@ mod test {
         let path = Nibbles::from_bytes(&[0x12]);
         let value = vec![0x17];
 
-        let node = node.insert(path.clone(), value.clone()).unwrap();
+        let node = node.insert(path.clone(), value.clone().into()).unwrap();
 
         assert!(matches!(node, Node::Extension(_)));
         assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));

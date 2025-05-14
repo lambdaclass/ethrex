@@ -2,7 +2,7 @@ use ethrex_rlp::structs::Encoder;
 
 use crate::{error::TrieError, nibbles::Nibbles, node_hash::NodeHash, TrieDB, ValueRLP};
 
-use super::{ExtensionNode, LeafNode, Node, NodeRef};
+use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 
 /// Branch Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's value and the hash of its children nodes
@@ -77,19 +77,19 @@ impl BranchNode {
         mut self,
         db: &dyn TrieDB,
         mut path: Nibbles,
-        value: ValueRLP,
+        value: ValueOrHash,
     ) -> Result<Node, TrieError> {
         // If path is at the end, insert or replace its own value.
         // Otherwise, check the corresponding choice and insert or delegate accordingly.
         if let Some(choice) = path.next_choice() {
-            match &mut self.choices[choice] {
+            match (&mut self.choices[choice], value) {
                 // Create new child (leaf node)
-                choice_hash if !choice_hash.is_valid() => {
+                (choice_hash, ValueOrHash::Value(value)) if !choice_hash.is_valid() => {
                     let new_leaf = LeafNode::new(path, value);
                     *choice_hash = Node::from(new_leaf).into();
                 }
                 // Insert into existing child and then update it
-                choice_hash => {
+                (choice_hash, ValueOrHash::Value(value)) => {
                     let child_node = choice_hash
                         .get_node(db)?
                         .ok_or(TrieError::InconsistentTree)?;
@@ -97,10 +97,20 @@ impl BranchNode {
                     let child_node = child_node.insert(db, path, value)?;
                     *choice_hash = Node::from(child_node).into();
                 }
+                // Insert external node hash if there are no overrides.
+                (choice_hash, ValueOrHash::Hash(hash)) => {
+                    if !choice_hash.is_valid() {
+                        *choice_hash = hash.into();
+                    } else {
+                        todo!("handle override case (error?)")
+                    }
+                }
             }
-        } else {
+        } else if let ValueOrHash::Value(value) = value {
             // Insert into self
             self.update(value);
+        } else {
+            todo!("handle override case (error?)")
         }
 
         Ok(self.into())
@@ -349,7 +359,7 @@ mod test {
         let value = vec![0x3];
 
         let node = node
-            .insert(trie.db.as_ref(), path.clone(), value.clone())
+            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
             .unwrap();
 
         assert!(matches!(node, Node::Branch(_)));
@@ -370,7 +380,7 @@ mod test {
         let value = vec![0x21];
 
         let node = node
-            .insert(trie.db.as_ref(), path.clone(), value.clone())
+            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
             .unwrap();
 
         assert!(matches!(node, Node::Branch(_)));
@@ -393,7 +403,7 @@ mod test {
 
         let new_node = node
             .clone()
-            .insert(trie.db.as_ref(), path.clone(), value.clone())
+            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
             .unwrap();
 
         let new_node = match new_node {
