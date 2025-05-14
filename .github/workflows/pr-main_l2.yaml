@@ -119,7 +119,7 @@ jobs:
         run: |
           cd crates/l2
           make build-prover
-          touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
+          mkdir -p prover/zkvm/interface/sp1/out && touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
 
       - name: Build test
         run: |
@@ -195,7 +195,7 @@ jobs:
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           touch .env
-          touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
+          mkdir -p prover/zkvm/interface/sp1/out && touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
           CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Run tests
