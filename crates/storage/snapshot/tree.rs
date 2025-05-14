@@ -325,12 +325,16 @@ impl SnapshotTree {
 
         // TODO: here we should save the diff to the db (in the future snapshots table) too.
         let accounts = diff_value.accounts();
+
+        // TODO: Need to make sure it's correct to leave the cache as is
+        prev_disk.cache.accounts.invalidate_all();
+
         for (hash, acc) in accounts.iter() {
             prev_disk.cache.accounts.insert(*hash, acc.clone());
         }
 
-        //// TODO: Need to make sure it's correct not
-        //prev_disk.cache.storages.invalidate_all();
+        // TODO: Need to make sure it's correct to leave the cache as is
+        prev_disk.cache.storages.invalidate_all();
 
         let storage = diff_value.storage();
         for (account_hash, storage) in storage.iter() {
