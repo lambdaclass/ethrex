@@ -125,8 +125,8 @@ impl L1ProofSender {
             .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
 
-        // Sent proof to Aligned batcher
-        self.sent_proof_to_aligned().await?;
+        // Send proof to Aligned batcher
+        self.send_proof_to_aligned().await?;
 
         loop {
             // Advance OnChainProposer verifying batch through AlignedProofAggregatorService
@@ -144,7 +144,7 @@ impl L1ProofSender {
         Ok(())
     }
 
-    async fn sent_proof_to_aligned(&self) -> Result<(), ProofSenderError> {
+    async fn send_proof_to_aligned(&self) -> Result<(), ProofSenderError> {
         let proof = std::fs::read("../../test_data/proof").unwrap();
 
         let verification_data = VerificationData {
