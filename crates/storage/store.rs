@@ -898,7 +898,7 @@ impl Store {
         Ok(self
             .open_state_trie(*EMPTY_TRIE_HASH)
             .db()
-            .get(node_hash)?
+            .get(node_hash.into())?
             .is_some())
     }
 
@@ -912,7 +912,7 @@ impl Store {
         Ok(self
             .open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)
             .db()
-            .get(node_hash)?
+            .get(node_hash.into())?
             .is_some())
     }
 
