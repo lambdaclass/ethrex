@@ -202,7 +202,7 @@ async fn do_loop(private_key: &SecretKey) -> Result<u64, String> {
     let output = calculate_transition(input)?;
     let signature = sign_eip191(&output, private_key);
     let calldata = vec![
-        Value::FixedBytes(output.into()),
+        Value::Bytes(output.into()),
         Value::Bytes(signature.into()),
     ];
     submit_proof(
