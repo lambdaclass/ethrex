@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747261725102,
+  "lastUpdate": 1747267042167,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7509,6 +7509,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007244831012962074,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b47623fdc8865f8e6f83857fccee1d74f145e03e",
+          "message": "docs(levm): update levm readme (#2712)\n\n**Motivation**\n\nKeeping docs updated.\n\n**Description**\n\nThe README was severely out of date, specially the roadmap. This updates\nit to line up with the current project state and goals.\n\nCloses #2704\n\n---------\n\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-05-14T21:21:08Z",
+          "tree_id": "48e8dd7ddc3cfc5cd0de6bda26c06bd70643bd90",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b47623fdc8865f8e6f83857fccee1d74f145e03e"
+        },
+        "date": 1747267041595,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.000726226323387873,
             "unit": "Mgas/s"
           }
         ]
