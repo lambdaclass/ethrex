@@ -5,7 +5,6 @@ use crate::{
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
-    precompiles::is_precompile,
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
@@ -829,7 +828,7 @@ impl<'a> VM<'a> {
         );
         self.call_frames.push(new_call_frame);
 
-        if is_precompile(&code_address, self.env.config.fork) {
+        if self.is_precompile()? {
             let report = self.execute_precompile()?;
             self.handle_return(&report)?;
         } else {

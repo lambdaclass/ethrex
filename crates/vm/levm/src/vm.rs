@@ -5,7 +5,7 @@ use crate::{
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     hooks::hook::Hook,
     precompiles::{
-        execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
+        execute_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
         SIZE_PRECOMPILES_PRE_CANCUN,
     },
     utils::*,
@@ -199,13 +199,6 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
-    pub fn is_precompile(&self) -> Result<bool, VMError> {
-        Ok(is_precompile(
-            &self.current_call_frame()?.code_address,
-            self.env.config.fork,
-        ))
-    }
-
     pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
         if self.is_precompile()? {
             return self.execute_precompile();
@@ -216,27 +209,21 @@ impl<'a> VM<'a> {
 
             let op_result = self.handle_current_opcode(opcode);
 
-            match op_result {
-                Ok(OpcodeResult::Continue { pc_increment }) => self
-                    .current_call_frame_mut()?
-                    .increment_pc_by(pc_increment)?,
-
-                Ok(OpcodeResult::Halt) => {
-                    let report = self.handle_opcode_result()?;
-                    if self.is_initial_call_frame() {
-                        return Ok(report);
-                    }
-                    self.handle_return(&report)?;
+            let result = match op_result {
+                Ok(OpcodeResult::Continue { pc_increment }) => {
+                    self.current_call_frame_mut()?
+                        .increment_pc_by(pc_increment)?;
+                    continue;
                 }
+                Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
+                Err(error) => self.handle_opcode_error(error)?,
+            };
 
-                Err(error) => {
-                    let report = self.handle_opcode_error(error)?;
-                    if self.is_initial_call_frame() {
-                        return Ok(report);
-                    }
-                    self.handle_return(&report)?;
-                }
+            if self.is_initial_call_frame() {
+                return Ok(result);
             }
+
+            self.handle_return(&result)?;
         }
     }
 
