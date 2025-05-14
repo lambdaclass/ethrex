@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747245839163,
+  "lastUpdate": 1747247976603,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6985,6 +6985,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 214931652850,
             "range": "± 662253206",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9779033a81150bc1975cf5d8bcab701935fca5c9",
+          "message": "refactor(l1): rename incorrect usage of `node_id` to `public_key` (node_id refactor 1/3) (#2778)\n\n**Motivation**\nOur implementation of `Node` stores the node's public key as `node_id`\nwhich is very confusing, as the `node_id` is the keccak256 hash of the\npublic key. This can lead to potential bugs and discrepancies with other\nimplementations where node_id is indeed the keccack hash of the public\nkey.\nFor this PR I left the public key as part of the Node but corrected its\nname to `public_key`, leaving all use cases as is.\nI also renamed some functions that mislabeled public key as node_id to\nbetter reflect what they do. The methods `id2pubkey` and `pubkey2id`\nconvert between the uncompressed (H512) and compressed (PubKey) versions\nof the same data so I renamed them to `compress_pubkey` and\n`decompress_pubkey`.\nI also added the method `node_id` to `Node` which returns the actual\nnode_id (aka the keccak252 hash of the public key).\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Rename various instances of `node_id` to `public_key`\n* Rename methods `id2pubkey` and `pubkey2id` to `compress_pubkey` and\n`decompress_pubkey`.\n* Add `Node` method `node_id`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n**Potential Follow-Up work**\nCache node_id computation so we don't need to hash the public key on\nevery Kademlia table operation (#2786 + #2789 )\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2774",
+          "timestamp": "2025-05-14T17:45:15Z",
+          "tree_id": "9946ff2cca57f38af4c8bcfb8f19be9ad3532255",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9779033a81150bc1975cf5d8bcab701935fca5c9"
+        },
+        "date": 1747247974746,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 216845771775,
+            "range": "± 626773854",
             "unit": "ns/iter"
           }
         ]
