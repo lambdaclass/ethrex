@@ -10,53 +10,6 @@ use ethrex_storage::AccountUpdate;
 use crate::{constants::COMMON_BRIDGE_L2_ADDRESS, state_diff::prepare_state_diff, EvmError};
 
 use super::LEVM;
-
-// pub fn calc_modified_accounts_size(
-//     account_updates: &[AccountUpdate],
-//     db: &GeneralizedDatabase,
-// ) -> Result<usize, EvmError> {
-//     let mut modified_accounts_size: usize = 2; // 2bytes | modified_accounts_len(u16)
-
-//     for account_update in account_updates {
-//         modified_accounts_size += 1 + 20; // 1byte + 20bytes | r#type(u8) + address(H160)
-//         if account_update.info.is_some() {
-//             modified_accounts_size += 32; // 32bytes | new_balance(U256)
-//         }
-
-//         if has_nonce_changed(account_update, db)? {
-//             modified_accounts_size += 2; // 2bytes | nonce_diff(u16)
-//         }
-//         // for each added_storage: 32bytes + 32bytes | key(H256) + value(U256)
-//         modified_accounts_size += account_update.added_storage.len() * 2 * 32;
-
-//         modified_accounts_size += 2; // 2bytes | bytecode_len(u16)
-//         if let Some(bytecode) = &account_update.code {
-//             modified_accounts_size += bytecode.len(); // (len)bytes | bytecode(Bytes)
-//         }
-//     }
-//     Ok(modified_accounts_size)
-// }
-
-// pub fn has_nonce_changed(
-//     account_update: &AccountUpdate,
-//     db: &GeneralizedDatabase,
-// ) -> Result<bool, EvmError> {
-//     // Get previous nonce
-//     let prev_nonce = db
-//         .in_memory_db
-//         .get(&account_update.address)
-//         .ok_or_else(|| EvmError::Custom("Failed to get account".to_owned()))?
-//         .info
-//         .nonce;
-//     // Get current nonce
-//     let new_nonce = if let Some(info) = &account_update.info {
-//         prev_nonce == info.nonce
-//     } else {
-//         false
-//     };
-//     Ok(new_nonce)
-// }
-
 pub fn get_nonce_diff(
     account_update: &AccountUpdate,
     db: &GeneralizedDatabase,
@@ -163,7 +116,3 @@ fn is_withdrawal_l2(tx: &Transaction, logs: &[Log]) -> Result<bool, EvmError> {
     };
     Ok(is_withdrawal)
 }
-
-// fn is_deposit_l2(tx: &Transaction) -> bool {
-//     matches!(tx, Transaction::PrivilegedL2Transaction(_tx))
-// }
