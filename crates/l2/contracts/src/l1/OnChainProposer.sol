@@ -97,7 +97,7 @@ contract OnChainProposer is
         address r0verifier,
         address sp1verifier,
         address picoverifier,
-        bytes32 genesisStateRoot
+        bytes32 genesisStateRoot,
         address[] calldata sequencerAddresses
     ) public initializer {
         VALIDIUM = _validium;
