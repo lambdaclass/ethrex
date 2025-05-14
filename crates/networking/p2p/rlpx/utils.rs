@@ -37,18 +37,18 @@ pub fn kdf(secret: &[u8], output: &mut [u8]) {
     concat_kdf::derive_key_into::<k256::sha2::Sha256>(secret, &[], output).unwrap();
 }
 
-/// Computes recipient id from public key.
-pub fn pubkey2id(pk: &PublicKey) -> H512 {
+/// Decompresses the received public key
+pub fn decompress_pubkey(pk: &PublicKey) -> H512 {
     let encoded = pk.to_encoded_point(false);
     let bytes = encoded.as_bytes();
     debug_assert_eq!(bytes[0], 4);
     H512::from_slice(&bytes[1..])
 }
 
-/// Computes public key from recipient id.
-/// The node ID is the uncompressed public key of a node, with the first byte omitted (0x04).
-pub fn id2pubkey(id: H512) -> Option<PublicKey> {
-    let point = EncodedPoint::from_untagged_bytes(&id.0.into());
+/// Compresses the received public key
+/// The received value is the uncompressed public key of a node, with the first byte omitted (0x04).
+pub fn compress_pubkey(pk: H512) -> Option<PublicKey> {
+    let point = EncodedPoint::from_untagged_bytes(&pk.0.into());
     PublicKey::from_encoded_point(&point).into_option()
 }
 
@@ -98,12 +98,12 @@ mod tests {
     }
 
     #[test]
-    fn id2pubkey_pubkey2id_smoke_test() {
+    fn compress_pubkey_decompress_pubkey_smoke_test() {
         use rand::rngs::OsRng;
 
         let sk = SecretKey::random(&mut OsRng);
         let pk = sk.public_key();
-        let id = pubkey2id(&pk);
-        let _pk2 = id2pubkey(id).unwrap();
+        let id = decompress_pubkey(&pk);
+        let _pk2 = compress_pubkey(id).unwrap();
     }
 }

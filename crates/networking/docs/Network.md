@@ -21,17 +21,17 @@ Before starting these tasks, we run a [startup](#startup) process to connect to 
 
 Before diving into what each task does, first, we need to understand how we are storing our nodes. Nodes are stored in an in-memory matrix which we call a [Kademlia table](https://github.com/lambdaclass/ethrex/blob/main/crates/networking/p2p/kademlia.rs#L25-L28), though it isn't really a Kademlia table as we don't thoroughly follow the spec but we take it as a reference, you can read more [here](https://en.wikipedia.org/wiki/Kademlia). This table holds:
 
--   Our `node_id`: `node_id`s are derived from the public key. They are the 64 bytes starting from index 1 of the encoded pub key.
+-   Our `public_key`: The 64 bytes starting from index 1 of the encoded pub key.
 -   A vector of 256 `bucket`s which holds:
     -   `peers`: a vector of 16 elements of type `PeersData` where we save the node record and other related data that we'll see later.
     -   `replacements`: a vector of 16 elements of `PeersData` that are not connected to us, but we consider them as potential replacements for those nodes that have disconnected from us.
 
-Peers are not assigned to any bucket but they are assigned based on its $0 \le \text{distance} \le 255$ to our `node_id`. Distance is defined by:
+Peers are not assigned to any bucket but they are assigned based on its $0 \le \text{distance} \le 255$ to our `public_key`. Distance is defined by:
 
 ```rust
-pub fn distance(node_id_1: H512, node_id_2: H512) -> usize {
-    let hash_1 = Keccak256::digest(node_id_1);
-    let hash_2 = Keccak256::digest(node_id_2);
+pub fn distance(public_key_1: H512, public_key_2: H512) -> usize {
+    let hash_1 = Keccak256::digest(public_key_1);
+    let hash_2 = Keccak256::digest(public_key_2);
     let xor = H256(hash_1.into()) ^ H256(hash_2.into());
     let distance = U256::from_big_endian(xor.as_bytes());
     distance.bits().saturating_sub(1)

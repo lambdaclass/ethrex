@@ -8,11 +8,11 @@ use ethrex_rlp::{
 };
 use k256::PublicKey;
 
-use crate::rlpx::utils::{id2pubkey, snappy_decompress};
+use crate::rlpx::utils::{compress_pubkey, snappy_decompress};
 
 use super::{
     message::RLPxMessage,
-    utils::{pubkey2id, snappy_compress},
+    utils::{decompress_pubkey, snappy_compress},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -71,7 +71,7 @@ impl RLPxMessage for HelloMessage {
             .encode_field(&self.client_id) // clientId
             .encode_field(&self.capabilities) // capabilities
             .encode_field(&0u8) // listenPort (ignored)
-            .encode_field(&pubkey2id(&self.node_id)) // nodeKey
+            .encode_field(&decompress_pubkey(&self.node_id)) // nodeKey
             .finish();
         Ok(())
     }
@@ -99,7 +99,7 @@ impl RLPxMessage for HelloMessage {
 
         Ok(Self::new(
             capabilities,
-            id2pubkey(node_id).ok_or(RLPDecodeError::MalformedData)?,
+            compress_pubkey(node_id).ok_or(RLPDecodeError::MalformedData)?,
             client_id,
         ))
     }
