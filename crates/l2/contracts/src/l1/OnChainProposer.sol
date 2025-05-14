@@ -303,7 +303,7 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
-    function _verifyPublicData(uint256 batchNumber, bytes publicData) internal {
+    function _verifyPublicData(uint256 batchNumber, bytes calldata publicData) internal view {
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         require(
             batchCommitments[lastVerifiedBatch].newStateRoot == initialStateRoot,
