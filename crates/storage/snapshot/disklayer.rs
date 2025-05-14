@@ -11,7 +11,7 @@ use ethrex_common::{types::AccountState, H256, U256};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_trie::Trie;
 
-use crate::{api::StoreEngine, cache::Cache, rlp::AccountStateRLP};
+use crate::{api::StoreEngine, cache::Cache};
 
 use super::{difflayer::DiffLayer, error::SnapshotError, tree::Layers};
 
@@ -68,14 +68,14 @@ impl DiskLayer {
             .get(hash)
             .ok()
             .flatten()
-            .map(AccountStateRLP::from_bytes)
+            .map(|x| AccountState::decode(&x))
         {
             value
         } else {
             return Ok(None);
         };
 
-        let value: AccountState = value.to();
+        let value: AccountState = value?;
 
         self.cache.accounts.insert(hash, value.clone().into());
 

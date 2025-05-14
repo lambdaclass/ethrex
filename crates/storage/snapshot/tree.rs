@@ -132,7 +132,7 @@ impl SnapshotTree {
             // Full commit
             info!("SnapshotTree: cap full commit triggered, clearing snapshots");
             let mut layers = self.layers.write().unwrap();
-            let base = self.save_diff(self.flatten_diff(head_block_hash, &mut layers)?)?;
+            let base = self.save_diff(Self::flatten_diff(head_block_hash, &mut layers)?)?;
             layers.clear();
             layers.insert(head_block_hash, Layer::DiskLayer(base));
             return Ok(());
@@ -270,7 +270,7 @@ impl SnapshotTree {
 
             let parent_root = parent.read().unwrap().root();
             // flatten parent into grand parent.
-            let flattened = self.flatten_diff(parent_root, layers)?;
+            let flattened = Self::flatten_diff(parent_root, layers)?;
             let flattened_root = match &flattened {
                 Layer::DiskLayer(disk_layer) => disk_layer.root(),
                 Layer::DiffLayer(diff_layer) => diff_layer.read().unwrap().root(),
@@ -392,7 +392,6 @@ impl SnapshotTree {
     }
 
     pub fn flatten_diff(
-        &self,
         diff: H256,
         layers: &mut HashMap<H256, Layer>,
     ) -> Result<Layer, SnapshotError> {
@@ -413,7 +412,7 @@ impl SnapshotTree {
         };
 
         // Flatten diff parent first.
-        let parent = match self.flatten_diff(parent.read().unwrap().root(), layers)? {
+        let parent = match Self::flatten_diff(parent.read().unwrap().root(), layers)? {
             Layer::DiskLayer(_) => unreachable!("only diff can be returned at this point"),
             Layer::DiffLayer(diff) => diff,
         };

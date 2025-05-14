@@ -1,7 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use ethrex_common::{types::AccountState, Bloom, BloomInput, H256, U256};
-use tracing::debug;
 
 use super::{
     disklayer::DiskLayer,
@@ -29,7 +28,7 @@ impl DiffLayer {
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> Self {
-        let layer = DiffLayer {
+        DiffLayer {
             origin: origin.clone(),
             parent,
             root,
@@ -37,9 +36,7 @@ impl DiffLayer {
             accounts,
             storage,
             diffed: Bloom::default(),
-        };
-
-        layer
+        }
     }
 }
 
@@ -109,7 +106,7 @@ impl DiffLayer {
         }
 
         // Start traversing layers.
-        self.get_storage_traverse(account_hash, storage_hash, 0, layers)
+        self.get_storage_traverse(account_hash, storage_hash, layers)
     }
 
     pub fn stale(&self) -> bool {
@@ -174,7 +171,6 @@ impl DiffLayer {
         &self,
         account_hash: H256,
         storage_hash: H256,
-        depth: usize,
         layers: &Layers,
     ) -> Result<Option<U256>, SnapshotError> {
         // todo: check if its stale
@@ -193,12 +189,12 @@ impl DiffLayer {
             Layer::DiskLayer(disk_layer) => {
                 disk_layer.get_storage(account_hash, storage_hash, layers)
             }
-            Layer::DiffLayer(diff_layer) => diff_layer.read().unwrap().get_storage_traverse(
-                account_hash,
-                storage_hash,
-                depth + 1,
-                layers,
-            ),
+            Layer::DiffLayer(diff_layer) => {
+                diff_layer
+                    .read()
+                    .unwrap()
+                    .get_storage_traverse(account_hash, storage_hash, layers)
+            }
         }
     }
 
