@@ -176,7 +176,7 @@ pub async fn withdraw(
                 // Also we have some mismatches at the end of the L2 integration test.
                 max_fee_per_gas: Some(800000000),
                 max_priority_fee_per_gas: Some(800000000),
-                gas_limit: Some(21000 * 2),
+                gas_limit: Some(21000 * 66),
                 ..Default::default()
             },
         )
