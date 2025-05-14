@@ -1,8 +1,5 @@
 .env*
 
-# Ignore all config files that doesn't end with _example.toml
-configs/config.toml
-
 store/
 
 solc_out
