@@ -15,7 +15,7 @@ use std::{
     path::PathBuf,
 };
 
-use super::{config::read_env_file_by_config, error::ProverInputError};
+use super::error::ProverInputError;
 
 // From cmd/ethrex
 pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
@@ -84,10 +84,9 @@ pub async fn generate_program_input(
     let parent_block_header = store
         .get_block_header_by_hash(block.header.parent_hash)?
         .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
-    read_env_file_by_config().map_err(ProverInputError::InvalidEnvVar)?;
     let elasticity_multiplier = ELASTICITY_MULTIPLIER;
     let blocks = vec![block];
-    let db = Evm::to_execution_db(&store, &blocks).await?;
+    let db = Evm::to_prover_db(&store, &blocks).await?;
 
     Ok(ProgramInput {
         db,
