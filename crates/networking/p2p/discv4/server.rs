@@ -16,7 +16,6 @@ use crate::{
 };
 use ethrex_common::H256;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
-use sha3::{Digest, Keccak256};
 use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr, SocketAddr},
