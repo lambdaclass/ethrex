@@ -5,7 +5,10 @@ use ethrex_l2::{
     BlockProducerConfig, CommitterConfig, EthConfig, L1WatcherConfig, ProofCoordinatorConfig,
     SequencerConfig,
 };
-use ethrex_rpc::clients::eth::get_address_from_secret_key;
+use ethrex_rpc::clients::eth::{
+    get_address_from_secret_key, BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY,
+    MIN_RETRY_DELAY,
+};
 use reqwest::Url;
 use secp256k1::SecretKey;
 use std::net::{IpAddr, Ipv4Addr};
@@ -175,6 +178,10 @@ impl Default for EthOptions {
             rpc_url: Url::parse("http://localhost:8545").unwrap(),
             maximum_allowed_max_fee_per_gas: Default::default(),
             maximum_allowed_max_fee_per_blob_gas: Default::default(),
+            max_number_of_retries: MAX_NUMBER_OF_RETRIES,
+            backoff_factor: BACKOFF_FACTOR,
+            min_retry_delay: MIN_RETRY_DELAY,
+            max_retry_delay: MAX_RETRY_DELAY,
         }
     }
 }
