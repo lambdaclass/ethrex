@@ -252,14 +252,10 @@ contract OnChainProposer is
         bytes32 picoRiscvVkey,
         bytes calldata picoPublicValues,
         uint256[8] calldata picoProof
-    ) external override onlySequencer {
+    ) external override {
         // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
-        require(
-            batchNumber == lastVerifiedBatch + 1,
-            "OnChainProposer: batch already verified"
-        );
         require(
             batchCommitments[batchNumber].newStateRoot != bytes32(0),
             "OnChainProposer: cannot verify an uncommitted batch"
