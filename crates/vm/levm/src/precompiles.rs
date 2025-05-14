@@ -233,10 +233,6 @@ pub fn execute_precompile(
     gas_used: &mut u64,
     gas_limit: u64,
 ) -> Result<Bytes, VMError> {
-    let gas_limit = gas_limit
-        .checked_sub(*gas_used)
-        .ok_or(InternalError::ArithmeticOperationUnderflow)?;
-
     let result = match address {
         address if address == ECRECOVER_ADDRESS => ecrecover(calldata, gas_limit, gas_used)?,
         address if address == IDENTITY_ADDRESS => identity(calldata, gas_limit, gas_used)?,
@@ -277,13 +273,13 @@ fn increase_precompile_consumed_gas(
     gas_cost: u64,
     gas_used: &mut u64,
 ) -> Result<(), VMError> {
-    if gas_limit < gas_cost {
-        return Err(VMError::PrecompileError(PrecompileError::NotEnoughGas));
-    }
-
     *gas_used = gas_used
         .checked_add(gas_cost)
         .ok_or(PrecompileError::GasConsumedOverflow)?;
+
+    if *gas_used > gas_limit {
+        return Err(VMError::PrecompileError(PrecompileError::NotEnoughGas));
+    }
 
     Ok(())
 }

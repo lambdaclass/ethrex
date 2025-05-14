@@ -63,9 +63,7 @@ impl<'a> VM<'a> {
             let value = current_call_frame.stack.pop()?;
             (key, value, current_call_frame.to)
         };
-        self.substate
-            .transient_storage
-            .insert((to, key), value);
+        self.substate.transient_storage.insert((to, key), value);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

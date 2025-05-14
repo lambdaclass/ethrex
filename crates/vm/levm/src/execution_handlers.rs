@@ -37,7 +37,7 @@ impl<'a> VM<'a> {
             }
         }
     }
-    
+
     pub fn execute_opcode(&mut self, opcode: Opcode) -> Result<OpcodeResult, VMError> {
         match opcode {
             Opcode::STOP => Ok(OpcodeResult::Halt),

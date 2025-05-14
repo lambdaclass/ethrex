@@ -70,8 +70,7 @@ impl<'a> VM<'a> {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (account, address_was_cold) =
-            self.db.access_account(&mut self.substate, callee)?;
+        let (account, address_was_cold) = self.db.access_account(&mut self.substate, callee)?;
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, callee)?;
@@ -171,9 +170,8 @@ impl<'a> VM<'a> {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (_account_info, address_was_cold) = self
-            .db
-            .access_account(&mut self.substate, code_address)?;
+        let (_account_info, address_was_cold) =
+            self.db.access_account(&mut self.substate, code_address)?;
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, code_address)?;
@@ -291,9 +289,8 @@ impl<'a> VM<'a> {
         };
 
         // GAS
-        let (_account_info, address_was_cold) = self
-            .db
-            .access_account(&mut self.substate, code_address)?;
+        let (_account_info, address_was_cold) =
+            self.db.access_account(&mut self.substate, code_address)?;
 
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
         let new_memory_size_for_return_data =
@@ -388,9 +385,8 @@ impl<'a> VM<'a> {
         };
 
         // GAS
-        let (_account_info, address_was_cold) = self
-            .db
-            .access_account(&mut self.substate, code_address)?;
+        let (_account_info, address_was_cold) =
+            self.db.access_account(&mut self.substate, code_address)?;
 
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
         let new_memory_size_for_return_data =
@@ -559,9 +555,8 @@ impl<'a> VM<'a> {
             (target_address, to)
         };
 
-        let (target_account, target_account_is_cold) = self
-            .db
-            .access_account(&mut self.substate, target_address)?;
+        let (target_account, target_account_is_cold) =
+            self.db.access_account(&mut self.substate, target_address)?;
 
         let (current_account, _current_account_is_cold) =
             self.db.access_account(&mut self.substate, to)?;
@@ -749,10 +744,7 @@ impl<'a> VM<'a> {
         bytecode: Bytes,
         is_delegation: bool,
     ) -> Result<OpcodeResult, VMError> {
-        let sender_account = self
-            .db
-            .access_account(&mut self.substate, msg_sender)?
-            .0;
+        let sender_account = self.db.access_account(&mut self.substate, msg_sender)?.0;
 
         let calldata = {
             let current_call_frame = self.current_call_frame_mut()?;
