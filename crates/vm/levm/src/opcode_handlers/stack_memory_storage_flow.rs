@@ -30,7 +30,7 @@ impl<'a> VM<'a> {
         let key = self.current_call_frame_mut()?.stack.pop()?;
         let to = self.current_call_frame()?.to;
         let value = self
-            .env
+            .accrued_substate
             .transient_storage
             .get(&(to, key))
             .cloned()
@@ -63,7 +63,9 @@ impl<'a> VM<'a> {
             let value = current_call_frame.stack.pop()?;
             (key, value, current_call_frame.to)
         };
-        self.env.transient_storage.insert((to, key), value);
+        self.accrued_substate
+            .transient_storage
+            .insert((to, key), value);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -113,7 +115,7 @@ impl<'a> VM<'a> {
     // MSTORE8 operation
     pub fn op_mstore8(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
-        // TODO: modify expansion cost to accept U256
+
         let offset = current_call_frame.stack.pop()?;
 
         let new_memory_size = calculate_memory_size(offset, 1)?;
@@ -186,7 +188,7 @@ impl<'a> VM<'a> {
 
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
-        let mut gas_refunds = self.env.refunded_gas;
+        let mut gas_refunds = self.accrued_substate.refunded_gas;
 
         // https://eips.ethereum.org/EIPS/eip-2929
         let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost) = (4800, 19900, 2800);
@@ -224,7 +226,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        self.env.refunded_gas = gas_refunds;
+        self.accrued_substate.refunded_gas = gas_refunds;
 
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::sstore(

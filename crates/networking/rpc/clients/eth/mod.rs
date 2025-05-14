@@ -44,6 +44,10 @@ pub enum RpcResponse {
 pub struct EthClient {
     client: Client,
     pub url: String,
+    pub max_number_of_retries: u64,
+    pub backoff_factor: u64,
+    pub min_retry_delay: u64,
+    pub max_retry_delay: u64,
     pub maximum_allowed_max_fee_per_gas: Option<u64>,
     pub maximum_allowed_max_fee_per_blob_gas: Option<u64>,
 }
@@ -138,24 +142,35 @@ pub struct WithdrawalProof {
 
 impl EthClient {
     pub fn new(url: &str) -> Self {
-        Self {
-            client: Client::new(),
-            url: url.to_string(),
-            maximum_allowed_max_fee_per_gas: None,
-            maximum_allowed_max_fee_per_blob_gas: None,
-        }
+        Self::new_with_config(
+            url,
+            MAX_NUMBER_OF_RETRIES,
+            BACKOFF_FACTOR,
+            MIN_RETRY_DELAY,
+            MAX_RETRY_DELAY,
+            None,
+            None,
+        )
     }
 
-    pub fn new_with_maximum_fees(
+    pub fn new_with_config(
         url: &str,
-        max_fee_per_gas: u64,
-        max_fee_per_blob_gas: u64,
+        max_number_of_retries: u64,
+        backoff_factor: u64,
+        min_retry_delay: u64,
+        max_retry_delay: u64,
+        maximum_allowed_max_fee_per_gas: Option<u64>,
+        maximum_allowed_max_fee_per_blob_gas: Option<u64>,
     ) -> Self {
         Self {
             client: Client::new(),
             url: url.to_string(),
-            maximum_allowed_max_fee_per_gas: Some(max_fee_per_gas),
-            maximum_allowed_max_fee_per_blob_gas: Some(max_fee_per_blob_gas),
+            max_number_of_retries,
+            backoff_factor,
+            min_retry_delay,
+            max_retry_delay,
+            maximum_allowed_max_fee_per_gas,
+            maximum_allowed_max_fee_per_blob_gas,
         }
     }
 
@@ -253,7 +268,7 @@ impl EthClient {
     ) -> Result<H256, EthClientError> {
         let mut number_of_retries = 0;
 
-        'outer: while number_of_retries < MAX_NUMBER_OF_RETRIES {
+        'outer: while number_of_retries < self.max_number_of_retries {
             if let Some(max_fee_per_gas) = self.maximum_allowed_max_fee_per_gas {
                 let tx_max_fee = match wrapped_tx {
                     WrappedTransaction::EIP4844(tx) => &mut tx.tx.max_fee_per_gas,
@@ -281,15 +296,16 @@ impl EthClient {
             let tx_hash = self.send_wrapped_transaction(wrapped_tx, signer).await?;
 
             if number_of_retries > 0 {
-                warn!("Resending Transaction after bumping gas, attempts [{number_of_retries}/{MAX_NUMBER_OF_RETRIES}]\nTxHash: {tx_hash:#x}");
+                warn!("Resending Transaction after bumping gas, attempts [{number_of_retries}/{}]\nTxHash: {tx_hash:#x}", self.max_number_of_retries);
             }
 
             let mut receipt = self.get_transaction_receipt(tx_hash).await?;
 
             let mut attempt = 1;
-            let attempts_to_wait_in_seconds = BACKOFF_FACTOR
+            let attempts_to_wait_in_seconds = self
+                .backoff_factor
                 .pow(number_of_retries as u32)
-                .clamp(MIN_RETRY_DELAY, MAX_RETRY_DELAY);
+                .clamp(self.min_retry_delay, self.max_retry_delay);
             while receipt.is_none() {
                 if attempt >= (attempts_to_wait_in_seconds / WAIT_TIME_FOR_RECEIPT_SECONDS) {
                     // We waited long enough for the receipt but did not find it, bump gas

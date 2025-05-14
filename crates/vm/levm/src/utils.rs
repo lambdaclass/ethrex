@@ -8,7 +8,8 @@ use crate::{
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
-    vm::{EVMConfig, Substate, VM},
+    vm::{Substate, VM},
+    EVMConfig,
 };
 use bytes::Bytes;
 use ethrex_common::types::Account;
@@ -25,8 +26,8 @@ use std::collections::{HashMap, HashSet};
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
+/// Converts address (H160) to word (U256)
 pub fn address_to_word(address: Address) -> U256 {
-    // This unwrap can't panic, as Address are 20 bytes long and U256 use 32 bytes
     let mut word = [0u8; 32];
 
     for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
@@ -53,12 +54,11 @@ pub fn calculate_create_address(
     )?))
 }
 
-/// Calculates the address of a new contract using the CREATE2 opcode as follow
+/// Calculates the address of a new contract using the CREATE2 opcode as follows
 ///
 /// initialization_code = memory[offset:offset+size]
 ///
-/// address = keccak256(0xff + sender_address + salt + keccak256(initialization_code))[12:]
-///
+/// address = keccak256(0xff || sender_address || salt || keccak256(initialization_code))[12:]
 pub fn calculate_create2_address(
     sender_address: Address,
     initialization_code: &Bytes,
@@ -85,6 +85,10 @@ pub fn calculate_create2_address(
     Ok(generated_address)
 }
 
+/// Calculates valid jump destinations given some bytecode.
+/// This is a necessary calculation because of PUSH opcodes.
+/// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
+/// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
 pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
     let mut valid_jump_destinations = HashSet::new();
     let mut pc = 0;
@@ -459,7 +463,7 @@ impl<'a> VM<'a> {
         self.current_call_frame_mut()?.valid_jump_destinations =
             get_valid_jump_destinations(&self.current_call_frame()?.bytecode).unwrap_or_default();
 
-        self.env.refunded_gas = refunded_gas;
+        self.accrued_substate.refunded_gas = refunded_gas;
 
         Ok(())
     }

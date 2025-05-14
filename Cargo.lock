@@ -3411,6 +3411,7 @@ dependencies = [
  "hex",
  "itertools 0.13.0",
  "keccak-hash",
+ "lazy_static",
  "reqwest",
  "secp256k1",
  "serde",
@@ -3512,19 +3513,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex_l2-deployer"
+name = "ethrex_l2-contracts"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "clap 4.5.36",
+ "clap_complete",
  "colored",
  "ethereum-types",
  "ethrex-common",
  "ethrex-l2",
  "ethrex-rpc",
  "ethrex-sdk",
+ "eyre",
  "hex",
  "keccak-hash",
  "lazy_static",
+ "reqwest",
  "secp256k1",
  "serde_json",
  "spinoff",
@@ -7387,6 +7392,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1885c039570dc00dcb4ff087a89e185fd56bae234ddc7f056a945bf36467248d"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "quote-pusher"
+version = "0.1.0"
+dependencies = [
+ "ethereum-types",
+ "ethrex-rpc",
+ "ethrex-sdk",
+ "hex",
+ "reqwest",
+ "secp256k1",
+ "serde_json",
+ "serial_test",
+ "thiserror 2.0.12",
+ "tokio",
 ]
 
 [[package]]
@@ -11470,6 +11491,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "keccak-hash",
  "pico-cli",
  "risc0-build",
  "serde",
