@@ -257,32 +257,8 @@ contract OnChainProposer is
         );
 
         if (PICOVERIFIER != DEV_MODE) {
-            bytes32 picoInitialStateRoot = bytes32(picoPublicValues[0:32]);
-            require(
-                batchCommitments[lastVerifiedBatch].newStateRoot == picoInitialStateRoot,
-                 "OnChainProposer: pico withdrawals public inputs don't match with initial state root"
-            ); 
-            bytes32 picoFinalStateRoot = bytes32(picoPublicValues[32:64]);
-            require(
-                batchCommitments[batchNumber].newStateRoot == picoFinalStateRoot,
-                 "OnChainProposer: pico withdrawals public inputs don't match with final state root"
-            );
-            bytes32 picoWithdrawalsMerkleRoot = bytes32(
-                picoPublicValues[64:96]
-            );
-            require(
-                batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
-                    picoWithdrawalsMerkleRoot,
-                "OnChainProposer: pico withdrawals public inputs don't match with committed withdrawals"
-            );
-            bytes32 picoDepositsLogHash = bytes32(picoPublicValues[96:128]);
-            require(
-                batchCommitments[batchNumber].processedDepositLogsRollingHash ==
-                    picoDepositsLogHash,
-                "OnChainProposer: pico deposits hash public input does not match with committed deposits"
-            );
-
             // If the verification fails, it will revert.
+            _verifyPublicData(batchNumber, picoPublicValues);
             IPicoVerifier(PICOVERIFIER).verifyPicoProof(
                 picoRiscvVkey,
                 picoPublicValues,
@@ -291,30 +267,8 @@ contract OnChainProposer is
         }
 
         if (R0VERIFIER != DEV_MODE) {
-            bytes32 risc0InitialStateRoot = bytes32(risc0Journal[0:32]);
-            require(
-                batchCommitments[lastVerifiedBatch].newStateRoot == risc0InitialStateRoot,
-                 "OnChainProposer: risc0 withdrawals public inputs don't match with initial state root"
-            ); 
-            bytes32 risc0inalStateRoot = bytes32(risc0Journal[32:64]);
-            require(
-                batchCommitments[batchNumber].newStateRoot == risc0inalStateRoot,
-                 "OnChainProposer: risc0 withdrawals public inputs don't match with final state root"
-            );
-            bytes32 risc0WithdrawalsMerkleRoot = bytes32(risc0Journal[64:96]);
-            require(
-                batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
-                    risc0WithdrawalsMerkleRoot,
-                "OnChainProposer: risc0 withdrawals public inputs don't match with committed withdrawals"
-            );
-            bytes32 risc0DepositsLogHash = bytes32(risc0Journal[96:128]);
-            require(
-                batchCommitments[batchNumber].processedDepositLogsRollingHash ==
-                    risc0DepositsLogHash,
-                "OnChainProposer: risc0 deposits hash public input does not match with committed deposits"
-            );
-
             // If the verification fails, it will revert.
+            _verifyPublicData(batchNumber, risc0Journal);
             IRiscZeroVerifier(R0VERIFIER).verify(
                 risc0BlockProof,
                 risc0ImageId,
@@ -323,30 +277,8 @@ contract OnChainProposer is
         }
 
         if (SP1VERIFIER != DEV_MODE) {
-            bytes32 sp1InitialStateRoot = bytes32(sp1PublicValues[0:32]);
-            require(
-                batchCommitments[lastVerifiedBatch].newStateRoot == sp1InitialStateRoot,
-                 "OnChainProposer: sp1 withdrawals public inputs don't match with initial state root"
-            ); 
-            bytes32 sp1FinalStateRoot = bytes32(sp1PublicValues[32:64]);
-            require(
-                batchCommitments[batchNumber].newStateRoot == sp1FinalStateRoot,
-                 "OnChainProposer: sp1 withdrawals public inputs don't match with final state root"
-            );
-            bytes32 sp1WithdrawalsMerkleRoot = bytes32(sp1PublicValues[80:112]);
-            require(
-                batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
-                    sp1WithdrawalsMerkleRoot,
-                "OnChainProposer: sp1 withdrawals public inputs don't match with committed withdrawals"
-            );
-            bytes32 sp1DepositsLogHash = bytes32(sp1PublicValues[112:144]);
-            require(
-                batchCommitments[batchNumber].processedDepositLogsRollingHash ==
-                    sp1DepositsLogHash,
-                "OnChainProposer: sp1 deposits hash public input does not match with committed deposits"
-            );
-
             // If the verification fails, it will revert.
+            _verifyPublicData(batchNumber, sp1PublicValues);
             ISP1Verifier(SP1VERIFIER).verifyProof(
                 sp1ProgramVKey,
                 sp1PublicValues,
@@ -369,6 +301,31 @@ contract OnChainProposer is
         delete batchCommitments[batchNumber - 1];
 
         emit BatchVerified(lastVerifiedBatch);
+    }
+
+    function _verifyPublicData(uint256 batchNumber, bytes publicData) internal {
+        bytes32 initialStateRoot = bytes32(publicData[0:32]);
+        require(
+            batchCommitments[lastVerifiedBatch].newStateRoot == initialStateRoot,
+                "OnChainProposer: withdrawals public inputs don't match with initial state root"
+        ); 
+        bytes32 finalStateRoot = bytes32(publicData[32:64]);
+        require(
+            batchCommitments[batchNumber].newStateRoot == finalStateRoot,
+                "OnChainProposer: withdrawals public inputs don't match with final state root"
+        );
+        bytes32 withdrawalsMerkleRoot = bytes32(publicData[80:112]);
+        require(
+            batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
+                withdrawalsMerkleRoot,
+            "OnChainProposer: withdrawals public inputs don't match with committed withdrawals"
+        );
+        bytes32 depositsLogHash = bytes32(publicData[112:144]);
+        require(
+            batchCommitments[batchNumber].processedDepositLogsRollingHash ==
+                depositsLogHash,
+            "OnChainProposer: deposits hash public input does not match with committed deposits"
+        );
     }
 
     /// @notice Allow owner to upgrade the contract.
