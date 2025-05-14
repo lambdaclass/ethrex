@@ -242,7 +242,6 @@ async fn load_test(
                             nonce: Some(nonce + i),
                             max_fee_per_gas: Some(u64::MAX),
                             max_priority_fee_per_gas: Some(10),
-                            gas_limit: Some(TX_GAS_COST * 100),
                             ..Default::default()
                         },
                     )
