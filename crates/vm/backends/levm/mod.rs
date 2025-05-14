@@ -278,8 +278,6 @@ impl LEVM {
             db,
             *BEACON_ROOTS_ADDRESS,
             *SYSTEM_ADDRESS,
-            30_000_000,
-            30_000_000,
         )?;
         Ok(())
     }
@@ -294,8 +292,6 @@ impl LEVM {
             db,
             *HISTORY_STORAGE_ADDRESS,
             *SYSTEM_ADDRESS,
-            30_000_000,
-            30_000_000,
         )?;
         Ok(())
     }
@@ -309,8 +305,6 @@ impl LEVM {
             db,
             *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
-            30_000_000 + 21_000, // EIP-7251 dictates that this system call does not use intrinsic gas. So we add the base cost that will be taken in the execution.
-            u64::MAX, // In this system call, there is no constraint on the block's gas limit.
         )?;
 
         // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
@@ -340,8 +334,6 @@ impl LEVM {
             db,
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
-            30_000_000 + 21_000, // EIP-7251 dictates that this system call does not use intrinsic gas. So we add the base cost that will be taken in the execution.
-            u64::MAX, // In this system call, there is no constraint on the block's gas limit.
         )?;
 
         // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
@@ -583,8 +575,6 @@ pub fn generic_system_contract_levm(
     db: &mut GeneralizedDatabase,
     contract_address: Address,
     system_address: Address,
-    gas_limit: u64,
-    block_gas_limit: u64,
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config();
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
@@ -592,7 +582,9 @@ pub fn generic_system_contract_levm(
     let coinbase_backup = db.cache.get(&block_header.coinbase).cloned();
     let env = Environment {
         origin: system_address,
-        gas_limit,
+        // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls do not use intrinsic gas.
+        // So we add the base cost that will be taken in the execution.
+        gas_limit: 30_000_000 + 21_000,
         block_number: block_header.number.into(),
         coinbase: block_header.coinbase,
         timestamp: block_header.timestamp.into(),
@@ -601,7 +593,7 @@ pub fn generic_system_contract_levm(
         gas_price: U256::zero(),
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit,
+        block_gas_limit: u64::MAX, // System calls, have no constraint on the block's gas limit.
         config,
         ..Default::default()
     };
