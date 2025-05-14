@@ -153,7 +153,7 @@ impl DiskLayer {
             storage,
         );
 
-        layer.rebloom(self.clone());
+        layer.rebloom(self.clone(), None);
 
         layer
     }

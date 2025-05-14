@@ -5,7 +5,7 @@ use std::{
 
 use ethrex_common::{
     types::{AccountState, BlockHash},
-    Address, H256, U256,
+    Address, Bloom, H256, U256,
 };
 use tracing::{debug, error, info};
 
@@ -212,16 +212,22 @@ impl SnapshotTree {
                 layers: &HashMap<H256, Layer>,
                 children: &HashMap<H256, Vec<H256>>,
                 base: Arc<DiskLayer>,
+                parent_diffed: Option<Bloom>,
             ) {
                 if let Some(layer) = layers.get(&root) {
-                    match layer {
-                        Layer::DiskLayer(_) => {}
-                        Layer::DiffLayer(layer) => layer.write().unwrap().rebloom(base.clone()),
-                    }
-                }
-                if let Some(childs) = children.get(&root) {
-                    for child in childs {
-                        rebloom(*child, layers, children, base.clone());
+                    let diffed = match layer {
+                        Layer::DiskLayer(_) => { None }
+                        Layer::DiffLayer(layer) => {
+                            let mut layer = layer.write().unwrap();
+                            layer.rebloom(base.clone(), parent_diffed);
+                            Some(layer.diffed)
+                        }
+                    };
+
+                    if let Some(childs) = children.get(&root) {
+                        for child in childs {
+                            rebloom(*child, layers, children, base.clone(), diffed);
+                        }
                     }
                 }
             }
@@ -229,7 +235,7 @@ impl SnapshotTree {
                 "SnapshotTree: changed disk layer block hash: {}",
                 base.state_root
             );
-            rebloom(base.state_root, &layers, &children, base);
+            rebloom(base.state_root, &layers, &children, base, None);
         }
 
         info!(
@@ -460,7 +466,6 @@ impl SnapshotTree {
 
         Ok(Layer::DiffLayer(Arc::new(RwLock::new(layer))))
     }
-
 }
 
 // Move the tests module outside the impl block
@@ -469,8 +474,8 @@ mod tests {
     use crate::store_db::in_memory::Store;
 
     use super::*;
-    use std::sync::Arc;
     use ethrex_common::{types::AccountState, H256, U256};
+    use std::sync::Arc;
 
     fn create_mock_tree() -> SnapshotTree {
         let db = Arc::new(Store::new());
