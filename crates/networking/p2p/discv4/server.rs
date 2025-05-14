@@ -363,12 +363,12 @@ impl Discv4Server {
                 Ok(())
             }
             Message::ENRResponse(msg) => {
-                let mut table_lock = self.ctx.table.lock().await;
-                let peer = table_lock.get_by_public_key_mut(packet.get_public_key());
-                let Some(peer) = peer else {
-                    return Err(DiscoveryError::InvalidMessage("Peer not known".into()));
-                };
                 {
+                    let mut table_lock = self.ctx.table.lock().await;
+                    let peer = table_lock.get_by_public_key_mut(packet.get_public_key());
+                    let Some(peer) = peer else {
+                        return Err(DiscoveryError::InvalidMessage("Peer not known".into()));
+                    };
                     let Some(req_hash) = peer.enr_request_hash else {
                         return Err(DiscoveryError::InvalidMessage(
                             "Discarding enr-response as enr-request wasn't sent".into(),
