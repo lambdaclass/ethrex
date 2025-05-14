@@ -12,18 +12,21 @@ use ethrex_rpc::{
 use ethrex_storage::Store;
 use keccak_hash::keccak;
 use std::{cmp::min, sync::Arc};
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use super::errors::SequencerError;
 use super::utils::sleep_random;
+use super::SequencerState;
 
 pub async fn start_l1_watcher(
     store: Store,
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
+    sequencer_state: Arc<Mutex<SequencerState>>,
 ) -> Result<(), SequencerError> {
     let mut l1_watcher = L1Watcher::new_from_config(&cfg.l1_watcher, &cfg.eth).await?;
-    l1_watcher.run(&store, &blockchain).await;
+    l1_watcher.run(&store, &blockchain, sequencer_state).await;
     Ok(())
 }
 
@@ -55,15 +58,36 @@ impl L1Watcher {
         })
     }
 
-    pub async fn run(&mut self, store: &Store, blockchain: &Blockchain) {
+    pub async fn run(
+        &mut self,
+        store: &Store,
+        blockchain: &Blockchain,
+        sequencer_state: Arc<Mutex<SequencerState>>,
+    ) {
         loop {
-            if let Err(err) = self.main_logic(store, blockchain).await {
+            if let Err(err) = self
+                .main_logic(store, blockchain, sequencer_state.clone())
+                .await
+            {
                 error!("L1 Watcher Error: {}", err);
             }
         }
     }
 
     async fn main_logic(
+        &mut self,
+        store: &Store,
+        blockchain: &Blockchain,
+        sequencer_state: Arc<Mutex<SequencerState>>,
+    ) -> Result<(), L1WatcherError> {
+        sequencer_state
+            .lock()
+            .await
+            .watch(self, store, blockchain)
+            .await
+    }
+
+    pub async fn watch(
         &mut self,
         store: &Store,
         blockchain: &Blockchain,

@@ -28,13 +28,15 @@ use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::Evm;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, ops::DerefMut, sync::Arc};
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use super::{
     errors::{BlobEstimationError, SequencerError},
     execution_cache::ExecutionCache,
     utils::sleep_random,
+    SequencerState,
 };
 
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
@@ -57,6 +59,7 @@ pub async fn start_l1_committer(
     rollup_store: StoreRollup,
     execution_cache: Arc<ExecutionCache>,
     cfg: SequencerConfig,
+    sequencer_state: Arc<Mutex<SequencerState>>,
 ) -> Result<(), SequencerError> {
     let mut committer = Committer::new_from_config(
         &cfg.l1_committer,
@@ -65,7 +68,7 @@ pub async fn start_l1_committer(
         rollup_store,
         execution_cache,
     );
-    committer.run().await;
+    committer.run(sequencer_state).await;
     Ok(())
 }
 
@@ -99,9 +102,9 @@ impl Committer {
         }
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self, sequencer_state: Arc<Mutex<SequencerState>>) {
         loop {
-            if let Err(err) = self.main_logic().await {
+            if let Err(err) = self.main_logic(sequencer_state.clone()).await {
                 error!("L1 Committer Error: {}", err);
             }
 
@@ -109,7 +112,17 @@ impl Committer {
         }
     }
 
-    async fn main_logic(&mut self) -> Result<(), CommitterError> {
+    async fn main_logic(
+        &mut self,
+        sequencer_state: Arc<Mutex<SequencerState>>,
+    ) -> Result<(), CommitterError> {
+        let mut sequencer_state_lock = sequencer_state.lock().await;
+        let new_state = sequencer_state_lock.commit_batch(self).await?;
+        *sequencer_state_lock.deref_mut() = new_state;
+        Ok(())
+    }
+
+    pub async fn commit_batch(&mut self) -> Result<(), CommitterError> {
         // Get the batch to commit
         let last_committed_batch_number = self
             .eth_client
