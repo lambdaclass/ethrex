@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-05-14
+
+- Add block snapshots with diff layers. [2664](https://github.com/lambdaclass/ethrex/pull/2664)
+
 ### 2025-04-30
 
 - Reduce transaction clone and Vec grow overhead in mempool [2637](https://github.com/lambdaclass/ethrex/pull/2637)
