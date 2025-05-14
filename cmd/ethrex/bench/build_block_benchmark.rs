@@ -1,7 +1,7 @@
-use std::{collections::HashMap, str::FromStr, u64};
+use std::{collections::HashMap, str::FromStr, sync::{atomic::AtomicU64, Arc, Mutex}, u64};
 
 use bytes::Bytes;
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion, async_executor::FuturesExecutor};
 use ethrex::{
     cli::{import_blocks, remove_db},
     utils::set_datadir,
@@ -12,7 +12,7 @@ use ethrex_blockchain::{
     Blockchain,
 };
 use ethrex_common::{
-    types::{Block, Genesis, GenesisAccount, LegacyTransaction, Signable, Transaction, TxKind, EIP1559Transaction},
+    types::{payload::PayloadBundle, Block, EIP1559Transaction, Genesis, GenesisAccount, LegacyTransaction, Signable, Transaction, TxKind},
     Address, H160, U256,
 };
 use ethrex_l2_sdk::{calldata::encode_calldata, get_address_from_secret_key};
@@ -75,18 +75,20 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
     return (store, genesis);
 }
 
-async fn create_payload_block(genesis_block: &Block, store: &Store) -> Block {
+async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u64) {
     let payload_args = BuildPayloadArgs {
         parent: genesis_block.hash(),
-        timestamp: genesis_block.header.timestamp,
+        timestamp: genesis_block.header.timestamp + 1,
         fee_recipient: H160::random(),
         random: genesis_block.header.prev_randao,
         withdrawals: None,
         beacon_root: genesis_block.header.parent_beacon_block_root,
         version: 3,
     };
+    let hash = genesis_block.hash();
+    let id = payload_args.id();
     let block = create_payload(&payload_args, &store).unwrap();
-    return block;
+    return (block, id);
 }
 
 async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
@@ -97,6 +99,8 @@ async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
                 Transaction::EIP1559Transaction(EIP1559Transaction {
                     value: 1_u64.into(),
                     gas_limit: (24000000_u64).into(),
+                    max_fee_per_gas: u64::MAX.into(),
+                    max_priority_fee_per_gas: 10_u64.into(),
                     chain_id: 9,
                     ..Default::default()
                 });
@@ -109,24 +113,72 @@ async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
     }
 }
 
+
+pub async fn bench_payload(input: &(&mut Blockchain, Block, &Store)) {
+    let (b, genesis_block, store) = input;
+    // 1. engine_forkChoiceUpdated is called, which ends up calling fork_choice::build_payload,
+    // which finally calls payload::create_payload(), this mimics this step without
+    // the RPC handling. The payload is created and the id stored.
+    let (payload_block, payload_id) = create_payload_block(&genesis_block, store).await;
+    let _ = store.add_payload(payload_id, payload_block.clone()).await.unwrap();
+    // 2. engine_getPayload is called, this code path ends up calling Store::get_payload(id),
+    // so we also mimic that here without the RPC part.
+    // We also need to updated the payload to set it as completed.
+    // Blockchain::build_payload eventaully calls to 'fill_transactions'
+    // which should take transactions from the previously filled mempool.
+    let payload = store.get_payload(payload_id).await.unwrap().unwrap();
+    let (blobs_bundle, requests, block_value, block) = {
+        let PayloadBuildResult {
+            blobs_bundle,
+            block_value,
+            requests,
+            payload,
+            ..
+        } = b
+            .build_payload(payload.block.clone())
+            .await
+            .unwrap();
+        (blobs_bundle, requests, block_value, payload)
+    };
+    let new_payload = PayloadBundle {
+        block: block.clone(),
+        block_value,
+        blobs_bundle,
+        requests,
+        completed: true,
+    };
+    store.update_payload(payload_id, new_payload).await.unwrap();
+    // 3. engine_newPayload is called, this eventually calls Blockchain::add_block
+    // which takes transactions from the mempool and fills the block with them.
+    b.add_block(&block).await.unwrap();
+}
+
 pub fn build_block_benchmark(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Block building");
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let mut blockchain: Option<Blockchain> = None;
-    rt.block_on(async {
+    let (mut blockchain, genesis_block, store) = rt.block_on(async {
         let accounts = read_private_keys();
         let addresses = accounts
             .clone()
             .into_iter()
             .map(|sk| recover_address_for_sk(&sk))
             .collect();
-        let (store, _) = setup_genesis(&addresses).await;
-        blockchain = Some(Blockchain::new(EvmEngine::LEVM, store.clone()));
-        fill_mempool(&blockchain.unwrap(), accounts).await;
+
+        let (store_with_genesis, gen) = setup_genesis(&addresses).await;
+        let block_chain = Blockchain::new(EvmEngine::LEVM, store_with_genesis.clone());
+        fill_mempool(&block_chain, accounts).await;
+
+        (
+            block_chain,
+            gen.get_block(),
+            store_with_genesis
+        )
     });
-    group.sample_size(10);
-    // group.bench_function("Build block with transfers", |b| b.iter(block_import));
-    group.finish();
+    let input = (&mut blockchain, genesis_block, &store);
+    c.bench_function("my_bench", |b| {
+        b.to_async(tokio::runtime::Runtime::new().unwrap()).iter(|| {
+            bench_payload(&input)
+        })
+    });
 }
 
 criterion_group!(runner, build_block_benchmark);

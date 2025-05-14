@@ -282,7 +282,6 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
-
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
@@ -593,8 +592,6 @@ pub fn validate_gas_used(
 ) -> Result<(), ChainError> {
     if let Some(last) = receipts.last() {
         // Note: This is commented because it is still being used in development.
-        // dbg!(last.cumulative_gas_used);
-        // dbg!(block_header.gas_used);
         if last.cumulative_gas_used != block_header.gas_used {
             return Err(ChainError::InvalidBlock(InvalidBlockError::GasUsedMismatch));
         }

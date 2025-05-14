@@ -78,7 +78,7 @@ based = ["l2", "ethrex-rpc/based"]
 
 
 [dev-dependencies]
-criterion = { version = "0.5.1", features = ["html_reports", "async_tokio"] }
+criterion = { version = "0.5.1", features = ["html_reports", "async_futures", "async_tokio"] }
 ethrex-sdk.workspace = true
 secp256k1.workspace = true
 k256.workspace = true
