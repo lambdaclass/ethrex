@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747230631545,
+  "lastUpdate": 1747236320440,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7125,6 +7125,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007430321516494338,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "garmasholeksii@gmail.com",
+            "name": "GarmashAlex",
+            "username": "GarmashAlex"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3b6efc87ee15fb79bdd18f8a3cfb5f3ab55e2e30",
+          "message": "refactor(l2): Remove redundant address derivation function in load_test (#2494)\n\n**Motivation**\n\nThis pull request addresses a TODO comment in the load_test code that\nsuggested moving the custom address derivation function to common\nutilities. Instead of duplicating functionality, we should leverage\nexisting code from the SDK to improve maintainability and consistency\nacross the codebase.\n\n**Description**\n\nThis PR removes a redundant implementation of Ethereum address\nderivation in the load_test tool by replacing it with the existing\nget_address_from_secret_key function from the L2 SDK. The changes\ninclude:\n- Removed the custom address_from_pub_key function that was marked with\na TODO comment\n- Added an import for get_address_from_secret_key from ethrex_l2_sdk\n- Updated all usages throughout the code to use the SDK function instead\n- Added proper error handling for the SDK function calls\n\n---------\n\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>\nCo-authored-by: Tomás Arjovsky <tomas.arjovsky@lambdaclass.com>",
+          "timestamp": "2025-05-14T14:30:11Z",
+          "tree_id": "67f931ab8af0a738c16e13d99c109f4b621642bf",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3b6efc87ee15fb79bdd18f8a3cfb5f3ab55e2e30"
+        },
+        "date": 1747236319152,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.000742301180521397,
             "unit": "Mgas/s"
           }
         ]
