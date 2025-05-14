@@ -420,8 +420,8 @@ mod tests {
         let socket_address = SocketAddr::from_str("18.138.108.67:30303").unwrap();
         let expected_bootnode = Node::new(
             socket_address.ip(),
-            socket_address.port(),
             30305,
+            socket_address.port(),
             public_key,
         );
         assert_eq!(node, expected_bootnode);
