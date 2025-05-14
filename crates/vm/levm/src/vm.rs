@@ -10,7 +10,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    types::{ Transaction, TxKind},
+    types::{Transaction, TxKind},
     Address, H256, U256,
 };
 use std::{

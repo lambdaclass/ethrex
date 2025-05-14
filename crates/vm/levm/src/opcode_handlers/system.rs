@@ -909,7 +909,7 @@ impl<'a> VM<'a> {
         }
         Ok(())
     }
-    
+
     pub fn handle_return_create(
         &mut self,
         executed_call_frame: &CallFrame,
