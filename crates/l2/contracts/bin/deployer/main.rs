@@ -203,7 +203,7 @@ async fn deploy_contracts(
         &salt,
     )
     .await?;
-    info!(address = %format!("{on_chain_proposer_address:#x}"), tx_hash = %format!("{on_chain_proposer_deployment_tx_hash:#x}"), "OnChainProposer deployed");
+    info!(address = %format!("{:#x}", on_chain_proposer_deployment.proxy_address), tx_hash = %format!("{:#x}", on_chain_proposer_deployment.proxy_tx_hash), "OnChainProposer deployed");
 
     info!("Deploying CommonBridge");
 
@@ -216,7 +216,7 @@ async fn deploy_contracts(
     )
     .await?;
 
-    info!(address = %format!("{bridge_address:#x}"), tx_hash = %format!("{bridge_deployment_tx_hash:#x}"), "CommonBridge deployed");
+    info!(address = %format!("{:#x}", bridge_deployment.proxy_address), tx_hash = %format!("{:#x}", bridge_deployment.proxy_tx_hash), "CommonBridge deployed");
 
     let sp1_verifier_address = if opts.sp1_deploy_verifier {
         info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
@@ -267,11 +267,11 @@ async fn deploy_contracts(
             ))?;
 
     trace!(
-        ?on_chain_proposer_address,
-        ?bridge_address,
-        ?sp1_verifier_address,
-        ?pico_verifier_address,
-        ?risc0_verifier_address,
+        on_chain_proposer_proxy_address = ?on_chain_proposer_deployment.proxy_address,
+        bridge_proxy_address = ?bridge_deployment.proxy_address,
+        sp1_verifier_address = ?sp1_verifier_address,
+        pico_verifier_address = ?pico_verifier_address,
+        risc0_verifier_address = ?risc0_verifier_address,
         "Contracts deployed"
     );
     Ok((
