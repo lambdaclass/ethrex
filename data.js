@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747256494196,
+  "lastUpdate": 1747258222962,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7045,6 +7045,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 212074008379,
             "range": "± 1026379321",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "76521daffea5dfb35562c67903f4cbd028eeb77c",
+          "message": "feat(l2): verify state roots (#2784)\n\n**Motivation**\n\nCurrently the OnChainProposer does not verify the initial and final\nstate roots contained in the program output.\n\n**Description**\n\nThe initial and state roots are verified, based on the commitment\nvalues. The genesis state root is added as a 0th block at initialization\ntime.\n\nCloses #2772",
+          "timestamp": "2025-05-14T20:35:46Z",
+          "tree_id": "41ad4be8fa147cf42bf27a250fb4b48692af9507",
+          "url": "https://github.com/lambdaclass/ethrex/commit/76521daffea5dfb35562c67903f4cbd028eeb77c"
+        },
+        "date": 1747258220468,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 215871106532,
+            "range": "± 673861273",
             "unit": "ns/iter"
           }
         ]
