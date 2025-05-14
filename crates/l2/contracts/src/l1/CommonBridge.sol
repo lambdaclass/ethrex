@@ -1,14 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
-import "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
-import "../../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 
 /// @title CommonBridge contract.
 /// @author LambdaClass
-contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
+contract CommonBridge is
+    ICommonBridge,
+    ReentrancyGuard,
+    Initializable,
+    UUPSUpgradeable,
+    OwnableUpgradeable
+{
     /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
     /// there is a non-zero value in the mapping (a merkle root) for the hash
     /// of the L2 transaction that requested the withdrawal.
@@ -45,10 +53,15 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
         _;
     }
 
-    constructor(address owner) Ownable(owner) {}
-
-    /// @inheritdoc ICommonBridge
-    function initialize(address onChainProposer) public nonReentrant {
+    /// @notice Initializes the contract.
+    /// @dev This method is called only once after the contract is deployed.
+    /// @dev It sets the OnChainProposer address.
+    /// @param owner the address of the owner who can perform upgrades.
+    /// @param onChainProposer the address of the OnChainProposer contract.
+    function initialize(
+        address owner,
+        address onChainProposer
+    ) public initializer {
         require(
             ON_CHAIN_PROPOSER == address(0),
             "CommonBridge: contract already initialized"
@@ -65,6 +78,8 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
 
         lastFetchedL1Block = block.number;
         depositId = 0;
+
+        OwnableUpgradeable.__Ownable_init(owner);
     }
 
     /// @inheritdoc ICommonBridge
@@ -248,4 +263,10 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
             withdrawalLeaf ==
             batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber];
     }
+
+    /// @notice Allow owner to upgrade the contract.
+    /// @param newImplementation the address of the new implementation
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal virtual override onlyOwner {}
 }

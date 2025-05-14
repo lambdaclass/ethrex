@@ -94,6 +94,12 @@ pub struct CallFrame {
     pub create_op_called: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
     pub call_frame_backup: CallFrameBackup,
+    /// Return data offset
+    pub ret_offset: U256,
+    /// Return data size
+    pub ret_size: usize,
+    /// If true then transfer value from caller to callee
+    pub should_transfer_value: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -113,9 +119,11 @@ impl CallFrame {
         calldata: Bytes,
         is_static: bool,
         gas_limit: u64,
-        gas_used: u64,
         depth: usize,
+        should_transfer_value: bool,
         create_op_called: bool,
+        ret_offset: U256,
+        ret_size: usize,
     ) -> Self {
         let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
@@ -128,9 +136,11 @@ impl CallFrame {
             calldata,
             is_static,
             depth,
-            gas_used,
             valid_jump_destinations,
+            should_transfer_value,
             create_op_called,
+            ret_offset,
+            ret_size,
             ..Default::default()
         }
     }
