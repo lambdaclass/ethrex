@@ -23,22 +23,6 @@ interface IOnChainProposer {
     /// @dev Event emitted when a batch is verified.
     event BatchVerified(uint256 indexed lastVerifiedBatch);
 
-    /// @notice Initializes the contract.
-    /// @dev This method is called only once after the contract is deployed.
-    /// @dev It sets the bridge address.
-    /// @param bridge the address of the bridge contract.
-    /// @param r0verifier the address of the risc0 groth16 verifier.
-    /// @param sp1verifier the address of the sp1 groth16 verifier.
-    /// @param tdxverifier the address of the tdx verifier.
-    function initialize(
-        address bridge,
-        address r0verifier,
-        address sp1verifier,
-        address picoverifier,
-        address tdxverifier,
-        address[] calldata sequencerAddress
-    ) external;
-
     /// @notice Commits to a batch of L2 blocks.
     /// @dev Committing to an L2 batch means to store the batch's commitment
     /// and to publish withdrawals if any.

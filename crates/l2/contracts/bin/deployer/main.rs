@@ -11,7 +11,8 @@ use ethrex_common::{Address, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
-    compile_contract, deploy_contract, get_address_from_secret_key, initialize_contract,
+    compile_contract, deploy_contract, deploy_with_proxy, get_address_from_secret_key,
+    initialize_contract,
 };
 use ethrex_rpc::{
     clients::{eth::BlockByNumber, EthClientError, Overrides},
@@ -24,8 +25,8 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(address,address,address,address,address,address[])";
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
+    "initialize(bool,address,address,address,address,address,address,address[])";
+const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployerError> {
@@ -86,12 +87,13 @@ fn download_contract_deps(opts: &DeployerOptions) -> Result<(), DeployerError> {
     })?;
 
     git_clone(
-        "https://github.com/OpenZeppelin/openzeppelin-contracts.git",
+        "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
         opts.contracts_path
-            .join("lib/openzeppelin-contracts")
+            .join("lib/openzeppelin-contracts-upgradeable")
             .to_str()
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
         None,
+        true,
     )?;
 
     git_clone(
@@ -101,6 +103,7 @@ fn download_contract_deps(opts: &DeployerOptions) -> Result<(), DeployerError> {
             .to_str()
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
         None,
+        false,
     )?;
 
     git_clone(
@@ -110,6 +113,7 @@ fn download_contract_deps(opts: &DeployerOptions) -> Result<(), DeployerError> {
             .to_str()
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
         Some("evm"),
+        false,
     )?;
 
     Ok(())
@@ -119,6 +123,7 @@ pub fn git_clone(
     repository_url: &str,
     outdir: &str,
     branch: Option<&str>,
+    submodules: bool,
 ) -> Result<ExitStatus, DeployerError> {
     let mut git_cmd = Command::new("git");
 
@@ -126,6 +131,10 @@ pub fn git_clone(
 
     if let Some(branch) = branch {
         git_clone_cmd.arg("--branch").arg(branch);
+    }
+
+    if submodules {
+        git_clone_cmd.arg("--recurse-submodules");
     }
 
     git_clone_cmd
@@ -137,6 +146,7 @@ pub fn git_clone(
 }
 
 fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
+    compile_contract(&opts.contracts_path, "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol", false)?;
     compile_contract(&opts.contracts_path, "src/l1/OnChainProposer.sol", false)?;
     compile_contract(&opts.contracts_path, "src/l1/CommonBridge.sol", false)?;
     compile_contract(
@@ -177,41 +187,48 @@ async fn deploy_contracts(
             .to_vec()
     };
 
-    let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) = deploy_contract(
-        &[&[0u8; 31][..], &[u8::from(opts.validium)]].concat(),
-        &opts.contracts_path.join("solc_out/OnChainProposer.bin"),
-        &opts.private_key,
-        &salt,
+    let on_chain_proposer_deployment = deploy_with_proxy(
+        opts.private_key,
         eth_client,
+        &opts.contracts_path.join("solc_out"),
+        "OnChainProposer.bin",
+        &salt,
     )
     .await?;
 
     spinner.success(&format!(
-        "OnChainProposer:\n\tDeployed at address {}\n\tWith tx hash {}",
-        format!("{on_chain_proposer_address:#x}").bright_green(),
-        format!("{on_chain_proposer_deployment_tx_hash:#x}").bright_cyan()
+        r#"OnChainProposer:
+    Deployed implementation at address {}
+    With tx hash {},
+    Deployed proxy at address {}
+    With tx hash {}"#,
+        format!("{:#x}", on_chain_proposer_deployment.implementation_address).bright_green(),
+        format!("{:#x}", on_chain_proposer_deployment.implementation_tx_hash).bright_cyan(),
+        format!("{:#x}", on_chain_proposer_deployment.proxy_address).bright_green(),
+        format!("{:#x}", on_chain_proposer_deployment.proxy_tx_hash).bright_cyan()
     ));
 
     let mut spinner = Spinner::new(deploy_frames.clone(), "Deploying CommonBridge", Color::Cyan);
-    let (bridge_deployment_tx_hash, bridge_address) = deploy_contract(
-        &{
-            let deployer_address = get_address_from_secret_key(&opts.private_key)?;
-            let offset = 32 - deployer_address.as_bytes().len() % 32;
-            let mut encoded_owner = vec![0; offset];
-            encoded_owner.extend_from_slice(deployer_address.as_bytes());
-            encoded_owner
-        },
-        &opts.contracts_path.join("solc_out/CommonBridge.bin"),
-        &opts.private_key,
-        &salt,
+
+    let bridge_deployment = deploy_with_proxy(
+        opts.private_key,
         eth_client,
+        &opts.contracts_path.join("solc_out"),
+        "CommonBridge.bin",
+        &salt,
     )
     .await?;
 
     spinner.success(&format!(
-        "CommonBridge:\n\tDeployed at address {}\n\tWith tx hash {}",
-        format!("{bridge_address:#x}").bright_green(),
-        format!("{bridge_deployment_tx_hash:#x}").bright_cyan(),
+        r#"CommonBridge:
+    Deployed implementation at address {}
+    With tx hash {},
+    Deployed proxy at address {}
+    With tx hash {}"#,
+        format!("{:#x}", bridge_deployment.implementation_address).bright_green(),
+        format!("{:#x}", bridge_deployment.implementation_tx_hash).bright_cyan(),
+        format!("{:#x}", bridge_deployment.proxy_address).bright_green(),
+        format!("{:#x}", bridge_deployment.proxy_tx_hash).bright_cyan()
     ));
 
     let sp1_verifier_address = if opts.sp1_deploy_verifier {
@@ -277,8 +294,8 @@ async fn deploy_contracts(
         ))?;
 
     Ok((
-        on_chain_proposer_address,
-        bridge_address,
+        on_chain_proposer_deployment.proxy_address,
+        bridge_deployment.proxy_address,
         sp1_verifier_address,
         pico_verifier_address,
         risc0_verifier_address,
@@ -307,6 +324,8 @@ async fn initialize_contracts(
 
     let initialize_tx_hash = {
         let calldata_values = vec![
+            Value::Bool(opts.validium),
+            Value::Address(opts.on_chain_proposer_owner),
             Value::Address(bridge_address),
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
@@ -340,7 +359,10 @@ async fn initialize_contracts(
         Color::Cyan,
     );
     let initialize_tx_hash = {
-        let calldata_values = vec![Value::Address(on_chain_proposer_address)];
+        let calldata_values = vec![
+            Value::Address(opts.bridge_owner),
+            Value::Address(on_chain_proposer_address),
+        ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
 
@@ -410,7 +432,6 @@ async fn make_deposits(
         let overrides = Overrides {
             value: Some(value_to_deposit),
             from: Some(address),
-            gas_limit: Some(21000 * 5),
             max_fee_per_gas: Some(gas_price),
             max_priority_fee_per_gas: Some(gas_price),
             ..Overrides::default()
