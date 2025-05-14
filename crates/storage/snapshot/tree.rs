@@ -7,7 +7,7 @@ use ethrex_common::{
     types::{AccountState, BlockHash},
     Address, H256, U256,
 };
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{api::StoreEngine, hash_address_fixed};
 
@@ -323,10 +323,7 @@ impl SnapshotTree {
             }
         }
 
-        let trie = Arc::new(self.db.open_state_trie(diff_value.root()));
-
         let disk = DiskLayer {
-            state_trie: trie,
             db: self.db.clone(),
             cache: prev_disk.cache.clone(),
             root: diff_value.root(),
@@ -344,7 +341,12 @@ impl SnapshotTree {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, SnapshotError> {
+        debug!(
+            "called get_account_state with block {} address {}",
+            block_hash, address
+        );
         if let Some(snapshot) = self.snapshot(block_hash) {
+            debug!("snapshot found");
             let layers = self.layers.read().unwrap();
             let address = hash_address_fixed(&address);
             let result = match snapshot {
@@ -374,7 +376,12 @@ impl SnapshotTree {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, SnapshotError> {
+        debug!(
+            "called get_storage_at_hash with block {} address {} key {}",
+            block_hash, address, storage_key
+        );
         if let Some(snapshot) = self.snapshot(block_hash) {
+            debug!("snapshot found");
             let layers = self.layers.read().unwrap();
             let address = hash_address_fixed(&address);
             return match snapshot {

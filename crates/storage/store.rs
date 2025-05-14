@@ -33,7 +33,7 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    engine: Arc<dyn StoreEngine>,
+    pub(crate) engine: Arc<dyn StoreEngine>,
     pub snapshots: SnapshotTree,
 }
 
@@ -698,7 +698,7 @@ impl Store {
         match self.snapshots.get_account_state(block_hash, address) {
             Ok(value) => return Ok(value),
             Err(snapshot_error) => {
-                debug!("failed to fetch snapshot (storage): {}", snapshot_error);
+                debug!("failed to fetch snapshot (state): {}", snapshot_error);
             }
         }
 
@@ -1184,7 +1184,7 @@ impl Store {
                 );
 
                 // Use this point to cap the amount of layers if needs be
-                store.snapshots.cap(hash, 8)?;
+                //store.snapshots.cap(hash, 8)?;
             }
             Ok(())
         }

@@ -7,17 +7,15 @@ use std::{
     },
 };
 
+use crate::{api::StoreEngine, cache::Cache};
 use ethrex_common::{types::AccountState, H256, U256};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_trie::Trie;
-
-use crate::{api::StoreEngine, cache::Cache};
+use tracing::debug;
 
 use super::{difflayer::DiffLayer, error::SnapshotError, tree::Layers};
 
 #[derive(Clone)]
 pub struct DiskLayer {
-    pub(super) state_trie: Arc<Trie>,
     pub(super) db: Arc<dyn StoreEngine>,
     pub(super) cache: Cache,
     pub(super) root: H256,
@@ -37,10 +35,7 @@ impl fmt::Debug for DiskLayer {
 
 impl DiskLayer {
     pub fn new(db: Arc<dyn StoreEngine>, root: H256) -> Self {
-        let trie = Arc::new(db.open_state_trie(root));
-
         Self {
-            state_trie: trie,
             root,
             db,
             cache: Cache::new(10000, 10000),
@@ -59,12 +54,16 @@ impl DiskLayer {
         hash: H256,
         _layers: &Layers,
     ) -> Result<Option<Option<AccountState>>, SnapshotError> {
+        debug!("get_account disk layer hit for {}", hash);
         if let Some(value) = self.cache.accounts.get(&hash) {
+            debug!("get_account disk layer cache hit for {}", hash);
             return Ok(Some(value.clone()));
         }
+        debug!("get_account disk layer cache miss for {}", hash);
 
-        let value = if let Some(value) = self
-            .state_trie
+        let state_trie = self.db.open_state_trie(self.root);
+
+        let value = if let Some(value) = state_trie
             .get(hash)
             .ok()
             .flatten()
@@ -72,6 +71,7 @@ impl DiskLayer {
         {
             value
         } else {
+            self.cache.accounts.insert(hash, None);
             return Ok(None);
         };
 
@@ -88,9 +88,21 @@ impl DiskLayer {
         storage_hash: H256,
         layers: &Layers,
     ) -> Result<Option<U256>, SnapshotError> {
+        debug!(
+            "get_storage disk layer hit for {} / {}",
+            account_hash, storage_hash
+        );
         if let Some(value) = self.cache.storages.get(&(account_hash, storage_hash)) {
+            debug!(
+                "get_storage disk layer cache hit for {} / {}",
+                account_hash, storage_hash
+            );
             return Ok(Some(value));
         }
+        debug!(
+            "get_storage disk layer cache miss for {} / {}",
+            account_hash, storage_hash
+        );
 
         let account = if let Some(Some(account)) = self.get_account(account_hash, layers)? {
             account

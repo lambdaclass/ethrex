@@ -52,9 +52,9 @@ impl DiffLayer {
         }
 
         {
-            for (hash, slots) in self.storage.iter() {
-                for slot in slots.keys() {
-                    let value = hash ^ slot;
+            for (account_hash, slots) in self.storage.iter() {
+                for storage_hash in slots.keys() {
+                    let value = account_hash ^ storage_hash;
                     self.diffed.accrue(BloomInput::Hash(value.as_fixed_bytes()));
                 }
             }
