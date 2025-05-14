@@ -37,11 +37,12 @@ async fn main() -> eyre::Result<()> {
         }
         None => &(String::from("")),
     };
-    let data_dir = set_datadir(((opts.datadir).to_owned() + &String::from("/") + sub_path).as_str());
+    let data_dir =
+        set_datadir(((opts.datadir).to_owned() + &String::from("/") + sub_path).as_str());
 
     let network = get_network(&opts);
 
-    let store = init_store(&(data_dir.to_owned()+&String::from("/store")), &network).await;
+    let store = init_store(&(data_dir.to_owned() + &String::from("/store")), &network).await;
 
     let blockchain = init_blockchain(opts.evm, store.clone());
 
