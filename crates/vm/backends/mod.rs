@@ -15,7 +15,7 @@ use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::db::CacheDB;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use levm::{update_state_diff_size, LEVM};
+use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;
 use std::sync::Arc;
@@ -185,7 +185,8 @@ impl Evm {
                 Ok((receipt, execution_result.gas_used()))
             }
             Evm::LEVM { db } => {
-                let execution_report = LEVM::execute_tx(tx, sender, block_header, db)?;
+                let execution_report =
+                    LEVM::execute_tx_l2(tx, sender, block_header, db, acc_state_diff_size)?;
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
 
@@ -195,8 +196,6 @@ impl Evm {
                     block_header.gas_limit - *remaining_gas,
                     execution_report.logs.clone(),
                 );
-
-                update_state_diff_size(acc_state_diff_size, tx, &receipt, db)?;
 
                 Ok((receipt, execution_report.gas_used))
             }

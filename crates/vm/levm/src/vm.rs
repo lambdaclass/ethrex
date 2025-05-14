@@ -389,6 +389,11 @@ impl<'a> VM<'a> {
             return Err(e);
         }
 
+        // Here we need to backup the callframe because in the L2 we want to revert a transaction if it exceeds blob size
+        // even if the transaction succeeds.
+        #[cfg(feature = "l2")]
+        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
+
         // Here we clear the cache backup because if prepare_execution succeeded we don't want to
         // revert the changes it made.
         // Even if the transaction reverts we want to apply these kind of changes!
@@ -429,6 +434,21 @@ impl<'a> VM<'a> {
         let mut report = self.run_execution()?;
 
         self.finalize_execution(&mut report)?;
+
+        // We want to restore to the initial state, this includes reverting the changes made by the prepare execution
+        // and the changes made by the execution itself.
+        #[cfg(feature = "l2")]
+        {
+            let current_backup = &mut self.current_call_frame_mut()?.call_frame_backup;
+            for (addr, acc) in callframe_backup.original_accounts_info {
+                current_backup.original_accounts_info.insert(addr, acc);
+            }
+            for (addr, storage) in callframe_backup.original_account_storage_slots {
+                current_backup
+                    .original_account_storage_slots
+                    .insert(addr, storage);
+            }
+        }
         Ok(report)
     }
 

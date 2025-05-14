@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use ethrex_common::{
-    types::{Receipt, Transaction, TxKind, SAFE_BYTES_PER_BLOB},
+    types::{Log, Transaction, TxKind, SAFE_BYTES_PER_BLOB},
     H256,
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
@@ -79,14 +79,14 @@ pub fn has_nonce_changed(
 pub fn update_state_diff_size(
     acc_state_diff_size: &mut Option<usize>,
     tx: &Transaction,
-    receipt: &Receipt,
+    logs: &[Log],
     db: &GeneralizedDatabase,
 ) -> Result<(), EvmError> {
     if acc_state_diff_size.is_none() {
         return Ok(());
     }
     let mut actual_size = 0;
-    if is_withdrawal_l2(tx, receipt)? {
+    if is_withdrawal_l2(tx, logs)? {
         actual_size += L2_WITHDRAWAL_SIZE;
     }
     if is_deposit_l2(tx) {
@@ -107,14 +107,14 @@ pub fn update_state_diff_size(
     Ok(())
 }
 
-fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> Result<bool, EvmError> {
+fn is_withdrawal_l2(tx: &Transaction, logs: &[Log]) -> Result<bool, EvmError> {
     // WithdrawalInitiated(address,address,uint256)
     let withdrawal_event_selector: H256 =
         H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2")
             .map_err(|e| EvmError::Custom(e.to_string()))?;
 
     let is_withdrawal = match tx.to() {
-        TxKind::Call(to) if to == *COMMON_BRIDGE_L2_ADDRESS => receipt.logs.iter().any(|log| {
+        TxKind::Call(to) if to == *COMMON_BRIDGE_L2_ADDRESS => logs.iter().any(|log| {
             log.topics
                 .iter()
                 .any(|topic| *topic == withdrawal_event_selector)
