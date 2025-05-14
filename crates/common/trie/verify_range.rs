@@ -1,4 +1,7 @@
-use std::{cmp::Ordering, collections::HashMap, mem};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, VecDeque},
+};
 
 use ethereum_types::H256;
 use sha3::{Digest, Keccak256};
@@ -7,7 +10,7 @@ use crate::{
     nibbles::Nibbles,
     node::{Node, NodeRef},
     node_hash::NodeHash,
-    Trie, TrieDB, TrieError, ValueRLP,
+    ProofTrie, Trie, TrieError, ValueRLP,
 };
 
 /// Verifies that the key value range belongs to the trie with the given root given the edge proofs for the range
@@ -19,8 +22,6 @@ pub fn verify_range(
     values: &[ValueRLP],
     proof: &[Vec<u8>],
 ) -> Result<bool, TrieError> {
-    // Store proof nodes by hash
-    let proof_nodes = ProofNodeStorage::from_proof(proof);
     // Validate range
     if keys.len() != values.len() {
         return Err(TrieError::Verify(format!(
@@ -44,7 +45,12 @@ pub fn verify_range(
         )));
     }
 
-    // Verify ranges depending on the given proof
+    // TODO: Check proof and remove internal references.
+    // TODO: Insert key-value pairs.
+    // TODO: Build trie.
+    // TODO: Insert external references.
+    // TODO: Check hash.
+
     let mut trie = Trie::stateless();
 
     // Special Case: No proofs given, the range is expected to be the full set of leaves
@@ -67,15 +73,15 @@ pub fn verify_range(
     if keys.is_empty() {
         // We need to check that the proof confirms the non-existance of the first key
         // and that there are no more elements to the right of the first key
-        let value = fill_state(&mut trie, root, first_key, &proof_nodes)?;
-        let has_right_element = has_right_element(trie.db(), todo!(), first_key.as_bytes())?;
-        if has_right_element || !value.is_empty() {
+        let (_, (left_value, _), num_right_refs) =
+            process_proof_nodes(proof, root.into(), (*first_key, None))?;
+        if num_right_refs > 0 || !left_value.is_empty() {
             return Err(TrieError::Verify(
                 "no keys returned but more are available on the trie".to_string(),
             ));
         } else {
             return Ok(false);
-        }
+        };
     }
 
     let last_key = keys.last().unwrap();
@@ -83,371 +89,493 @@ pub fn verify_range(
     // Special Case: There is only one element and the two edge keys are the same
     if keys.len() == 1 && first_key == last_key {
         // We need to check that the proof confirms the existance of the first key
-        let value = fill_state(&mut trie, root, first_key, &proof_nodes)?;
         if first_key != &keys[0] {
             return Err(TrieError::Verify(
                 "correct proof but invalid key".to_string(),
             ));
         }
-        if value != values[0] {
+        let (_, (left_value, _), num_right_refs) =
+            process_proof_nodes(proof, root.into(), (*first_key, Some(*last_key)))?;
+        if left_value != values[0] {
             return Err(TrieError::Verify(
                 "correct proof but invalid data".to_string(),
             ));
         }
-        return has_right_element(root, first_key.as_bytes(), &trie);
+        return Ok(num_right_refs > 0);
     }
 
     // Regular Case: Two edge proofs
     if first_key >= last_key {
         return Err(TrieError::Verify("invalid edge keys".to_string()));
     }
-    // Fill up the state with the nodes from the proof
-    fill_state(&mut trie, root, first_key, &proof_nodes)?;
-    fill_state(&mut trie, root, last_key, &proof_nodes)?;
-    // Remove all references to the internal nodes that belong to the range so they can be reconstructed
-    let empty = remove_internal_references(root, first_key, last_key, &mut trie)?;
-    if !empty {
-        trie.root = Some(NodeHash::from(root));
-    }
+
+    // Process proofs to check if they are valid.
+    let (external_refs, (left_value, right_value), num_right_refs) =
+        process_proof_nodes(proof, root.into(), (*first_key, Some(*last_key)))?;
+
     // Reconstruct the internal nodes by inserting the elements on the range
     for (key, value) in keys.iter().zip(values.iter()) {
         trie.insert(key.0.to_vec(), value.clone())?;
     }
-    // Check for elements to the right of the range before we wipe the sate
-    let has_right_element = has_right_element(root, last_key.as_bytes(), &trie)?;
+
+    // Fill up the state with the nodes from the proof
+    let mut trie = ProofTrie::from(trie);
+    for (partial_path, external_ref) in external_refs {
+        trie.insert(partial_path, external_ref);
+    }
+
     // Check that the hash is the one we expected (aka the trie was properly reconstructed from the edge proofs and the range)
-    let hash = trie.hash()?;
+    let hash = trie.hash();
     if hash != root {
         return Err(TrieError::Verify(format!(
             "invalid proof, expected root hash {}, got  {}",
             root, hash
         )));
     }
-    Ok(has_right_element)
+    Ok(num_right_refs > 0)
 }
 
-/// Fills up the TrieState with nodes from the proof traversing the path given by first_key
-/// Returns an error if there are gaps in the proof node path
-/// Also returns the value if it is part of the proof
-fn fill_state(
-    trie_state: &mut Trie,
-    root_hash: H256,
-    first_key: &H256,
-    proof_nodes: &ProofNodeStorage,
-) -> Result<Vec<u8>, TrieError> {
-    let mut path = Nibbles::from_bytes(&first_key.0);
-    let (node, data) = fill_node(
-        &mut path,
-        &NodeHash::from(root_hash),
-        match mem::take(&mut trie_state.root) {
-            NodeRef::Node(node) => Some(*node),
-            NodeRef::Hash(_) => None,
-        },
-        proof_nodes,
-    )?;
+/// Iterate over all provided proofs starting from the root and generate a set of hashes that fall
+/// outside the verification bounds.
+///
+/// For example, calling this function with the proofs for the range `(hash_a, hash_b)` will return
+/// all node references contained within those proofs except the ones that are contained between
+/// `hash_a` and `hash_b` lexicographically.
+///
+/// Also returns the number of references strictly to the right of the bounds. If the right bound
+/// is unbounded (aka. not provided), all nodes to the right (inclusive) of the left bound will
+/// be counted. Leaf nodes are not counted (the leaf nodes within the proof do not count).
+fn process_proof_nodes(
+    proof: &[Vec<u8>],
+    root: NodeHash,
+    bounds: (H256, Option<H256>),
+) -> Result<(Vec<(Nibbles, NodeHash)>, (Vec<u8>, Vec<u8>), usize), TrieError> {
+    // Convert `H256` bounds into `Nibble` bounds for convenience.
+    let bounds = (
+        Nibbles::from_bytes(&bounds.0 .0),
+        bounds.1.map(|x| Nibbles::from_bytes(&x.0)),
+    );
 
-    trie_state.root = node.into();
-    Ok(data)
-}
-
-/// Fills up the TrieState with nodes from the proof traversing the path given by first_key
-/// Returns an error if there are gaps in the proof node path
-/// Also returns the value if it is part of the proof
-fn fill_node(
-    path: &mut Nibbles,
-    node_hash: &NodeHash,
-    parent: Option<Node>,
-    proof_nodes: &ProofNodeStorage,
-) -> Result<(Node, Vec<u8>), TrieError> {
-    let node = proof_nodes.get_node(node_hash)?;
-    let child_hash = get_child(path, &node);
-    if let Some(ref child_hash) = child_hash {
-        // trie_state.insert_node(node, *node_hash);
-        fill_node(path, child_hash, trie_state, proof_nodes)
-    } else {
-        let value = match &node {
-            Node::Branch(n) => n.value.clone(),
-            Node::Extension(_) => vec![],
-            Node::Leaf(n) => (*path == n.partial)
-                .then_some(n.value.clone())
-                .unwrap_or_default(),
-        };
-        trie_state.insert_node(node, *node_hash);
-        Ok(value)
-    }
-}
-
-/// Returns the node hash of the node's child (if any) following the given path
-fn get_child<'a>(path: &'a mut Nibbles, node: &'a Node) -> Option<Nibbles> {
-    match node {
-        Node::Branch(n) => {
-            if let Some(choice) = path.next_choice() {
-                if n.choices[choice].is_valid() {
-                    return Some(path.append_new(choice as u8));
-                }
-            }
-            None
-        }
-        Node::Extension(n) => {
-            path.skip_prefix(&n.prefix);
-            Some(path.clone())
-        }
-        Node::Leaf(_) => None,
-    }
-}
-
-/// Returns true if the trie contains elements to the right of the given key
-/// (Aka if the given key is not the edge key of the trie)
-fn has_right_element(db: &dyn TrieDB, node: &NodeRef, key: &[u8]) -> Result<bool, TrieError> {
-    let path = Nibbles::from_bytes(key);
-    has_right_element_inner(db, node, path)
-}
-
-/// Returns true if the node's subtrie contains elements to the right of the given key
-/// (Aka if the given key is not the edge key of the subtrie)
-fn has_right_element_inner(
-    db: &dyn TrieDB,
-    node: &NodeRef,
-    mut path: Nibbles,
-) -> Result<bool, TrieError> {
-    let node = match node {
-        NodeRef::Node(node) => node.as_ref(),
-        NodeRef::Hash(_) => todo!(),
-    };
-
-    match node {
-        Node::Branch(ref n) => {
-            // Check if there are children to the right side
-            if let Some(choice) = path.next_choice() {
-                if n.choices[choice + 1..].iter().any(|child| child.is_valid()) {
-                    return Ok(true);
-                } else if n.choices[choice].is_valid() {
-                    return has_right_element_inner(db, &n.choices[choice], path);
-                }
-            }
-        }
-        Node::Extension(n) => {
-            if path.skip_prefix(&n.prefix) {
-                return has_right_element_inner(db, &n.child, path);
-            } else {
-                return Ok(n.prefix.as_ref() > path.as_ref());
-            }
-        }
-        // We reached the end of the path
-        Node::Leaf(_) => {}
-    }
-    Ok(false)
-}
-
-/// Removes references to internal nodes between the left and right key
-/// These nodes should be entirely reconstructed when inserting the elements between left and right key (the proven range)
-/// Returns true if the trie is left empty (rootless) as a result of this process
-/// Asumes that left_key & right_key are not equal and of same length
-fn remove_internal_references(
-    db: &dyn TrieDB,
-    root_hash: H256,
-    left_key: &H256,
-    right_key: &H256,
-) -> Result<bool, TrieError> {
-    // First find the node at which the left and right path differ
-    let left_path = Nibbles::from_bytes(&left_key.0);
-    let right_path = Nibbles::from_bytes(&right_key.0);
-
-    remove_internal_references_inner(db, NodeHash::from(root_hash).into(), left_path, right_path)
-}
-
-/// Traverses the left and right path starting from the given node until the paths diverge
-/// Once the paths diverge, removes the nodes between the left and right path
-/// Returns true if the given node was completely removed as a result of this process
-/// In which case the caller should remove the reference to this node from its parent node
-/// Asumes that left_key & right_key are not equal and of same length
-fn remove_internal_references_inner(
-    db: &dyn TrieDB,
-    node_hash: NodeRef,
-    mut left_path: Nibbles,
-    mut right_path: Nibbles,
-) -> Result<bool, TrieError> {
-    if !node_hash.is_valid() {
-        return Ok(true);
-    }
-    // We already looked up the nodes when filling the state so this shouldn't fail
-    match node {
-        Node::Branch(mut n) => {
-            // If none of the paths have a next choice nibble then it means that this is the end of the path
-            // which would mean that both paths are equal, which we already checked before
-            // If only one path doesn't have a next choice then it would mean that the paths have different lengths,
-            // which we also checked before calling this function
-            // Therefore we can safely unwrap here
-            let left_choice = left_path.next_choice().unwrap();
-            let right_choice = right_path.next_choice().unwrap();
-
-            if left_choice == right_choice && n.choices[left_choice].is_valid() {
-                // Keep going
-                // Check if the child extension node should be removed as a result of this process
-                let should_remove = remove_internal_references_inner(
-                    n.choices[left_choice].compute_hash(),
-                    left_path,
-                    right_path,
-                    trie_state,
-                )?;
-                if should_remove {
-                    // Remove child node
-                    n.choices[left_choice] = NodeHash::default().into();
-                    // Update node in the state
-                    trie_state.insert_node(n.into(), node_hash);
-                }
-            } else {
-                // We found our fork node, now we can remove the internal references
-                // Remove all child nodes between the left and right child nodes
-                for choice in &mut n.choices[left_choice + 1..right_choice] {
-                    *choice = NodeHash::default().into();
-                }
-                // Remove nodes on the left and right choice's subtries
-                let should_remove_left = remove_node(db, &n.choices[left_choice], left_path, false);
-                let should_remove_right =
-                    remove_node(db, &n.choices[right_choice], right_path, true);
-                // Remove left and right child nodes if their subtries where wiped in the process
-                if should_remove_left {
-                    n.choices[left_choice] = NodeHash::default().into();
-                }
-                if should_remove_right {
-                    n.choices[right_choice] = NodeHash::default().into();
-                }
-                // Update node in the state
-                trie_state.insert_node(n.into(), node_hash);
-            }
-        }
-        Node::Extension(n) => {
-            // Compare left and right paths against prefix
-
-            let left_fork = left_path.compare_prefix(&n.prefix);
-            let right_fork = right_path.compare_prefix(&n.prefix);
-
-            match (left_fork, right_fork) {
-                // If both paths contain the same prefix as the extension node, keep going
-                (Ordering::Equal, Ordering::Equal) => {
-                    return remove_internal_references_inner(
-                        n.child.compute_hash(),
-                        left_path.offset(n.prefix.len()),
-                        right_path.offset(n.prefix.len()),
-                        trie_state,
-                    );
-                }
-                // If both paths are greater or lesser than the node's prefix then the range is empty
-                (Ordering::Greater, Ordering::Greater) | (Ordering::Less, Ordering::Less) => {
-                    return Err(TrieError::Verify("empty range".to_string()))
-                }
-                // None of the paths fit the prefix, remove the entire subtrie
-                (left, right) if left.is_ne() && right.is_ne() => {
-                    // Return true so that the parent node removes this node
-                    return Ok(true);
-                }
-                // One path fits the prefix, the other one doesn't
-                (left, right) => {
-                    // Remove the nodes from the child's subtrie
-                    let path = if left.is_eq() { left_path } else { right_path };
-                    // Propagate the response so that this node will be removed too if the child's subtrie is wiped
-                    return Ok(remove_node(
-                        db,
-                        node,
-                        path.offset(n.prefix.len()),
-                        right.is_eq(),
-                    ));
-                }
-            }
-        }
-        // This case should be unreachable as we checked that left_path != right_path
-        // before calling this function
-        Node::Leaf(_) => {}
-    }
-    Ok(false)
-}
-
-// Removes all nodes in the node's subtrie to the left or right of the path (given by the `remove_left` flag)
-// If the whole subtrie is removed in the process this function will return true, in which case
-// the caller must remove the reference to this node from it's parent node
-fn remove_node(
-    db: &dyn TrieDB,
-    node: &NodeRef,
-    mut path: Nibbles,
-    remove_left: bool,
-    trie_state: &mut Trie,
-) -> bool {
-    // We already looked up the nodes when filling the state so this shouldn't fail
-    match node {
-        Node::Branch(mut n) => {
-            // Remove child nodes
-            let Some(choice) = path.next_choice() else {
-                // Path ends in the branch node
-                return true;
-            };
-            if remove_left {
-                for child in &mut n.choices[..choice] {
-                    *child = NodeHash::default().into();
-                }
-            } else {
-                for child in &mut n.choices[choice + 1..] {
-                    *child = NodeHash::default().into();
-                }
-            }
-            // Remove nodes to the left/right of the choice's subtrie
-            let should_remove =
-                remove_node(db, n.choices[choice].compute_hash(), path, remove_left);
-            if should_remove {
-                n.choices[choice] = NodeRef::default();
-            }
-            // Update node in the state
-            trie_state.insert_node(n.into(), node_hash);
-        }
-        Node::Extension(n) => {
-            // If no child subtrie would result from this process remove the node entirely
-            // (Such as removing the left side of a trie with no right side)
-            if !path.skip_prefix(&n.prefix) {
-                if (remove_left && path.compare_prefix(&n.prefix).is_gt())
-                    || !remove_left && path.compare_prefix(&n.prefix).is_lt()
-                {
-                    return true;
-                }
-            } else {
-                // Remove left/right side of the child subtrie
-                return remove_node(n.child.compute_hash(), path, remove_left, trie_state);
-            }
-        }
-        Node::Leaf(_) => return true,
-    }
-    false
-}
-
-/// An intermediate storage for proof nodes, containing encoded nodes indexed by hash
-struct ProofNodeStorage<'a> {
-    nodes: HashMap<Vec<u8>, &'a Vec<u8>>,
-}
-
-impl<'a> ProofNodeStorage<'a> {
-    // Construct a ProofNodeStorage for a proof
-    fn from_proof(proof: &'a [Vec<u8>]) -> Self {
-        Self {
-            nodes: proof
-                .iter()
-                .map(|node| (Keccak256::new_with_prefix(node).finalize().to_vec(), node))
-                .collect::<HashMap<_, _>>(),
-        }
-    }
-    // Fetch a node by its hash, return an error if the node is not present or badly encoded
-    fn get_node(&self, hash: &NodeHash) -> Result<Node, TrieError> {
-        let encoded = match hash {
-            NodeHash::Hashed(hash) => {
-                let Some(encoded) = self.nodes.get(hash.as_bytes()) else {
-                    return Err(TrieError::Verify(format!("proof node missing: {hash}")));
-                };
-                encoded.as_slice()
-            }
-
+    // Generate a map of node hashes to node data for obtaining proof nodes given their hashes.
+    let proof = proof
+        .iter()
+        .map(|node| {
+            (
+                H256::from_slice(&Keccak256::new_with_prefix(node).finalize()),
+                node.as_slice(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    fn get_node(proof: &HashMap<H256, &[u8]>, hash: NodeHash) -> Result<Option<Node>, TrieError> {
+        Ok(Some(Node::decode_raw(match hash {
+            NodeHash::Hashed(hash) => match proof.get(&hash) {
+                Some(x) => x,
+                None => return Ok(None),
+            },
             NodeHash::Inline(_) => hash.as_ref(),
-        };
-        Ok(Node::decode_raw(encoded)?)
+        })?))
     }
+
+    // Initialize the external refs container.
+    let mut external_refs = Vec::new();
+    let (mut left_value, mut right_value) = (Vec::new(), Vec::new());
+    let mut num_right_refs = 0;
+
+    // Iterate over the proofs tree.
+    //
+    // The children are processed as follows:
+    //   1. Nodes that fall within bounds will be filtered out.
+    //   2. Nodes for which we have the proof will push themselves into the queue.
+    //   3. Nodes for which we do not have the proof are treated as external references.
+    let mut process_child =
+        |stack: &mut VecDeque<_>, mut partial_path: Nibbles, child| -> Result<(), TrieError> {
+            let cmp_l = partial_path.cmp(&bounds.0);
+            let cmp_r = bounds.1.as_ref().map(|x| partial_path.cmp(x));
+
+            // if partial_path < left_bound || partial_path > right_bound
+            if cmp_l == Ordering::Less || cmp_r.is_none_or(|x| x == Ordering::Greater) {
+                let NodeRef::Hash(hash) = child else {
+                    // This is unreachable because the nodes have just been decoded,
+                    // therefore only having hash references.
+                    unreachable!()
+                };
+
+                match get_node(&proof, hash)? {
+                    Some(node) => {
+                        // Append leaf marker if pushing a leaf.
+                        if matches!(node, Node::Leaf(_)) {
+                            partial_path.append(16);
+                        }
+
+                        stack.push_back((partial_path, node));
+                    }
+                    None => external_refs.push((partial_path, hash)),
+                }
+            } else {
+                // Increment right-reference counter.
+                // if is_some_and(partial_path > right_bound) || partial_path > left_bound
+                if cmp_r.is_none_or(|x| x == Ordering::Greater) || cmp_l == Ordering::Greater {
+                    num_right_refs += 1;
+                }
+            }
+
+            Ok(())
+        };
+
+    let mut stack = VecDeque::from_iter([(
+        Nibbles::default(),
+        get_node(&proof, root)?
+            .ok_or(TrieError::Verify(format!("proof node missing: {root:?}")))?,
+    )]);
+    while let Some((current_path, current_node)) = stack.pop_front() {
+        match current_node {
+            Node::Branch(node) => {
+                for (index, choice) in node.choices.into_iter().enumerate() {
+                    if choice.is_valid() {
+                        process_child(&mut stack, current_path.append_new(index as u8), choice)?;
+                    }
+                }
+            }
+            Node::Extension(node) => {
+                process_child(&mut stack, current_path.concat(node.prefix), node.child)?;
+            }
+            Node::Leaf(node) => {
+                if !node.value.is_empty() {
+                    if current_path == bounds.0 {
+                        left_value = node.value.clone();
+                    }
+                    if bounds.1.as_ref().is_some_and(|x| &current_path == x) {
+                        right_value = node.value.clone();
+                    }
+                }
+            }
+        }
+    }
+
+    Ok((external_refs, (left_value, right_value), num_right_refs))
 }
+
+// /// Fills up the TrieState with nodes from the proof traversing the path given by first_key
+// /// Returns an error if there are gaps in the proof node path
+// /// Also returns the value if it is part of the proof
+// fn fill_state(
+//     trie_state: &mut Trie,
+//     root_hash: H256,
+//     first_key: &H256,
+//     proof_nodes: &ProofNodeStorage,
+// ) -> Result<Vec<u8>, TrieError> {
+//     let mut path = Nibbles::from_bytes(&first_key.0);
+//     let (node, data) = fill_node(
+//         &mut path,
+//         &NodeHash::from(root_hash),
+//         match mem::take(&mut trie_state.root) {
+//             NodeRef::Node(node) => Some(*node),
+//             NodeRef::Hash(_) => None,
+//         },
+//         proof_nodes,
+//     )?;
+
+//     trie_state.root = node.into();
+//     Ok(data)
+// }
+
+// /// Fills up the TrieState with nodes from the proof traversing the path given by first_key
+// /// Returns an error if there are gaps in the proof node path
+// /// Also returns the value if it is part of the proof
+// fn fill_node(
+//     path: &mut Nibbles,
+//     node_hash: &NodeHash,
+//     parent: Option<Node>,
+//     proof_nodes: &ProofNodeStorage,
+// ) -> Result<(Node, Vec<u8>), TrieError> {
+//     let node = proof_nodes.get_node(node_hash)?;
+//     let child_hash = get_child(path, &node);
+//     if let Some(ref child_hash) = child_hash {
+//         fill_node(path, child_hash, trie_state, proof_nodes)
+//     } else {
+//         let value = match &node {
+//             Node::Branch(n) => n.value.clone(),
+//             Node::Extension(_) => vec![],
+//             Node::Leaf(n) => (*path == n.partial)
+//                 .then_some(n.value.clone())
+//                 .unwrap_or_default(),
+//         };
+//         trie_state.insert_node(node, *node_hash);
+//         Ok(value)
+//     }
+// }
+
+// /// Returns the node hash of the node's child (if any) following the given path
+// fn get_child<'a>(path: &'a mut Nibbles, node: &'a Node) -> Option<Nibbles> {
+//     match node {
+//         Node::Branch(n) => {
+//             if let Some(choice) = path.next_choice() {
+//                 if n.choices[choice].is_valid() {
+//                     return Some(path.append_new(choice as u8));
+//                 }
+//             }
+//             None
+//         }
+//         Node::Extension(n) => {
+//             path.skip_prefix(&n.prefix);
+//             Some(path.clone())
+//         }
+//         Node::Leaf(_) => None,
+//     }
+// }
+
+// /// Returns true if the trie contains elements to the right of the given key
+// /// (Aka if the given key is not the edge key of the trie)
+// fn has_right_element(db: &dyn TrieDB, node: &NodeRef, key: &[u8]) -> Result<bool, TrieError> {
+//     let path = Nibbles::from_bytes(key);
+//     has_right_element_inner(db, node, path)
+// }
+
+// /// Returns true if the node's subtrie contains elements to the right of the given key
+// /// (Aka if the given key is not the edge key of the subtrie)
+// fn has_right_element_inner(
+//     db: &dyn TrieDB,
+//     node: &NodeRef,
+//     mut path: Nibbles,
+// ) -> Result<bool, TrieError> {
+//     let node = match node {
+//         NodeRef::Node(node) => node.as_ref(),
+//         NodeRef::Hash(_) => todo!(),
+//     };
+
+//     match node {
+//         Node::Branch(ref n) => {
+//             // Check if there are children to the right side
+//             if let Some(choice) = path.next_choice() {
+//                 if n.choices[choice + 1..].iter().any(|child| child.is_valid()) {
+//                     return Ok(true);
+//                 } else if n.choices[choice].is_valid() {
+//                     return has_right_element_inner(db, &n.choices[choice], path);
+//                 }
+//             }
+//         }
+//         Node::Extension(n) => {
+//             if path.skip_prefix(&n.prefix) {
+//                 return has_right_element_inner(db, &n.child, path);
+//             } else {
+//                 return Ok(n.prefix.as_ref() > path.as_ref());
+//             }
+//         }
+//         // We reached the end of the path
+//         Node::Leaf(_) => {}
+//     }
+//     Ok(false)
+// }
+
+// /// Removes references to internal nodes between the left and right key
+// /// These nodes should be entirely reconstructed when inserting the elements between left and right key (the proven range)
+// /// Returns true if the trie is left empty (rootless) as a result of this process
+// /// Asumes that left_key & right_key are not equal and of same length
+// fn remove_internal_references(
+//     db: &dyn TrieDB,
+//     root_hash: H256,
+//     left_key: &H256,
+//     right_key: &H256,
+// ) -> Result<bool, TrieError> {
+//     // First find the node at which the left and right path differ
+//     let left_path = Nibbles::from_bytes(&left_key.0);
+//     let right_path = Nibbles::from_bytes(&right_key.0);
+
+//     remove_internal_references_inner(db, NodeHash::from(root_hash).into(), left_path, right_path)
+// }
+
+// /// Traverses the left and right path starting from the given node until the paths diverge
+// /// Once the paths diverge, removes the nodes between the left and right path
+// /// Returns true if the given node was completely removed as a result of this process
+// /// In which case the caller should remove the reference to this node from its parent node
+// /// Asumes that left_key & right_key are not equal and of same length
+// fn remove_internal_references_inner(
+//     db: &dyn TrieDB,
+//     node_hash: NodeRef,
+//     mut left_path: Nibbles,
+//     mut right_path: Nibbles,
+// ) -> Result<bool, TrieError> {
+//     if !node_hash.is_valid() {
+//         return Ok(true);
+//     }
+//     // We already looked up the nodes when filling the state so this shouldn't fail
+//     match node {
+//         Node::Branch(mut n) => {
+//             // If none of the paths have a next choice nibble then it means that this is the end of the path
+//             // which would mean that both paths are equal, which we already checked before
+//             // If only one path doesn't have a next choice then it would mean that the paths have different lengths,
+//             // which we also checked before calling this function
+//             // Therefore we can safely unwrap here
+//             let left_choice = left_path.next_choice().unwrap();
+//             let right_choice = right_path.next_choice().unwrap();
+
+//             if left_choice == right_choice && n.choices[left_choice].is_valid() {
+//                 // Keep going
+//                 // Check if the child extension node should be removed as a result of this process
+//                 let should_remove = remove_internal_references_inner(
+//                     n.choices[left_choice].compute_hash(),
+//                     left_path,
+//                     right_path,
+//                     trie_state,
+//                 )?;
+//                 if should_remove {
+//                     // Remove child node
+//                     n.choices[left_choice] = NodeHash::default().into();
+//                     // Update node in the state
+//                     trie_state.insert_node(n.into(), node_hash);
+//                 }
+//             } else {
+//                 // We found our fork node, now we can remove the internal references
+//                 // Remove all child nodes between the left and right child nodes
+//                 for choice in &mut n.choices[left_choice + 1..right_choice] {
+//                     *choice = NodeHash::default().into();
+//                 }
+//                 // Remove nodes on the left and right choice's subtries
+//                 let should_remove_left = remove_node(db, &n.choices[left_choice], left_path, false);
+//                 let should_remove_right =
+//                     remove_node(db, &n.choices[right_choice], right_path, true);
+//                 // Remove left and right child nodes if their subtries where wiped in the process
+//                 if should_remove_left {
+//                     n.choices[left_choice] = NodeHash::default().into();
+//                 }
+//                 if should_remove_right {
+//                     n.choices[right_choice] = NodeHash::default().into();
+//                 }
+//                 // Update node in the state
+//                 trie_state.insert_node(n.into(), node_hash);
+//             }
+//         }
+//         Node::Extension(n) => {
+//             // Compare left and right paths against prefix
+
+//             let left_fork = left_path.compare_prefix(&n.prefix);
+//             let right_fork = right_path.compare_prefix(&n.prefix);
+
+//             match (left_fork, right_fork) {
+//                 // If both paths contain the same prefix as the extension node, keep going
+//                 (Ordering::Equal, Ordering::Equal) => {
+//                     return remove_internal_references_inner(
+//                         n.child.compute_hash(),
+//                         left_path.offset(n.prefix.len()),
+//                         right_path.offset(n.prefix.len()),
+//                         trie_state,
+//                     );
+//                 }
+//                 // If both paths are greater or lesser than the node's prefix then the range is empty
+//                 (Ordering::Greater, Ordering::Greater) | (Ordering::Less, Ordering::Less) => {
+//                     return Err(TrieError::Verify("empty range".to_string()))
+//                 }
+//                 // None of the paths fit the prefix, remove the entire subtrie
+//                 (left, right) if left.is_ne() && right.is_ne() => {
+//                     // Return true so that the parent node removes this node
+//                     return Ok(true);
+//                 }
+//                 // One path fits the prefix, the other one doesn't
+//                 (left, right) => {
+//                     // Remove the nodes from the child's subtrie
+//                     let path = if left.is_eq() { left_path } else { right_path };
+//                     // Propagate the response so that this node will be removed too if the child's subtrie is wiped
+//                     return Ok(remove_node(
+//                         db,
+//                         node,
+//                         path.offset(n.prefix.len()),
+//                         right.is_eq(),
+//                     ));
+//                 }
+//             }
+//         }
+//         // This case should be unreachable as we checked that left_path != right_path
+//         // before calling this function
+//         Node::Leaf(_) => {}
+//     }
+//     Ok(false)
+// }
+
+// // Removes all nodes in the node's subtrie to the left or right of the path (given by the `remove_left` flag)
+// // If the whole subtrie is removed in the process this function will return true, in which case
+// // the caller must remove the reference to this node from it's parent node
+// fn remove_node(
+//     db: &dyn TrieDB,
+//     node: &NodeRef,
+//     mut path: Nibbles,
+//     remove_left: bool,
+//     trie_state: &mut Trie,
+// ) -> bool {
+//     // We already looked up the nodes when filling the state so this shouldn't fail
+//     match node {
+//         Node::Branch(mut n) => {
+//             // Remove child nodes
+//             let Some(choice) = path.next_choice() else {
+//                 // Path ends in the branch node
+//                 return true;
+//             };
+//             if remove_left {
+//                 for child in &mut n.choices[..choice] {
+//                     *child = NodeHash::default().into();
+//                 }
+//             } else {
+//                 for child in &mut n.choices[choice + 1..] {
+//                     *child = NodeHash::default().into();
+//                 }
+//             }
+//             // Remove nodes to the left/right of the choice's subtrie
+//             let should_remove =
+//                 remove_node(db, n.choices[choice].compute_hash(), path, remove_left);
+//             if should_remove {
+//                 n.choices[choice] = NodeRef::default();
+//             }
+//             // Update node in the state
+//             trie_state.insert_node(n.into(), node_hash);
+//         }
+//         Node::Extension(n) => {
+//             // If no child subtrie would result from this process remove the node entirely
+//             // (Such as removing the left side of a trie with no right side)
+//             if !path.skip_prefix(&n.prefix) {
+//                 if (remove_left && path.compare_prefix(&n.prefix).is_gt())
+//                     || !remove_left && path.compare_prefix(&n.prefix).is_lt()
+//                 {
+//                     return true;
+//                 }
+//             } else {
+//                 // Remove left/right side of the child subtrie
+//                 return remove_node(n.child.compute_hash(), path, remove_left, trie_state);
+//             }
+//         }
+//         Node::Leaf(_) => return true,
+//     }
+//     false
+// }
+
+// /// An intermediate storage for proof nodes, containing encoded nodes indexed by hash
+// struct ProofNodeStorage<'a> {
+//     nodes: HashMap<Vec<u8>, &'a Vec<u8>>,
+// }
+
+// impl<'a> ProofNodeStorage<'a> {
+//     // Construct a ProofNodeStorage for a proof
+//     fn from_proof(proof: &'a [Vec<u8>]) -> Self {
+//         Self {
+//             nodes: proof
+//                 .iter()
+//                 .map(|node| (Keccak256::new_with_prefix(node).finalize().to_vec(), node))
+//                 .collect::<HashMap<_, _>>(),
+//         }
+//     }
+//     // Fetch a node by its hash, return an error if the node is not present or badly encoded
+//     fn get_node(&self, hash: &NodeHash) -> Result<Node, TrieError> {
+//         let encoded = match hash {
+//             NodeHash::Hashed(hash) => {
+//                 let Some(encoded) = self.nodes.get(hash.as_bytes()) else {
+//                     return Err(TrieError::Verify(format!("proof node missing: {hash}")));
+//                 };
+//                 encoded.as_slice()
+//             }
+
+//             NodeHash::Inline(_) => hash.as_ref(),
+//         };
+//         Ok(Node::decode_raw(encoded)?)
+//     }
+// }
 
 // #[cfg(test)]
 // mod tests {
