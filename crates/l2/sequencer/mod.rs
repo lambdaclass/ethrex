@@ -23,6 +23,7 @@ pub mod execution_cache;
 pub mod configs;
 pub mod errors;
 pub mod utils;
+pub mod setup;
 
 pub async fn start_l2(
     store: Store,

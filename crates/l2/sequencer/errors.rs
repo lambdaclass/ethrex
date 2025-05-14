@@ -74,6 +74,8 @@ pub enum ProverServerError {
     InternalError(String),
     #[error("ProverServer failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
+    #[error("Failed to execute command: {0}")]
+    ComandError(std::io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
