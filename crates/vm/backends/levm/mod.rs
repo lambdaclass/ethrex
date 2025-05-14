@@ -7,6 +7,7 @@ use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
+use crate::db::VmDbWrapper;
 use crate::{EvmError, ExecutionResult, ProverDB, ProverDBError, StoreWrapper};
 use bytes::Bytes;
 use ethrex_common::{
@@ -25,7 +26,6 @@ use ethrex_levm::{
     vm::{Substate, VM},
     Environment,
 };
-use ethrex_storage::error::StoreError;
 use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
 use ethrex_trie::{NodeRLP, TrieError};
 use std::cmp::min;
@@ -238,7 +238,7 @@ impl LEVM {
     pub fn process_withdrawals(
         db: &mut GeneralizedDatabase,
         withdrawals: &[Withdrawal],
-    ) -> Result<(), ethrex_storage::error::StoreError> {
+    ) -> Result<(), EvmError> {
         // For every withdrawal we increment the target account's balance
         for (address, increment) in withdrawals
             .iter()
@@ -249,7 +249,7 @@ impl LEVM {
             let mut account = db.cache.get(&address).cloned().unwrap_or({
                 db.store
                     .get_account(address)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
+                    .map_err(|e| EvmError::Custom(e.to_string()))?
             });
 
             account.info.balance += increment.into();
@@ -386,11 +386,13 @@ impl LEVM {
             return Err(ProverDBError::Custom("Unable to get last block".into()));
         };
 
+        let store_wrapper = VmDbWrapper(StoreWrapper {
+            store: store.clone(),
+            block_hash: first_block_parent_hash,
+        });
+
         let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(
-            StoreWrapper {
-                store: store.clone(),
-                block_hash: first_block_parent_hash,
-            },
+            store_wrapper,
         )))));
 
         let mut execution_updates: HashMap<Address, AccountUpdate> = HashMap::new();
@@ -407,10 +409,10 @@ impl LEVM {
             }
 
             // Update de block_hash for the next execution.
-            let new_store = StoreWrapper {
+            let new_store = VmDbWrapper(StoreWrapper {
                 store: store.clone(),
                 block_hash: block.hash(),
-            };
+            });
 
             // Replace the store
             *logger.store.lock().unwrap() = Box::new(new_store);
@@ -420,9 +422,7 @@ impl LEVM {
         let state_accessed = logger
             .state_accessed
             .lock()
-            .map_err(|_| {
-                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
-            })?
+            .map_err(|_| ProverDBError::Store("Could not lock mutex".to_string()))?
             .clone();
 
         // fetch all read/written accounts from store
@@ -441,9 +441,7 @@ impl LEVM {
         let code_accessed = logger
             .code_accessed
             .lock()
-            .map_err(|_| {
-                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
-            })?
+            .map_err(|_| ProverDBError::Store("Could not lock mutex".to_string()))?
             .clone();
         let code = accounts
             .values()
@@ -487,9 +485,7 @@ impl LEVM {
         let block_hashes = logger
             .block_hashes_accessed
             .lock()
-            .map_err(|_| {
-                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
-            })?
+            .map_err(|_| ProverDBError::Store("Could not lock mutex".to_string()))?
             .clone()
             .into_iter()
             .map(|(num, hash)| (num, H256::from(hash.0)))

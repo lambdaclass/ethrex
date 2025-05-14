@@ -15,7 +15,7 @@ pub enum EvmError {
     #[error("Invalid Header: {0}")]
     Header(String),
     #[error("DB error: {0}")]
-    DB(#[from] StoreError),
+    DB(String),
     #[error("Execution DB error: {0}")]
     ProverDB(#[from] ProverDBError),
     #[error("{0}")]
@@ -33,7 +33,7 @@ pub enum ProverDBError {
     #[error("Database error: {0}")]
     Database(#[from] DatabaseError),
     #[error("Store error: {0}")]
-    Store(#[from] StoreError),
+    Store(String),
     #[error("Evm error: {0}")]
     Evm(#[from] Box<EvmError>), // boxed to avoid cyclic definition
     #[error("Trie error: {0}")]
@@ -95,7 +95,19 @@ impl From<RevmError<StoreError>> for EvmError {
         match value {
             RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
             RevmError::Header(err) => EvmError::Header(err.to_string()),
-            RevmError::Database(err) => EvmError::DB(err),
+            RevmError::Database(err) => EvmError::DB(err.to_string()),
+            RevmError::Custom(err) => EvmError::Custom(err),
+            RevmError::Precompile(err) => EvmError::Precompile(err),
+        }
+    }
+}
+
+impl From<RevmError<EvmError>> for EvmError {
+    fn from(value: RevmError<EvmError>) -> Self {
+        match value {
+            RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
+            RevmError::Header(err) => EvmError::Header(err.to_string()),
+            RevmError::Database(err) => EvmError::DB(err.to_string()),
             RevmError::Custom(err) => EvmError::Custom(err),
             RevmError::Precompile(err) => EvmError::Precompile(err),
         }
@@ -122,5 +134,17 @@ impl From<VMError> for EvmError {
             // If an error is not internal it means it is a transaction validation error.
             EvmError::Transaction(value.to_string())
         }
+    }
+}
+
+impl From<StoreError> for ProverDBError {
+    fn from(err: StoreError) -> Self {
+        ProverDBError::Store(err.to_string())
+    }
+}
+
+impl From<EvmError> for ProverDBError {
+    fn from(err: EvmError) -> Self {
+        ProverDBError::Store(err.to_string())
     }
 }

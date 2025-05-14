@@ -178,7 +178,9 @@ pub struct PayloadBuildContext {
 
 impl PayloadBuildContext {
     pub fn new(payload: Block, evm_engine: EvmEngine, storage: &Store) -> Result<Self, EvmError> {
-        let config = storage.get_chain_config()?;
+        let config = storage
+            .get_chain_config()
+            .map_err(|e| EvmError::DB(e.to_string()))?;
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
             config
@@ -214,7 +216,10 @@ impl PayloadBuildContext {
     }
 
     fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        Ok(self.store.get_chain_config()?)
+        Ok(self
+            .store
+            .get_chain_config()
+            .map_err(|e| EvmError::DB(e.to_string()))?)
     }
 
     fn base_fee_per_gas(&self) -> Option<u64> {

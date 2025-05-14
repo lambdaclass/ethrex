@@ -4,7 +4,7 @@ use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::constants::EMPTY_CODE_HASH;
 use ethrex_levm::db::Database as LevmDatabase;
 
-use crate::db::StoreWrapper;
+use crate::db::{Database, VmDbWrapper};
 use crate::ProverDB;
 use ethrex_levm::db::error::DatabaseError;
 use std::collections::HashMap;
@@ -99,16 +99,16 @@ impl LevmDatabase for DatabaseLogger {
     }
 }
 
-impl LevmDatabase for StoreWrapper {
+impl<T: Database> LevmDatabase for VmDbWrapper<T> {
     fn get_account(&self, address: CoreAddress) -> Result<Account, DatabaseError> {
         let acc_info = self
-            .store
-            .get_account_info_by_hash(self.block_hash, address)
+            .0
+            .get_account_info(address)
             .unwrap_or(None)
             .unwrap_or_default();
 
         let acc_code = self
-            .store
+            .0
             .get_account_code(acc_info.code_hash)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default();
@@ -122,11 +122,7 @@ impl LevmDatabase for StoreWrapper {
     }
 
     fn account_exists(&self, address: CoreAddress) -> bool {
-        let acc_info = self
-            .store
-            .get_account_info_by_hash(self.block_hash, address)
-            .unwrap();
-
+        let acc_info = self.0.get_account_info(address).unwrap();
         acc_info.is_some()
     }
 
@@ -136,26 +132,25 @@ impl LevmDatabase for StoreWrapper {
         key: CoreH256,
     ) -> Result<ethrex_common::U256, DatabaseError> {
         Ok(self
-            .store
-            .get_storage_at_hash(self.block_hash, address, key)
+            .0
+            .get_storage_slot(address, key)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default())
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<Option<CoreH256>, DatabaseError> {
         Ok(self
-            .store
-            .get_block_header(block_number)
-            .map_err(|e| DatabaseError::Custom(e.to_string()))?
-            .map(|header| CoreH256::from(header.compute_block_hash().0)))
+            .0
+            .get_block_hash(block_number)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?)
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
-        self.store.get_chain_config().unwrap()
+        self.0.get_chain_config()
     }
 
     fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
-        self.store
+        self.0
             .get_account_code(code_hash)
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }

@@ -2,6 +2,7 @@ pub mod levm;
 pub mod revm;
 
 use self::revm::db::evm_state;
+use crate::db::VmDbWrapper;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
 use crate::{db::StoreWrapper, errors::EvmError};
@@ -13,8 +14,8 @@ use ethrex_common::types::{
 use ethrex_common::{Address, H256};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::db::CacheDB;
+use ethrex_storage::AccountUpdate;
 use ethrex_storage::Store;
-use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;
@@ -74,15 +75,18 @@ impl Evm {
             EvmEngine::REVM => Evm::REVM {
                 state: evm_state(store.clone(), parent_hash),
             },
-            EvmEngine::LEVM => Evm::LEVM {
-                db: GeneralizedDatabase::new(
-                    Arc::new(StoreWrapper {
-                        store: store.clone(),
-                        block_hash: parent_hash,
-                    }),
-                    CacheDB::new(),
-                ),
-            },
+            EvmEngine::LEVM => {
+                let store = StoreWrapper {
+                    store: store.clone(),
+                    block_hash: parent_hash,
+                };
+
+                let store_wrapper = VmDbWrapper(store);
+
+                Evm::LEVM {
+                    db: GeneralizedDatabase::new(Arc::new(store_wrapper), CacheDB::new()),
+                }
+            }
         }
     }
 
@@ -208,7 +212,7 @@ impl Evm {
 
     /// Wraps the [REVM::process_withdrawals] and [LEVM::process_withdrawals].
     /// Applies the withdrawals to the state or the block_chache if using [LEVM].
-    pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), StoreError> {
+    pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), EvmError> {
         match self {
             Evm::REVM { state } => REVM::process_withdrawals(state, withdrawals),
             Evm::LEVM { db } => LEVM::process_withdrawals(db, withdrawals),
