@@ -12,7 +12,6 @@ use crate::{
 use ethrex_common::{H256, H512};
 use k256::ecdsa::SigningKey;
 use rand::rngs::OsRng;
-use sha3::{Digest, Keccak256};
 use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::UdpSocket;
 use tracing::debug;
