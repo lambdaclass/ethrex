@@ -26,7 +26,7 @@ impl Hook for DefaultHook {
     /// - It substracts up-front-cost from sender balance.
     /// - It adds value to receiver balance.
     /// - It calculates and adds intrinsic gas to the 'gas used' of callframe and environment.
-    /// See 'docs' for more information about validations.
+    ///   See 'docs' for more information about validations.
     fn prepare_execution(&self, vm: &mut VM<'_>) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
         let sender_account = vm.db.get_account(sender_address)?;
