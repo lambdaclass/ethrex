@@ -291,14 +291,14 @@ contract OnChainProposer is
         }
 
         if (R0VERIFIER != DEV_MODE) {
-            bytes32 risc0InitialStateRoot = bytes32(risc0PublicValues[0:32]);
+            bytes32 risc0InitialStateRoot = bytes32(risc0Journal[0:32]);
             require(
-                batchCommitments[lastVerifiedBatch].newStateRoot == picoInitialStateRoot,
+                batchCommitments[lastVerifiedBatch].newStateRoot == risc0InitialStateRoot,
                  "OnChainProposer: risc0 withdrawals public inputs don't match with initial state root"
             ); 
-            bytes32 risc0inalStateRoot = bytes32(risc0PublicValues[32:64]);
+            bytes32 risc0inalStateRoot = bytes32(risc0Journal[32:64]);
             require(
-                batchCommitments[batchNumber].newStateRoot == picoFinalStateRoot,
+                batchCommitments[batchNumber].newStateRoot == risc0inalStateRoot,
                  "OnChainProposer: risc0 withdrawals public inputs don't match with final state root"
             );
             bytes32 risc0WithdrawalsMerkleRoot = bytes32(risc0Journal[64:96]);
