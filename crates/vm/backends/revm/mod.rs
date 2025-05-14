@@ -170,6 +170,7 @@ impl REVM {
             state,
             *BEACON_ROOTS_ADDRESS,
             *SYSTEM_ADDRESS,
+            30_000_000,
         )?;
         Ok(())
     }
@@ -183,6 +184,7 @@ impl REVM {
             state,
             *HISTORY_STORAGE_ADDRESS,
             *SYSTEM_ADDRESS,
+            30_000_000,
         )?;
         Ok(())
     }
@@ -210,6 +212,7 @@ impl REVM {
             state,
             *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
+            30_000_000 + 21_000, // EIP-7002 dictates that system calls to WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS do not use intrinsic gas
         )?;
 
         // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
@@ -249,6 +252,7 @@ impl REVM {
             state,
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
+            30_000_000 + 21_000, // EIP-7251 dictates that system calls to CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS do not use intrinsic gas
         )?;
 
         // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
@@ -676,18 +680,19 @@ pub(crate) fn generic_system_contract_revm(
     state: &mut EvmState,
     contract_address: Address,
     system_address: Address,
+    gas_limit: u64,
 ) -> Result<ExecutionResult, EvmError> {
     let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
     let tx_env = TxEnv {
         caller: RevmAddress::from_slice(system_address.as_bytes()),
         transact_to: RevmTxKind::Call(RevmAddress::from_slice(contract_address.as_bytes())),
-        gas_limit: 30_000_000 + 21_000,
+        gas_limit: gas_limit,
         data: calldata,
         ..Default::default()
     };
     let mut block_env = block_env(block_header, spec_id);
     block_env.basefee = RevmU256::ZERO;
-    block_env.gas_limit = RevmU256::from(30_000_000 + 21_000);
+    block_env.gas_limit = RevmU256::from(gas_limit);
 
     match state {
         EvmState::Store(db) => {
