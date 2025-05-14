@@ -724,9 +724,7 @@ impl<'a> VM<'a> {
 
         self.accrued_substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
 
-        // Backup of Substate, a copy of the substate to restore if sub-context is reverted
-        let backup = self.accrued_substate.clone();
-        self.substate_backups.push(backup);
+        self.backup_substate();
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
@@ -832,9 +830,7 @@ impl<'a> VM<'a> {
             let report = self.execute_precompile()?;
             self.handle_return(&report)?;
         } else {
-            // Backup of Substate, a copy of the substate to restore if sub-context is reverted
-            let backup = self.accrued_substate.clone();
-            self.substate_backups.push(backup);
+            self.backup_substate();
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })

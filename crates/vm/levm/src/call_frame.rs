@@ -213,18 +213,16 @@ impl<'a> VM<'a> {
     }
 
     /// Restores the cache state to the state before changes made during a callframe.
-    pub fn restore_cache_state(
-        &mut self,
-        call_frame_backup: CallFrameBackup,
-    ) -> Result<(), VMError> {
-        for (address, account) in call_frame_backup.original_accounts_info {
+    pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
+        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
+        for (address, account) in callframe_backup.original_accounts_info {
             if let Some(current_account) = cache::get_account_mut(&mut self.db.cache, &address) {
                 current_account.info = account.info;
                 current_account.code = account.code;
             }
         }
 
-        for (address, storage) in call_frame_backup.original_account_storage_slots {
+        for (address, storage) in callframe_backup.original_account_storage_slots {
             // This call to `get_account_mut` should never return None, because we are looking up accounts
             // that had their storage modified, which means they should be in the cache. That's why
             // we return an internal error in case we haven't found it.

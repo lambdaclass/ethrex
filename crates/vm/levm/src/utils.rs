@@ -600,4 +600,9 @@ impl<'a> VM<'a> {
             self.env.config.fork,
         ))
     }
+
+    /// Backup of Substate, a copy of the current substate to restore if sub-context is reverted
+    pub fn backup_substate(&mut self) {
+        self.substate_backups.push(self.accrued_substate.clone());
+    }
 }

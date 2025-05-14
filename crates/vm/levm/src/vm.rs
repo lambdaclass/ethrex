@@ -1,5 +1,5 @@
 use crate::{
-    call_frame::{CallFrame, CallFrameBackup},
+    call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
@@ -187,7 +187,7 @@ impl<'a> VM<'a> {
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
-            self.restore_cache_state(self.current_call_frame()?.call_frame_backup.clone())?;
+            self.restore_cache_state()?;
             return Err(e);
         }
 
@@ -202,10 +202,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        // Backup of Substate, a copy of the current substate to restore if sub-context is reverted
-        let backup = self.accrued_substate.clone();
-
-        self.substate_backups.push(backup);
+        self.backup_substate();
 
         let mut report = self.run_execution()?;
 
@@ -259,12 +256,8 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
-    pub fn restore_state(
-        &mut self,
-        backup: Substate,
-        call_frame_backup: CallFrameBackup,
-    ) -> Result<(), VMError> {
-        self.restore_cache_state(call_frame_backup)?;
+    pub fn restore_state(&mut self, backup: Substate) -> Result<(), VMError> {
+        self.restore_cache_state()?;
         self.accrued_substate = backup;
         Ok(())
     }
