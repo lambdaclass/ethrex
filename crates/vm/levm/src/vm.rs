@@ -4,10 +4,7 @@ use crate::{
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     hooks::hook::Hook,
-    precompiles::{
-        execute_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
-        SIZE_PRECOMPILES_PRE_CANCUN,
-    },
+    precompiles::execute_precompile,
     utils::*,
     TransientStorage,
 };
@@ -15,7 +12,7 @@ use bytes::Bytes;
 use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        Fork, Transaction, TxKind,
+        Transaction, TxKind,
     },
     Address, H256, U256,
 };
@@ -24,11 +21,6 @@ use std::{
     fmt::Debug,
     sync::Arc,
 };
-
-#[cfg(not(feature = "l2"))]
-use crate::hooks::DefaultHook;
-#[cfg(feature = "l2")]
-use {crate::hooks::L2Hook, ethrex_common::types::PrivilegedL2Transaction};
 
 pub type Storage = HashMap<U256, H256>;
 
@@ -63,61 +55,8 @@ impl<'a> VM<'a> {
         db: &'a mut GeneralizedDatabase,
         tx: &Transaction,
     ) -> Result<Self, VMError> {
-        // Add sender and recipient (in the case of a Call) to cache [https://www.evm.codes/about#access_list]
-        let mut default_touched_accounts = HashSet::from_iter([env.origin].iter().cloned());
-
-        // [EIP-3651] - Add coinbase to cache if the spec is SHANGHAI or higher
-        if env.config.fork >= Fork::Shanghai {
-            default_touched_accounts.insert(env.coinbase);
-        }
-
-        let mut default_touched_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
-
-        // Add access lists contents to cache
-        for (address, keys) in tx.access_list() {
-            default_touched_accounts.insert(address);
-            let mut warm_slots = BTreeSet::new();
-            for slot in keys {
-                warm_slots.insert(slot);
-            }
-            default_touched_storage_slots.insert(address, warm_slots);
-        }
-
-        // Add precompiled contracts addresses to cache.
-        let max_precompile_address = match env.config.fork {
-            spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
-            spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
-            spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
-            _ => return Err(VMError::Internal(InternalError::InvalidSpecId)),
-        };
-        for i in 1..=max_precompile_address {
-            default_touched_accounts.insert(Address::from_low_u64_be(i));
-        }
-
-        #[cfg(not(feature = "l2"))]
-        let hooks: Vec<Arc<dyn Hook>> = vec![Arc::new(DefaultHook)];
-        #[cfg(feature = "l2")]
-        let hooks: Vec<Arc<dyn Hook>> = {
-            let recipient = if let Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
-                recipient,
-                ..
-            }) = tx
-            {
-                Some(*recipient)
-            } else {
-                None
-            };
-            vec![Arc::new(L2Hook { recipient })]
-        };
-
-        let mut substate = Substate {
-            selfdestruct_set: HashSet::new(),
-            touched_accounts: default_touched_accounts,
-            touched_storage_slots: default_touched_storage_slots,
-            created_accounts: HashSet::new(),
-            refunded_gas: 0,
-            transient_storage: HashMap::new(),
-        };
+        let mut substate = Self::initialize_substate(&env, tx)?;
+        let hooks = Self::get_hooks(tx);
 
         let bytecode;
         let destination_and_code_address;

@@ -7,13 +7,17 @@ use crate::{
         BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
+    hooks::hook::Hook,
     opcodes::Opcode,
-    precompiles::is_precompile,
+    precompiles::{
+        is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
+        SIZE_PRECOMPILES_PRE_CANCUN,
+    },
     vm::{Substate, VM},
-    EVMConfig,
+    EVMConfig, Environment,
 };
 use bytes::Bytes;
-use ethrex_common::types::Account;
+use ethrex_common::types::{Account, Transaction};
 use ethrex_common::{
     types::{tx_fields::*, Fork},
     Address, H256, U256,
@@ -23,8 +27,16 @@ use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
 use libsecp256k1::{Message, RecoveryId, Signature};
 use sha3::{Digest, Keccak256};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    sync::Arc,
+};
 pub type Storage = HashMap<U256, H256>;
+
+#[cfg(not(feature = "l2"))]
+use crate::hooks::DefaultHook;
+#[cfg(feature = "l2")]
+use {crate::hooks::L2Hook, ethrex_common::types::PrivilegedL2Transaction};
 
 // ================== Address related functions ======================
 /// Converts address (H160) to word (U256)
@@ -604,5 +616,68 @@ impl<'a> VM<'a> {
     /// Backup of Substate, a copy of the current substate to restore if sub-context is reverted
     pub fn backup_substate(&mut self) {
         self.substate_backups.push(self.accrued_substate.clone());
+    }
+
+    pub fn initialize_substate(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
+        // Add sender and recipient (in the case of a Call) to cache [https://www.evm.codes/about#access_list]
+        let mut default_touched_accounts = HashSet::from_iter([env.origin].iter().cloned());
+
+        // [EIP-3651] - Add coinbase to cache if the spec is SHANGHAI or higher
+        if env.config.fork >= Fork::Shanghai {
+            default_touched_accounts.insert(env.coinbase);
+        }
+
+        let mut default_touched_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
+
+        // Add access lists contents to cache
+        for (address, keys) in tx.access_list() {
+            default_touched_accounts.insert(address);
+            let mut warm_slots = BTreeSet::new();
+            for slot in keys {
+                warm_slots.insert(slot);
+            }
+            default_touched_storage_slots.insert(address, warm_slots);
+        }
+
+        // Add precompiled contracts addresses to cache.
+        let max_precompile_address = match env.config.fork {
+            spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
+            spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
+            spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
+            _ => return Err(VMError::Internal(InternalError::InvalidSpecId)),
+        };
+        for i in 1..=max_precompile_address {
+            default_touched_accounts.insert(Address::from_low_u64_be(i));
+        }
+
+        let substate = Substate {
+            selfdestruct_set: HashSet::new(),
+            touched_accounts: default_touched_accounts,
+            touched_storage_slots: default_touched_storage_slots,
+            created_accounts: HashSet::new(),
+            refunded_gas: 0,
+            transient_storage: HashMap::new(),
+        };
+
+        Ok(substate)
+    }
+
+    pub fn get_hooks(tx: &Transaction) -> Vec<Arc<dyn Hook + 'static>> {
+        #[cfg(not(feature = "l2"))]
+        let hooks: Vec<Arc<dyn Hook>> = vec![Arc::new(DefaultHook)];
+        #[cfg(feature = "l2")]
+        let hooks: Vec<Arc<dyn Hook>> = {
+            let recipient = if let Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
+                recipient,
+                ..
+            }) = tx
+            {
+                Some(*recipient)
+            } else {
+                None
+            };
+            vec![Arc::new(L2Hook { recipient })]
+        };
+        hooks
     }
 }
