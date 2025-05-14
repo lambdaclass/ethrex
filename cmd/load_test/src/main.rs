@@ -270,7 +270,7 @@ async fn load_test(
 // Waits until the nonce of each account has reached the tx_amount.
 async fn wait_until_all_included(
     client: EthClient,
-    wait: Option<Duration>,
+    timeout: Option<Duration>,
     accounts: &[Account],
     tx_amount: u64,
 ) -> Result<(), String> {
@@ -296,13 +296,15 @@ async fn wait_until_all_included(
                 );
             }
 
-            if let Some(wait) = wait {
-                let elapsed = last_updated.elapsed();
-                if last_nonce == nonce && elapsed > wait {
-                    return Err(format!(
-                        "Node inactive for {} seconds. Timeout reached.",
-                        elapsed.as_secs()
-                    ));
+            if let Some(timeout) = timeout {
+                if last_nonce == nonce {
+                    let inactivity_time = last_updated.elapsed();
+                    if inactivity_time > timeout {
+                        return Err(format!(
+                            "Node inactive for {} seconds. Timeout reached.",
+                            inactivity_time.as_secs()
+                        ));
+                    }
                 } else {
                     last_nonce = nonce;
                     last_updated = tokio::time::Instant::now();
