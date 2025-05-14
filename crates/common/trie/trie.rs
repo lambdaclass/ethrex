@@ -114,8 +114,7 @@ impl Trie {
                 .root
                 .get_node(self.db.as_ref())?
                 .ok_or(TrieError::InconsistentTree)?
-                .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?
-                .into();
+                .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
 
             (node.map(Into::into).unwrap_or_default(), value)
         } else {
@@ -147,7 +146,7 @@ impl Trie {
         if self.root.is_valid() {
             let mut acc = Vec::new();
             self.root.commit(&mut acc);
-            self.db.put_batch(acc);
+            self.db.put_batch(acc)?;
         }
 
         Ok(())

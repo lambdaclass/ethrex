@@ -19,7 +19,7 @@ use crate::{error::TrieError, nibbles::Nibbles, TrieDB};
 use super::{node_hash::NodeHash, ValueRLP};
 
 /// A reference to a node.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum NodeRef {
     /// The node is embedded within the reference.
     Node(Box<Node>),
@@ -103,7 +103,24 @@ impl From<NodeHash> for NodeRef {
     }
 }
 
-enum ValueOrHash {
+impl PartialEq for NodeRef {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (NodeRef::Node(lhs), NodeRef::Node(rhs)) => PartialEq::eq(lhs, rhs),
+            (NodeRef::Node(lhs), NodeRef::Hash(rhs)) => {
+                let lhs = lhs.compute_hash();
+                PartialEq::eq(&lhs, rhs)
+            }
+            (NodeRef::Hash(lhs), NodeRef::Node(rhs)) => {
+                let rhs = rhs.compute_hash();
+                PartialEq::eq(lhs, &rhs)
+            }
+            (NodeRef::Hash(lhs), NodeRef::Hash(rhs)) => PartialEq::eq(lhs, rhs),
+        }
+    }
+}
+
+pub enum ValueOrHash {
     Value(ValueRLP),
     Hash(NodeHash),
 }

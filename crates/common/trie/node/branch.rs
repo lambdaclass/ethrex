@@ -94,15 +94,22 @@ impl BranchNode {
                         .get_node(db)?
                         .ok_or(TrieError::InconsistentTree)?;
 
-                    let child_node = child_node.insert(db, path, value)?;
-                    *choice_hash = Node::from(child_node).into();
+                    *choice_hash = child_node.insert(db, path, value)?.into();
                 }
                 // Insert external node hash if there are no overrides.
-                (choice_hash, ValueOrHash::Hash(hash)) => {
+                (choice_hash, value @ ValueOrHash::Hash(hash)) => {
                     if !choice_hash.is_valid() {
                         *choice_hash = hash.into();
+                    } else if path.is_empty() {
+                        return Err(TrieError::Verify(
+                            "attempt to override proof node with external hash".to_string(),
+                        ));
                     } else {
-                        todo!("handle override case (error?)")
+                        *choice_hash = choice_hash
+                            .get_node(db)?
+                            .ok_or(TrieError::InconsistentTree)?
+                            .insert(db, path, value)?
+                            .into();
                     }
                 }
             }
@@ -152,7 +159,7 @@ impl BranchNode {
                 let (child_node, old_value) = child_node.remove(db, path.clone())?;
                 if let Some(child_node) = child_node {
                     // Update child node
-                    self.choices[choice_index] = Node::from(child_node).into();
+                    self.choices[choice_index] = child_node.into();
                 } else {
                     // Remove child hash if the child subtrie was removed in the process
                     self.choices[choice_index] = NodeHash::default().into();

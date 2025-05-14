@@ -110,7 +110,7 @@ pub fn verify_range(
     }
 
     // Process proofs to check if they are valid.
-    let (external_refs, (left_value, right_value), num_right_refs) =
+    let (external_refs, _, num_right_refs) =
         process_proof_nodes(proof, root.into(), (*first_key, Some(*last_key)))?;
 
     // Reconstruct the internal nodes by inserting the elements on the range
@@ -121,7 +121,7 @@ pub fn verify_range(
     // Fill up the state with the nodes from the proof
     let mut trie = ProofTrie::from(trie);
     for (partial_path, external_ref) in external_refs {
-        trie.insert(partial_path, external_ref);
+        trie.insert(partial_path, external_ref)?;
     }
 
     // Check that the hash is the one we expected (aka the trie was properly reconstructed from the edge proofs and the range)
@@ -189,32 +189,30 @@ fn process_proof_nodes(
     //   3. Nodes for which we do not have the proof are treated as external references.
     let mut process_child =
         |stack: &mut VecDeque<_>, mut partial_path: Nibbles, child| -> Result<(), TrieError> {
-            let cmp_l = partial_path.cmp(&bounds.0);
-            let cmp_r = bounds.1.as_ref().map(|x| partial_path.cmp(x));
+            let cmp_l = bounds.0.compare_prefix(&partial_path);
+            let cmp_r = bounds.1.as_ref().map(|x| x.compare_prefix(&partial_path));
 
-            // if partial_path < left_bound || partial_path > right_bound
-            if cmp_l == Ordering::Less || cmp_r.is_none_or(|x| x == Ordering::Greater) {
+            if cmp_l != Ordering::Less || cmp_r.is_none_or(|x| x != Ordering::Greater) {
                 let NodeRef::Hash(hash) = child else {
-                    // This is unreachable because the nodes have just been decoded,
-                    // therefore only having hash references.
+                    // This is unreachable because the nodes have just been decoded, therefore only
+                    // having hash references.
                     unreachable!()
                 };
 
                 match get_node(&proof, hash)? {
                     Some(node) => {
-                        // Append leaf marker if pushing a leaf.
-                        if matches!(node, Node::Leaf(_)) {
-                            partial_path.append(16);
+                        // Append implicit leaf extension when pushing leaves.
+                        if let Node::Leaf(node) = &node {
+                            partial_path.extend(&node.partial);
                         }
 
                         stack.push_back((partial_path, node));
                     }
                     None => external_refs.push((partial_path, hash)),
                 }
-            } else {
+
                 // Increment right-reference counter.
-                // if is_some_and(partial_path > right_bound) || partial_path > left_bound
-                if cmp_r.is_none_or(|x| x == Ordering::Greater) || cmp_l == Ordering::Greater {
+                if cmp_l == Ordering::Less && cmp_r.is_none_or(|x| x == Ordering::Less) {
                     num_right_refs += 1;
                 }
             }
@@ -227,7 +225,7 @@ fn process_proof_nodes(
         get_node(&proof, root)?
             .ok_or(TrieError::Verify(format!("proof node missing: {root:?}")))?,
     )]);
-    while let Some((current_path, current_node)) = stack.pop_front() {
+    while let Some((mut current_path, current_node)) = stack.pop_front() {
         match current_node {
             Node::Branch(node) => {
                 for (index, choice) in node.choices.into_iter().enumerate() {
@@ -237,7 +235,8 @@ fn process_proof_nodes(
                 }
             }
             Node::Extension(node) => {
-                process_child(&mut stack, current_path.concat(node.prefix), node.child)?;
+                current_path.extend(&node.prefix);
+                process_child(&mut stack, current_path, node.child)?;
             }
             Node::Leaf(node) => {
                 if !node.value.is_empty() {
@@ -255,715 +254,393 @@ fn process_proof_nodes(
     Ok((external_refs, (left_value, right_value), num_right_refs))
 }
 
-// /// Fills up the TrieState with nodes from the proof traversing the path given by first_key
-// /// Returns an error if there are gaps in the proof node path
-// /// Also returns the value if it is part of the proof
-// fn fill_state(
-//     trie_state: &mut Trie,
-//     root_hash: H256,
-//     first_key: &H256,
-//     proof_nodes: &ProofNodeStorage,
-// ) -> Result<Vec<u8>, TrieError> {
-//     let mut path = Nibbles::from_bytes(&first_key.0);
-//     let (node, data) = fill_node(
-//         &mut path,
-//         &NodeHash::from(root_hash),
-//         match mem::take(&mut trie_state.root) {
-//             NodeRef::Node(node) => Some(*node),
-//             NodeRef::Hash(_) => None,
-//         },
-//         proof_nodes,
-//     )?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::collection::{btree_set, vec};
+    use proptest::prelude::any;
+    use proptest::{bool, proptest};
+    use std::str::FromStr;
 
-//     trie_state.root = node.into();
-//     Ok(data)
-// }
+    #[test]
+    fn verify_range_regular_case_only_branch_nodes() {
+        // The trie will have keys and values ranging from 25-100
+        // We will prove the range from 50-75
+        // Note values are written as hashes in the form i -> [i;32]
+        let mut trie = Trie::new_temp();
+        for k in 25..100_u8 {
+            trie.insert([k; 32].to_vec(), [k; 32].to_vec()).unwrap()
+        }
+        let mut proof = trie.get_proof(&[50; 32].to_vec()).unwrap();
+        proof.extend(trie.get_proof(&[75; 32].to_vec()).unwrap());
+        let root = trie.hash().unwrap();
+        let keys = (50_u8..=75).map(|i| H256([i; 32])).collect::<Vec<_>>();
+        let values = (50_u8..=75).map(|i| [i; 32].to_vec()).collect::<Vec<_>>();
+        let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
+        // Our trie contains more elements to the right
+        assert!(fetch_more)
+    }
 
-// /// Fills up the TrieState with nodes from the proof traversing the path given by first_key
-// /// Returns an error if there are gaps in the proof node path
-// /// Also returns the value if it is part of the proof
-// fn fill_node(
-//     path: &mut Nibbles,
-//     node_hash: &NodeHash,
-//     parent: Option<Node>,
-//     proof_nodes: &ProofNodeStorage,
-// ) -> Result<(Node, Vec<u8>), TrieError> {
-//     let node = proof_nodes.get_node(node_hash)?;
-//     let child_hash = get_child(path, &node);
-//     if let Some(ref child_hash) = child_hash {
-//         fill_node(path, child_hash, trie_state, proof_nodes)
-//     } else {
-//         let value = match &node {
-//             Node::Branch(n) => n.value.clone(),
-//             Node::Extension(_) => vec![],
-//             Node::Leaf(n) => (*path == n.partial)
-//                 .then_some(n.value.clone())
-//                 .unwrap_or_default(),
-//         };
-//         trie_state.insert_node(node, *node_hash);
-//         Ok(value)
-//     }
-// }
+    #[test]
+    fn verify_range_regular_case() {
+        // The account ranges were taken form a hive test state, but artificially modified
+        // so that the resulting trie has a wide variety of different nodes (and not only branches)
+        let account_addresses: [&str; 26] = [
+            "0xaa56789abcde80cde11add7d3447cd4ca93a5f2205d9874261484ae180718bd6",
+            "0xaa56789abcdeda9ae19dd26a33bd10bbf825e28b3de84fc8fe1d15a21645067f",
+            "0xaa56789abc39a8284ef43790e3a511b2caa50803613c5096bc782e8de08fa4c5",
+            "0xaa5678931f4754834b0502de5b0342ceff21cde5bef386a83d2292f4445782c2",
+            "0xaa567896492bfe767f3d18be2aab96441c449cd945770ef7ef8555acc505b2e4",
+            "0xaa5f478d53bf78add6fa3708d9e061d59bfe14b21329b2a4cf1156d4f81b3d2d",
+            "0xaa67c643f67b47cac9efacf6fcf0e4f4e1b273a727ded155db60eb9907939eb6",
+            "0xaa04d8eaccf0b942c468074250cbcb625ec5c4688b6b5d17d2a9bdd8dd565d5a",
+            "0xaa63e52cda557221b0b66bd7285b043071df4c2ab146260f4e010970f3a0cccf",
+            "0xaad9aa4f67f8b24d70a0ffd757e82456d9184113106b7d9e8eb6c3e8a8df27ee",
+            "0xaa3df2c3b574026812b154a99b13b626220af85cd01bb1693b1d42591054bce6",
+            "0xaa79e46a5ed8a88504ac7d579b12eb346fbe4fd7e281bdd226b891f8abed4789",
+            "0xbbf68e241fff876598e8e01cd529bd76416b248caf11e0552047c5f1d516aab6",
+            "0xbbf68e241fff876598e8e01cd529c908cdf0d646049b5b83629a70b0117e2957",
+            "0xbbf68e241fff876598e8e0180b89744abb96f7af1171ed5f47026bdf01df1874",
+            "0xbbf68e241fff876598e8a4cd8e43f08be4715d903a0b1d96b3d9c4e811cbfb33",
+            "0xbbf68e241fff8765182a510994e2b54d14b731fac96b9c9ef434bc1924315371",
+            "0xbbf68e241fff87655379a3b66c2d8983ba0b2ca87abaf0ca44836b2a06a2b102",
+            "0xbbf68e241fffcbcec8301709a7449e2e7371910778df64c89f48507390f2d129",
+            "0xbbf68e241ffff228ed3aa7a29644b1915fde9ec22e0433808bf5467d914e7c7a",
+            "0xbbf68e24190b881949ec9991e48dec768ccd1980896aefd0d51fd56fd5689790",
+            "0xbbf68e2419de0a0cb0ff268c677aba17d39a3190fe15aec0ff7f54184955cba4",
+            "0xbbf68e24cc6cbd96c1400150417dd9b30d958c58f63c36230a90a02b076f78b5",
+            "0xbbf68e2490f33f1d1ba6d1521a00935630d2c81ab12fa03d4a0f4915033134f3",
+            "0xc017b10a7cc3732d729fe1f71ced25e5b7bc73dc62ca61309a8c7e5ac0af2f72",
+            "0xc098f06082dc467088ecedb143f9464ebb02f19dc10bd7491b03ba68d751ce45",
+        ];
+        let mut account_addresses = account_addresses
+            .iter()
+            .map(|addr| H256::from_str(addr).unwrap())
+            .collect::<Vec<_>>();
+        account_addresses.sort();
+        let trie_values = account_addresses
+            .iter()
+            .map(|addr| addr.0.to_vec())
+            .collect::<Vec<_>>();
+        let keys = account_addresses[7..=17].to_vec();
+        let values = account_addresses[7..=17]
+            .iter()
+            .map(|v| v.0.to_vec())
+            .collect::<Vec<_>>();
+        let mut trie = Trie::new_temp();
+        for val in trie_values.iter() {
+            trie.insert(val.clone(), val.clone()).unwrap()
+        }
+        let mut proof = trie.get_proof(&trie_values[7]).unwrap();
+        proof.extend(trie.get_proof(&trie_values[17]).unwrap());
+        let root = trie.hash().unwrap();
+        let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
+        // Our trie contains more elements to the right
+        assert!(fetch_more)
+    }
 
-// /// Returns the node hash of the node's child (if any) following the given path
-// fn get_child<'a>(path: &'a mut Nibbles, node: &'a Node) -> Option<Nibbles> {
-//     match node {
-//         Node::Branch(n) => {
-//             if let Some(choice) = path.next_choice() {
-//                 if n.choices[choice].is_valid() {
-//                     return Some(path.append_new(choice as u8));
-//                 }
-//             }
-//             None
-//         }
-//         Node::Extension(n) => {
-//             path.skip_prefix(&n.prefix);
-//             Some(path.clone())
-//         }
-//         Node::Leaf(_) => None,
-//     }
-// }
+    // Proptests for verify_range
+    proptest! {
 
-// /// Returns true if the trie contains elements to the right of the given key
-// /// (Aka if the given key is not the edge key of the trie)
-// fn has_right_element(db: &dyn TrieDB, node: &NodeRef, key: &[u8]) -> Result<bool, TrieError> {
-//     let path = Nibbles::from_bytes(key);
-//     has_right_element_inner(db, node, path)
-// }
+        // Successful Cases
 
-// /// Returns true if the node's subtrie contains elements to the right of the given key
-// /// (Aka if the given key is not the edge key of the subtrie)
-// fn has_right_element_inner(
-//     db: &dyn TrieDB,
-//     node: &NodeRef,
-//     mut path: Nibbles,
-// ) -> Result<bool, TrieError> {
-//     let node = match node {
-//         NodeRef::Node(node) => node.as_ref(),
-//         NodeRef::Hash(_) => todo!(),
-//     };
+        #[test]
+        // Regular Case: Two Edge Proofs, both keys exist
+        fn proptest_verify_range_regular_case(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
+            // Build trie
+            let mut trie = Trie::new_temp();
+            for val in data.iter() {
+                trie.insert(val.clone(), val.clone()).unwrap()
+            }
+            let root = trie.hash().unwrap();
+            // Select range to prove
+            let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
+            let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
+            // Generate proofs
+            let mut proof = trie.get_proof(&values[0]).unwrap();
+            proof.extend(trie.get_proof(values.last().unwrap()).unwrap());
+            // Verify the range proof
+            let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
+            if end == 199 {
+                // The last key is at the edge of the trie
+                assert!(!fetch_more)
+            } else {
+                // Our trie contains more elements to the right
+                assert!(fetch_more)
+            }
+        }
 
-//     match node {
-//         Node::Branch(ref n) => {
-//             // Check if there are children to the right side
-//             if let Some(choice) = path.next_choice() {
-//                 if n.choices[choice + 1..].iter().any(|child| child.is_valid()) {
-//                     return Ok(true);
-//                 } else if n.choices[choice].is_valid() {
-//                     return has_right_element_inner(db, &n.choices[choice], path);
-//                 }
-//             }
-//         }
-//         Node::Extension(n) => {
-//             if path.skip_prefix(&n.prefix) {
-//                 return has_right_element_inner(db, &n.child, path);
-//             } else {
-//                 return Ok(n.prefix.as_ref() > path.as_ref());
-//             }
-//         }
-//         // We reached the end of the path
-//         Node::Leaf(_) => {}
-//     }
-//     Ok(false)
-// }
+        #[test]
+        // Two Edge Proofs, first and last keys dont exist
+        fn proptest_verify_range_nonexistant_edge_keys(data in btree_set(vec(1..u8::MAX-1, 32), 200), start in 1_usize..=100_usize, end in 101..199_usize) {
+            let data = data.into_iter().collect::<Vec<_>>();
+            // Build trie
+            let mut trie = Trie::new_temp();
+            for val in data.iter() {
+                trie.insert(val.clone(), val.clone()).unwrap()
+            }
+            let root = trie.hash().unwrap();
+            // Select range to prove
+            let values = data[start..=end].to_vec();
+            let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
+            // Select the first and last keys
+            // As we will be using non-existant keys we will choose values that are `just` higer/lower than
+            // the first and last values in our key range
+            // Skip the test entirely in the unlucky case that the values just next to the edge keys are also part of the trie
+            let mut first_key = data[start].clone();
+            first_key[31] -=1;
+            if first_key == data[start -1] {
+                // Skip test
+                return Ok(());
+            }
+            let mut last_key = data[end].clone();
+            last_key[31] +=1;
+            if last_key == data[end +1] {
+                // Skip test
+                return Ok(());
+            }
+            // Generate proofs
+            let mut proof = trie.get_proof(&first_key).unwrap();
+            proof.extend(trie.get_proof(&last_key).unwrap());
+            // Verify the range proof
+            let fetch_more = verify_range(root, &H256::from_slice(&first_key), &keys, &values, &proof).unwrap();
+            // Our trie contains more elements to the right
+            assert!(fetch_more)
+        }
 
-// /// Removes references to internal nodes between the left and right key
-// /// These nodes should be entirely reconstructed when inserting the elements between left and right key (the proven range)
-// /// Returns true if the trie is left empty (rootless) as a result of this process
-// /// Asumes that left_key & right_key are not equal and of same length
-// fn remove_internal_references(
-//     db: &dyn TrieDB,
-//     root_hash: H256,
-//     left_key: &H256,
-//     right_key: &H256,
-// ) -> Result<bool, TrieError> {
-//     // First find the node at which the left and right path differ
-//     let left_path = Nibbles::from_bytes(&left_key.0);
-//     let right_path = Nibbles::from_bytes(&right_key.0);
+        #[test]
+        // Two Edge Proofs, one key doesn't exist
+        fn proptest_verify_range_one_key_doesnt_exist(data in btree_set(vec(1..u8::MAX-1, 32), 200), start in 1_usize..=100_usize, end in 101..199_usize, first_key_exists in bool::ANY) {
+            let data = data.into_iter().collect::<Vec<_>>();
+            // Build trie
+            let mut trie = Trie::new_temp();
+            for val in data.iter() {
+                trie.insert(val.clone(), val.clone()).unwrap()
+            }
+            let root = trie.hash().unwrap();
+            // Select range to prove
+            let values = data[start..=end].to_vec();
+            let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
+            // Select the first and last keys
+            // As we will be using non-existant keys we will choose values that are `just` higer/lower than
+            // the first and last values in our key range
+            // Skip the test entirely in the unlucky case that the values just next to the edge keys are also part of the trie
+            let mut first_key = data[start].clone();
+            let mut last_key = data[end].clone();
+            if first_key_exists {
+                last_key[31] +=1;
+                if last_key == data[end +1] {
+                    // Skip test
+                    return Ok(());
+                }
+            } else {
+                first_key[31] -=1;
+                if first_key == data[start -1] {
+                    // Skip test
+                    return Ok(());
+            }
+            }
+            // Generate proofs
+            let mut proof = trie.get_proof(&first_key).unwrap();
+            proof.extend(trie.get_proof(&last_key).unwrap());
+            // Verify the range proof
+            let fetch_more = verify_range(root, &H256::from_slice(&first_key), &keys, &values, &proof).unwrap();
+            // Our trie contains more elements to the right
+            assert!(fetch_more)
+        }
 
-//     remove_internal_references_inner(db, NodeHash::from(root_hash).into(), left_path, right_path)
-// }
+        #[test]
+        // Special Case: Range contains all the leafs in the trie, no proofs
+        fn proptest_verify_range_full_leafset(data in btree_set(vec(any::<u8>(), 32), 100..200)) {
+            // Build trie
+            let mut trie = Trie::new_temp();
+            for val in data.iter() {
+                trie.insert(val.clone(), val.clone()).unwrap()
+            }
+            let root = trie.hash().unwrap();
+            // Select range to prove
+            let values = data.into_iter().collect::<Vec<_>>();
+            let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
+            // The keyset contains the entire trie so we don't need edge proofs
+            let proof = vec![];
+            // Verify the range proof
+            let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
+            // Our range is the full leafset, there shouldn't be more values left in the trie
+            assert!(!fetch_more)
+        }
 
-// /// Traverses the left and right path starting from the given node until the paths diverge
-// /// Once the paths diverge, removes the nodes between the left and right path
-// /// Returns true if the given node was completely removed as a result of this process
-// /// In which case the caller should remove the reference to this node from its parent node
-// /// Asumes that left_key & right_key are not equal and of same length
-// fn remove_internal_references_inner(
-//     db: &dyn TrieDB,
-//     node_hash: NodeRef,
-//     mut left_path: Nibbles,
-//     mut right_path: Nibbles,
-// ) -> Result<bool, TrieError> {
-//     if !node_hash.is_valid() {
-//         return Ok(true);
-//     }
-//     // We already looked up the nodes when filling the state so this shouldn't fail
-//     match node {
-//         Node::Branch(mut n) => {
-//             // If none of the paths have a next choice nibble then it means that this is the end of the path
-//             // which would mean that both paths are equal, which we already checked before
-//             // If only one path doesn't have a next choice then it would mean that the paths have different lengths,
-//             // which we also checked before calling this function
-//             // Therefore we can safely unwrap here
-//             let left_choice = left_path.next_choice().unwrap();
-//             let right_choice = right_path.next_choice().unwrap();
+        #[test]
+        // Special Case: No values, one edge proof (of non-existance)
+        fn proptest_verify_range_no_values(mut data in btree_set(vec(any::<u8>(), 32), 100..200)) {
+            // Remove the last element so we can use it as key for the proof of non-existance
+            let last_element = data.pop_last().unwrap();
+            // Build trie
+            let mut trie = Trie::new_temp();
+            for val in data.iter() {
+                trie.insert(val.clone(), val.clone()).unwrap()
+            }
+            let root = trie.hash().unwrap();
+            // Range is empty
+            let values = vec![];
+            let keys = vec![];
+            let first_key = H256::from_slice(&last_element);
+            // Generate proof (last element)
+            let proof = trie.get_proof(&last_element).unwrap();
+            // Verify the range proof
+            let fetch_more = verify_range(root, &first_key, &keys, &values, &proof).unwrap();
+            // There are no more elements to the right of the range
+            assert!(!fetch_more)
+        }
 
-//             if left_choice == right_choice && n.choices[left_choice].is_valid() {
-//                 // Keep going
-//                 // Check if the child extension node should be removed as a result of this process
-//                 let should_remove = remove_internal_references_inner(
-//                     n.choices[left_choice].compute_hash(),
-//                     left_path,
-//                     right_path,
-//                     trie_state,
-//                 )?;
-//                 if should_remove {
-//                     // Remove child node
-//                     n.choices[left_choice] = NodeHash::default().into();
-//                     // Update node in the state
-//                     trie_state.insert_node(n.into(), node_hash);
-//                 }
-//             } else {
-//                 // We found our fork node, now we can remove the internal references
-//                 // Remove all child nodes between the left and right child nodes
-//                 for choice in &mut n.choices[left_choice + 1..right_choice] {
-//                     *choice = NodeHash::default().into();
-//                 }
-//                 // Remove nodes on the left and right choice's subtries
-//                 let should_remove_left = remove_node(db, &n.choices[left_choice], left_path, false);
-//                 let should_remove_right =
-//                     remove_node(db, &n.choices[right_choice], right_path, true);
-//                 // Remove left and right child nodes if their subtries where wiped in the process
-//                 if should_remove_left {
-//                     n.choices[left_choice] = NodeHash::default().into();
-//                 }
-//                 if should_remove_right {
-//                     n.choices[right_choice] = NodeHash::default().into();
-//                 }
-//                 // Update node in the state
-//                 trie_state.insert_node(n.into(), node_hash);
-//             }
-//         }
-//         Node::Extension(n) => {
-//             // Compare left and right paths against prefix
+        #[test]
+        // Special Case: One element range
+        fn proptest_verify_range_one_element(data in btree_set(vec(any::<u8>(), 32), 200), start in 0_usize..200_usize) {
+            // Build trie
+            let mut trie = Trie::new_temp();
+            for val in data.iter() {
+                trie.insert(val.clone(), val.clone()).unwrap()
+            }
+            let root = trie.hash().unwrap();
+            // Select range to prove
+            let values = vec![data.iter().collect::<Vec<_>>()[start].clone()];
+            let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
+            // Generate proofs
+            let proof = trie.get_proof(&values[0]).unwrap();
+            // Verify the range proof
+            let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
+            if start == 199 {
+                // The last key is at the edge of the trie
+                assert!(!fetch_more)
+            } else {
+                // Our trie contains more elements to the right
+                assert!(fetch_more)
+            }
+        }
 
-//             let left_fork = left_path.compare_prefix(&n.prefix);
-//             let right_fork = right_path.compare_prefix(&n.prefix);
+    // Unsuccesful Cases
 
-//             match (left_fork, right_fork) {
-//                 // If both paths contain the same prefix as the extension node, keep going
-//                 (Ordering::Equal, Ordering::Equal) => {
-//                     return remove_internal_references_inner(
-//                         n.child.compute_hash(),
-//                         left_path.offset(n.prefix.len()),
-//                         right_path.offset(n.prefix.len()),
-//                         trie_state,
-//                     );
-//                 }
-//                 // If both paths are greater or lesser than the node's prefix then the range is empty
-//                 (Ordering::Greater, Ordering::Greater) | (Ordering::Less, Ordering::Less) => {
-//                     return Err(TrieError::Verify("empty range".to_string()))
-//                 }
-//                 // None of the paths fit the prefix, remove the entire subtrie
-//                 (left, right) if left.is_ne() && right.is_ne() => {
-//                     // Return true so that the parent node removes this node
-//                     return Ok(true);
-//                 }
-//                 // One path fits the prefix, the other one doesn't
-//                 (left, right) => {
-//                     // Remove the nodes from the child's subtrie
-//                     let path = if left.is_eq() { left_path } else { right_path };
-//                     // Propagate the response so that this node will be removed too if the child's subtrie is wiped
-//                     return Ok(remove_node(
-//                         db,
-//                         node,
-//                         path.offset(n.prefix.len()),
-//                         right.is_eq(),
-//                     ));
-//                 }
-//             }
-//         }
-//         // This case should be unreachable as we checked that left_path != right_path
-//         // before calling this function
-//         Node::Leaf(_) => {}
-//     }
-//     Ok(false)
-// }
+        #[test]
+        // Regular Case: Only one edge proof, both keys exist
+        fn proptest_verify_range_regular_case_only_one_edge_proof(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
+            // Build trie
+            let mut trie = Trie::new_temp();
+            for val in data.iter() {
+                trie.insert(val.clone(), val.clone()).unwrap()
+            }
+            let root = trie.hash().unwrap();
+            // Select range to prove
+            let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
+            let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
+            // Generate proofs (only prove first key)
+            let proof = trie.get_proof(&values[0]).unwrap();
+            // Verify the range proof
+            assert!(verify_range(root, &keys[0], &keys, &values, &proof).is_err());
+        }
 
-// // Removes all nodes in the node's subtrie to the left or right of the path (given by the `remove_left` flag)
-// // If the whole subtrie is removed in the process this function will return true, in which case
-// // the caller must remove the reference to this node from it's parent node
-// fn remove_node(
-//     db: &dyn TrieDB,
-//     node: &NodeRef,
-//     mut path: Nibbles,
-//     remove_left: bool,
-//     trie_state: &mut Trie,
-// ) -> bool {
-//     // We already looked up the nodes when filling the state so this shouldn't fail
-//     match node {
-//         Node::Branch(mut n) => {
-//             // Remove child nodes
-//             let Some(choice) = path.next_choice() else {
-//                 // Path ends in the branch node
-//                 return true;
-//             };
-//             if remove_left {
-//                 for child in &mut n.choices[..choice] {
-//                     *child = NodeHash::default().into();
-//                 }
-//             } else {
-//                 for child in &mut n.choices[choice + 1..] {
-//                     *child = NodeHash::default().into();
-//                 }
-//             }
-//             // Remove nodes to the left/right of the choice's subtrie
-//             let should_remove =
-//                 remove_node(db, n.choices[choice].compute_hash(), path, remove_left);
-//             if should_remove {
-//                 n.choices[choice] = NodeRef::default();
-//             }
-//             // Update node in the state
-//             trie_state.insert_node(n.into(), node_hash);
-//         }
-//         Node::Extension(n) => {
-//             // If no child subtrie would result from this process remove the node entirely
-//             // (Such as removing the left side of a trie with no right side)
-//             if !path.skip_prefix(&n.prefix) {
-//                 if (remove_left && path.compare_prefix(&n.prefix).is_gt())
-//                     || !remove_left && path.compare_prefix(&n.prefix).is_lt()
-//                 {
-//                     return true;
-//                 }
-//             } else {
-//                 // Remove left/right side of the child subtrie
-//                 return remove_node(n.child.compute_hash(), path, remove_left, trie_state);
-//             }
-//         }
-//         Node::Leaf(_) => return true,
-//     }
-//     false
-// }
+        #[test]
+        // Regular Case: Two Edge Proofs, both keys exist, but there is a missing node in the proof
+        fn proptest_verify_range_regular_case_gap_in_proof(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
+            // Build trie
+            let mut trie = Trie::new_temp();
+            for val in data.iter() {
+                trie.insert(val.clone(), val.clone()).unwrap()
+            }
+            let root = trie.hash().unwrap();
+            // Select range to prove
+            let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
+            let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
+            // Generate proofs
+            let mut proof = trie.get_proof(&values[0]).unwrap();
+            proof.extend(trie.get_proof(values.last().unwrap()).unwrap());
+            // Remove the last node of the second proof (to make sure we don't remove a node that is also part of the first proof)
+            proof.pop();
+            // Verify the range proof
+            assert!(verify_range(root, &keys[0], &keys, &values, &proof).is_err());
+        }
 
-// /// An intermediate storage for proof nodes, containing encoded nodes indexed by hash
-// struct ProofNodeStorage<'a> {
-//     nodes: HashMap<Vec<u8>, &'a Vec<u8>>,
-// }
+        #[test]
+        // Regular Case: Two Edge Proofs, both keys exist, but there is a missing node in the proof
+        fn proptest_verify_range_regular_case_gap_in_middle_of_proof(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
+            // Build trie
+            let mut trie = Trie::new_temp();
+            for val in data.iter() {
+                trie.insert(val.clone(), val.clone()).unwrap()
+            }
+            let root = trie.hash().unwrap();
+            // Select range to prove
+            let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
+            let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
+            // Generate proofs
+            let mut proof = trie.get_proof(&values[0]).unwrap();
+            let mut second_proof = trie.get_proof(&values[0]).unwrap();
+            proof.extend(trie.get_proof(values.last().unwrap()).unwrap());
+            // Remove the middle node of the second proof
+            let gap_idx = second_proof.len() / 2;
+            let removed = second_proof.remove(gap_idx);
+            // Remove the node from the first proof if it is also there
+            proof.retain(|n| n != &removed);
+            proof.extend(second_proof);
+            // Verify the range proof
+            assert!(verify_range(root, &keys[0], &keys, &values, &proof).is_err());
+        }
 
-// impl<'a> ProofNodeStorage<'a> {
-//     // Construct a ProofNodeStorage for a proof
-//     fn from_proof(proof: &'a [Vec<u8>]) -> Self {
-//         Self {
-//             nodes: proof
-//                 .iter()
-//                 .map(|node| (Keccak256::new_with_prefix(node).finalize().to_vec(), node))
-//                 .collect::<HashMap<_, _>>(),
-//         }
-//     }
-//     // Fetch a node by its hash, return an error if the node is not present or badly encoded
-//     fn get_node(&self, hash: &NodeHash) -> Result<Node, TrieError> {
-//         let encoded = match hash {
-//             NodeHash::Hashed(hash) => {
-//                 let Some(encoded) = self.nodes.get(hash.as_bytes()) else {
-//                     return Err(TrieError::Verify(format!("proof node missing: {hash}")));
-//                 };
-//                 encoded.as_slice()
-//             }
+        #[test]
+        // Regular Case: No proofs both keys exist
+        fn proptest_verify_range_regular_case_no_proofs(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
+            // Build trie
+            let mut trie = Trie::new_temp();
+            for val in data.iter() {
+                trie.insert(val.clone(), val.clone()).unwrap()
+            }
+            let root = trie.hash().unwrap();
+            // Select range to prove
+            let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
+            let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
+            // Dont generate proof
+            let proof = vec![];
+            // Verify the range proof
+            assert!(verify_range(root, &keys[0], &keys, &values, &proof).is_err());
+        }
 
-//             NodeHash::Inline(_) => hash.as_ref(),
-//         };
-//         Ok(Node::decode_raw(encoded)?)
-//     }
-// }
+        #[test]
+        // Special Case: No values, one edge proof (of existance)
+        fn proptest_verify_range_no_values_proof_of_existance(data in btree_set(vec(any::<u8>(), 32), 100..200)) {
+            // Fetch the last element so we can use it as key for the proof
+            let last_element = data.last().unwrap();
+            // Build trie
+            let mut trie = Trie::new_temp();
+            for val in data.iter() {
+                trie.insert(val.clone(), val.clone()).unwrap()
+            }
+            let root = trie.hash().unwrap();
+            // Range is empty
+            let values = vec![];
+            let keys = vec![];
+            let first_key = H256::from_slice(last_element);
+            // Generate proof (last element)
+            let proof = trie.get_proof(last_element).unwrap();
+            // Verify the range proof
+            assert!(verify_range(root, &first_key, &keys, &values, &proof).is_err());
+        }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use proptest::collection::{btree_set, vec};
-//     use proptest::prelude::any;
-//     use proptest::{bool, proptest};
-//     use std::str::FromStr;
-
-//     #[test]
-//     fn verify_range_regular_case_only_branch_nodes() {
-//         // The trie will have keys and values ranging from 25-100
-//         // We will prove the range from 50-75
-//         // Note values are written as hashes in the form i -> [i;32]
-//         let mut trie = Trie::new_temp();
-//         for k in 25..100_u8 {
-//             trie.insert([k; 32].to_vec(), [k; 32].to_vec()).unwrap()
-//         }
-//         let mut proof = trie.get_proof(&[50; 32].to_vec()).unwrap();
-//         proof.extend(trie.get_proof(&[75; 32].to_vec()).unwrap());
-//         let root = trie.hash().unwrap();
-//         let keys = (50_u8..=75).map(|i| H256([i; 32])).collect::<Vec<_>>();
-//         let values = (50_u8..=75).map(|i| [i; 32].to_vec()).collect::<Vec<_>>();
-//         let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
-//         // Our trie contains more elements to the right
-//         assert!(fetch_more)
-//     }
-
-//     #[test]
-//     fn verify_range_regular_case() {
-//         // The account ranges were taken form a hive test state, but artificially modified
-//         // so that the resulting trie has a wide variety of different nodes (and not only branches)
-//         let account_addresses: [&str; 26] = [
-//             "0xaa56789abcde80cde11add7d3447cd4ca93a5f2205d9874261484ae180718bd6",
-//             "0xaa56789abcdeda9ae19dd26a33bd10bbf825e28b3de84fc8fe1d15a21645067f",
-//             "0xaa56789abc39a8284ef43790e3a511b2caa50803613c5096bc782e8de08fa4c5",
-//             "0xaa5678931f4754834b0502de5b0342ceff21cde5bef386a83d2292f4445782c2",
-//             "0xaa567896492bfe767f3d18be2aab96441c449cd945770ef7ef8555acc505b2e4",
-//             "0xaa5f478d53bf78add6fa3708d9e061d59bfe14b21329b2a4cf1156d4f81b3d2d",
-//             "0xaa67c643f67b47cac9efacf6fcf0e4f4e1b273a727ded155db60eb9907939eb6",
-//             "0xaa04d8eaccf0b942c468074250cbcb625ec5c4688b6b5d17d2a9bdd8dd565d5a",
-//             "0xaa63e52cda557221b0b66bd7285b043071df4c2ab146260f4e010970f3a0cccf",
-//             "0xaad9aa4f67f8b24d70a0ffd757e82456d9184113106b7d9e8eb6c3e8a8df27ee",
-//             "0xaa3df2c3b574026812b154a99b13b626220af85cd01bb1693b1d42591054bce6",
-//             "0xaa79e46a5ed8a88504ac7d579b12eb346fbe4fd7e281bdd226b891f8abed4789",
-//             "0xbbf68e241fff876598e8e01cd529bd76416b248caf11e0552047c5f1d516aab6",
-//             "0xbbf68e241fff876598e8e01cd529c908cdf0d646049b5b83629a70b0117e2957",
-//             "0xbbf68e241fff876598e8e0180b89744abb96f7af1171ed5f47026bdf01df1874",
-//             "0xbbf68e241fff876598e8a4cd8e43f08be4715d903a0b1d96b3d9c4e811cbfb33",
-//             "0xbbf68e241fff8765182a510994e2b54d14b731fac96b9c9ef434bc1924315371",
-//             "0xbbf68e241fff87655379a3b66c2d8983ba0b2ca87abaf0ca44836b2a06a2b102",
-//             "0xbbf68e241fffcbcec8301709a7449e2e7371910778df64c89f48507390f2d129",
-//             "0xbbf68e241ffff228ed3aa7a29644b1915fde9ec22e0433808bf5467d914e7c7a",
-//             "0xbbf68e24190b881949ec9991e48dec768ccd1980896aefd0d51fd56fd5689790",
-//             "0xbbf68e2419de0a0cb0ff268c677aba17d39a3190fe15aec0ff7f54184955cba4",
-//             "0xbbf68e24cc6cbd96c1400150417dd9b30d958c58f63c36230a90a02b076f78b5",
-//             "0xbbf68e2490f33f1d1ba6d1521a00935630d2c81ab12fa03d4a0f4915033134f3",
-//             "0xc017b10a7cc3732d729fe1f71ced25e5b7bc73dc62ca61309a8c7e5ac0af2f72",
-//             "0xc098f06082dc467088ecedb143f9464ebb02f19dc10bd7491b03ba68d751ce45",
-//         ];
-//         let mut account_addresses = account_addresses
-//             .iter()
-//             .map(|addr| H256::from_str(addr).unwrap())
-//             .collect::<Vec<_>>();
-//         account_addresses.sort();
-//         let trie_values = account_addresses
-//             .iter()
-//             .map(|addr| addr.0.to_vec())
-//             .collect::<Vec<_>>();
-//         let keys = account_addresses[7..=17].to_vec();
-//         let values = account_addresses[7..=17]
-//             .iter()
-//             .map(|v| v.0.to_vec())
-//             .collect::<Vec<_>>();
-//         let mut trie = Trie::new_temp();
-//         for val in trie_values.iter() {
-//             trie.insert(val.clone(), val.clone()).unwrap()
-//         }
-//         let mut proof = trie.get_proof(&trie_values[7]).unwrap();
-//         proof.extend(trie.get_proof(&trie_values[17]).unwrap());
-//         let root = trie.hash().unwrap();
-//         let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
-//         // Our trie contains more elements to the right
-//         assert!(fetch_more)
-//     }
-
-//     // Proptests for verify_range
-//     proptest! {
-
-//         // Successful Cases
-
-//         #[test]
-//         // Regular Case: Two Edge Proofs, both keys exist
-//         fn proptest_verify_range_regular_case(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
-//             // Build trie
-//             let mut trie = Trie::new_temp();
-//             for val in data.iter() {
-//                 trie.insert(val.clone(), val.clone()).unwrap()
-//             }
-//             let root = trie.hash().unwrap();
-//             // Select range to prove
-//             let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
-//             let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
-//             // Generate proofs
-//             let mut proof = trie.get_proof(&values[0]).unwrap();
-//             proof.extend(trie.get_proof(values.last().unwrap()).unwrap());
-//             // Verify the range proof
-//             let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
-//             if end == 199 {
-//                 // The last key is at the edge of the trie
-//                 assert!(!fetch_more)
-//             } else {
-//                 // Our trie contains more elements to the right
-//                 assert!(fetch_more)
-//             }
-//         }
-
-//         #[test]
-//         // Two Edge Proofs, first and last keys dont exist
-//         fn proptest_verify_range_nonexistant_edge_keys(data in btree_set(vec(1..u8::MAX-1, 32), 200), start in 1_usize..=100_usize, end in 101..199_usize) {
-//             let data = data.into_iter().collect::<Vec<_>>();
-//             // Build trie
-//             let mut trie = Trie::new_temp();
-//             for val in data.iter() {
-//                 trie.insert(val.clone(), val.clone()).unwrap()
-//             }
-//             let root = trie.hash().unwrap();
-//             // Select range to prove
-//             let values = data[start..=end].to_vec();
-//             let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
-//             // Select the first and last keys
-//             // As we will be using non-existant keys we will choose values that are `just` higer/lower than
-//             // the first and last values in our key range
-//             // Skip the test entirely in the unlucky case that the values just next to the edge keys are also part of the trie
-//             let mut first_key = data[start].clone();
-//             first_key[31] -=1;
-//             if first_key == data[start -1] {
-//                 // Skip test
-//                 return Ok(());
-//             }
-//             let mut last_key = data[end].clone();
-//             last_key[31] +=1;
-//             if last_key == data[end +1] {
-//                 // Skip test
-//                 return Ok(());
-//             }
-//             // Generate proofs
-//             let mut proof = trie.get_proof(&first_key).unwrap();
-//             proof.extend(trie.get_proof(&last_key).unwrap());
-//             // Verify the range proof
-//             let fetch_more = verify_range(root, &H256::from_slice(&first_key), &keys, &values, &proof).unwrap();
-//             // Our trie contains more elements to the right
-//             assert!(fetch_more)
-//         }
-
-//         #[test]
-//         // Two Edge Proofs, one key doesn't exist
-//         fn proptest_verify_range_one_key_doesnt_exist(data in btree_set(vec(1..u8::MAX-1, 32), 200), start in 1_usize..=100_usize, end in 101..199_usize, first_key_exists in bool::ANY) {
-//             let data = data.into_iter().collect::<Vec<_>>();
-//             // Build trie
-//             let mut trie = Trie::new_temp();
-//             for val in data.iter() {
-//                 trie.insert(val.clone(), val.clone()).unwrap()
-//             }
-//             let root = trie.hash().unwrap();
-//             // Select range to prove
-//             let values = data[start..=end].to_vec();
-//             let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
-//             // Select the first and last keys
-//             // As we will be using non-existant keys we will choose values that are `just` higer/lower than
-//             // the first and last values in our key range
-//             // Skip the test entirely in the unlucky case that the values just next to the edge keys are also part of the trie
-//             let mut first_key = data[start].clone();
-//             let mut last_key = data[end].clone();
-//             if first_key_exists {
-//                 last_key[31] +=1;
-//                 if last_key == data[end +1] {
-//                     // Skip test
-//                     return Ok(());
-//                 }
-//             } else {
-//                 first_key[31] -=1;
-//                 if first_key == data[start -1] {
-//                     // Skip test
-//                     return Ok(());
-//             }
-//             }
-//             // Generate proofs
-//             let mut proof = trie.get_proof(&first_key).unwrap();
-//             proof.extend(trie.get_proof(&last_key).unwrap());
-//             // Verify the range proof
-//             let fetch_more = verify_range(root, &H256::from_slice(&first_key), &keys, &values, &proof).unwrap();
-//             // Our trie contains more elements to the right
-//             assert!(fetch_more)
-//         }
-
-//         #[test]
-//         // Special Case: Range contains all the leafs in the trie, no proofs
-//         fn proptest_verify_range_full_leafset(data in btree_set(vec(any::<u8>(), 32), 100..200)) {
-//             // Build trie
-//             let mut trie = Trie::new_temp();
-//             for val in data.iter() {
-//                 trie.insert(val.clone(), val.clone()).unwrap()
-//             }
-//             let root = trie.hash().unwrap();
-//             // Select range to prove
-//             let values = data.into_iter().collect::<Vec<_>>();
-//             let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
-//             // The keyset contains the entire trie so we don't need edge proofs
-//             let proof = vec![];
-//             // Verify the range proof
-//             let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
-//             // Our range is the full leafset, there shouldn't be more values left in the trie
-//             assert!(!fetch_more)
-//         }
-
-//         #[test]
-//         // Special Case: No values, one edge proof (of non-existance)
-//         fn proptest_verify_range_no_values(mut data in btree_set(vec(any::<u8>(), 32), 100..200)) {
-//             // Remove the last element so we can use it as key for the proof of non-existance
-//             let last_element = data.pop_last().unwrap();
-//             // Build trie
-//             let mut trie = Trie::new_temp();
-//             for val in data.iter() {
-//                 trie.insert(val.clone(), val.clone()).unwrap()
-//             }
-//             let root = trie.hash().unwrap();
-//             // Range is empty
-//             let values = vec![];
-//             let keys = vec![];
-//             let first_key = H256::from_slice(&last_element);
-//             // Generate proof (last element)
-//             let proof = trie.get_proof(&last_element).unwrap();
-//             // Verify the range proof
-//             let fetch_more = verify_range(root, &first_key, &keys, &values, &proof).unwrap();
-//             // There are no more elements to the right of the range
-//             assert!(!fetch_more)
-//         }
-
-//         #[test]
-//         // Special Case: One element range
-//         fn proptest_verify_range_one_element(data in btree_set(vec(any::<u8>(), 32), 200), start in 0_usize..200_usize) {
-//             // Build trie
-//             let mut trie = Trie::new_temp();
-//             for val in data.iter() {
-//                 trie.insert(val.clone(), val.clone()).unwrap()
-//             }
-//             let root = trie.hash().unwrap();
-//             // Select range to prove
-//             let values = vec![data.iter().collect::<Vec<_>>()[start].clone()];
-//             let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
-//             // Generate proofs
-//             let proof = trie.get_proof(&values[0]).unwrap();
-//             // Verify the range proof
-//             let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
-//             if start == 199 {
-//                 // The last key is at the edge of the trie
-//                 assert!(!fetch_more)
-//             } else {
-//                 // Our trie contains more elements to the right
-//                 assert!(fetch_more)
-//             }
-//         }
-
-//     // Unsuccesful Cases
-
-//         #[test]
-//         // Regular Case: Only one edge proof, both keys exist
-//         fn proptest_verify_range_regular_case_only_one_edge_proof(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
-//             // Build trie
-//             let mut trie = Trie::new_temp();
-//             for val in data.iter() {
-//                 trie.insert(val.clone(), val.clone()).unwrap()
-//             }
-//             let root = trie.hash().unwrap();
-//             // Select range to prove
-//             let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
-//             let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
-//             // Generate proofs (only prove first key)
-//             let proof = trie.get_proof(&values[0]).unwrap();
-//             // Verify the range proof
-//             assert!(verify_range(root, &keys[0], &keys, &values, &proof).is_err());
-//         }
-
-//         #[test]
-//         // Regular Case: Two Edge Proofs, both keys exist, but there is a missing node in the proof
-//         fn proptest_verify_range_regular_case_gap_in_proof(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
-//             // Build trie
-//             let mut trie = Trie::new_temp();
-//             for val in data.iter() {
-//                 trie.insert(val.clone(), val.clone()).unwrap()
-//             }
-//             let root = trie.hash().unwrap();
-//             // Select range to prove
-//             let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
-//             let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
-//             // Generate proofs
-//             let mut proof = trie.get_proof(&values[0]).unwrap();
-//             proof.extend(trie.get_proof(values.last().unwrap()).unwrap());
-//             // Remove the last node of the second proof (to make sure we don't remove a node that is also part of the first proof)
-//             proof.pop();
-//             // Verify the range proof
-//             assert!(verify_range(root, &keys[0], &keys, &values, &proof).is_err());
-//         }
-
-//         #[test]
-//         // Regular Case: Two Edge Proofs, both keys exist, but there is a missing node in the proof
-//         fn proptest_verify_range_regular_case_gap_in_middle_of_proof(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
-//             // Build trie
-//             let mut trie = Trie::new_temp();
-//             for val in data.iter() {
-//                 trie.insert(val.clone(), val.clone()).unwrap()
-//             }
-//             let root = trie.hash().unwrap();
-//             // Select range to prove
-//             let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
-//             let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
-//             // Generate proofs
-//             let mut proof = trie.get_proof(&values[0]).unwrap();
-//             let mut second_proof = trie.get_proof(&values[0]).unwrap();
-//             proof.extend(trie.get_proof(values.last().unwrap()).unwrap());
-//             // Remove the middle node of the second proof
-//             let gap_idx = second_proof.len() / 2;
-//             let removed = second_proof.remove(gap_idx);
-//             // Remove the node from the first proof if it is also there
-//             proof.retain(|n| n != &removed);
-//             proof.extend(second_proof);
-//             // Verify the range proof
-//             assert!(verify_range(root, &keys[0], &keys, &values, &proof).is_err());
-//         }
-
-//         #[test]
-//         // Regular Case: No proofs both keys exist
-//         fn proptest_verify_range_regular_case_no_proofs(data in btree_set(vec(any::<u8>(), 32), 200), start in 1_usize..=100_usize, end in 101..200_usize) {
-//             // Build trie
-//             let mut trie = Trie::new_temp();
-//             for val in data.iter() {
-//                 trie.insert(val.clone(), val.clone()).unwrap()
-//             }
-//             let root = trie.hash().unwrap();
-//             // Select range to prove
-//             let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
-//             let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
-//             // Dont generate proof
-//             let proof = vec![];
-//             // Verify the range proof
-//             assert!(verify_range(root, &keys[0], &keys, &values, &proof).is_err());
-//         }
-
-//         #[test]
-//         // Special Case: No values, one edge proof (of existance)
-//         fn proptest_verify_range_no_values_proof_of_existance(data in btree_set(vec(any::<u8>(), 32), 100..200)) {
-//             // Fetch the last element so we can use it as key for the proof
-//             let last_element = data.last().unwrap();
-//             // Build trie
-//             let mut trie = Trie::new_temp();
-//             for val in data.iter() {
-//                 trie.insert(val.clone(), val.clone()).unwrap()
-//             }
-//             let root = trie.hash().unwrap();
-//             // Range is empty
-//             let values = vec![];
-//             let keys = vec![];
-//             let first_key = H256::from_slice(last_element);
-//             // Generate proof (last element)
-//             let proof = trie.get_proof(last_element).unwrap();
-//             // Verify the range proof
-//             assert!(verify_range(root, &first_key, &keys, &values, &proof).is_err());
-//         }
-
-//         #[test]
-//         // Special Case: One element range (but the proof is of nonexistance)
-//         fn proptest_verify_range_one_element_bad_proof(data in btree_set(vec(any::<u8>(), 32), 200), start in 0_usize..200_usize) {
-//             // Build trie
-//             let mut trie = Trie::new_temp();
-//             for val in data.iter() {
-//                 trie.insert(val.clone(), val.clone()).unwrap()
-//             }
-//             let root = trie.hash().unwrap();
-//             // Select range to prove
-//             let values = vec![data.iter().collect::<Vec<_>>()[start].clone()];
-//             let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
-//             // Remove the value to generate a proof of non-existance
-//             trie.remove(values[0].clone()).unwrap();
-//             // Generate proofs
-//             let proof = trie.get_proof(&values[0]).unwrap();
-//             // Verify the range proof
-//             assert!(verify_range(root, &keys[0], &keys, &values, &proof).is_err());
-//         }
-//     }
-// }
+        #[test]
+        // Special Case: One element range (but the proof is of nonexistance)
+        fn proptest_verify_range_one_element_bad_proof(data in btree_set(vec(any::<u8>(), 32), 200), start in 0_usize..200_usize) {
+            // Build trie
+            let mut trie = Trie::new_temp();
+            for val in data.iter() {
+                trie.insert(val.clone(), val.clone()).unwrap()
+            }
+            let root = trie.hash().unwrap();
+            // Select range to prove
+            let values = vec![data.iter().collect::<Vec<_>>()[start].clone()];
+            let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
+            // Remove the value to generate a proof of non-existance
+            trie.remove(values[0].clone()).unwrap();
+            // Generate proofs
+            let proof = trie.get_proof(&values[0]).unwrap();
+            // Verify the range proof
+            assert!(verify_range(root, &keys[0], &keys, &values, &proof).is_err());
+        }
+    }
+}
