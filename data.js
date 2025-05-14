@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747179755135,
+  "lastUpdate": 1747230349394,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7066,6 +7066,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007441313116370809,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "bc79391f811cad4e744f294c95580bd48b6d6d5b",
+          "message": "feat(l2): signature-based TDX (#2677)\n\n**Motivation**\n\nVerifying TDX attestations on-chain is expensive (~5M gas), so it would\nbe better to avoid them if possible\n\n**Description**\n\nBy generating a private key inside the TDX VM (where the host can't read\nit), attesting it's validity and then using it to sign updates it's\npossible to massively decrease gas usage.",
+          "timestamp": "2025-05-14T12:50:56Z",
+          "tree_id": "d9a51beed6c4778ec24646ce23d11ce277e5d30b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bc79391f811cad4e744f294c95580bd48b6d6d5b"
+        },
+        "date": 1747230348293,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007430321516494338,
             "unit": "Mgas/s"
           }
         ]
