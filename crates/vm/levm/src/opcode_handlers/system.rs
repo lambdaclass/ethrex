@@ -830,7 +830,8 @@ impl<'a> VM<'a> {
         self.call_frames.push(new_call_frame);
 
         if is_precompile(&code_address, self.env.config.fork) {
-            let _report = self.run_execution()?;
+            let report = self.execute_precompile()?;
+            self.handle_return(&report)?;
         } else {
             // Backup of Substate, a copy of the substate to restore if sub-context is reverted
             let backup = self.accrued_substate.clone();

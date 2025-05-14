@@ -183,21 +183,24 @@ impl<'a> VM<'a> {
         })
     }
 
-    pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
-        if is_precompile(
+    pub fn execute_precompile(&mut self) -> Result<ExecutionReport, VMError> {
+        let precompile_result = execute_precompile(self.current_call_frame_mut()?);
+
+        let report = self.handle_precompile_result(precompile_result)?;
+
+        return Ok(report);
+    }
+
+    pub fn is_precompile(&self) -> Result<bool, VMError> {
+        Ok(is_precompile(
             &self.current_call_frame()?.code_address,
             self.env.config.fork,
-        ) {
-            let precompile_result = execute_precompile(self.current_call_frame_mut()?);
+        ))
+    }
 
-            let report = self.handle_precompile_result(precompile_result)?;
-
-            if !self.is_initial_call_frame() {
-                self.handle_return(&report)?;
-            }
-
-            // In this case we always return the report because precompile calls are recursive (we have to change that though)
-            return Ok(report);
+    pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
+        if self.is_precompile()? {
+            return self.execute_precompile();
         }
 
         loop {
