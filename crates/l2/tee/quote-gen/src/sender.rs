@@ -11,7 +11,7 @@ use ethrex_l2::{
 
 use ethrex_common::Bytes;
 
-const SERVER_URL: &str = "10.0.2.1:3900";
+const SERVER_URL: &str = "172.17.0.1:3900";
 const SERVER_URL_DEV: &str = "localhost:3900";
 
 pub async fn get_batch() -> Result<(u64, ProgramInput), String> {
