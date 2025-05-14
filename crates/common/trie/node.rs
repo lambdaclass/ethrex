@@ -7,6 +7,7 @@ use std::array;
 pub use branch::BranchNode;
 use ethrex_rlp::{
     decode::{decode_bytes, RLPDecode},
+    encode::RLPEncode,
     error::RLPDecodeError,
     structs::Decoder,
 };
@@ -34,7 +35,10 @@ impl NodeRef {
     pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
         match *self {
             NodeRef::Node(ref node) => Ok(Some(node.as_ref().clone())),
-            NodeRef::Hash(hash) => db
+            NodeRef::Hash(NodeHash::Inline((data, len))) => {
+                Ok(Some(Node::decode_raw(&data[..len as usize])?))
+            }
+            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
                 .get(hash)?
                 .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
                 .transpose(),
@@ -64,7 +68,9 @@ impl NodeRef {
                 }
 
                 let hash = node.compute_hash();
+                acc.push((hash, node.encode_to_vec()));
                 *self = hash.into();
+
                 hash
             }
             NodeRef::Hash(hash) => hash,
