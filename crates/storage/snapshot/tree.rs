@@ -370,11 +370,7 @@ impl SnapshotTree {
                 }
             };
 
-            match result {
-                Ok(Some(value)) => Ok(value),
-                Err(snapshot_error) => Err(snapshot_error),
-                Ok(None) => Ok(None),
-            }
+            result
         } else {
             Err(SnapshotError::SnapshotNotFound(block_hash))
         }

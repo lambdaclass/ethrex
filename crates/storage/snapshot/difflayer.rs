@@ -82,8 +82,10 @@ impl DiffLayer {
         &self,
         hash: H256,
         layers: &Layers,
-    ) -> Result<Option<Option<AccountState>>, SnapshotError> {
-        // todo: check stale
+    ) -> Result<Option<AccountState>, SnapshotError> {
+        if self.stale {
+            return Err(SnapshotError::StaleSnapshot);
+        }
 
         let hit = self
             .diffed
@@ -104,7 +106,9 @@ impl DiffLayer {
         storage_hash: H256,
         layers: &Layers,
     ) -> Result<Option<U256>, SnapshotError> {
-        // todo: check stale
+        if self.stale {
+            return Err(SnapshotError::StaleSnapshot);
+        }
 
         let bloom_hash = account_hash ^ storage_hash;
         let hit = self
@@ -168,12 +172,12 @@ impl DiffLayer {
         &self,
         hash: H256,
         layers: &Layers,
-    ) -> Result<Option<Option<AccountState>>, SnapshotError> {
+    ) -> Result<Option<AccountState>, SnapshotError> {
         // todo: check if its stale
 
         // If it's in this layer, return it.
         if let Some(value) = self.accounts.get(&hash) {
-            return Ok(Some(value.clone()));
+            return Ok(value.clone());
         }
 
         // delegate to parent

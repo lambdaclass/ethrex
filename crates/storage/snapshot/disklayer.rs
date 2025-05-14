@@ -58,11 +58,11 @@ impl DiskLayer {
         &self,
         hash: H256,
         _layers: &Layers,
-    ) -> Result<Option<Option<AccountState>>, SnapshotError> {
+    ) -> Result<Option<AccountState>, SnapshotError> {
         debug!("get_account disk layer hit for {}", hash);
         if let Some(value) = self.cache.accounts.get(&hash) {
             debug!("get_account disk layer cache hit for {}", hash);
-            return Ok(Some(value.clone()));
+            return Ok(value.clone());
         }
         debug!("get_account disk layer cache miss for {}", hash);
 
@@ -84,7 +84,7 @@ impl DiskLayer {
 
         self.cache.accounts.insert(hash, value.clone().into());
 
-        Ok(Some(Some(value)))
+        Ok(Some(value))
     }
 
     pub fn get_storage(
@@ -109,7 +109,7 @@ impl DiskLayer {
             account_hash, storage_hash
         );
 
-        let account = if let Some(Some(account)) = self.get_account(account_hash, layers)? {
+        let account = if let Some(account) = self.get_account(account_hash, layers)? {
             account
         } else {
             return Ok(None);
