@@ -426,13 +426,12 @@ impl PeerChannels {
 
 #[cfg(test)]
 mod tests {
-    use crate::network::public_key_from_signing_key;
+    use crate::{network::public_key_from_signing_key, rlpx::utils::node_id};
 
     use super::*;
     use ethrex_common::H512;
     use hex_literal::hex;
     use k256::{ecdsa::SigningKey, elliptic_curve::rand_core::OsRng};
-    use sha3::{Digest, Keccak256};
     use std::{
         net::{IpAddr, Ipv4Addr},
         time::{Duration, SystemTime, UNIX_EPOCH},
@@ -442,8 +441,8 @@ mod tests {
     fn bucket_number_works_as_expected() {
         let public_key_1 = H512(hex!("4dc429669029ceb17d6438a35c80c29e09ca2c25cc810d690f5ee690aa322274043a504b8d42740079c4f4cef50777c991010208b333b80bee7b9ae8e5f6b6f0"));
         let public_key_2 = H512(hex!("034ee575a025a661e19f8cda2b6fd8b2fd4fe062f6f2f75f0ec3447e23c1bb59beb1e91b2337b264c7386150b24b621b8224180c9e4aaf3e00584402dc4a8386"));
-        let node_id_1 = H256(Keccak256::new_with_prefix(public_key_1).finalize().into());
-        let node_id_2 = H256(Keccak256::new_with_prefix(public_key_2).finalize().into());
+        let node_id_1 = node_id(&public_key_1);
+        let node_id_2 = node_id(&public_key_2);
         let expected_bucket = 255;
         let result = bucket_number(node_id_1, node_id_2);
         assert_eq!(result, expected_bucket);
@@ -469,11 +468,7 @@ mod tests {
     fn get_test_table() -> KademliaTable {
         let signer = SigningKey::random(&mut OsRng);
         let local_public_key = public_key_from_signing_key(&signer);
-        let local_node_id = H256(
-            Keccak256::new_with_prefix(local_public_key)
-                .finalize()
-                .into(),
-        );
+        let local_node_id = node_id(&local_public_key);
 
         KademliaTable::new(local_node_id)
     }
@@ -489,7 +484,7 @@ mod tests {
                 0,
                 node_1_pubkey,
             ));
-            let node_1_id = H256(Keccak256::new_with_prefix(node_1_pubkey).finalize().into());
+            let node_1_id = node_id(&node_1_pubkey);
             table.get_by_node_id_mut(node_1_id).unwrap().last_pong = (SystemTime::now()
                 - Duration::from_secs(12 * 60 * 60))
             .duration_since(UNIX_EPOCH)
@@ -505,7 +500,7 @@ mod tests {
                 0,
                 node_2_pubkey,
             ));
-            let node_2_id = H256(Keccak256::new_with_prefix(node_2_pubkey).finalize().into());
+            let node_2_id = node_id(&node_2_pubkey);
             table.get_by_node_id_mut(node_2_id).unwrap().last_pong = (SystemTime::now()
                 - Duration::from_secs(36 * 60 * 60))
             .duration_since(UNIX_EPOCH)
@@ -521,7 +516,7 @@ mod tests {
                 0,
                 node_3_pubkey,
             ));
-            let node_3_id = H256(Keccak256::new_with_prefix(node_3_pubkey).finalize().into());
+            let node_3_id = node_id(&node_3_pubkey);
             table.get_by_node_id_mut(node_3_id).unwrap().last_pong = (SystemTime::now()
                 - Duration::from_secs(10 * 60 * 60))
             .duration_since(UNIX_EPOCH)
