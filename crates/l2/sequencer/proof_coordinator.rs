@@ -1,9 +1,9 @@
 use crate::sequencer::errors::ProverServerError;
+use crate::sequencer::setup::prepare_quote_prerequisites;
 use crate::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use crate::utils::prover::save_state::{
     batch_number_has_state_file, write_state, StateFileType, StateType,
 };
-use crate::sequencer::setup::prepare_quote_prerequisites;
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
@@ -351,14 +351,18 @@ impl ProofCoordinator {
             ProverType::TDX => {
                 prepare_quote_prerequisites(
                     &self.eth_client,
-                    &std::env::var("RPC_URL")
-                        .map_err(|_| ProverServerError::Custom("Couldn't read RPC_URL".to_owned()))?,
-                    &std::env::var("PRIVATE_KEY")
-                        .map_err(|_| ProverServerError::Custom("Couldn't read PRIVATE_KEY".to_owned()))?,
-                    &hex::encode(payload)
-                ).await.map_err(|_| ProverServerError::Custom("Could not setup TDX key".to_owned()))?;
+                    &std::env::var("RPC_URL").map_err(|_| {
+                        ProverServerError::Custom("Couldn't read RPC_URL".to_owned())
+                    })?,
+                    &std::env::var("PRIVATE_KEY").map_err(|_| {
+                        ProverServerError::Custom("Couldn't read PRIVATE_KEY".to_owned())
+                    })?,
+                    &hex::encode(payload),
+                )
+                .await
+                .map_err(|_| ProverServerError::Custom("Could not setup TDX key".to_owned()))?;
                 todo!() // send the update
-            },
+            }
             _ => {
                 warn!("Setup requested for {prover_type}, which doesn't need setup.")
             }

@@ -52,10 +52,7 @@ impl ProverType {
                 ]
             }
             ProverType::TDX => {
-                vec![
-                    Value::Bytes(vec![].into()),
-                    Value::Bytes(vec![].into()),
-                ]
+                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
             }
             ProverType::Exec => unimplemented!("Doesn't need to generate an empty calldata."),
         }
