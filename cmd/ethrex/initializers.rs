@@ -123,6 +123,7 @@ pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
 #[allow(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
+    authrpc_jwtsecret_path: &str,
     #[cfg(feature = "l2")] l2_opts: &L2Options,
     signer: &SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
@@ -155,7 +156,7 @@ pub async fn init_rpc_api(
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
-        read_jwtsecret_file(&opts.authrpc_jwtsecret),
+        read_jwtsecret_file(authrpc_jwtsecret_path),
         local_p2p_node,
         local_node_record,
         syncer,
