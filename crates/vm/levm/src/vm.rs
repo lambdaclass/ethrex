@@ -197,7 +197,8 @@ impl<'a> VM<'a> {
 
         if self.is_create() {
             // Create contract, reverting the Tx if address is already occupied.
-            if let Some(report) = self.handle_create_transaction()? {
+            if let Some(mut report) = self.handle_create_transaction()? {
+                self.finalize_execution(&mut report)?;
                 return Ok(report);
             }
         }
@@ -281,8 +282,13 @@ impl<'a> VM<'a> {
         let new_account = self.get_account_mut(new_contract_address)?;
 
         if new_account.has_code_or_nonce() {
-            let report = self.handle_create_non_empty_account()?;
-            return Ok(Some(report));
+            return Ok(Some(ExecutionReport {
+                result: TxResult::Revert(VMError::AddressAlreadyOccupied),
+                gas_used: self.env.gas_limit,
+                gas_refunded: 0,
+                logs: vec![],
+                output: Bytes::new(),
+            }));
         }
 
         self.increase_account_balance(new_contract_address, self.current_call_frame()?.msg_value)?;
@@ -290,20 +296,6 @@ impl<'a> VM<'a> {
         self.increment_account_nonce(new_contract_address)?;
 
         Ok(None)
-    }
-
-    fn handle_create_non_empty_account(&mut self) -> Result<ExecutionReport, VMError> {
-        let mut report = ExecutionReport {
-            result: TxResult::Revert(VMError::AddressAlreadyOccupied),
-            gas_used: self.env.gas_limit,
-            gas_refunded: 0,
-            logs: vec![],
-            output: Bytes::new(),
-        };
-
-        self.finalize_execution(&mut report)?;
-
-        Ok(report)
     }
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {
