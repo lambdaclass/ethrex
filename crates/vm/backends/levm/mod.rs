@@ -1,7 +1,7 @@
 pub mod db;
 mod l2_utils;
 use ethrex_levm::db::error::DatabaseError;
-pub use l2_utils::update_state_diff_size;
+use l2_utils::update_state_diff_size;
 
 use super::revm::db::get_potential_child_nodes;
 use super::BlockExecutionResult;
