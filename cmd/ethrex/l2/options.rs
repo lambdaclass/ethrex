@@ -6,6 +6,7 @@ use ethrex_l2::{
     SequencerConfig,
 };
 use ethrex_rpc::clients::eth::get_address_from_secret_key;
+use reqwest::Url;
 use secp256k1::SecretKey;
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -72,6 +73,7 @@ impl From<SequencerOptions> for SequencerConfig {
                 maximum_allowed_max_fee_per_blob_gas: opts
                     .eth_opts
                     .maximum_allowed_max_fee_per_blob_gas,
+                remote_signer_url: opts.eth_opts.remote_signer_url,
             },
             l1_watcher: L1WatcherConfig {
                 bridge_address: opts.watcher_opts.bridge_address,
@@ -152,6 +154,13 @@ pub struct EthOptions {
         help_heading = "Eth options"
     )]
     pub max_retry_delay: u64,
+    #[arg(
+        long = "eth-remote-signer-url",
+        value_name = "URL",
+        env = "ETHREX_REMOTE_SIGNER_URL",
+        help_heading = "Eth options"
+    )]
+    pub remote_signer_url: Option<Url>,
 }
 
 #[derive(Parser)]
