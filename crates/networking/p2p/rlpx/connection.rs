@@ -175,7 +175,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // Note: we don't ping the node we let the validation service do its job
             {
                 let mut table_lock = table.lock().await;
-                //table_lock.insert_node_forced(self.node);
+                table_lock.insert_node_forced(self.node);
                 table_lock.init_backend_communication(
                     self.node.public_key,
                     peer_channels,
