@@ -3098,6 +3098,7 @@ dependencies = [
  "reqwest",
  "secp256k1",
  "serde_json",
+ "thiserror 2.0.12",
  "tokio",
  "tokio-util",
  "tracing",

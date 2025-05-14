@@ -46,12 +46,24 @@ pub struct SequencerOptions {
     pub proof_coordinator_opts: ProofCoordinatorOptions,
 }
 
-impl From<SequencerOptions> for SequencerConfig {
-    fn from(opts: SequencerOptions) -> Self {
+#[derive(Debug, thiserror::Error)]
+pub enum SequencerOptionsError {
+    #[error("Remote signer URL was provided without a public key")]
+    RemoteUrlWithoutPubkey,
+}
+
+impl TryFrom<SequencerOptions> for SequencerConfig {
+    type Error = SequencerOptionsError;
+
+    fn try_from(opts: SequencerOptions) -> Result<Self, Self::Error> {
         let committer_signer = match opts.committer_opts.remote_signer_url {
-            Some(url) => {
-                RemoteSigner::new(url, opts.committer_opts.remote_signer_public_key.unwrap()).into()
-            }
+            Some(url) => RemoteSigner::new(
+                url,
+                opts.committer_opts
+                    .remote_signer_public_key
+                    .ok_or(SequencerOptionsError::RemoteUrlWithoutPubkey)?,
+            )
+            .into(),
             None => LocalSigner::new(opts.committer_opts.committer_l1_private_key).into(),
         };
 
@@ -60,14 +72,14 @@ impl From<SequencerOptions> for SequencerConfig {
                 url,
                 opts.proof_coordinator_opts
                     .remote_signer_public_key
-                    .unwrap(),
+                    .ok_or(SequencerOptionsError::RemoteUrlWithoutPubkey)?,
             )
             .into(),
             None => LocalSigner::new(opts.proof_coordinator_opts.proof_coordinator_l1_private_key)
                 .into(),
         };
 
-        Self {
+        Ok(Self {
             block_producer: BlockProducerConfig {
                 block_time_ms: opts.proposer_opts.block_time_ms,
                 coinbase_address: opts.proposer_opts.coinbase_address,
@@ -104,7 +116,7 @@ impl From<SequencerOptions> for SequencerConfig {
                 dev_mode: opts.proof_coordinator_opts.dev_mode,
                 signer: proof_coordinator_signer,
             },
-        }
+        })
     }
 }
 

@@ -37,6 +37,7 @@ lazy_static.workspace = true
 secp256k1 = { workspace = true, optional = true }
 keccak-hash.workspace = true
 reqwest.workspace = true
+thiserror = { workspace = true, optional = true }
 
 cfg-if = "1.0.0"
 
@@ -71,6 +72,7 @@ l2 = [
   "ethrex-rpc/l2",
   "dep:secp256k1",
   "ethrex-storage-rollup",
+  "dep:thiserror",
 ]
 rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
 rollup_storage_redb = ["ethrex-storage-rollup/redb"]
