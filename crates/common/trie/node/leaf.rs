@@ -54,23 +54,37 @@ impl LeafNode {
                 // Create a new leaf node and store the value in it
                 // Create a new branch node with the leaf as a child and store self's value
                 // Branch { [ Leaf { Value } , ... ], SelfValue}
-                let new_leaf = LeafNode::new(path.offset(match_index + 1), value);
                 let mut choices = BranchNode::EMPTY_CHOICES;
-                choices[new_leaf_choice_idx] = Node::from(new_leaf).into();
+                choices[new_leaf_choice_idx] = match value {
+                    ValueOrHash::Value(value) => {
+                        Node::from(LeafNode::new(path.offset(match_index + 1), value)).into()
+                    }
+                    ValueOrHash::Hash(hash) => hash.into(),
+                };
                 BranchNode::new_with_value(choices, self.value)
             } else if new_leaf_choice_idx == 16 {
                 // Create a branch node with self as a child and store the value in the branch node
                 // Branch { [Self,...], Value }
                 let mut choices = BranchNode::EMPTY_CHOICES;
                 choices[self_choice_idx] = Node::from(self).into();
-                BranchNode::new_with_value(choices, value)
+                BranchNode::new_with_value(
+                    choices,
+                    match value {
+                        ValueOrHash::Value(value) => value,
+                        ValueOrHash::Hash(_) => todo!("handle override case (error?)"),
+                    },
+                )
             } else {
                 // Create a new leaf node and store the path and value in it
                 // Create a new branch node with the leaf and self as children
                 // Branch { [ Leaf { Path, Value }, Self, ... ], None, None}
-                let new_leaf = LeafNode::new(path.offset(match_index + 1), value);
                 let mut choices = BranchNode::EMPTY_CHOICES;
-                choices[new_leaf_choice_idx] = Node::from(new_leaf).into();
+                choices[new_leaf_choice_idx] = match value {
+                    ValueOrHash::Value(value) => {
+                        Node::from(LeafNode::new(path.offset(match_index + 1), value)).into()
+                    }
+                    ValueOrHash::Hash(hash) => hash.into(),
+                };
                 choices[self_choice_idx] = Node::from(self).into();
                 BranchNode::new(choices)
             };
