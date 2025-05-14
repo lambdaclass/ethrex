@@ -88,6 +88,8 @@ impl From<SequencerOptions> for SequencerConfig {
                 )
                 .unwrap(),
                 l1_private_key: opts.proof_coordinator_opts.proof_coordinator_l1_private_key,
+                remote_signer_url: opts.proof_coordinator_opts.remote_signer_url,
+                remote_signer_public_key: opts.proof_coordinator_opts.remote_signer_public_key,
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
                 listen_port: opts.proof_coordinator_opts.listen_port,
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
@@ -252,7 +254,7 @@ pub struct CommitterOptions {
     #[arg(
         long = "committer.remote-signer-url",
         value_name = "URL",
-        env = "ETHREX_REMOTE_SIGNER_URL",
+        env = "ETHREX_COMMITTER_REMOTE_SIGNER_URL",
         help_heading = "L1 Committer options",
         help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key."
     )]
@@ -333,6 +335,23 @@ pub struct ProofCoordinatorOptions {
     )]
     pub proof_coordinator_l1_private_key: SecretKey,
     #[arg(
+        long = "proof-coordinator.remote-signer-url",
+        value_name = "URL",
+        env = "ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_URL",
+        help_heading = "L1 Prover Server options",
+        help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key."
+    )]
+    pub remote_signer_url: Option<Url>,
+    #[arg(
+        long = "proof-coordinator.remote-signer-public-key",
+        value_name = "PUBLIC_KEY",
+        value_parser = utils::parse_public_key,
+        env = "ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_PUBLIC_KEY",
+        help_heading = "L1 Prover Server options",
+        help = "Public key to request the remote signature from."
+    )]
+    pub remote_signer_public_key: Option<PublicKey>,
+    #[arg(
         long = "proof-coordinator-listen-ip",
         default_value = "127.0.0.1",
         value_name = "IP_ADDRESS",
@@ -374,6 +393,8 @@ impl Default for ProofCoordinatorOptions {
                 "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
                     .parse()
                     .unwrap(),
+            remote_signer_url: None,
+            remote_signer_public_key: None,
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             listen_port: 3900,
             proof_send_interval_ms: 5000,

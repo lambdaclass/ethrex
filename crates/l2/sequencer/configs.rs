@@ -59,4 +59,6 @@ pub struct ProofCoordinatorConfig {
     pub listen_port: u16,
     pub proof_send_interval_ms: u64,
     pub dev_mode: bool,
+    pub remote_signer_url: Option<Url>,
+    pub remote_signer_public_key: Option<PublicKey>,
 }

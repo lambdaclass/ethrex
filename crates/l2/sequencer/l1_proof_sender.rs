@@ -53,7 +53,16 @@ impl L1ProofSender {
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new(&eth_cfg.rpc_url);
 
-        let signer = LocalSigner::new(cfg.l1_private_key).into();
+        let signer = if let Some(remote_signer_url) = &cfg.remote_signer_url {
+            RemoteSigner::new(
+                remote_signer_url.clone(),
+                cfg.remote_signer_public_key
+                    .ok_or(ProofSenderError::RemoteSignerWithoutPubkey),
+            )
+            .into()
+        } else {
+            LocalSigner::new(cfg.l1_private_key).into()
+        };
 
         let mut needed_proof_types = vec![];
         if !cfg.dev_mode {
