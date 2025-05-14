@@ -177,7 +177,7 @@ restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Clien
 init-prover: ../../target/release/ethrex_prover ## 🚀 Initializes the Prover
 	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
 	../../target/release/ethrex_prover -- \
-	--http.addr http://localhost \
+	--http.addr 127.0.0.1 \
   	--http.port 3900 \
 	--log.level debug
 
