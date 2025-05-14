@@ -711,7 +711,6 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        dbg!("called get_account_state_by_hash");
         self.get_account_state_from_trie(&state_trie, address)
     }
 
@@ -720,7 +719,6 @@ impl Store {
         state_trie: &Trie,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        dbg!("called get_account_state_from_trie");
         let hashed_address = hash_address(&address);
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
@@ -1182,7 +1180,7 @@ impl Store {
                 );
 
                 // Use this point to cap the amount of layers if needs be
-                //store.snapshots.cap(hash, 8)?;
+                store.snapshots.cap(hash, 8)?;
             }
             Ok(())
         }

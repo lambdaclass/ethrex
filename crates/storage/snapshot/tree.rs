@@ -216,7 +216,7 @@ impl SnapshotTree {
             ) {
                 if let Some(layer) = layers.get(&root) {
                     let diffed = match layer {
-                        Layer::DiskLayer(_) => { None }
+                        Layer::DiskLayer(_) => None,
                         Layer::DiffLayer(layer) => {
                             let mut layer = layer.write().unwrap();
                             layer.rebloom(base.clone(), parent_diffed);
@@ -273,9 +273,9 @@ impl SnapshotTree {
             Layer::DiffLayer(diff) => diff,
         };
 
-        let parent = {
+        let (parent, parent_block_hash) = {
             let diff_value = diff.read().unwrap();
-            layers[&diff_value.parent()].clone()
+            (layers[&diff_value.parent()].clone(), diff_value.parent())
         };
 
         let parent = match parent {
@@ -287,9 +287,8 @@ impl SnapshotTree {
             // hold write lock until linked to new parent to avoid incorrect external reads
             let mut diff_value = diff.write().unwrap();
 
-            let parent_root = parent.read().unwrap().root();
             // flatten parent into grand parent.
-            let flattened = Self::flatten_diff(parent_root, layers)?;
+            let flattened = Self::flatten_diff(parent_block_hash, layers)?;
             let flattened_block_hash = match &flattened {
                 Layer::DiskLayer(disk_layer) => disk_layer.block_hash(),
                 Layer::DiffLayer(diff_layer) => diff_layer.read().unwrap().block_hash(),
@@ -462,6 +461,7 @@ impl SnapshotTree {
             parent_value.storage(),
         );
 
+        // TODO: should we rebloom here?
         layer.diffed = layer_value.diffed();
 
         Ok(Layer::DiffLayer(Arc::new(RwLock::new(layer))))
