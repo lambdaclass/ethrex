@@ -207,6 +207,22 @@ pub struct DeployerOptions {
     pub validium: bool,
     #[arg(
         long,
+        value_name = "ADDRESS",
+        env = "ETHREX_ON_CHAIN_PROPOSER_OWNER",
+        help_heading = "Deployer options",
+        help = "Address of the owner of the OnChainProposer contract, who can upgrade the contract."
+    )]
+    pub on_chain_proposer_owner: Address,
+    #[arg(
+        long,
+        value_name = "ADDRESS",
+        env = "ETHREX_BRIDGE_OWNER",
+        help_heading = "Deployer options",
+        help = "Address of the owner of the CommonBridge contract, who can upgrade the contract."
+    )]
+    pub bridge_owner: Address,
+    #[arg(
+        long,
         default_value_t = format!("{}/crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
@@ -267,6 +283,16 @@ impl Default for DeployerOptions {
             sp1_deploy_verifier: false,
             randomize_contract_deployment: false,
             validium: false,
+            // 0x03d0a0aee676cc45bf7032649e0871927c947c8e
+            on_chain_proposer_owner: H160([
+                0x03, 0xd0, 0xa0, 0xae, 0xe6, 0x76, 0xcc, 0x45, 0xbf, 0x70, 0x32, 0x64, 0x9e, 0x08,
+                0x71, 0x92, 0x7c, 0x94, 0x7c, 0x8e,
+            ]),
+            // 0x03d0a0aee676cc45bf7032649e0871927c947c8e
+            bridge_owner: H160([
+                0x03, 0xd0, 0xa0, 0xae, 0xe6, 0x76, 0xcc, 0x45, 0xbf, 0x70, 0x32, 0x64, 0x9e, 0x08,
+                0x71, 0x92, 0x7c, 0x94, 0x7c, 0x8e,
+            ]),
             sp1_vk_path: format!(
                 "{}/crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
                 env!("CARGO_MANIFEST_DIR")
