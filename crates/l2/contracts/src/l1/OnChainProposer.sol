@@ -88,6 +88,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         address r0verifier,
         address sp1verifier,
         address picoverifier,
+        bytes32 genesisStateRoot
         address[] calldata sequencerAddresses
     ) public nonReentrant {
         // Set the CommonBridge address
@@ -149,6 +150,13 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             "OnChainProposer: sp1verifier is the contract address"
         );
         SP1VERIFIER = sp1verifier;
+
+        batchCommitments[0] = BatchCommitmentInfo(
+            genesisStateRoot,
+            bytes32(0),
+            bytes32(0),
+            bytes32(0)
+        );
 
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
@@ -236,6 +244,16 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         );
 
         if (PICOVERIFIER != DEV_MODE) {
+            bytes32 picoInitialStateRoot = bytes32(picoPublicValues[0:32]);
+            require(
+                batchCommitments[lastVerifiedBatch].newStateRoot == picoInitialStateRoot,
+                 "OnChainProposer: pico withdrawals public inputs don't match with initial state root"
+            ); 
+            bytes32 picoFinalStateRoot = bytes32(picoPublicValues[32:64]);
+            require(
+                batchCommitments[batchNumber].newStateRoot == picoFinalStateRoot,
+                 "OnChainProposer: pico withdrawals public inputs don't match with final state root"
+            );
             bytes32 picoWithdrawalsMerkleRoot = bytes32(
                 picoPublicValues[64:96]
             );
@@ -260,6 +278,16 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         }
 
         if (R0VERIFIER != DEV_MODE) {
+            bytes32 risc0InitialStateRoot = bytes32(risc0PublicValues[0:32]);
+            require(
+                batchCommitments[lastVerifiedBatch].newStateRoot == picoInitialStateRoot,
+                 "OnChainProposer: risc0 withdrawals public inputs don't match with initial state root"
+            ); 
+            bytes32 risc0inalStateRoot = bytes32(risc0PublicValues[32:64]);
+            require(
+                batchCommitments[batchNumber].newStateRoot == picoFinalStateRoot,
+                 "OnChainProposer: risc0 withdrawals public inputs don't match with final state root"
+            );
             bytes32 risc0WithdrawalsMerkleRoot = bytes32(risc0Journal[64:96]);
             require(
                 batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
@@ -282,6 +310,16 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         }
 
         if (SP1VERIFIER != DEV_MODE) {
+            bytes32 sp1InitialStateRoot = bytes32(sp1PublicValues[0:32]);
+            require(
+                batchCommitments[lastVerifiedBatch].newStateRoot == sp1InitialStateRoot,
+                 "OnChainProposer: sp1 withdrawals public inputs don't match with initial state root"
+            ); 
+            bytes32 sp1FinalStateRoot = bytes32(sp1PublicValues[32:64]);
+            require(
+                batchCommitments[batchNumber].newStateRoot == sp1FinalStateRoot,
+                 "OnChainProposer: sp1 withdrawals public inputs don't match with final state root"
+            );
             bytes32 sp1WithdrawalsMerkleRoot = bytes32(sp1PublicValues[80:112]);
             require(
                 batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==

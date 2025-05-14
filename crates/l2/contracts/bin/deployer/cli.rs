@@ -111,6 +111,14 @@ pub struct DeployerOptions {
     )]
     pub genesis_l1_path: String,
     #[arg(
+        long,
+        value_name = "PATH",
+        env = "ETHREX_DEPLOYER_GENESIS_L2_PATH",
+        help_heading = "Deployer options",
+        help = "Path to the l1 genesis file. The default is ../../test_data/genesis-l2-dev.json"
+    )]
+    pub genesis_l2_path: String,
+    #[arg(
         long = "committer.l1-address",
         default_value = "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b",
         value_name = "ADDRESS",
@@ -231,6 +239,7 @@ impl Default for DeployerOptions {
             deposit_rich: false,
             private_keys_file_path: "../../test_data/private_keys_l1.txt".to_string(),
             genesis_l1_path: "../../test_data/genesis-l1-dev.json".to_string(),
+            genesis_l2_path: "../../test_data/genesis-l2-dev.json".to_string(),
             // 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
             committer_l1_address: H160([
                 0x3d, 0x1e, 0x15, 0xa1, 0xa5, 0x55, 0x78, 0xf7, 0xc9, 0x20, 0x88, 0x4a, 0x99, 0x43,
