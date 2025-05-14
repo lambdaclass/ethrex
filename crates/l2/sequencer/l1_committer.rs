@@ -5,9 +5,9 @@ use crate::{
 
 use ethrex_common::{
     types::{
-        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block, BlockHeader,
-        BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
-        BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
+        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block, BlockNumber,
+        PrivilegedL2Transaction, Receipt, Transaction, BLOB_BASE_FEE_UPDATE_FRACTION,
+        MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
 };
@@ -22,7 +22,7 @@ use ethrex_rpc::{
 use ethrex_storage::{AccountUpdate, Store};
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{
-    state_diff::{get_nonce_diff, AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
+    state_diff::{get_nonce_diff, prepare_state_diff, StateDiff},
     Evm,
 };
 use keccak_hash::keccak;
@@ -248,28 +248,29 @@ impl Committer {
                 } else {
                     acc_account_updates.insert(address, account.clone());
                 }
+            }
 
+            for (address, account_update) in &acc_account_updates {
                 // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
                 // and we may have to keep track of the latestCommittedBlock (last block of the batch),
                 // the batch_size and the latestCommittedBatch in the contract.
-                let nonce_diff = get_nonce_diff(&account, &self.store, None, first_block_of_batch)
-                    .await
-                    .map_err(CommitterError::from)?;
+                let nonce_diff =
+                    get_nonce_diff(account_update, &self.store, None, first_block_of_batch)
+                        .await
+                        .map_err(CommitterError::from)?;
 
-                nonce_diffs.insert(address, nonce_diff);
+                nonce_diffs.insert(*address, nonce_diff);
             }
 
             let result = if !self.validium {
                 // Prepare current state diff.
-                let state_diff = self
-                    .prepare_state_diff(
-                        block_to_commit_header,
-                        &acc_withdrawals,
-                        &acc_deposits,
-                        acc_account_updates.clone().into_values().collect(),
-                        nonce_diffs,
-                    )
-                    .await?;
+                let state_diff = prepare_state_diff(
+                    block_to_commit_header,
+                    &acc_withdrawals,
+                    &acc_deposits,
+                    acc_account_updates.clone().into_values().collect(),
+                    nonce_diffs,
+                )?;
                 self.generate_blobs_bundle(&state_diff)
             } else {
                 Ok(BlobsBundle::default())
@@ -385,64 +386,6 @@ impl Committer {
         } else {
             Ok(H256::zero())
         }
-    }
-
-    /// Prepare the state diff for the block.
-    async fn prepare_state_diff(
-        &self,
-        last_header: BlockHeader,
-        withdrawals: &[(H256, Transaction)],
-        deposits: &[PrivilegedL2Transaction],
-        account_updates: Vec<AccountUpdate>,
-        nonce_diffs: HashMap<Address, u16>,
-    ) -> Result<StateDiff, CommitterError> {
-        let mut modified_accounts = HashMap::new();
-        for account_update in account_updates {
-            let nonce_diff = nonce_diffs.get(&account_update.address).copied().ok_or(
-                CommitterError::InternalError("This nonce should be present".to_owned()),
-            )?;
-
-            modified_accounts.insert(
-                account_update.address,
-                AccountStateDiff {
-                    new_balance: account_update.info.clone().map(|info| info.balance),
-                    nonce_diff,
-                    storage: account_update.added_storage.clone().into_iter().collect(),
-                    bytecode: account_update.code.clone(),
-                    bytecode_hash: None,
-                },
-            );
-        }
-
-        let state_diff = StateDiff {
-            modified_accounts,
-            version: StateDiff::default().version,
-            last_header,
-            withdrawal_logs: withdrawals
-                .iter()
-                .map(|(hash, tx)| WithdrawalLog {
-                    address: match tx.to() {
-                        TxKind::Call(address) => address,
-                        TxKind::Create => Address::zero(),
-                    },
-                    amount: tx.value(),
-                    tx_hash: *hash,
-                })
-                .collect(),
-            deposit_logs: deposits
-                .iter()
-                .map(|tx| DepositLog {
-                    address: match tx.to {
-                        TxKind::Call(address) => address,
-                        TxKind::Create => Address::zero(),
-                    },
-                    amount: tx.value,
-                    nonce: tx.nonce,
-                })
-                .collect(),
-        };
-
-        Ok(state_diff)
     }
 
     /// Generate the blob bundle necessary for the EIP-4844 transaction.

@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::{code_hash, AccountInfo, AccountState, BlockHeader, BlockNumber};
+use ethrex_common::types::{
+    code_hash, AccountInfo, AccountState, BlockHeader, BlockNumber, PrivilegedL2Transaction,
+    Transaction, TxKind,
+};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{error::StoreError, hash_address, AccountUpdate, Store};
 use ethrex_trie::{Trie, TrieError};
@@ -29,6 +32,8 @@ pub enum StateDiffError {
     StoreError(#[from] StoreError),
     #[error("New nonce is lower than the previous one")]
     FailedToCalculateNonce,
+    #[error("Unexpected Error: {0}")]
+    InternalError(String),
 }
 
 // transactions_root(H256) + receipts_root(H256) + parent_hash(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64)
@@ -597,4 +602,61 @@ async fn account_info_from_cache(
         }
     };
     Ok(account_info)
+}
+
+/// Prepare the state diff for the block.
+pub fn prepare_state_diff(
+    last_header: BlockHeader,
+    withdrawals: &[(H256, Transaction)],
+    deposits: &[PrivilegedL2Transaction],
+    account_updates: Vec<AccountUpdate>,
+    nonce_diffs: HashMap<Address, u16>,
+) -> Result<StateDiff, StateDiffError> {
+    let mut modified_accounts = HashMap::new();
+    for account_update in account_updates {
+        let nonce_diff = nonce_diffs.get(&account_update.address).copied().ok_or(
+            StateDiffError::InternalError("This nonce should be present".to_owned()),
+        )?;
+
+        modified_accounts.insert(
+            account_update.address,
+            AccountStateDiff {
+                new_balance: account_update.info.clone().map(|info| info.balance),
+                nonce_diff,
+                storage: account_update.added_storage.clone().into_iter().collect(),
+                bytecode: account_update.code.clone(),
+                bytecode_hash: None,
+            },
+        );
+    }
+
+    let state_diff = StateDiff {
+        modified_accounts,
+        version: StateDiff::default().version,
+        last_header,
+        withdrawal_logs: withdrawals
+            .iter()
+            .map(|(hash, tx)| WithdrawalLog {
+                address: match tx.to() {
+                    TxKind::Call(address) => address,
+                    TxKind::Create => Address::zero(),
+                },
+                amount: tx.value(),
+                tx_hash: *hash,
+            })
+            .collect(),
+        deposit_logs: deposits
+            .iter()
+            .map(|tx| DepositLog {
+                address: match tx.to {
+                    TxKind::Call(address) => address,
+                    TxKind::Create => Address::zero(),
+                },
+                amount: tx.value,
+                nonce: tx.nonce,
+            })
+            .collect(),
+    };
+
+    Ok(state_diff)
 }
