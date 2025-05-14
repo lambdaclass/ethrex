@@ -10,10 +10,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    types::{
-        tx_fields::{AccessList, AuthorizationList},
-        Transaction, TxKind,
-    },
+    types::{ Transaction, TxKind},
     Address, H256, U256,
 };
 use std::{
@@ -40,9 +37,7 @@ pub struct VM<'a> {
     pub env: Environment,
     pub accrued_substate: Substate,
     pub db: &'a mut GeneralizedDatabase,
-    pub tx_kind: TxKind,
-    pub access_list: AccessList,
-    pub authorization_list: Option<AuthorizationList>,
+    pub tx: Transaction,
     pub hooks: Vec<Arc<dyn Hook>>,
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
@@ -113,9 +108,7 @@ impl<'a> VM<'a> {
             env,
             accrued_substate: substate,
             db,
-            tx_kind: tx.to(),
-            access_list: tx.access_list(),
-            authorization_list: tx.authorization_list(),
+            tx: tx.clone(),
             hooks,
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
@@ -203,7 +196,7 @@ impl<'a> VM<'a> {
 
     /// True if external transaction is a contract creation
     pub fn is_create(&self) -> bool {
-        matches!(self.tx_kind, TxKind::Create)
+        matches!(self.tx.to(), TxKind::Create)
     }
 
     /// Executes without making changes to the cache.
