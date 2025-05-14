@@ -177,7 +177,9 @@ impl DiffLayer {
         hash: H256,
         layers: &Layers,
     ) -> Result<Option<AccountState>, SnapshotError> {
-        // todo: check if its stale
+        if self.stale {
+            return Err(SnapshotError::StaleSnapshot);
+        }
 
         // If it's in this layer, return it.
         if let Some(value) = self.accounts.get(&hash) {
@@ -200,7 +202,9 @@ impl DiffLayer {
         storage_hash: H256,
         layers: &Layers,
     ) -> Result<Option<U256>, SnapshotError> {
-        // todo: check if its stale
+        if self.stale {
+            return Err(SnapshotError::StaleSnapshot);
+        }
 
         // If it's in this layer, return it.
         if let Some(value) = self
