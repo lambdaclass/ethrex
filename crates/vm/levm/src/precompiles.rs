@@ -267,7 +267,7 @@ pub fn execute_precompile(
     Ok(result)
 }
 
-/// Verifies if the gas cost is higher than the gas limit and consumes the gas cost if it is not
+/// Consumes gas and if it's higher than the gas limit returns an error.
 fn increase_precompile_consumed_gas(
     gas_limit: u64,
     gas_cost: u64,
