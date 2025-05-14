@@ -3,8 +3,6 @@ use ethrex_storage::error::StoreError;
 use ethrex_vm::ProverDBError;
 use keccak_hash::H256;
 
-use super::config::errors::ConfigError;
-
 #[derive(Debug, thiserror::Error)]
 pub enum ProverInputError {
     #[error("Invalid block number: {0}")]
@@ -17,8 +15,6 @@ pub enum ProverInputError {
     ChainError(#[from] ChainError),
     #[error("ProverDB error: {0}")]
     ProverDBError(#[from] ProverDBError),
-    #[error("Invalid Environment variable: {0}")]
-    InvalidEnvVar(#[from] ConfigError),
 }
 
 #[derive(Debug, thiserror::Error)]

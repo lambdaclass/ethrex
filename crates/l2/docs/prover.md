@@ -107,13 +107,12 @@ make init-prover T="prover_type (pico,risc0,sp1) G=true"
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
-3. `cp configs/prover_client_config_example.toml configs/prover_client_config.toml` &rarr; check if you want to change any config.
-4. `make init`
+3. `make init`
    - Make sure you have the `solc` compiler installed in your system.
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
    - Start the L2 locally on port `1729`.
-5. In a new terminal &rarr; `make init-prover T=(sp1,risc0,pico)`.
+4. In a new terminal &rarr; `make init-prover T=(sp1,risc0,pico)`.
 
 After this initialization we should have the prover running in `dev_mode` &rarr; No real proofs.
 
@@ -160,14 +159,9 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
 
 1. `Prover`/`zkvm` &rarr; prover with gpu, make sure to have all the required dependencies described at the beginning of [Gpu Mode](#gpu-mode) section.
    1. `cd ethrex/crates/l2`
-   2. `cp configs/prover_client_config_example.toml configs/prover_client_config.toml` and change the `prover_server_endpoint` with machine's `2` ip and make sure the port matches the one defined in machine 2.
-
-The important variables are:
-
-```sh
-[prover_client]
-prover_server_endpoint=<ip-address>:3900
-```
+   2. You can set the following environment variables to configure the prover:
+      - PROVER_CLIENT_PROVER_SERVER_ENDPOINT: The address of the server where the client will request the proofs from
+      - PROVER_CLIENT_PROVING_TIME_MS: The amount of time to wait before requesting new data to prove
 
 - `Finally`, to start the `Prover`/`zkvm`, run:
   - `make init-prover T=(sp1,risc0,pico) G=true`

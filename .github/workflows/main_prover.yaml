@@ -72,7 +72,6 @@ jobs:
         if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           touch .env
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \

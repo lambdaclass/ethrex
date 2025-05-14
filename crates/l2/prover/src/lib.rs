@@ -1,8 +1,8 @@
 pub mod backends;
-pub mod errors;
 pub mod prover;
 
-use ethrex_l2::utils::config::prover::ProverConfig;
+pub mod config;
+use config::ProverConfig;
 use tracing::warn;
 
 pub async fn init_client(config: ProverConfig) {
