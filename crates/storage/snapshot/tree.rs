@@ -331,13 +331,16 @@ impl SnapshotTree {
             prev_disk.cache.accounts.insert(*hash, acc.clone());
         }
 
+        //// TODO: Need to make sure it's correct not
+        //prev_disk.cache.storages.invalidate_all();
+
         let storage = diff_value.storage();
         for (account_hash, storage) in storage.iter() {
             for (storage_hash, value) in storage.iter() {
                 prev_disk
                     .cache
                     .storages
-                    .insert((*account_hash, *storage_hash), *value);
+                    .insert((*account_hash, *storage_hash), Some(*value));
             }
         }
 
@@ -619,5 +622,155 @@ mod tests {
         // Retrieve it from the first hash and check it returns the first value
         let retrieved_account = tree.get_account_state(root1, address).unwrap();
         assert_eq!(retrieved_account, Some(account_state1));
+    }
+
+    #[test]
+    fn test_override_account_storage_flattening() {
+        let tree = create_mock_tree();
+        tree.rebuild(H256::zero(), H256::zero());
+        let root1 = H256::from_low_u64_be(1);
+        let root2 = H256::from_low_u64_be(2);
+
+        let storage_root1 = H256::from_low_u64_be(0xbeef);
+        let storage_root2 = H256::from_low_u64_be(0xfafa);
+
+        let address = Address::from_low_u64_be(1);
+        let account_hash = hash_address_fixed(&address);
+
+        let account_state1 = AccountState {
+            nonce: 1,
+            balance: U256::from(100),
+            storage_root: storage_root1,
+            code_hash: H256::zero(),
+        };
+
+        let account_state2 = AccountState {
+            nonce: 2,
+            balance: U256::from(200),
+            storage_root: storage_root2,
+            code_hash: H256::zero(),
+        };
+
+        // Add the account in the first difflayer
+        tree.update(
+            root1,
+            root1,
+            H256::zero(),
+            HashMap::from([(account_hash, Some(account_state1.clone()))]),
+            HashMap::from([(account_hash, {
+                let mut map: HashMap<H256, U256> = HashMap::new();
+                map.insert(H256::zero(), U256::one());
+                map
+            })]),
+        )
+        .unwrap();
+
+        tree.update(
+            root2,
+            root2,
+            root1,
+            HashMap::from([(account_hash, Some(account_state2.clone()))]),
+            HashMap::from([(account_hash, {
+                let mut map: HashMap<H256, U256> = HashMap::new();
+                map.insert(H256::zero(), U256::zero());
+                map
+            })]),
+        )
+        .unwrap();
+
+        tree.cap(root2, 1).unwrap();
+        assert_eq!(tree.layers.read().unwrap().len(), 2);
+
+        // Retrieve the account and check it returns the second value
+        let retrieved_account = tree.get_account_state(root2, address).unwrap();
+        assert_eq!(retrieved_account, Some(account_state2));
+
+        let value = tree
+            .get_storage_at_hash(root2, address, H256::zero())
+            .unwrap();
+        assert_eq!(value, Some(U256::zero()));
+
+        // Retrieve it from the first hash and check it returns the first value
+        let retrieved_account = tree.get_account_state(root1, address).unwrap();
+        assert_eq!(retrieved_account, Some(account_state1));
+
+        let value = tree
+            .get_storage_at_hash(root1, address, H256::zero())
+            .unwrap();
+        assert_eq!(value, Some(U256::one()));
+    }
+
+    #[test]
+    fn test_override_account_storage_in_second_difflayer() {
+        let tree = create_mock_tree();
+        tree.rebuild(H256::zero(), H256::zero());
+        let root1 = H256::from_low_u64_be(1);
+        let root2 = H256::from_low_u64_be(2);
+
+        let storage_root1 = H256::from_low_u64_be(0xbeef);
+        let storage_root2 = H256::from_low_u64_be(0xfafa);
+
+        let address = Address::from_low_u64_be(1);
+        let account_hash = hash_address_fixed(&address);
+
+        let account_state1 = AccountState {
+            nonce: 1,
+            balance: U256::from(100),
+            storage_root: storage_root1,
+            code_hash: H256::zero(),
+        };
+
+        let account_state2 = AccountState {
+            nonce: 2,
+            balance: U256::from(200),
+            storage_root: storage_root2,
+            code_hash: H256::zero(),
+        };
+
+        // Add the account in the first difflayer
+        tree.update(
+            root1,
+            root1,
+            H256::zero(),
+            HashMap::from([(account_hash, Some(account_state1.clone()))]),
+            HashMap::from([(account_hash, {
+                let mut map: HashMap<H256, U256> = HashMap::new();
+                map.insert(H256::zero(), U256::one());
+                map
+            })]),
+        )
+        .unwrap();
+
+        // Override the account in the second difflayer
+        tree.update(
+            root2,
+            root2,
+            root1,
+            HashMap::from([(account_hash, Some(account_state2.clone()))]),
+            HashMap::from([(account_hash, {
+                let mut map: HashMap<H256, U256> = HashMap::new();
+                map.insert(H256::zero(), U256::zero());
+                map
+            })]),
+        )
+        .unwrap();
+
+        // Retrieve the account and check it returns the second value
+        let retrieved_account = tree.get_account_state(root2, address).unwrap();
+        assert_eq!(retrieved_account, Some(account_state2));
+
+        let value = tree
+            .get_storage_at_hash(root2, address, H256::zero())
+            .unwrap();
+        assert_eq!(value, Some(U256::zero()));
+
+        // Retrieve it from the first hash and check it returns the first value
+        let retrieved_account = tree.get_account_state(root1, address).unwrap();
+        assert_eq!(retrieved_account, Some(account_state1));
+
+        let value = tree
+            .get_storage_at_hash(root1, address, H256::zero())
+            .unwrap();
+        assert_eq!(value, Some(U256::one()));
     }
 }

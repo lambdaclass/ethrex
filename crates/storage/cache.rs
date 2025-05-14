@@ -8,7 +8,7 @@ use ethrex_common::{types::AccountState, H256, U256};
 #[derive(Debug, Clone)]
 pub struct Cache {
     pub accounts: moka::sync::Cache<H256, Option<AccountState>>,
-    pub storages: moka::sync::Cache<(H256, H256), U256>,
+    pub storages: moka::sync::Cache<(H256, H256), Option<U256>>,
 }
 
 impl Cache {

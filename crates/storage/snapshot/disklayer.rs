@@ -59,12 +59,9 @@ impl DiskLayer {
         hash: H256,
         _layers: &Layers,
     ) -> Result<Option<AccountState>, SnapshotError> {
-        debug!("get_account disk layer hit for {}", hash);
         if let Some(value) = self.cache.accounts.get(&hash) {
-            debug!("get_account disk layer cache hit for {}", hash);
             return Ok(value.clone());
         }
-        debug!("get_account disk layer cache miss for {}", hash);
 
         let state_trie = self.db.open_state_trie(self.state_root);
 
@@ -102,7 +99,7 @@ impl DiskLayer {
                 "get_storage disk layer cache hit for {} / {}",
                 account_hash, storage_hash
             );
-            return Ok(Some(value));
+            return Ok(value);
         }
         debug!(
             "get_storage disk layer cache miss for {} / {}",
@@ -112,6 +109,9 @@ impl DiskLayer {
         let account = if let Some(account) = self.get_account(account_hash, layers)? {
             account
         } else {
+            self.cache
+                .storages
+                .insert((account_hash, storage_hash), None);
             return Ok(None);
         };
 
@@ -122,13 +122,16 @@ impl DiskLayer {
         let value = if let Some(value) = storage_trie.get(storage_hash).ok().flatten() {
             value
         } else {
+            self.cache
+                .storages
+                .insert((account_hash, storage_hash), None);
             return Ok(None);
         };
         let value: U256 = U256::decode(&value)?;
 
         self.cache
             .storages
-            .insert((account_hash, storage_hash), value);
+            .insert((account_hash, storage_hash), Some(value));
 
         Ok(Some(value))
     }
