@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747244814986,
+  "lastUpdate": 1747244878355,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7214,6 +7214,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.000742301180521397,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "77f7dd4e48ad8008818e9067e9e82e99131e109b",
+          "message": "refactor(l2): replace prover config toml with CLI flags (#2771)\n\n**Motivation**\n\nWe want to replace the .toml file used to configure the prover with a\ncli\n\n**Description**\n\n- Remove all the code related to reading toml files\n- Implement a struct ProverClientOptions that adds CLI options for the\nprover\n\n**How to test**\n\nIf you are in a dev environment, keep working as usual because under the\nhood, the sequencer initialization is not relying anymore on the\nprover_client_config.toml.\n\nIf you are in a prod environment, inside `crates/l2/prover` run `cargo\nrun --release -- --help` to explore the different configuration flags\nthis PR adds.\n\nCloses #2576",
+          "timestamp": "2025-05-14T16:51:47Z",
+          "tree_id": "39aa5a67946e692e9d0627237e8ad29578479091",
+          "url": "https://github.com/lambdaclass/ethrex/commit/77f7dd4e48ad8008818e9067e9e82e99131e109b"
+        },
+        "date": 1747244877176,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.000739754068627451,
             "unit": "Mgas/s"
           }
         ]
