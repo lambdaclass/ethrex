@@ -27,11 +27,21 @@ async fn main() -> eyre::Result<()> {
         return subcommand.run(&opts).await;
     }
 
-    let data_dir = set_datadir(&opts.datadir);
+    let sub_path = match &opts.network {
+        Some(network) => {
+            if ["holesky", "sepolia", "hoodi", "mainnet"].contains(&network.as_str()) {
+                &network.clone()
+            } else {
+                &(String::from("custom/").to_owned() + &network.clone())
+            }
+        }
+        None => &(String::from("")),
+    };
+    let data_dir = set_datadir(((opts.datadir).to_owned() + &String::from("/") + sub_path).as_str());
 
     let network = get_network(&opts);
 
-    let store = init_store(&data_dir, &network).await;
+    let store = init_store(&(data_dir.to_owned()+&String::from("/store")), &network).await;
 
     let blockchain = init_blockchain(opts.evm, store.clone());
 
