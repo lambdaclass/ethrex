@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747247976603,
+  "lastUpdate": 1747248310064,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7303,6 +7303,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.000739754068627451,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "onoratomatias@gmail.com",
+            "name": "Matías Onorato",
+            "username": "mationorato"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ac0b378a346cbadec43a1a4464f58d1524a93c6d",
+          "message": "fix(l2): remove rich wallets from l2 genesis (#2781)\n\n**Motivation**\nRemove no longer needed rich wallets from l2 genesis file\n\n---------\n\nCo-authored-by: Leandro Serra <leandro.serra@lambdaclass.com>\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-05-14T17:09:35Z",
+          "tree_id": "283b1c9d6bca4d5952c4808241396bfcb84bdcc3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ac0b378a346cbadec43a1a4464f58d1524a93c6d"
+        },
+        "date": 1747248308991,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.000738306409001957,
             "unit": "Mgas/s"
           }
         ]
