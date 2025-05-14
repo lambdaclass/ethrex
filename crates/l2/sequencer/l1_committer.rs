@@ -76,7 +76,7 @@ impl Committer {
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
     ) -> Self {
-        let signer = if let Some(remote_signer_url) = &eth_config.remote_signer_url {
+        let signer = if let Some(remote_signer_url) = &committer_config.remote_signer_url {
             RemoteSigner::new(
                 remote_signer_url.clone(),
                 committer_config

@@ -6,6 +6,7 @@ use ethrex_p2p::{kademlia::KademliaTable, sync::SyncMode, types::Node};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_vm::EvmEngine;
 use hex::FromHexError;
+use secp256k1::PublicKey;
 #[cfg(feature = "l2")]
 use secp256k1::SecretKey;
 use std::{
@@ -127,6 +128,10 @@ pub fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Err
 #[cfg(feature = "l2")]
 pub fn parse_private_key(s: &str) -> eyre::Result<SecretKey> {
     Ok(SecretKey::from_slice(&parse_hex(s)?)?)
+}
+
+pub fn parse_public_key(s: &str) -> eyre::Result<PublicKey> {
+    Ok(PublicKey::from_slice(&parse_hex(s)?)?)
 }
 
 pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {

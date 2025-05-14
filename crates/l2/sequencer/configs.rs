@@ -1,6 +1,6 @@
 use ethrex_common::{Address, U256};
 use reqwest::Url;
-use secp256k1::SecretKey;
+use secp256k1::{PublicKey, SecretKey};
 use std::net::IpAddr;
 
 #[derive(Clone, Debug)]
@@ -28,6 +28,8 @@ pub struct CommitterConfig {
     pub commit_time_ms: u64,
     pub arbitrary_base_blob_gas_price: u64,
     pub validium: bool,
+    pub remote_signer_url: Option<Url>,
+    pub remote_signer_public_key: Option<PublicKey>,
 }
 
 #[derive(Clone, Debug)]
@@ -39,7 +41,6 @@ pub struct EthConfig {
     pub backoff_factor: u64,
     pub min_retry_delay: u64,
     pub max_retry_delay: u64,
-    pub remote_signer_url: Option<Url>,
 }
 
 #[derive(Clone, Debug)]

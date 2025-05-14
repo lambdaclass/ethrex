@@ -7,7 +7,7 @@ use ethrex_l2::{
 };
 use ethrex_rpc::clients::eth::get_address_from_secret_key;
 use reqwest::Url;
-use secp256k1::SecretKey;
+use secp256k1::{PublicKey, SecretKey};
 use std::net::{IpAddr, Ipv4Addr};
 
 #[derive(Parser, Default)]
@@ -62,6 +62,8 @@ impl From<SequencerOptions> for SequencerConfig {
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
                 validium: opts.committer_opts.validium,
+                remote_signer_url: opts.committer_opts.remote_signer_url,
+                remote_signer_public_key: opts.committer_opts.remote_signer_public_key,
             },
             eth: EthConfig {
                 rpc_url: opts.eth_opts.rpc_url,
@@ -73,7 +75,6 @@ impl From<SequencerOptions> for SequencerConfig {
                 maximum_allowed_max_fee_per_blob_gas: opts
                     .eth_opts
                     .maximum_allowed_max_fee_per_blob_gas,
-                remote_signer_url: opts.eth_opts.remote_signer_url,
             },
             l1_watcher: L1WatcherConfig {
                 bridge_address: opts.watcher_opts.bridge_address,
@@ -154,13 +155,6 @@ pub struct EthOptions {
         help_heading = "Eth options"
     )]
     pub max_retry_delay: u64,
-    #[arg(
-        long = "eth-remote-signer-url",
-        value_name = "URL",
-        env = "ETHREX_REMOTE_SIGNER_URL",
-        help_heading = "Eth options"
-    )]
-    pub remote_signer_url: Option<Url>,
 }
 
 #[derive(Parser)]
@@ -256,6 +250,23 @@ pub struct CommitterOptions {
     )]
     pub committer_l1_private_key: SecretKey,
     #[arg(
+        long = "committer.remote-signer-url",
+        value_name = "URL",
+        env = "ETHREX_REMOTE_SIGNER_URL",
+        help_heading = "L1 Committer options",
+        help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key."
+    )]
+    pub remote_signer_url: Option<Url>,
+    #[arg(
+        long = "committer.remote-signer-public-key",
+        value_name = "PUBLIC_KEY",
+        value_parser = utils::parse_public_key,
+        env = "ETHREX_COMMITTER_REMOTE_SIGNER_PUBLIC_KEY",
+        help_heading = "L1 Committer options",
+        help = "Public key to request the remote signature from."
+    )]
+    pub remote_signer_public_key: Option<PublicKey>,
+    #[arg(
         long,
         value_name = "ADDRESS",
         env = "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS",
@@ -303,6 +314,8 @@ impl Default for CommitterOptions {
             commit_time_ms: 1000,
             arbitrary_base_blob_gas_price: 1_000_000_000,
             validium: false,
+            remote_signer_url: None,
+            remote_signer_public_key: None,
         }
     }
 }
