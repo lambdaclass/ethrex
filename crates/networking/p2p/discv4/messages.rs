@@ -1,5 +1,8 @@
 use super::helpers::current_unix_time;
-use crate::types::{Endpoint, Node, NodeRecord};
+use crate::{
+    rlpx::utils::node_id,
+    types::{Endpoint, Node, NodeRecord},
+};
 use bytes::BufMut;
 use ethrex_common::{H256, H512, H520};
 use ethrex_rlp::{
@@ -93,11 +96,7 @@ impl Packet {
     }
 
     pub fn get_node_id(&self) -> H256 {
-        H256(
-            Keccak256::new_with_prefix(&self.public_key)
-                .finalize()
-                .into(),
-        )
+        node_id(&self.public_key)
     }
 }
 

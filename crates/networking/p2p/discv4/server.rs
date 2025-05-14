@@ -11,7 +11,7 @@ use super::{
 use crate::{
     kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
     network::{handle_peer_as_initiator, P2PContext},
-    rlpx::connection::MAX_PEERS_TCP_CONNECTIONS,
+    rlpx::{connection::MAX_PEERS_TCP_CONNECTIONS, utils::node_id},
     types::{Endpoint, Node, NodeRecord},
 };
 use ethrex_common::H256;
@@ -252,9 +252,7 @@ impl Discv4Server {
 
                 let nodes = {
                     let table = self.ctx.table.lock().await;
-                    table.get_closest_nodes(H256(
-                        Keccak256::new_with_prefix(&msg.target).finalize().into(),
-                    ))
+                    table.get_closest_nodes(node_id(&msg.target))
                 };
                 let nodes_chunks = nodes.chunks(4);
                 let expiration = get_msg_expiration_from_seconds(20);

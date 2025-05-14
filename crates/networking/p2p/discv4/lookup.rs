@@ -6,6 +6,7 @@ use super::{
 use crate::{
     kademlia::{bucket_number, MAX_NODES_PER_BUCKET},
     network::{public_key_from_signing_key, P2PContext},
+    rlpx::utils::node_id,
     types::Node,
 };
 use ethrex_common::{H256, H512};
@@ -103,7 +104,7 @@ impl Discv4LookupHandler {
     /// We use the public key instead of the node_id as target as we might need to perform a FindNode request
     async fn recursive_lookup(&self, target: H512) {
         // lookups start with the closest nodes to the target from our table
-        let target_node_id = H256(Keccak256::new_with_prefix(target).finalize().into());
+        let target_node_id = node_id(&target);
         let mut peers_to_ask: Vec<Node> = self
             .ctx
             .table

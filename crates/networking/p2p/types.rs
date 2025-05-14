@@ -14,6 +14,8 @@ use std::{
     str::FromStr,
 };
 
+use crate::rlpx::utils::node_id;
+
 const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,7 +108,7 @@ impl Node {
             udp_port,
             tcp_port,
             public_key,
-            node_id: H256(Keccak256::new_with_prefix(&public_key).finalize().into()),
+            node_id: node_id(&public_key),
         }
     }
 
