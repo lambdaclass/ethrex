@@ -120,23 +120,27 @@ impl L1ProofSender {
     }
 
     async fn main_logic(&self) -> Result<(), ProofSenderError> {
-        // let batch_to_verify = 1 + self
-        //     .eth_client
-        //     .get_last_verified_batch(self.on_chain_proposer_address)
-        //     .await?;
+        let batch_to_verify = 1 + self
+            .eth_client
+            .get_last_verified_batch(self.on_chain_proposer_address)
+            .await?;
 
-        // if batch_number_has_all_needed_proofs(batch_to_verify, &self.needed_proof_types)
-        //     .is_ok_and(|has_all_proofs| has_all_proofs)
-        // {
-        //     self.send_proof(batch_to_verify).await?;
-        // } else {
-        //     info!("Missing proofs for batch {batch_to_verify}, skipping sending");
-        // }
-
+        // Sent proof to Aligned batcher
         self.sent_proof_to_aligned().await?;
-        sleep(Duration::from_secs(100)).await;
-        self.verify_proof_aggregation(1).await?;
 
+        loop {
+            // Advance OnChainProposer verifying batch through AlignedProofAggregatorService
+            match self.verify_proof_aggregation(batch_to_verify).await? {
+                Some(verify_tx_hash) => {
+                    info!("L1 proof sender batch {batch_to_verify} verified in AlignedProofAggregatorService, with transaction hash {verify_tx_hash:#x}");
+                    break;
+                }
+                None => {
+                    // not aggregated yet
+                    sleep(Duration::from_secs(20)).await;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -185,7 +189,10 @@ impl L1ProofSender {
         Ok(())
     }
 
-    async fn verify_proof_aggregation(&self, batch_number: u64) -> Result<(), ProofSenderError> {
+    async fn verify_proof_aggregation(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, ProofSenderError> {
         info!("L1 proof sender: Verifying proof in aggregation mode");
 
         let vk = std::fs::read("../../test_data/vk")
@@ -212,7 +219,7 @@ impl L1ProofSender {
             Ok(Some(merkle_path)) => merkle_path,
             Ok(None) => {
                 warn!("L1 proof sender: Proof not aggregated yet.");
-                return Ok(());
+                return Ok(None);
             }
             Err(e) => {
                 error!("L1 proof sender: Error getting merkle path: {:?}", e);
@@ -237,8 +244,7 @@ impl L1ProofSender {
         let calldata = encode_calldata(ALIGNED_VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
         let verify_tx_hash = self.send_verify_tx(calldata).await?;
-        info!("Sent proof for batch {batch_number}, with transaction hash {verify_tx_hash:#x}");
-        Ok(())
+        Ok(Some(verify_tx_hash))
     }
 
     pub async fn send_proof(&self, batch_number: u64) -> Result<H256, ProofSenderError> {
