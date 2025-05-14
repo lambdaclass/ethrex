@@ -10,7 +10,7 @@ use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::{EvmError, ExecutionDB, ExecutionDBError, ExecutionResult, StoreWrapper};
+use crate::{EvmError, ExecutionResult, ProverDB, ProverDBError, StoreWrapper};
 use bytes::Bytes;
 use ethrex_common::{
     types::{
@@ -22,9 +22,10 @@ use ethrex_common::{
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
+use ethrex_levm::EVMConfig;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
-    vm::{EVMConfig, Substate, VM},
+    vm::{Substate, VM},
     Environment,
 };
 use ethrex_storage::error::StoreError;
@@ -118,7 +119,6 @@ impl LEVM {
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
             origin: tx_sender,
-            refunded_gas: 0,
             gas_limit: tx.gas_limit(),
             config,
             block_number: block_header.number.into(),
@@ -136,7 +136,6 @@ impl LEVM {
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
             tx_nonce: tx.nonce(),
             block_gas_limit: block_header.gas_limit,
-            transient_storage: HashMap::new(),
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
         };
@@ -419,7 +418,7 @@ impl LEVM {
             TxResult::Success => Ok(report),
             // EIP-7002 specifies that a failed system call invalidates the entire block.
             TxResult::Revert(vm_error) => Err(EvmError::Custom(format!(
-                "REVERT when reading withdrawal requests with error: {:?}. According to EIP-7002, the revert of this system call invalidates the block.", 
+                "REVERT when reading withdrawal requests with error: {:?}. According to EIP-7002, the revert of this system call invalidates the block.",
                 vm_error
             ))),
         }
@@ -448,7 +447,7 @@ impl LEVM {
             TxResult::Success => Ok(report),
             // EIP-7251 specifies that a failed system call invalidates the entire block.
             TxResult::Revert(vm_error) => Err(EvmError::Custom(format!(
-                "REVERT when dequeuing consolidation requests with error: {:?}. According to EIP-7251, the revert of this system call invalidates the block.", 
+                "REVERT when dequeuing consolidation requests with error: {:?}. According to EIP-7251, the revert of this system call invalidates the block.",
                 vm_error
             ))),
         }
@@ -477,16 +476,13 @@ impl LEVM {
         Ok((report.into(), access_list))
     }
 
-    pub async fn to_execution_db(
-        blocks: &[Block],
-        store: &Store,
-    ) -> Result<ExecutionDB, ExecutionDBError> {
+    pub async fn to_prover_db(blocks: &[Block], store: &Store) -> Result<ProverDB, ProverDBError> {
         let chain_config = store.get_chain_config()?;
         let Some(first_block_parent_hash) = blocks.first().map(|e| e.header.parent_hash) else {
-            return Err(ExecutionDBError::Custom("Unable to get first block".into()));
+            return Err(ProverDBError::Custom("Unable to get first block".into()));
         };
         let Some(last_block) = blocks.last() else {
-            return Err(ExecutionDBError::Custom("Unable to get last block".into()));
+            return Err(ProverDBError::Custom("Unable to get last block".into()));
         };
 
         let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(
@@ -524,7 +520,7 @@ impl LEVM {
             .state_accessed
             .lock()
             .map_err(|_| {
-                ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
             })?
             .clone();
 
@@ -538,14 +534,14 @@ impl LEVM {
                     .transpose()
                     .map(|account| Ok((*address, account?)))
             })
-            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
+            .collect::<Result<HashMap<_, _>, ProverDBError>>()?;
 
         // fetch all read/written code from store
         let code_accessed = logger
             .code_accessed
             .lock()
             .map_err(|_| {
-                ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
             })?
             .clone();
         let code = accounts
@@ -558,7 +554,7 @@ impl LEVM {
                     .transpose()
                     .map(|account| Ok((hash, account?)))
             })
-            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
+            .collect::<Result<HashMap<_, _>, ProverDBError>>()?;
 
         // fetch all read/written storage from store
         let added_storage = execution_updates.iter().filter_map(|(address, update)| {
@@ -574,7 +570,7 @@ impl LEVM {
             .into_iter()
             .chain(added_storage)
             .map(|(address, keys)| {
-                let keys: Result<HashMap<_, _>, ExecutionDBError> = keys
+                let keys: Result<HashMap<_, _>, ProverDBError> = keys
                     .iter()
                     .filter_map(|key| {
                         store
@@ -585,13 +581,13 @@ impl LEVM {
                     .collect();
                 Ok((address, keys?))
             })
-            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
+            .collect::<Result<HashMap<_, _>, ProverDBError>>()?;
 
         let block_hashes = logger
             .block_hashes_accessed
             .lock()
             .map_err(|_| {
-                ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
             })?
             .clone()
             .into_iter()
@@ -601,10 +597,10 @@ impl LEVM {
         // get account proofs
         let state_trie = store
             .state_trie(last_block.hash())?
-            .ok_or(ExecutionDBError::NewMissingStateTrie(last_block.hash()))?;
-        let parent_state_trie = store.state_trie(first_block_parent_hash)?.ok_or(
-            ExecutionDBError::NewMissingStateTrie(first_block_parent_hash),
-        )?;
+            .ok_or(ProverDBError::NewMissingStateTrie(last_block.hash()))?;
+        let parent_state_trie = store
+            .state_trie(first_block_parent_hash)?
+            .ok_or(ProverDBError::NewMissingStateTrie(first_block_parent_hash))?;
         let hashed_addresses: Vec<_> = state_accessed.keys().map(hash_address).collect();
         let initial_state_proofs = parent_state_trie.get_proofs(&hashed_addresses)?;
         let final_state_proofs: Vec<_> = hashed_addresses
@@ -632,7 +628,7 @@ impl LEVM {
                 continue;
             };
             let storage_trie = store.storage_trie(last_block.hash(), address)?.ok_or(
-                ExecutionDBError::NewMissingStorageTrie(last_block.hash(), address),
+                ProverDBError::NewMissingStorageTrie(last_block.hash(), address),
             )?;
             let paths = storage_keys.iter().map(hash_key).collect::<Vec<_>>();
 
@@ -660,7 +656,7 @@ impl LEVM {
             final_storage_proofs.insert(address, final_proofs);
         }
 
-        Ok(ExecutionDB {
+        Ok(ProverDB {
             accounts,
             code,
             storage,
@@ -695,7 +691,6 @@ pub fn generic_system_contract_levm(
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
         block_gas_limit: 30_000_000,
-        transient_storage: HashMap::new(),
         config,
         ..Default::default()
     };
@@ -810,7 +805,6 @@ fn env_from_generic(
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
     Ok(Environment {
         origin: tx.from.0.into(),
-        refunded_gas: 0,
         gas_limit: tx.gas.unwrap_or(header.gas_limit), // Ensure tx doesn't fail due to gas limit
         config,
         block_number: header.number.into(),
@@ -828,7 +822,6 @@ fn env_from_generic(
         tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
         tx_nonce: tx.nonce.unwrap_or_default(),
         block_gas_limit: header.gas_limit,
-        transient_storage: HashMap::new(),
         difficulty: header.difficulty,
         is_privileged: false,
     })

@@ -5,7 +5,7 @@ use self::revm::db::evm_state;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
 use crate::{db::StoreWrapper, errors::EvmError};
-use crate::{ExecutionDB, ExecutionDBError};
+use crate::{ProverDB, ProverDBError};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
@@ -18,13 +18,23 @@ use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;
+use std::fmt;
 use std::sync::Arc;
 
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum EvmEngine {
     #[default]
-    REVM,
     LEVM,
+    REVM,
+}
+
+impl fmt::Display for EvmEngine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EvmEngine::LEVM => write!(f, "levm"),
+            EvmEngine::REVM => write!(f, "revm"),
+        }
+    }
 }
 
 // Allow conversion from string for backward compatibility
@@ -76,17 +86,14 @@ impl Evm {
         }
     }
 
-    pub fn from_execution_db(db: ExecutionDB) -> Self {
+    pub fn from_prover_db(db: ProverDB) -> Self {
         Evm::LEVM {
             db: GeneralizedDatabase::new(Arc::new(db), CacheDB::new()),
         }
     }
 
-    pub async fn to_execution_db(
-        store: &Store,
-        blocks: &[Block],
-    ) -> Result<ExecutionDB, ExecutionDBError> {
-        LEVM::to_execution_db(blocks, store).await
+    pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, ProverDBError> {
+        LEVM::to_prover_db(blocks, store).await
     }
 
     pub fn default(store: Store, parent_hash: H256) -> Self {
