@@ -317,15 +317,9 @@ impl<'a> VM<'a> {
         // and the changes made by the execution itself.
         #[cfg(feature = "l2")]
         {
-            let current_backup = &mut self.current_call_frame_mut()?.call_frame_backup;
-            for (addr, acc) in callframe_backup.original_accounts_info {
-                current_backup.original_accounts_info.insert(addr, acc);
-            }
-            for (addr, storage) in callframe_backup.original_account_storage_slots {
-                current_backup
-                    .original_account_storage_slots
-                    .insert(addr, storage);
-            }
+            let current_backup: &mut CallFrameBackup =
+                &mut self.current_call_frame_mut()?.call_frame_backup;
+            merge_callframe_backup(current_backup, callframe_backup);
         }
         Ok(report)
     }
