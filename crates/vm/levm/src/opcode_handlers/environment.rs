@@ -31,7 +31,7 @@ impl<'a> VM<'a> {
 
         let (account, address_was_cold) = self
             .db
-            .access_account(&mut self.accrued_substate, address)?;
+            .access_account(&mut self.substate, address)?;
 
         let current_call_frame = self.current_call_frame_mut()?;
 
@@ -258,7 +258,7 @@ impl<'a> VM<'a> {
 
         let (account, address_was_cold) = self
             .db
-            .access_account(&mut self.accrued_substate, address)?;
+            .access_account(&mut self.substate, address)?;
 
         let current_call_frame = self.current_call_frame_mut()?;
 
@@ -284,7 +284,7 @@ impl<'a> VM<'a> {
 
         let (account, address_was_cold) = self
             .db
-            .access_account(&mut self.accrued_substate, address)?;
+            .access_account(&mut self.substate, address)?;
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -400,7 +400,7 @@ impl<'a> VM<'a> {
 
         let (account, address_was_cold) = self
             .db
-            .access_account(&mut self.accrued_substate, address)?;
+            .access_account(&mut self.substate, address)?;
 
         let current_call_frame = self.current_call_frame_mut()?;
 

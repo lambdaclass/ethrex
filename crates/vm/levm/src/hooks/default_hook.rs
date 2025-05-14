@@ -20,13 +20,13 @@ pub struct DefaultHook;
 
 impl Hook for DefaultHook {
     /// ## Description
-    /// This method performs validations and returns an error if any of the validations fail.
+    /// This method performs validations and returns an error if any of these fail.
     /// It also makes pre-execution changes:
     /// - It increases sender nonce
     /// - It substracts up-front-cost from sender balance.
     /// - It adds value to receiver balance.
     /// - It calculates and adds intrinsic gas to the 'gas used' of callframe and environment.
-    ///   See 'docs' for more information about validations.
+    /// See 'docs' for more information about validations.
     fn prepare_execution(&self, vm: &mut VM<'_>) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
         let sender_account = vm.db.get_account(sender_address)?;
@@ -230,7 +230,7 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
 
 // In Cancun the only addresses destroyed are contracts created in this transaction
 pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
-    let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
+    let selfdestruct_set = vm.substate.selfdestruct_set.clone();
     for address in selfdestruct_set {
         let account_to_remove = vm.get_account_mut(address)?;
         *account_to_remove = Account::default();

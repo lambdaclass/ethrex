@@ -18,7 +18,7 @@ impl<'a> VM<'a> {
             Ok(output) => Ok(ExecutionReport {
                 result: TxResult::Success,
                 gas_used: self.current_call_frame()?.gas_used,
-                gas_refunded: self.accrued_substate.refunded_gas,
+                gas_refunded: self.substate.refunded_gas,
                 output,
                 logs: vec![],
             }),
@@ -30,7 +30,7 @@ impl<'a> VM<'a> {
                 Ok(ExecutionReport {
                     result: TxResult::Revert(error),
                     gas_used: self.current_call_frame()?.gas_limit,
-                    gas_refunded: self.accrued_substate.refunded_gas,
+                    gas_refunded: self.substate.refunded_gas,
                     output: Bytes::new(),
                     logs: vec![],
                 })
@@ -200,7 +200,7 @@ impl<'a> VM<'a> {
                     return Ok(ExecutionReport {
                         result: TxResult::Revert(error),
                         gas_used: self.current_call_frame()?.gas_used,
-                        gas_refunded: self.accrued_substate.refunded_gas,
+                        gas_refunded: self.substate.refunded_gas,
                         output: std::mem::take(&mut self.current_call_frame_mut()?.output),
                         logs: vec![],
                     });
@@ -211,7 +211,7 @@ impl<'a> VM<'a> {
         Ok(ExecutionReport {
             result: TxResult::Success,
             gas_used: self.current_call_frame()?.gas_used,
-            gas_refunded: self.accrued_substate.refunded_gas,
+            gas_refunded: self.substate.refunded_gas,
             output: std::mem::take(&mut self.current_call_frame_mut()?.output),
             logs: std::mem::take(&mut self.current_call_frame_mut()?.logs),
         })

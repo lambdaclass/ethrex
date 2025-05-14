@@ -14,10 +14,10 @@ use crate::{
         SIZE_PRECOMPILES_PRE_CANCUN,
     },
     vm::{Substate, VM},
-    EVMConfig, Environment,
+    EVMConfig,
 };
 use bytes::Bytes;
-use ethrex_common::types::{Account, Transaction};
+use ethrex_common::types::{Account, Transaction, TxKind};
 use ethrex_common::{
     types::{tx_fields::*, Fork},
     Address, H256, U256,
@@ -408,7 +408,7 @@ impl<'a> VM<'a> {
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
             let (authority_account, _address_was_cold) = self
                 .db
-                .access_account(&mut self.accrued_substate, authority_address)?;
+                .access_account(&mut self.substate, authority_address)?;
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated =
@@ -456,17 +456,14 @@ impl<'a> VM<'a> {
         }
 
         let code_address = self.current_call_frame()?.code_address;
-        let (code_address_info, _) = self
-            .db
-            .access_account(&mut self.accrued_substate, code_address)?;
+        let (code_address_info, _) = self.db.access_account(&mut self.substate, code_address)?;
 
         if has_delegation(&code_address_info)? {
             self.current_call_frame_mut()?.code_address =
                 get_authorized_address(&code_address_info)?;
             let code_address = self.current_call_frame()?.code_address;
-            let (auth_address_info, _) = self
-                .db
-                .access_account(&mut self.accrued_substate, code_address)?;
+            let (auth_address_info, _) =
+                self.db.access_account(&mut self.substate, code_address)?;
 
             self.current_call_frame_mut()?.bytecode = auth_address_info.code.clone();
         } else {
@@ -476,7 +473,7 @@ impl<'a> VM<'a> {
         self.current_call_frame_mut()?.valid_jump_destinations =
             get_valid_jump_destinations(&self.current_call_frame()?.bytecode).unwrap_or_default();
 
-        self.accrued_substate.refunded_gas = refunded_gas;
+        self.substate.refunded_gas = refunded_gas;
 
         Ok(())
     }
@@ -616,22 +613,22 @@ impl<'a> VM<'a> {
 
     /// Backup of Substate, a copy of the current substate to restore if sub-context is reverted
     pub fn backup_substate(&mut self) {
-        self.substate_backups.push(self.accrued_substate.clone());
+        self.substate_backups.push(self.substate.clone());
     }
 
-    pub fn initialize_substate(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
+    pub fn initialize_substate(&mut self) -> Result<(), VMError> {
         // Add sender and recipient (in the case of a Call) to cache [https://www.evm.codes/about#access_list]
-        let mut default_touched_accounts = HashSet::from_iter([env.origin].iter().cloned());
+        let mut default_touched_accounts = HashSet::from_iter([self.env.origin].iter().cloned());
 
         // [EIP-3651] - Add coinbase to cache if the spec is SHANGHAI or higher
-        if env.config.fork >= Fork::Shanghai {
-            default_touched_accounts.insert(env.coinbase);
+        if self.env.config.fork >= Fork::Shanghai {
+            default_touched_accounts.insert(self.env.coinbase);
         }
 
         let mut default_touched_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
 
         // Add access lists contents to cache
-        for (address, keys) in tx.access_list() {
+        for (address, keys) in self.tx.access_list() {
             default_touched_accounts.insert(address);
             let mut warm_slots = BTreeSet::new();
             for slot in keys {
@@ -641,7 +638,7 @@ impl<'a> VM<'a> {
         }
 
         // Add precompiled contracts addresses to cache.
-        let max_precompile_address = match env.config.fork {
+        let max_precompile_address = match self.env.config.fork {
             spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
             spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
             spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
@@ -651,7 +648,7 @@ impl<'a> VM<'a> {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
-        let substate = Substate {
+        self.substate = Substate {
             selfdestruct_set: HashSet::new(),
             touched_accounts: default_touched_accounts,
             touched_storage_slots: default_touched_storage_slots,
@@ -660,7 +657,7 @@ impl<'a> VM<'a> {
             transient_storage: HashMap::new(),
         };
 
-        Ok(substate)
+        Ok(())
     }
 
     pub fn get_hooks(tx: &Transaction) -> Vec<Arc<dyn Hook + 'static>> {
@@ -680,5 +677,32 @@ impl<'a> VM<'a> {
             vec![Arc::new(L2Hook { recipient })]
         };
         hooks
+    }
+
+    pub fn get_callee_and_code(&mut self) -> Result<(Address, Bytes), VMError> {
+        let (callee, code) = match self.tx.to() {
+            TxKind::Call(address_to) => {
+                self.substate.touched_accounts.insert(address_to);
+
+                let (_is_delegation, _eip7702_gas_consumed, _code_address, bytes) =
+                    eip7702_get_code(self.db, &mut self.substate, address_to)?;
+
+                (address_to, bytes)
+            }
+
+            TxKind::Create => {
+                let sender_nonce = self.db.get_account(self.env.origin)?.info.nonce;
+
+                let created_address = calculate_create_address(self.env.origin, sender_nonce)
+                    .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
+
+                self.substate.touched_accounts.insert(created_address);
+                self.substate.created_accounts.insert(created_address);
+
+                (created_address, Bytes::new()) // Bytecode will be assigned from calldata after validations
+            }
+        };
+
+        Ok((callee, code))
     }
 }

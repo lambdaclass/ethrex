@@ -71,10 +71,10 @@ impl<'a> VM<'a> {
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
         let (account, address_was_cold) =
-            self.db.access_account(&mut self.accrued_substate, callee)?;
+            self.db.access_account(&mut self.substate, callee)?;
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(self.db, &mut self.accrued_substate, callee)?;
+            eip7702_get_code(self.db, &mut self.substate, callee)?;
 
         let gas_left = self
             .current_call_frame()?
@@ -173,10 +173,10 @@ impl<'a> VM<'a> {
 
         let (_account_info, address_was_cold) = self
             .db
-            .access_account(&mut self.accrued_substate, code_address)?;
+            .access_account(&mut self.substate, code_address)?;
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(self.db, &mut self.accrued_substate, code_address)?;
+            eip7702_get_code(self.db, &mut self.substate, code_address)?;
 
         let gas_left = self
             .current_call_frame()?
@@ -293,7 +293,7 @@ impl<'a> VM<'a> {
         // GAS
         let (_account_info, address_was_cold) = self
             .db
-            .access_account(&mut self.accrued_substate, code_address)?;
+            .access_account(&mut self.substate, code_address)?;
 
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
         let new_memory_size_for_return_data =
@@ -301,7 +301,7 @@ impl<'a> VM<'a> {
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(self.db, &mut self.accrued_substate, code_address)?;
+            eip7702_get_code(self.db, &mut self.substate, code_address)?;
 
         let gas_left = self
             .current_call_frame()?
@@ -390,7 +390,7 @@ impl<'a> VM<'a> {
         // GAS
         let (_account_info, address_was_cold) = self
             .db
-            .access_account(&mut self.accrued_substate, code_address)?;
+            .access_account(&mut self.substate, code_address)?;
 
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
         let new_memory_size_for_return_data =
@@ -398,7 +398,7 @@ impl<'a> VM<'a> {
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
         let (is_delegation, eip7702_gas_consumed, _, bytecode) =
-            eip7702_get_code(self.db, &mut self.accrued_substate, code_address)?;
+            eip7702_get_code(self.db, &mut self.substate, code_address)?;
 
         let gas_left = self
             .current_call_frame()?
@@ -561,10 +561,10 @@ impl<'a> VM<'a> {
 
         let (target_account, target_account_is_cold) = self
             .db
-            .access_account(&mut self.accrued_substate, target_address)?;
+            .access_account(&mut self.substate, target_address)?;
 
         let (current_account, _current_account_is_cold) =
-            self.db.access_account(&mut self.accrued_substate, to)?;
+            self.db.access_account(&mut self.substate, to)?;
         let balance_to_transfer = current_account.info.balance;
 
         self.current_call_frame_mut()?
@@ -580,17 +580,17 @@ impl<'a> VM<'a> {
             self.decrease_account_balance(to, balance_to_transfer)?;
 
             // Selfdestruct is executed in the same transaction as the contract was created
-            if self.accrued_substate.created_accounts.contains(&to) {
+            if self.substate.created_accounts.contains(&to) {
                 // If target is the same as the contract calling, Ether will be burnt.
                 self.get_account_mut(to)?.info.balance = U256::zero();
 
-                self.accrued_substate.selfdestruct_set.insert(to);
+                self.substate.selfdestruct_set.insert(to);
             }
         } else {
             self.increase_account_balance(target_address, balance_to_transfer)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
 
-            self.accrued_substate.selfdestruct_set.insert(to);
+            self.substate.selfdestruct_set.insert(to);
         }
 
         Ok(OpcodeResult::Halt)
@@ -630,7 +630,7 @@ impl<'a> VM<'a> {
 
         let deployer_account = self
             .db
-            .access_account(&mut self.accrued_substate, deployer_address)?
+            .access_account(&mut self.substate, deployer_address)?
             .0;
 
         let code = Bytes::from(
@@ -648,7 +648,7 @@ impl<'a> VM<'a> {
         };
 
         // touch account
-        self.accrued_substate.touched_accounts.insert(new_address);
+        self.substate.touched_accounts.insert(new_address);
 
         let new_depth = {
             let current_call_frame = self.current_call_frame_mut()?;
@@ -722,7 +722,7 @@ impl<'a> VM<'a> {
         );
         self.call_frames.push(new_call_frame);
 
-        self.accrued_substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
+        self.substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
 
         self.backup_substate();
 
@@ -751,7 +751,7 @@ impl<'a> VM<'a> {
     ) -> Result<OpcodeResult, VMError> {
         let sender_account = self
             .db
-            .access_account(&mut self.accrued_substate, msg_sender)?
+            .access_account(&mut self.substate, msg_sender)?
             .0;
 
         let calldata = {
@@ -947,7 +947,7 @@ impl<'a> VM<'a> {
 
                 // Deployment failed so account shouldn't exist
                 cache::remove_account(&mut self.db.cache, &executed_call_frame.to);
-                self.accrued_substate
+                self.substate
                     .created_accounts
                     .remove(&executed_call_frame.to);
 

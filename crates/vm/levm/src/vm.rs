@@ -2,10 +2,9 @@ use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
-    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
+    errors::{ExecutionReport, OpcodeResult, TxResult, VMError},
     hooks::hook::Hook,
     precompiles::execute_precompile,
-    utils::*,
     TransientStorage,
 };
 use bytes::Bytes;
@@ -35,7 +34,7 @@ pub struct Substate {
 pub struct VM<'a> {
     pub call_frames: Vec<CallFrame>,
     pub env: Environment,
-    pub accrued_substate: Substate,
+    pub substate: Substate,
     pub db: &'a mut GeneralizedDatabase,
     pub tx: Transaction,
     pub hooks: Vec<Arc<dyn Hook>>,
@@ -45,57 +44,36 @@ pub struct VM<'a> {
 }
 
 impl<'a> VM<'a> {
-    pub fn new(
-        env: Environment,
-        db: &'a mut GeneralizedDatabase,
-        tx: &Transaction,
-    ) -> Result<Self, VMError> {
-        let mut substate = Self::initialize_substate(&env, tx)?;
+    pub fn new(env: Environment, db: &'a mut GeneralizedDatabase, tx: &Transaction) -> Self {
         let hooks = Self::get_hooks(tx);
 
-        let bytecode;
-        let destination_and_code_address;
-
-        match tx.to() {
-            TxKind::Call(address_to) => {
-                substate.touched_accounts.insert(address_to);
-
-                let (_is_delegation, _eip7702_gas_consumed, _code_address, bytes) =
-                    eip7702_get_code(db, &mut substate, address_to)?;
-                destination_and_code_address = address_to;
-                bytecode = bytes;
-            }
-
-            TxKind::Create => {
-                let sender_nonce = db.get_account(env.origin)?.info.nonce;
-
-                // In this case, the destination address which also holds the code would be the address of the newly created contract
-                destination_and_code_address = calculate_create_address(env.origin, sender_nonce)
-                    .map_err(|_| {
-                    VMError::Internal(InternalError::CouldNotComputeCreateAddress)
-                })?;
-
-                substate
-                    .touched_accounts
-                    .insert(destination_and_code_address);
-
-                substate
-                    .created_accounts
-                    .insert(destination_and_code_address);
-
-                bytecode = Bytes::new() //Bytecode will be later assigned from the calldata after passing validations;
-            }
+        Self {
+            call_frames: vec![],
+            env,
+            substate: Substate::default(),
+            db,
+            tx: tx.clone(),
+            hooks,
+            substate_backups: vec![],
+            storage_original_values: HashMap::new(),
         }
+    }
+
+    /// Initializes substate and creates first callframe.
+    pub fn setup_vm(&mut self) -> Result<(), VMError> {
+        self.initialize_substate()?;
+
+        let (callee, bytecode) = self.get_callee_and_code()?;
 
         let initial_call_frame = CallFrame::new(
-            env.origin,
-            destination_and_code_address,
-            destination_and_code_address,
+            self.env.origin,
+            callee,
+            callee,
             bytecode,
-            tx.value(),
-            tx.data().clone(),
+            self.tx.value(),
+            self.tx.data().clone(),
             false,
-            env.gas_limit,
+            self.env.gas_limit,
             0,
             true,
             false,
@@ -103,20 +81,15 @@ impl<'a> VM<'a> {
             0,
         );
 
-        Ok(Self {
-            call_frames: vec![initial_call_frame],
-            env,
-            accrued_substate: substate,
-            db,
-            tx: tx.clone(),
-            hooks,
-            substate_backups: vec![],
-            storage_original_values: HashMap::new(),
-        })
+        self.call_frames.push(initial_call_frame);
+
+        Ok(())
     }
 
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
+        self.setup_vm()?;
+
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
             self.restore_cache_state()?;
@@ -190,7 +163,7 @@ impl<'a> VM<'a> {
 
     pub fn restore_state(&mut self, backup: Substate) -> Result<(), VMError> {
         self.restore_cache_state()?;
-        self.accrued_substate = backup;
+        self.substate = backup;
         Ok(())
     }
 
