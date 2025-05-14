@@ -300,7 +300,7 @@ pub async fn handle_authrpc_request(
 pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.namespace() {
         Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
-        Ok(RpcNamespace::Admin) => map_admin_requests(req, context).await,
+        Ok(RpcNamespace::Admin) => map_admin_requests(req, context),
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
@@ -450,7 +450,7 @@ pub async fn map_engine_requests(
     }
 }
 
-pub async fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
