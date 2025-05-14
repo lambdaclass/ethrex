@@ -1180,7 +1180,7 @@ impl Store {
                 );
 
                 // Use this point to cap the amount of layers if needs be
-                store.snapshots.cap(hash, 8)?;
+                store.snapshots.cap(hash, 128)?;
             }
             Ok(())
         }
