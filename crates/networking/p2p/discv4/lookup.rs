@@ -154,7 +154,7 @@ impl Discv4LookupHandler {
                 continue;
             }
             let mut locked_table = self.ctx.table.lock().await;
-            if let Some(peer) = locked_table.get_by_node_id_mut(node.node_id) {
+            if let Some(peer) = locked_table.get_by_node_id_mut(node.node_id()) {
                 // if the peer has an ongoing find_node request, don't query
                 if peer.find_node_request.is_none() {
                     let (tx, mut receiver) = tokio::sync::mpsc::unbounded_channel::<Vec<Node>>();
@@ -166,13 +166,18 @@ impl Discv4LookupHandler {
                     queries += 1;
                     asked_peers.insert(node.public_key);
                     if let Ok(mut found_nodes) = self
-                        .find_node_and_wait_for_response(*node, target, &mut receiver)
+                        .find_node_and_wait_for_response(node, target, &mut receiver)
                         .await
                     {
                         nodes.append(&mut found_nodes);
                     }
 
-                    if let Some(peer) = self.ctx.table.lock().await.get_by_node_id_mut(node.node_id)
+                    if let Some(peer) = self
+                        .ctx
+                        .table
+                        .lock()
+                        .await
+                        .get_by_node_id_mut(node.node_id())
                     {
                         peer.find_node_request = None;
                     };
@@ -190,7 +195,7 @@ impl Discv4LookupHandler {
     /// Adds a node to `peers_to_ask` if there's space; otherwise, replaces the farthest node
     /// from `target` if the new node is closer.
     fn peers_to_ask_push(&self, peers_to_ask: &mut Vec<Node>, target_node_id: H256, node: Node) {
-        let distance = bucket_number(target_node_id, node.node_id);
+        let distance = bucket_number(target_node_id, node.node_id());
 
         if peers_to_ask.len() < MAX_NODES_PER_BUCKET {
             peers_to_ask.push(node);
@@ -201,7 +206,7 @@ impl Discv4LookupHandler {
         let (mut idx_to_replace, mut highest_distance) = (None, 0);
 
         for (i, peer) in peers_to_ask.iter().enumerate() {
-            let current_distance = bucket_number(peer.node_id, target_node_id);
+            let current_distance = bucket_number(peer.node_id(), target_node_id);
 
             if distance < current_distance && current_distance >= highest_distance {
                 highest_distance = current_distance;
@@ -216,7 +221,7 @@ impl Discv4LookupHandler {
 
     async fn find_node_and_wait_for_response(
         &self,
-        node: Node,
+        node: &Node,
         target: H512,
         request_receiver: &mut tokio::sync::mpsc::UnboundedReceiver<Vec<Node>>,
     ) -> Result<Vec<Node>, DiscoveryError> {
@@ -297,12 +302,12 @@ mod tests {
         // because the table is filled, before making the connection, remove a node from the `b` bucket
         // otherwise it won't be added.
         let b_bucket = bucket_number(
-            server_a.ctx.local_node.node_id,
-            server_b.ctx.local_node.node_id,
+            server_a.ctx.local_node.node_id(),
+            server_b.ctx.local_node.node_id(),
         );
         let node_id_to_remove = server_a.ctx.table.lock().await.buckets()[b_bucket].peers[0]
             .node
-            .node_id;
+            .node_id();
         server_a
             .ctx
             .table
@@ -318,13 +323,13 @@ mod tests {
             .table
             .lock()
             .await
-            .get_closest_nodes(server_b.ctx.local_node.node_id);
+            .get_closest_nodes(server_b.ctx.local_node.node_id());
         let nodes_to_ask = server_b
             .ctx
             .table
             .lock()
             .await
-            .get_closest_nodes(server_b.ctx.local_node.node_id);
+            .get_closest_nodes(server_b.ctx.local_node.node_id());
 
         let lookup_handler = lookup_handler_from_server(server_b.clone());
         lookup_handler
@@ -341,10 +346,10 @@ mod tests {
         // now all peers should've been inserted
         for peer in closets_peers_to_b_from_a {
             let table = server_b.ctx.table.lock().await;
-            let node = table.get_by_node_id(peer.node_id);
+            let node = table.get_by_node_id(peer.node_id());
             // sometimes nodes can send ourselves as a neighbor
             // make sure we don't add it
-            if peer.node_id == server_b.ctx.local_node.node_id {
+            if peer.node_id() == server_b.ctx.local_node.node_id() {
                 assert!(node.is_none());
             } else {
                 assert!(node.is_some());
@@ -384,7 +389,7 @@ mod tests {
                 .table
                 .lock()
                 .await
-                .get_closest_nodes(server_a.ctx.local_node.node_id),
+                .get_closest_nodes(server_a.ctx.local_node.node_id()),
         );
         expected_peers.extend(
             server_c
@@ -392,7 +397,7 @@ mod tests {
                 .table
                 .lock()
                 .await
-                .get_closest_nodes(server_a.ctx.local_node.node_id),
+                .get_closest_nodes(server_a.ctx.local_node.node_id()),
         );
         expected_peers.extend(
             server_d
@@ -400,7 +405,7 @@ mod tests {
                 .table
                 .lock()
                 .await
-                .get_closest_nodes(server_a.ctx.local_node.node_id),
+                .get_closest_nodes(server_a.ctx.local_node.node_id()),
         );
 
         let lookup_handler = lookup_handler_from_server(server_a.clone());
@@ -414,9 +419,9 @@ mod tests {
         // make sure we don't add it
         for peer in expected_peers {
             let table = server_a.ctx.table.lock().await;
-            let node = table.get_by_node_id(peer.node_id);
+            let node = table.get_by_node_id(peer.node_id());
 
-            if peer.node_id == server_a.ctx.local_node.node_id {
+            if peer.node_id() == server_a.ctx.local_node.node_id() {
                 assert!(node.is_none());
             } else {
                 assert!(node.is_some());

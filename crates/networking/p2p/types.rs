@@ -12,6 +12,7 @@ use std::{
     fmt::Display,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
+    sync::OnceLock,
 };
 
 use crate::rlpx::utils::node_id;
@@ -57,13 +58,13 @@ impl RLPDecode for Endpoint {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
     pub ip: IpAddr,
     pub udp_port: u16,
     pub tcp_port: u16,
     pub public_key: H512,
-    pub node_id: H256,
+    node_id: OnceLock<H256>,
 }
 
 impl RLPDecode for Node {
@@ -108,7 +109,7 @@ impl Node {
             udp_port,
             tcp_port,
             public_key,
-            node_id: node_id(&public_key),
+            node_id: OnceLock::new(),
         }
     }
 
@@ -183,12 +184,16 @@ impl Node {
         }
     }
 
-    pub fn udp_addr(self) -> SocketAddr {
+    pub fn udp_addr(&self) -> SocketAddr {
         SocketAddr::new(self.ip, self.udp_port)
     }
 
-    pub fn tcp_addr(self) -> SocketAddr {
+    pub fn tcp_addr(&self) -> SocketAddr {
         SocketAddr::new(self.ip, self.tcp_port)
+    }
+
+    pub fn node_id(&self) -> H256 {
+        *self.node_id.get_or_init(|| node_id(&self.public_key))
     }
 }
 
@@ -263,7 +268,7 @@ impl NodeRecord {
         Ok(result)
     }
 
-    pub fn from_node(node: Node, seq: u64, signer: &SigningKey) -> Result<Self, String> {
+    pub fn from_node(node: &Node, seq: u64, signer: &SigningKey) -> Result<Self, String> {
         let mut record = NodeRecord {
             seq,
             ..Default::default()
@@ -460,7 +465,7 @@ mod tests {
             addr.port(),
             public_key_from_signing_key(&signer),
         );
-        let record = NodeRecord::from_node(node, 0, &signer).unwrap();
+        let record = NodeRecord::from_node(&node, 0, &signer).unwrap();
         let expected_enr_string = "enr:-Iu4QDOLZWVEdbtRUtrZ8PU1vxUJ0t_TUpVghJhJuakBUyYKE_ZfvhR2EKxDyJ8Z5wwoJE4mTSItAcYsErU0NrB7uzCAgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 
         assert_eq!(record.enr_url().unwrap(), expected_enr_string);

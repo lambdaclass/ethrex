@@ -45,7 +45,7 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
     let node_info = NodeInfo {
         enode: enode_url,
         enr: enr_url,
-        id: hex::encode(node_data.local_p2p_node.node_id),
+        id: hex::encode(node_data.local_p2p_node.node_id()),
         name: node_data.client_version.clone(),
         ip: node_data.local_p2p_node.ip.to_string(),
         ports: Ports {

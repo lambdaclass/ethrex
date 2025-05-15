@@ -45,7 +45,7 @@ impl KademliaTable {
         bucket
             .peers
             .iter()
-            .find(|entry| entry.node.node_id == node_id)
+            .find(|entry| entry.node.node_id() == node_id)
     }
 
     pub fn get_by_node_id_mut(&mut self, node_id: H256) -> Option<&mut PeerData> {
@@ -53,7 +53,7 @@ impl KademliaTable {
         bucket
             .peers
             .iter_mut()
-            .find(|entry| entry.node.node_id == node_id)
+            .find(|entry| entry.node.node_id() == node_id)
     }
 
     /// Will try to insert a node into the table. If the table is full then it pushes it to the replacement list.
@@ -62,7 +62,7 @@ impl KademliaTable {
     ///     1. PeerData: none if the peer was already in the table or as a potential replacement
     ///     2. A bool indicating if the node was inserted to the table
     pub fn insert_node(&mut self, node: Node) -> (Option<PeerData>, bool) {
-        let bucket_idx = bucket_number(node.node_id, self.local_node_id);
+        let bucket_idx = bucket_number(node.node_id(), self.local_node_id);
 
         self.insert_node_inner(node, bucket_idx, false)
     }
@@ -73,7 +73,7 @@ impl KademliaTable {
     ///     1. PeerData: none if the peer was already in the table or as a potential replacement
     ///     2. A bool indicating if the node was inserted to the table
     pub fn insert_node_forced(&mut self, node: Node) -> (Option<PeerData>, bool) {
-        let bucket_idx = bucket_number(node.node_id, self.local_node_id);
+        let bucket_idx = bucket_number(node.node_id(), self.local_node_id);
 
         self.insert_node_inner(node, bucket_idx, true)
     }
@@ -96,14 +96,14 @@ impl KademliaTable {
         let peer_already_in_table = self.buckets[bucket_idx]
             .peers
             .iter()
-            .any(|p| p.node.node_id == node.node_id);
+            .any(|p| p.node.node_id() == node.node_id());
         if peer_already_in_table {
             return (None, false);
         }
         let peer_already_in_replacements = self.buckets[bucket_idx]
             .replacements
             .iter()
-            .any(|p| p.node.node_id == node.node_id);
+            .any(|p| p.node.node_id() == node.node_id());
         if peer_already_in_replacements {
             return (None, false);
         }
@@ -115,7 +115,7 @@ impl KademliaTable {
             self.insert_as_replacement(&peer, bucket_idx);
             (Some(peer), false)
         } else {
-            self.remove_from_replacements(node.node_id, bucket_idx);
+            self.remove_from_replacements(peer.node.node_id(), bucket_idx);
             self.buckets[bucket_idx].peers.push(peer.clone());
             (Some(peer), true)
         }
@@ -135,7 +135,7 @@ impl KademliaTable {
         bucket.replacements = bucket
             .replacements
             .drain(..)
-            .filter(|r| r.node.node_id != node_id)
+            .filter(|r| r.node.node_id() != node_id)
             .collect();
     }
 
@@ -146,13 +146,13 @@ impl KademliaTable {
         // though the bucket isn't that large and it shouldn't be an issue I guess
         for bucket in &self.buckets {
             for peer in &bucket.peers {
-                let distance = bucket_number(node_id, peer.node.node_id);
+                let distance = bucket_number(node_id, peer.node.node_id());
                 if nodes.len() < MAX_NODES_PER_BUCKET {
-                    nodes.push((peer.node, distance));
+                    nodes.push((peer.node.clone(), distance));
                 } else {
                     for (i, (_, dis)) in &mut nodes.iter().enumerate() {
                         if distance < *dis {
-                            nodes[i] = (peer.node, distance);
+                            nodes[i] = (peer.node.clone(), distance);
                             break;
                         }
                     }
@@ -160,7 +160,7 @@ impl KademliaTable {
             }
         }
 
-        nodes.iter().map(|a| a.0).collect()
+        nodes.into_iter().map(|a| a.0).collect()
     }
 
     pub fn pong_answered(&mut self, node_id: H256, pong_at: u64) {
@@ -275,7 +275,7 @@ impl KademliaTable {
         let idx_to_remove = self.buckets[bucket_idx]
             .peers
             .iter()
-            .position(|peer| peer.node.node_id == node_id);
+            .position(|peer| peer.node.node_id() == node_id);
 
         if let Some(idx) = idx_to_remove {
             let bucket = &mut self.buckets[bucket_idx];
@@ -593,16 +593,16 @@ mod tests {
         let replacement_peer = replacement_peer.unwrap();
         assert!(!inserted_to_table);
 
-        let node_id_to_replace = table.buckets[bucket_idx].peers[0].node.node_id;
+        let node_id_to_replace = table.buckets[bucket_idx].peers[0].node.node_id();
         let replacement = table.replace_peer_on_custom_bucket(node_id_to_replace, bucket_idx);
 
         assert_eq!(
-            replacement.unwrap().node.node_id,
-            replacement_peer.node.node_id
+            replacement.unwrap().node.node_id(),
+            replacement_peer.node.node_id()
         );
         assert_eq!(
-            table.buckets[bucket_idx].peers[0].node.node_id,
-            replacement_peer.node.node_id
+            table.buckets[bucket_idx].peers[0].node.node_id(),
+            replacement_peer.node.node_id()
         );
     }
     #[test]
@@ -612,7 +612,7 @@ mod tests {
         let bucket_idx = 0;
         fill_table_with_random_nodes(&mut table);
 
-        let node_id_to_replace = table.buckets[bucket_idx].peers[0].node.node_id;
+        let node_id_to_replace = table.buckets[bucket_idx].peers[0].node.node_id();
         let len_before = table.buckets[bucket_idx].peers.len();
         let replacement = table.replace_peer_on_custom_bucket(node_id_to_replace, bucket_idx);
         let len_after = table.buckets[bucket_idx].peers.len();
