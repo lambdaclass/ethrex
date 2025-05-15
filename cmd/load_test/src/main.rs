@@ -249,7 +249,10 @@ async fn load_test(
                 sleep(Duration::from_micros(800)).await;
                 let _sent = client.send_eip1559_transaction(&tx, &sk).await?;
             }
-            println!("{} transactions have been sent for {}", tx_amount, encoded_src);
+            println!(
+                "{} transactions have been sent for {}",
+                tx_amount, encoded_src
+            );
             Ok::<(), EthClientError>(())
         });
     }
