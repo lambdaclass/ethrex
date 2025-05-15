@@ -3183,6 +3183,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-dev",
+ "ethrex-l2-common",
  "ethrex-levm",
  "ethrex-metrics",
  "ethrex-rlp",
@@ -3205,6 +3206,21 @@ dependencies = [
  "tokio-util",
  "tracing",
  "zkvm_interface",
+]
+
+[[package]]
+name = "ethrex-l2-common"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "ethereum-types",
+ "ethrex-common",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-trie",
+ "keccak-hash",
+ "serde",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -3550,6 +3566,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2",
+ "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-sdk",
@@ -11485,6 +11502,7 @@ name = "zkvm_interface"
 version = "0.1.0"
 dependencies = [
  "ethrex-common",
+ "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-trie",

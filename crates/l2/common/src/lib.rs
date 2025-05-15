@@ -2,12 +2,18 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::{code_hash, AccountInfo, AccountState, BlockHeader, BlockNumber};
+use ethrex_common::{
+    types::{
+        code_hash, AccountInfo, AccountState, Block, BlockHeader, BlockNumber,
+        PrivilegedL2Transaction, Receipt, Transaction, TxKind,
+    },
+    H160,
+};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{error::StoreError, hash_address, AccountUpdate, Store};
-use ethrex_trie::Trie;
-
-use super::errors::StateDiffError;
+use ethrex_trie::{Trie, TrieError};
+use keccak_hash::keccak;
+use serde::{Deserialize, Serialize};
 
 // transactions_root(H256) + receipts_root(H256) + parent_hash(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64)
 // block_number(u64) + base_fee_per_gas(u64)
@@ -26,7 +32,33 @@ pub const L2_DEPOSIT_SIZE: usize = 52;
 // Two `AccountUpdates` with new_balance, one of which also has nonce_diff.
 pub const TX_STATE_DIFF_SIZE: usize = 116;
 
-#[derive(Clone)]
+#[derive(Debug, thiserror::Error)]
+pub enum StateDiffError {
+    #[error("StateDiff failed to deserialize: {0}")]
+    FailedToDeserializeStateDiff(String),
+    #[error("StateDiff failed to serialize: {0}")]
+    FailedToSerializeStateDiff(String),
+    #[error("StateDiff invalid account state diff type: {0}")]
+    InvalidAccountStateDiffType(u8),
+    #[error("StateDiff unsupported version: {0}")]
+    UnsupportedVersion(u8),
+    #[error("Both bytecode and bytecode hash are set")]
+    BytecodeAndBytecodeHashSet,
+    #[error("Empty account diff")]
+    EmptyAccountDiff,
+    #[error("The length of the vector is too big to fit in u16: {0}")]
+    LengthTooBig(#[from] core::num::TryFromIntError),
+    #[error("DB Error: {0}")]
+    DbError(#[from] TrieError),
+    #[error("Store Error: {0}")]
+    StoreError(#[from] StoreError),
+    #[error("New nonce is lower than the previous one")]
+    FailedToCalculateNonce,
+    #[error("Unexpected Error: {0}")]
+    InternalError(String),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AccountStateDiff {
     pub new_balance: Option<U256>,
     pub nonce_diff: u16,
@@ -44,21 +76,21 @@ pub enum AccountStateDiffType {
     BytecodeHash = 16,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WithdrawalLog {
     pub address: Address,
     pub amount: U256,
     pub tx_hash: H256,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DepositLog {
     pub address: Address,
     pub amount: U256,
     pub nonce: u64,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StateDiff {
     pub version: u8,
     pub last_header: BlockHeader,
@@ -575,4 +607,131 @@ async fn account_info_from_cache(
         }
     };
     Ok(account_info)
+}
+
+/// Prepare the state diff for the block.
+pub async fn prepare_state_diff(
+    first_block_number: BlockNumber,
+    last_header: BlockHeader,
+    store: Store,
+    withdrawals: &[(H256, Transaction)],
+    deposits: &[PrivilegedL2Transaction],
+    account_updates: Vec<AccountUpdate>,
+) -> Result<StateDiff, StateDiffError> {
+    let mut modified_accounts = HashMap::new();
+    for account_update in account_updates {
+        // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
+        // and we may have to keep track of the latestCommittedBlock (last block of the batch),
+        // the batch_size and the latestCommittedBatch in the contract.
+        let nonce_diff = get_nonce_diff(&account_update, &store, None, first_block_number).await?;
+
+        modified_accounts.insert(
+            account_update.address,
+            AccountStateDiff {
+                new_balance: account_update.info.clone().map(|info| info.balance),
+                nonce_diff,
+                storage: account_update.added_storage.clone().into_iter().collect(),
+                bytecode: account_update.code.clone(),
+                bytecode_hash: None,
+            },
+        );
+    }
+
+    let state_diff = StateDiff {
+        modified_accounts,
+        version: StateDiff::default().version,
+        last_header,
+        withdrawal_logs: withdrawals
+            .iter()
+            .map(|(hash, tx)| WithdrawalLog {
+                address: match tx.to() {
+                    TxKind::Call(address) => address,
+                    TxKind::Create => Address::zero(),
+                },
+                amount: tx.value(),
+                tx_hash: *hash,
+            })
+            .collect(),
+        deposit_logs: deposits
+            .iter()
+            .map(|tx| DepositLog {
+                address: match tx.to {
+                    TxKind::Call(address) => address,
+                    TxKind::Create => Address::zero(),
+                },
+                amount: tx.value,
+                nonce: tx.nonce,
+            })
+            .collect(),
+    };
+
+    Ok(state_diff)
+}
+
+pub fn get_block_withdrawals(
+    txs_and_receipts: &[(Transaction, Receipt)],
+) -> Result<Vec<(H256, Transaction)>, StateDiffError> {
+    let mut ret = vec![];
+
+    for (tx, receipt) in txs_and_receipts {
+        if is_withdrawal_l2(tx, receipt)? {
+            ret.push((tx.compute_hash(), tx.clone()))
+        }
+    }
+    Ok(ret)
+}
+
+pub fn get_block_deposits(
+    txs_and_receipts: &[(Transaction, Receipt)],
+) -> Vec<PrivilegedL2Transaction> {
+    let deposits = txs_and_receipts
+        .iter()
+        .filter_map(|(tx, _)| match tx {
+            Transaction::PrivilegedL2Transaction(tx) => Some(tx.clone()),
+            _ => None,
+        })
+        .collect();
+
+    deposits
+}
+
+pub fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> Result<bool, StateDiffError> {
+    pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0xff, 0xff,
+    ]);
+
+    let withdrawal_event_selector = keccak("WithdrawalInitiated(address,address,uint256)");
+
+    let is_withdrawal = match tx.to() {
+        TxKind::Call(to) if to == COMMON_BRIDGE_L2_ADDRESS => receipt.logs.iter().any(|log| {
+            log.topics
+                .iter()
+                .any(|topic| *topic == withdrawal_event_selector)
+        }),
+        _ => false,
+    };
+    Ok(is_withdrawal)
+}
+
+pub fn is_deposit_l2(tx: &Transaction) -> bool {
+    matches!(tx, Transaction::PrivilegedL2Transaction(_tx))
+}
+
+pub async fn get_tx_and_receipts(
+    block: Block,
+    store: Store,
+) -> Result<Vec<(Transaction, Receipt)>, StateDiffError> {
+    // Get block transactions and receipts
+    let mut txs_and_receipts = vec![];
+    for (index, tx) in block.body.transactions.iter().enumerate() {
+        let receipt = store
+            .get_receipt(block.header.number, index.try_into()?)
+            .await?
+            .ok_or(StateDiffError::InternalError(
+                "Transactions in a block should have a receipt".to_owned(),
+            ))?;
+        txs_and_receipts.push((tx.clone(), receipt));
+    }
+    Ok(txs_and_receipts)
 }

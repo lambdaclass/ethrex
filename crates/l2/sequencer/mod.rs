@@ -16,7 +16,6 @@ pub mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
-pub mod state_diff;
 
 pub mod execution_cache;
 
@@ -50,6 +49,7 @@ pub async fn start_l2(
         store.clone(),
         rollup_store,
         cfg.clone(),
+        execution_cache.clone(),
     ));
     task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
     task_set.spawn(start_block_producer(

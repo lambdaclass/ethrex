@@ -24,6 +24,7 @@ pub mod io {
         types::{Block, BlockHeader},
         H256,
     };
+    use ethrex_l2_common::StateDiff;
     use ethrex_vm::ProverDB;
     use serde::{de::DeserializeOwned, Deserialize, Serialize};
     use serde_with::{serde_as, DeserializeAs, SerializeAs};
@@ -42,6 +43,8 @@ pub mod io {
         pub db: ProverDB,
         /// value used to calculate base fee
         pub elasticity_multiplier: u64,
+        #[cfg(feature = "l2")]
+        pub state_diff: StateDiff,
     }
 
     /// Public output variables exposed by the zkVM execution program. Some of these are part of
