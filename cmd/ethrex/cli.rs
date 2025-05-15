@@ -13,7 +13,7 @@ use tracing::{info, warn, Level};
 use crate::{
     initializers::{init_blockchain, init_store},
     utils::{self, get_client_version, set_datadir},
-    DEFAULT_DATADIR,
+    DEFAULT_DATADIR, DEFAULT_STORE_DIR,
 };
 
 #[cfg(any(feature = "l2", feature = "based"))]
@@ -303,7 +303,7 @@ pub fn remove_db(datadir: &str, force: bool, network: &Option<String>) {
 pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
     let data_dir = set_datadir(data_dir, &Some(network.to_string()));
 
-    let store = init_store(&(data_dir.to_owned() + &String::from("/store")), network).await;
+    let store = init_store(&(data_dir.to_owned() + DEFAULT_STORE_DIR), network).await;
 
     let blockchain = init_blockchain(evm, store.clone());
 

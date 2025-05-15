@@ -6,6 +6,7 @@ use ethrex::{
         init_store, init_tracing,
     },
     utils::{set_datadir, store_known_peers},
+    DEFAULT_JWT_PATH, DEFAULT_STORE_DIR,
 };
 use ethrex_p2p::network::peer_table;
 use std::{path::PathBuf, time::Duration};
@@ -31,7 +32,7 @@ async fn main() -> eyre::Result<()> {
 
     let network = get_network(&opts);
 
-    let store = init_store(&(data_dir.to_owned() + &String::from("/store")), &network).await;
+    let store = init_store(&(data_dir.to_owned() + DEFAULT_STORE_DIR), &network).await;
 
     let blockchain = init_blockchain(opts.evm, store.clone());
 
@@ -46,10 +47,8 @@ async fn main() -> eyre::Result<()> {
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
-    let authrpc_jwtsecret_path = if opts.authrpc_jwtsecret == "jwt.hex"
-    //Check if authrpc_jwtsecret is equal to default value.
-    {
-        data_dir.to_owned() + &String::from("/") + &opts.authrpc_jwtsecret
+    let authrpc_jwtsecret_path = if opts.authrpc_jwtsecret == DEFAULT_JWT_PATH[1..] {
+        data_dir.to_owned() + DEFAULT_JWT_PATH
     } else {
         opts.authrpc_jwtsecret.clone()
     };
