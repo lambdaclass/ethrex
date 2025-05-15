@@ -24,6 +24,9 @@ interface IOnChainProposer {
     event BatchVerified(uint256 indexed lastVerifiedBatch);
 
     /// @notice Set the bridge address for the first time.
+    /// @dev This method is separated from initialize because both the CommonBridge
+    /// and the OnChainProposer need to know the address of the other. This solves
+    /// the circular dependency while allowing to initialize the proxy with the deploy.
     /// @param bridge the address of the bridge contract.
     function initializeBridgeAddress(address bridge) external;
 
