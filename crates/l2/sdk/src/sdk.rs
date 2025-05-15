@@ -390,19 +390,19 @@ pub enum DeployError {
 pub async fn deploy_contract(
     constructor_args: &[u8],
     contract_path: &Path,
-    deployer_private_key: &SecretKey,
+    deployer: &Signer,
     salt: &[u8],
     eth_client: &EthClient,
 ) -> Result<(H256, Address), DeployError> {
     let bytecode = hex::decode(read_to_string(contract_path)?)?;
     let init_code = [&bytecode, constructor_args].concat();
     let (deploy_tx_hash, contract_address) =
-        create2_deploy(salt, &init_code, deployer_private_key, eth_client).await?;
+        create2_deploy(salt, &init_code, deployer, eth_client).await?;
     Ok((deploy_tx_hash, contract_address))
 }
 
 async fn deploy_proxy(
-    deployer_private_key: SecretKey,
+    deployer: &Signer,
     eth_client: &EthClient,
     contract_binaries: &Path,
     implementation_address: Address,
@@ -418,20 +418,16 @@ async fn deploy_proxy(
     init_code.extend(H256::from_low_u64_be(0x40).0);
     init_code.extend(H256::zero().0);
 
-    let (deploy_tx_hash, proxy_address) = create2_deploy(
-        salt,
-        &Bytes::from(init_code),
-        &deployer_private_key,
-        eth_client,
-    )
-    .await
-    .map_err(DeployError::from)?;
+    let (deploy_tx_hash, proxy_address) =
+        create2_deploy(salt, &Bytes::from(init_code), deployer, eth_client)
+            .await
+            .map_err(DeployError::from)?;
 
     Ok((deploy_tx_hash, proxy_address))
 }
 
 pub async fn deploy_with_proxy(
-    deployer_private_key: SecretKey,
+    deployer: &Signer,
     eth_client: &EthClient,
     contract_binaries: &Path,
     contract_name: &str,
@@ -440,14 +436,14 @@ pub async fn deploy_with_proxy(
     let (implementation_tx_hash, implementation_address) = deploy_contract(
         &[],
         &contract_binaries.join(contract_name),
-        &deployer_private_key,
+        deployer,
         salt,
         eth_client,
     )
     .await?;
 
     let (proxy_tx_hash, proxy_address) = deploy_proxy(
-        deployer_private_key,
+        deployer,
         eth_client,
         contract_binaries,
         implementation_address,
@@ -466,11 +462,9 @@ pub async fn deploy_with_proxy(
 async fn create2_deploy(
     salt: &[u8],
     init_code: &[u8],
-    deployer_private_key: &SecretKey,
+    deployer: &Signer,
     eth_client: &EthClient,
 ) -> Result<(H256, Address), EthClientError> {
-    let deployer: Signer = LocalSigner::new(*deployer_private_key).into();
-
     let calldata = [salt, init_code].concat();
     let gas_price = eth_client
         .get_gas_price_with_extra(20)
@@ -498,7 +492,7 @@ async fn create2_deploy(
         .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer.address())
         .await?;
     let deploy_tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &deployer)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, deployer)
         .await?;
 
     wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
@@ -527,11 +521,9 @@ fn create2_address(salt: &[u8], init_code_hash: H256) -> Address {
 pub async fn initialize_contract(
     contract_address: Address,
     initialize_calldata: Vec<u8>,
-    initializer_private_key: &SecretKey,
+    initializer: &Signer,
     eth_client: &EthClient,
 ) -> Result<H256, EthClientError> {
-    let initializer: Signer = LocalSigner::new(*initializer_private_key).into();
-
     let gas_price = eth_client
         .get_gas_price_with_extra(20)
         .await?
@@ -560,7 +552,7 @@ pub async fn initialize_contract(
         .await?;
 
     let initialize_tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &initializer)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, initializer)
         .await?;
 
     Ok(initialize_tx_hash)

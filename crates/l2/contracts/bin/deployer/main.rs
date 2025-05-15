@@ -12,7 +12,7 @@ use cli::{parse_private_key, DeployerOptions};
 use colored::Colorize;
 use error::DeployerError;
 use ethrex_common::{
-    types::signer::{LocalSigner, Signer},
+    types::signer::{LocalSigner, RemoteSigner, Signer},
     Address, U256,
 };
 use ethrex_l2::utils::test_data_io::read_genesis_file;
@@ -37,6 +37,15 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 #[tokio::main]
 async fn main() -> Result<(), DeployerError> {
     let opts = DeployerOptions::parse();
+    let signer = match &opts.remote_signer_url {
+        Some(url) => RemoteSigner::new(
+            url.clone(),
+            opts.remote_signer_public_key
+                .ok_or(DeployerError::RemoteUrlWithoutPubkey)?,
+        )
+        .into(),
+        None => LocalSigner::new(opts.private_key.ok_or(DeployerError::NoSigner)?).into(),
+    };
 
     let eth_client = EthClient::new_with_config(
         &opts.rpc_url,
@@ -58,7 +67,7 @@ async fn main() -> Result<(), DeployerError> {
         sp1_verifier_address,
         pico_verifier_address,
         risc0_verifier_address,
-    ) = deploy_contracts(&eth_client, &opts).await?;
+    ) = deploy_contracts(&eth_client, &opts, &signer).await?;
 
     initialize_contracts(
         on_chain_proposer_address,
@@ -68,6 +77,7 @@ async fn main() -> Result<(), DeployerError> {
         pico_verifier_address,
         &eth_client,
         &opts,
+        &signer,
     )
     .await?;
 
@@ -173,6 +183,7 @@ lazy_static::lazy_static! {
 async fn deploy_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
+    deployer: &Signer,
 ) -> Result<(Address, Address, Address, Address, Address), DeployerError> {
     let deploy_frames = spinner!(["📭❱❱", "❱📬❱", "❱❱📫"], 220);
 
@@ -192,7 +203,7 @@ async fn deploy_contracts(
     };
 
     let on_chain_proposer_deployment = deploy_with_proxy(
-        opts.private_key,
+        deployer,
         eth_client,
         &opts.contracts_path.join("solc_out"),
         "OnChainProposer.bin",
@@ -215,7 +226,7 @@ async fn deploy_contracts(
     let mut spinner = Spinner::new(deploy_frames.clone(), "Deploying CommonBridge", Color::Cyan);
 
     let bridge_deployment = deploy_with_proxy(
-        opts.private_key,
+        deployer,
         eth_client,
         &opts.contracts_path.join("solc_out"),
         "CommonBridge.bin",
@@ -240,7 +251,7 @@ async fn deploy_contracts(
         let (verifier_deployment_tx_hash, sp1_verifier_address) = deploy_contract(
             &[],
             &opts.contracts_path.join("solc_out/SP1Verifier.bin"),
-            &opts.private_key,
+            deployer,
             &salt,
             eth_client,
         )
@@ -264,7 +275,7 @@ async fn deploy_contracts(
         let (verifier_deployment_tx_hash, pico_verifier_address) = deploy_contract(
             &[],
             &opts.contracts_path.join("solc_out/PicoVerifier.bin"),
-            &opts.private_key,
+            deployer,
             &salt,
             eth_client,
         )
@@ -309,6 +320,7 @@ async fn initialize_contracts(
     pico_verifier_address: Address,
     eth_client: &EthClient,
     opts: &DeployerOptions,
+    intitializer: &Signer,
 ) -> Result<(), DeployerError> {
     let initialize_frames = spinner!(["🪄❱❱", "❱🪄❱", "❱❱🪄"], 200);
 
@@ -340,7 +352,7 @@ async fn initialize_contracts(
         initialize_contract(
             on_chain_proposer_address,
             on_chain_proposer_initialization_calldata,
-            &opts.private_key,
+            intitializer,
             eth_client,
         )
         .await?
@@ -367,7 +379,7 @@ async fn initialize_contracts(
         initialize_contract(
             bridge_address,
             bridge_initialization_calldata,
-            &opts.private_key,
+            intitializer,
             eth_client,
         )
         .await?

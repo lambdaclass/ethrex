@@ -5,7 +5,7 @@ use clap::{ArgAction, Parser};
 use ethrex_common::{Address, H160, H256};
 use hex::FromHexError;
 use reqwest::Url;
-use secp256k1::SecretKey;
+use secp256k1::{PublicKey, SecretKey};
 
 #[derive(Parser)]
 pub struct DeployerOptions {
@@ -41,17 +41,31 @@ pub struct DeployerOptions {
         env = "ETHREX_DEPLOYER_L1_PRIVATE_KEY",
         help_heading = "Deployer options",
         help = "Private key corresponding of a funded account that will be used for L1 contract deployment.",
+        conflicts_with_all = &["remote_signer_url", "remote_signer_public_key"],
+        required_unless_present = "remote_signer_url",
     )]
-    pub private_key: SecretKey,
+    pub private_key: Option<SecretKey>,
     #[arg(
         long,
         value_name = "URL",
         value_parser = parse_url,
-        env = "ETHREX_REMOTE_SIGNER_URL",
+        env = "ETHREX_DEPLOYER_REMOTE_SIGNER_URL",
         help_heading = "Deployer options",
-        help = "URL of a Web3Signer-compatible server to use instead of a local private key."
+        help = "URL of a Web3Signer-compatible server to use instead of a local private key.",
+        requires = "remote_signer_public_key",
+        required_unless_present = "private_key"
     )]
-    pub remote_signer: Option<Url>,
+    pub remote_signer_url: Option<Url>,
+    #[arg(
+        long,
+        value_name = "PUBLIC_KEY",
+        value_parser = parse_public_key,
+        env = "ETHREX_DEPLOYER_REMOTE_SIGNER_PUBLIC_KEY",
+        help_heading = "Deployer options",
+        help = "Public key to request the remote signature from.",
+        requires = "remote_signer_url",
+    )]
+    pub remote_signer_public_key: Option<PublicKey>,
     #[arg(
         long,
         default_value = "10",
@@ -260,8 +274,9 @@ impl Default for DeployerOptions {
                 ])
                 .as_bytes(),
             )
-            .unwrap(),
-            remote_signer: None,
+            .ok(),
+            remote_signer_url: None,
+            remote_signer_public_key: None,
             env_file_path: None,
             deposit_rich: false,
             private_keys_file_path: "../../test_data/private_keys_l1.txt".to_string(),
@@ -310,6 +325,10 @@ impl Default for DeployerOptions {
 
 pub fn parse_private_key(s: &str) -> eyre::Result<SecretKey> {
     Ok(SecretKey::from_slice(&parse_hex(s)?)?)
+}
+
+pub fn parse_public_key(s: &str) -> eyre::Result<PublicKey> {
+    Ok(PublicKey::from_slice(&parse_hex(s)?)?)
 }
 
 pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
