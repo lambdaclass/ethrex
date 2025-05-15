@@ -8,6 +8,7 @@ use ethrex_rpc::{
 use keccak_hash::H256;
 use secp256k1::SecretKey;
 
+#[derive(Debug)]
 pub struct L1ToL2TransactionData {
     pub to: Address,
     pub recipient: Address,
