@@ -1,8 +1,7 @@
 name: L2 (SP1 Backend)
 on:
-  pull_request:
-    branches: ["**"]
-  merge_group:
+  push:
+    branches: ["main"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -68,7 +67,7 @@ jobs:
         run: |
           cargo test l2 --no-run --release
 
-      - name: Deploy L1 Contracts
+      - name: Start L1 & Deploy contracts
         if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
