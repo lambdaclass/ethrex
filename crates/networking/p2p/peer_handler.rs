@@ -207,7 +207,7 @@ impl PeerHandler {
         headers_iter: &mut impl Iterator<Item = &BlockHeader>,
     ) -> Result<Vec<Block>, BodyRequestError> {
 
-        let mut block_bodies: Vec<BlockBody>;
+        let block_bodies: Vec<BlockBody>;
         let Some((block_bodies, peer_id)) = self.request_block_bodies(block_hashes.clone()).await
         else {
             return Err(BodyRequestError::BodiesReturnedEmpty);
@@ -231,7 +231,7 @@ impl PeerHandler {
             self.remove_peer(peer_id).await;
             return Err(BodyRequestError::InvalidBlockBody); // Retry
         }
-        return Ok(blocks);
+        Ok(blocks)
            
     }
 
