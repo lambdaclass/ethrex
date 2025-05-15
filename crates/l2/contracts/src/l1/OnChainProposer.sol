@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
+import "../../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/IOnChainProposer.sol";
 import {CommonBridge} from "./CommonBridge.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
@@ -13,25 +12,17 @@ import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
-contract OnChainProposer is
-    IOnChainProposer,
-    Initializable,
-    UUPSUpgradeable,
-    OwnableUpgradeable
-{
+contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @notice Committed batches data.
     /// @dev This struct holds the information about the committed batches.
     /// @dev processedDepositLogsRollingHash is the Merkle root of the logs of the
     /// deposits that were processed in the batch being committed. The amount of
     /// logs that is encoded in this root are to be removed from the
     /// pendingDepositLogs queue of the CommonBridge contract.
-    /// @dev withdrawalsLogsMerkleRoot is the Merkle root of the Merkle tree containing
-    /// all the withdrawals that were processed in the batch being committed
     struct BatchCommitmentInfo {
         bytes32 newStateRoot;
         bytes32 stateDiffKZGVersionedHash;
         bytes32 processedDepositLogsRollingHash;
-        bytes32 withdrawalsLogsMerkleRoot;
     }
 
     /// @notice The commitments of the committed batches.
@@ -72,7 +63,13 @@ contract OnChainProposer is
 
     /// @notice Indicates whether the contract operates in validium mode.
     /// @dev This value is immutable and can only be set during contract deployment.
-    bool public VALIDIUM;
+    bool public immutable VALIDIUM;
+
+    /// @notice Constructor to initialize the immutable validium value.
+    /// @param _validium A boolean indicating if the contract operates in validium mode.
+    constructor(bool _validium) {
+        VALIDIUM = _validium;
+    }
 
     modifier onlySequencer() {
         require(
@@ -82,25 +79,14 @@ contract OnChainProposer is
         _;
     }
 
-    /// @notice Initializes the contract.
-    /// @dev This method is called only once after the contract is deployed.
-    /// @dev It sets the bridge address.
-    /// @param _validium initialize the contract in validium mode.
-    /// @param owner the address of the owner who can perform upgrades.
-    /// @param bridge the address of the bridge contract.
-    /// @param r0verifier the address of the risc0 groth16 verifier.
-    /// @param sp1verifier the address of the sp1 groth16 verifier.
+    /// @inheritdoc IOnChainProposer
     function initialize(
-        bool _validium,
-        address owner,
         address bridge,
         address r0verifier,
         address sp1verifier,
         address picoverifier,
         address[] calldata sequencerAddresses
-    ) public initializer {
-        VALIDIUM = _validium;
-
+    ) public nonReentrant {
         // Set the CommonBridge address
         require(
             BRIDGE == address(0),
@@ -164,8 +150,6 @@ contract OnChainProposer is
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
         }
-
-        OwnableUpgradeable.__Ownable_init(owner);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -207,8 +191,7 @@ contract OnChainProposer is
         batchCommitments[batchNumber] = BatchCommitmentInfo(
             newStateRoot,
             stateDiffKZGVersionedHash,
-            processedDepositLogsRollingHash,
-            withdrawalsLogsMerkleRoot
+            processedDepositLogsRollingHash
         );
         emit BatchCommitted(newStateRoot);
 
@@ -226,7 +209,7 @@ contract OnChainProposer is
         //risc0
         bytes calldata risc0BlockProof,
         bytes32 risc0ImageId,
-        bytes calldata risc0Journal,
+        bytes32 risc0JournalDigest,
         //sp1
         bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,
@@ -249,21 +232,6 @@ contract OnChainProposer is
         );
 
         if (PICOVERIFIER != DEV_MODE) {
-            bytes32 picoWithdrawalsMerkleRoot = bytes32(
-                picoPublicValues[64:96]
-            );
-            require(
-                batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
-                    picoWithdrawalsMerkleRoot,
-                "OnChainProposer: pico withdrawals public inputs don't match with committed withdrawals"
-            );
-            bytes32 picoDepositsLogHash = bytes32(picoPublicValues[96:128]);
-            require(
-                batchCommitments[batchNumber].processedDepositLogsRollingHash ==
-                    picoDepositsLogHash,
-                "OnChainProposer: pico deposits hash public input does not match with committed deposits"
-            );
-
             // If the verification fails, it will revert.
             IPicoVerifier(PICOVERIFIER).verifyPicoProof(
                 picoRiscvVkey,
@@ -273,41 +241,15 @@ contract OnChainProposer is
         }
 
         if (R0VERIFIER != DEV_MODE) {
-            bytes32 risc0WithdrawalsMerkleRoot = bytes32(risc0Journal[64:96]);
-            require(
-                batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
-                    risc0WithdrawalsMerkleRoot,
-                "OnChainProposer: risc0 withdrawals public inputs don't match with committed withdrawals"
-            );
-            bytes32 risc0DepositsLogHash = bytes32(risc0Journal[96:128]);
-            require(
-                batchCommitments[batchNumber].processedDepositLogsRollingHash ==
-                    risc0DepositsLogHash,
-                "OnChainProposer: risc0 deposits hash public input does not match with committed deposits"
-            );
-
             // If the verification fails, it will revert.
             IRiscZeroVerifier(R0VERIFIER).verify(
                 risc0BlockProof,
                 risc0ImageId,
-                sha256(risc0Journal)
+                risc0JournalDigest
             );
         }
 
         if (SP1VERIFIER != DEV_MODE) {
-            bytes32 sp1WithdrawalsMerkleRoot = bytes32(sp1PublicValues[80:112]);
-            require(
-                batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
-                    sp1WithdrawalsMerkleRoot,
-                "OnChainProposer: sp1 withdrawals public inputs don't match with committed withdrawals"
-            );
-            bytes32 sp1DepositsLogHash = bytes32(sp1PublicValues[112:144]);
-            require(
-                batchCommitments[batchNumber].processedDepositLogsRollingHash ==
-                    sp1DepositsLogHash,
-                "OnChainProposer: sp1 deposits hash public input does not match with committed deposits"
-            );
-
             // If the verification fails, it will revert.
             ISP1Verifier(SP1VERIFIER).verifyProof(
                 sp1ProgramVKey,
@@ -332,10 +274,4 @@ contract OnChainProposer is
 
         emit BatchVerified(lastVerifiedBatch);
     }
-
-    /// @notice Allow owner to upgrade the contract.
-    /// @param newImplementation the address of the new implementation
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal virtual override onlyOwner {}
 }

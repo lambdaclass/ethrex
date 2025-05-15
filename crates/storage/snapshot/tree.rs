@@ -395,24 +395,34 @@ impl SnapshotTree {
         block_hash: BlockHash,
         address: Address,
         storage_key: H256,
-    ) -> Result<Option<U256>, SnapshotError> {
+    ) -> Result<Option<Option<U256>>, SnapshotError> {
         debug!(
             "called get_storage_at_hash with block {} address {} key {}",
             block_hash, address, storage_key
         );
         if let Some(snapshot) = self.snapshot(block_hash) {
-            debug!("snapshot found");
             let layers = self.layers.read().unwrap();
             let address = hash_address_fixed(&address);
-            return match snapshot {
-                Layer::DiskLayer(snapshot) => snapshot.get_storage(address, storage_key, &layers),
+
+            let (value, origin_block_hash) = match snapshot {
+                Layer::DiskLayer(snapshot) => (
+                    snapshot.get_storage(address, storage_key, &layers)?,
+                    snapshot.block_hash,
+                ),
                 Layer::DiffLayer(snapshot) => {
-                    snapshot
-                        .read()
-                        .unwrap()
-                        .get_storage(address, storage_key, &layers)
+                    let snapshot = snapshot.read().unwrap();
+                    (
+                        snapshot.get_storage(address, storage_key, &layers)?,
+                        snapshot.origin().block_hash,
+                    )
                 }
             };
+
+            if value.is_none() && block_hash != origin_block_hash {
+                return Ok(None);
+            } else {
+                return Ok(Some(value));
+            }
         }
 
         Err(SnapshotError::SnapshotNotFound(block_hash))
@@ -690,7 +700,7 @@ mod tests {
         let value = tree
             .get_storage_at_hash(root2, address, H256::zero())
             .unwrap();
-        assert_eq!(value, Some(U256::zero()));
+        assert_eq!(value, Some(Some(U256::zero())));
 
         // Retrieve it from the first hash and check it returns the first value
         let retrieved_account = tree.get_account_state(root1, address).unwrap();
@@ -699,7 +709,7 @@ mod tests {
         let value = tree
             .get_storage_at_hash(root1, address, H256::zero())
             .unwrap();
-        assert_eq!(value, Some(U256::one()));
+        assert_eq!(value, Some(Some(U256::one())));
     }
 
     #[test]
@@ -764,7 +774,7 @@ mod tests {
         let value = tree
             .get_storage_at_hash(root2, address, H256::zero())
             .unwrap();
-        assert_eq!(value, Some(U256::zero()));
+        assert_eq!(value, Some(Some(U256::zero())));
 
         // Retrieve it from the first hash and check it returns the first value
         let retrieved_account = tree.get_account_state(root1, address).unwrap();
@@ -773,6 +783,6 @@ mod tests {
         let value = tree
             .get_storage_at_hash(root1, address, H256::zero())
             .unwrap();
-        assert_eq!(value, Some(U256::one()));
+        assert_eq!(value, Some(Some(U256::one())));
     }
 }

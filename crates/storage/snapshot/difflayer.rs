@@ -114,6 +114,14 @@ impl DiffLayer {
             return Err(SnapshotError::StaleSnapshot);
         }
 
+        if let Some(value) = self
+            .storage
+            .get(&account_hash)
+            .and_then(|x| x.get(&storage_hash))
+        {
+            return Ok(Some(*value));
+        }
+
         let bloom_hash = account_hash ^ storage_hash;
         let hit = self
             .diffed

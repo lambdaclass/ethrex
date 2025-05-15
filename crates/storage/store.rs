@@ -485,6 +485,8 @@ impl Store {
         self.set_canonical_block(genesis_block_number, genesis_hash)
             .await?;
 
+        self.snapshots.rebuild(genesis_hash, genesis_state_root);
+
         // Set chain config
         self.set_chain_config(&genesis.config).await
     }
@@ -532,7 +534,9 @@ impl Store {
             .snapshots
             .get_storage_at_hash(block_hash, address, storage_key)
         {
-            Ok(value) => return Ok(value),
+            Ok(Some(value)) => return Ok(value),
+            // Not found in snapshots
+            Ok(None) => {}
             // snapshot errors are non-fatal
             Err(snapshot_error) => {
                 debug!("failed to fetch snapshot (storage): {}", snapshot_error);

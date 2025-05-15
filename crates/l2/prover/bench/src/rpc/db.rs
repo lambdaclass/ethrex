@@ -13,7 +13,7 @@ use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_storage::{hash_address, hash_key};
 use ethrex_trie::{Node, PathRLP, Trie};
 use ethrex_vm::backends::levm::{CacheDB, LEVM};
-use ethrex_vm::{ProverDB, ProverDBError};
+use ethrex_vm::{ExecutionDB, ExecutionDBError};
 use futures_util::future::join_all;
 use tokio_utils::RateLimiter;
 
@@ -234,7 +234,7 @@ impl RpcDB {
         })
     }
 
-    pub fn to_exec_db(&self, block: &Block) -> Result<ethrex_vm::ProverDB, ProverDBError> {
+    pub fn to_exec_db(&self, block: &Block) -> Result<ethrex_vm::ExecutionDB, ExecutionDBError> {
         // TODO: Simplify this function and potentially merge with the implementation for
         // StoreWrapper.
 
@@ -245,7 +245,8 @@ impl RpcDB {
 
         // pre-execute and get all state changes
         let result = LEVM::execute_block(block, &mut db).map_err(Box::new)?;
-        let execution_updates = LEVM::get_state_transitions(&mut db).map_err(Box::new)?;
+        let execution_updates =
+            LEVM::get_state_transitions(&mut db, Fork::default()).map_err(Box::new)?;
 
         let index: Vec<(Address, Vec<H256>)> = self
             .cache
@@ -409,7 +410,7 @@ impl RpcDB {
             })
             .collect();
 
-        Ok(ProverDB {
+        Ok(ExecutionDB {
             accounts,
             code,
             storage,

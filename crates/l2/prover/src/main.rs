@@ -1,5 +1,5 @@
 use ethrex_l2::utils::config::{
-    prover::ProverConfig, read_env_file_by_config, toml_parser::parse_configs,
+    prover::ProverConfig, read_env_file_by_config, toml_parser::parse_configs, ConfigMode,
 };
 use ethrex_prover_lib::init_client;
 use tracing::{self, debug, error, Level};
@@ -15,12 +15,12 @@ async fn main() {
         return;
     }
 
-    if let Err(e) = parse_configs() {
+    if let Err(e) = parse_configs(ConfigMode::ProverClient) {
         error!("Failed to parse .toml file: {e}");
         return;
     }
 
-    if let Err(e) = read_env_file_by_config() {
+    if let Err(e) = read_env_file_by_config(ConfigMode::ProverClient) {
         error!("Failed to read .env file. It is '.env.prover' by default: {e}");
         return;
     }
