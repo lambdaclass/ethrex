@@ -204,11 +204,11 @@ async fn deploy_contracts(
     )
     .await?;
     info!(
-        proxy_address = %format!("{:#x}", on_chain_proposer_deployment.proxy_address),
-        proxy_tx_hash = %format!("{:#x}", on_chain_proposer_deployment.proxy_tx_hash),
-        implementation_address = %format!("{:#x}", on_chain_proposer_deployment.implementation_address),
-        implementation_tx_hash = %format!("{:#x}", on_chain_proposer_deployment.implementation_tx_hash),
-        "OnChainProposer deployed"
+        "OnChainProposer deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
+        on_chain_proposer_deployment.proxy_address,
+        on_chain_proposer_deployment.proxy_tx_hash,
+        on_chain_proposer_deployment.implementation_address,
+        on_chain_proposer_deployment.implementation_tx_hash,
     );
 
     info!("Deploying CommonBridge");
@@ -223,11 +223,11 @@ async fn deploy_contracts(
     .await?;
 
     info!(
-        proxy_address = %format!("{:#x}", bridge_deployment.proxy_address),
-        proxy_tx_hash = %format!("{:#x}", bridge_deployment.proxy_tx_hash),
-        implementation_address = %format!("{:#x}", bridge_deployment.implementation_address),
-        implementation_tx_hash = %format!("{:#x}", bridge_deployment.implementation_tx_hash),
-        "CommonBridge deployed"
+        "CommonBridge deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
+        bridge_deployment.proxy_address,
+        bridge_deployment.proxy_tx_hash,
+        bridge_deployment.implementation_address,
+        bridge_deployment.implementation_tx_hash,
     );
 
     let sp1_verifier_address = if opts.sp1_deploy_verifier {
