@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, io::ErrorKind, path::Path};
 
 use bytes::Bytes;
 use clap::Parser;
@@ -34,7 +34,9 @@ fn update_genesis_file(l2_genesis_path: &str) -> Result<(), SystemContractsUpdat
         },
     );
 
-    genesis.write_as_json(Path::new(&genesis_path))?;
+    genesis
+        .write_as_json(Path::new(l2_genesis_path))
+        .map_err(|err_msg| std::io::Error::new(ErrorKind::Other, err_msg))?;
 
     println!("Updated L2 genesis file.");
 

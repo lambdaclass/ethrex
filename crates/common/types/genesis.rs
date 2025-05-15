@@ -7,7 +7,6 @@ use serde_json::{Map, Value};
 use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap},
-    io,
     ops::Deref,
     path::Path,
 };
