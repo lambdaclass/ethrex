@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747337656317,
+  "lastUpdate": 1747338281761,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7804,6 +7804,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007386677924620656,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0f9cc95d8cf5fb15b0d5acc37bf9c2264e0ff5db",
+          "message": "refactor(l1): cache `node_id` computation (node_id refactor 3/3) (#2789)\n\nBased on #2786 \n**Motivation**\nUse `OnceLock` to cache node_id computation so we only do it once but at\nthe same time don't need to do it unless we will use it. For example,\nwhen we receive a Neighbours message we will decode all received nodes\nbut may not use them all if our kademlia table is full.\nThis PR can be ignored if we consider the cases where we would not need\nto use a node's id scarce enough to not warrant the added complexity of\na cache. For example, the Neighbours case could be handled by using a\nseparate structure (without node_id) to decode the incoming node and\nconverting that to our Node (with node_id) when we insert that node into\nour table.\nThe main consecuente of adding this cache is the `Node` no longer being\ncopy, which affects various areas of the networking codebase\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Convert public `Node` field `node_id: H256` into private field\n`node_id: OnceLock<H256>`\n* Add `Node` method `node_id`\n* Fix code affected by `Node` no longer being `Copy`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-15T18:40:12Z",
+          "tree_id": "7ab0821461058532c135bdaf08ba49e22fa73d0c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0f9cc95d8cf5fb15b0d5acc37bf9c2264e0ff5db"
+        },
+        "date": 1747338279980,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007437645638245441,
             "unit": "Mgas/s"
           }
         ]
