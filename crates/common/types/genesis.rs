@@ -7,7 +7,6 @@ use serde_json::{Map, Value};
 use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap},
-    ops::Deref,
     path::Path,
 };
 
@@ -441,7 +440,7 @@ impl Genesis {
             format!(
                 "Could not write genesis json to path: {}, error: {}",
                 path.display(),
-                to_write
+                e
             )
         })
     }
@@ -476,18 +475,15 @@ fn sort_config(genesis_map: &mut Map<String, Value>) -> Result<Map<String, Value
     ];
     let config = genesis_map
         .get_mut("config")
-        .ok_or_else(|| format!("Genesis file is missing config"))?;
+        .ok_or_else(|| "Genesis file is missing config".to_owned())?;
     let mut ordered_config: Map<String, Value> = Map::new();
     for key in config_keys_order {
         // If a key is not present in the config, this means
         // we're reading a genesis file that simply does not support
         // a certain configuration from the genesis block,
         // so we simply ignore it.
-        match config.get(key).take() {
-            Some(value) => {
-                ordered_config.insert(key.to_owned(), value.clone());
-            }
-            None => {}
+        if let Some(value) = config.get(key).take() {
+            ordered_config.insert(key.to_owned(), value.clone());
         };
     }
     Ok(ordered_config)
