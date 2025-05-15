@@ -1,5 +1,7 @@
+use crate::rlpx::utils::{compress_pubkey, snappy_decompress};
 use bytes::BufMut;
 use ethrex_common::H512;
+use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -8,53 +10,42 @@ use ethrex_rlp::{
 };
 use k256::PublicKey;
 
-use crate::rlpx::utils::{compress_pubkey, snappy_decompress};
-
 use super::{
     message::RLPxMessage,
     utils::{decompress_pubkey, snappy_compress},
 };
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Capability {
-    P2p,
-    Eth,
-    Snap,
-    UnsupportedCapability(String),
+pub struct Capability {
+    protocol: String,
+    version: u8,
 }
 
 impl RLPEncode for Capability {
     fn encode(&self, buf: &mut dyn BufMut) {
-        match self {
-            Self::P2p => "p2p".encode(buf),
-            Self::Eth => "eth".encode(buf),
-            Self::Snap => "snap".encode(buf),
-            Self::UnsupportedCapability(name) => name.encode(buf),
-        }
+        Encoder::new(buf)
+            .encode_field(&self.protocol)
+            .encode_field(&self.version)
+            .finish();
     }
 }
 
 impl RLPDecode for Capability {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (cap_string, rest) = String::decode_unfinished(rlp)?;
-        match cap_string.as_str() {
-            "p2p" => Ok((Capability::P2p, rest)),
-            "eth" => Ok((Capability::Eth, rest)),
-            "snap" => Ok((Capability::Snap, rest)),
-            other => Ok((Capability::UnsupportedCapability(other.to_string()), rest)),
-        }
+        //let (cap_string, rest) = String::decode_unfinished(rlp)?;
+        let decoder = Decoder::new(rlp)?;
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct HelloMessage {
-    pub(crate) capabilities: Vec<(Capability, u8)>,
+    pub(crate) capabilities: Vec<Capability>,
     pub(crate) node_id: PublicKey,
     pub(crate) client_id: String,
 }
 
 impl HelloMessage {
-    pub fn new(capabilities: Vec<(Capability, u8)>, node_id: PublicKey, client_id: String) -> Self {
+    pub fn new(capabilities: Vec<Capability>, node_id: PublicKey, client_id: String) -> Self {
         Self {
             capabilities,
             node_id,
