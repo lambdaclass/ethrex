@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747346573055,
+  "lastUpdate": 1747348512476,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8101,6 +8101,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007375847018572825,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "19097eeba57defb13af215cf50adb39d6eada412",
+          "message": "chore(l2): separate address initialization (#2809)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nDeploy proxy contracts without instant initialization is considered\ninsecure.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nChange OnChainProposer contract so it can be initialized and then the\nowner can set (only once) the bridge address\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-05-15T19:47:53Z",
+          "tree_id": "aa0dfc08af20716fab5374f5f6d7aacbf355b1fa",
+          "url": "https://github.com/lambdaclass/ethrex/commit/19097eeba57defb13af215cf50adb39d6eada412"
+        },
+        "date": 1747348509355,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.000734354403892944,
             "unit": "Mgas/s"
           }
         ]
