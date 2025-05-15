@@ -9,7 +9,7 @@ mod trie_rebuild;
 use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{error::ChainError, BatchBlockProcessingFailure, Blockchain};
 use ethrex_common::{
-    types::{validate_block_body, Block, BlockHash, BlockHeader},
+    types::{Block, BlockHash, BlockHeader},
     BigEndianHash, H256, U256, U512,
 };
 use ethrex_rlp::error::RLPDecodeError;
@@ -35,7 +35,7 @@ use trie_rebuild::TrieRebuilder;
 
 use crate::{
     kademlia::KademliaTable,
-    peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST},
+    peer_handler::{BlockRequestOrder, BodyRequestError, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST},
 };
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
@@ -381,34 +381,27 @@ impl Syncer {
         let since = Instant::now();
         loop {
             debug!("Requesting Block Bodies");
-            let Some((block_bodies, peer_id)) = self
+            let block_request_result = self
                 .peers
-                .request_block_bodies(current_block_hashes_chunk.clone())
-                .await
-            else {
-                break;
-            };
+                .request_and_validate_blocks(current_block_hashes_chunk.clone(), &mut headers_iter)
+                .await;
+            match block_request_result {
+                Ok(blcks) => { blocks = blcks; }
+                BodyRequestError::BodiesNotFound => { return SyncError::BodiesNotFound; }
+                BodyRequestError::BodiesReturnedEmpty => { break; }
+                BodyRequestError::InvalidBlockBody => { continue; }
+            }
 
-            let block_bodies_len = block_bodies.len();
+            let blocks_len = blocks.len();
 
             let first_block_hash = current_block_hashes_chunk
                 .first()
                 .map_or(H256::default(), |a| *a);
 
             debug!(
-                "Received {} Block Bodies, starting from block hash {:?}",
-                block_bodies_len, first_block_hash
+                "Received {} Blocks, starting from block hash {:?}",
+                blocks_len, first_block_hash
             );
-
-            // Push blocks
-            for (_, body) in current_block_hashes_chunk
-                .drain(..block_bodies_len)
-                .zip(block_bodies)
-            {
-                let header = headers_iter.next().ok_or(SyncError::BodiesNotFound)?;
-                let block = Block::new(header.clone(), body);
-                blocks.push(block);
-            }
 
             if current_block_hashes_chunk.is_empty() {
                 current_chunk_idx += 1;
@@ -417,15 +410,6 @@ impl Syncer {
                     None => break,
                 };
             };
-
-            if let Some(e) = blocks
-                .iter()
-                .find_map(|block| validate_block_body(block).err())
-            {
-                warn!("Invalid block body error {e}, discarding peer {peer_id}");
-                self.peers.remove_peer(peer_id).await;
-                continue; // Retry
-            }
         }
 
         let blocks_len = blocks.len();

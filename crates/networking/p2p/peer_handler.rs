@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountState, BlockBody, BlockHeader, Receipt},
+    types::{AccountState, Block, BlockBody, BlockHeader, Receipt, validate_block_body},
     H256, U256,
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -26,7 +26,8 @@ use crate::{
             StorageRanges, TrieNodes,
         },
     },
-    snap::encodable_to_proof,
+    snap::encodable_to_proof, sync::SyncError,
+
 };
 use tracing::{debug, info, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -52,6 +53,12 @@ pub struct PeerHandler {
 pub enum BlockRequestOrder {
     OldToNew,
     NewToOld,
+}
+
+pub enum BodyRequestError {
+    BodiesReturnedEmpty,
+    BodiesNotFound,
+    InvalidBlockBody
 }
 
 impl PeerHandler {
@@ -188,6 +195,44 @@ impl PeerHandler {
             }
         }
         None
+    }
+
+    /// Requests block bodies from any suitable peer given their block hashes
+    /// Returns the block bodies or None if:
+    /// - There are no available peers (the node just started up or was rejected by all other nodes)
+    /// - No peer returned a valid response in the given time and retry limits
+    pub async fn request_and_validate_blocks<'a>(
+        &self,
+        block_hashes: Vec<H256>,
+        headers_iter: &mut impl Iterator<Item = &BlockHeader>,
+    ) -> Result<Vec<Block>, BodyRequestError> {
+
+        let mut block_bodies: Vec<BlockBody>;
+        let Some((block_bodies, peer_id)) = self.request_block_bodies(block_hashes).await
+        else {
+            return BodyRequestError::BodiesReturnedEmpty;
+        };
+        let mut blocks: Vec<Block> = vec![];
+        let block_bodies_len = block_bodies.len();
+        // Push blocks
+        for (_, body) in block_hashes
+            .drain(..block_bodies_len)
+            .zip(block_bodies)
+        {
+            let header = headers_iter.next().ok_or(BodyRequestError::BodiesNotFound)?;
+            let block = Block::new(header.clone(), body);
+            blocks.push(block);
+        }
+        if let Some(e) = blocks
+            .iter()
+            .find_map(|block| validate_block_body(block).err())
+        {
+            warn!("Invalid block body error {e}, discarding peer {peer_id}");
+            self.remove_peer(peer_id).await;
+            return BodyRequestError::InvalidBlockBody; // Retry
+        }
+        return Some(blocks);
+           
     }
 
     /// Requests all receipts in a set of blocks from any suitable peer given their block hashes
