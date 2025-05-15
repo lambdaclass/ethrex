@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747328107427,
+  "lastUpdate": 1747331402052,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7686,6 +7686,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007372243771372741,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ce76f6903fc702671d943c5fe9717f08d77fe951",
+          "message": "refactor(l1): add `node_id` field to Node (node_id refactor 2/3) (#2786)\n\nBased on #2778 \n**Motivation**\nAvoid constantly hashing the node's public key on kademlia operations by\nadding `node_id` field. Before this PR we would hash the node's public\nkey every time we needed to add, remove or find a node in the kademlia\ntable, which is pretty often.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add `Node` field `node_id`\n* Add `new` method for `Node` which handles node_id computation\n* Use `node_id` for kademlia table (and some other) operations instead\nof the public key so we no longer need to hash it when calculating the\nbucket index (this affects most kademlia table reads/writes)\n\n**Follow-Up Work**\nUse `OnceLock` to cache for `node_id` computation (replacing the field\nadded by this PR) #2789\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-15T15:15:26Z",
+          "tree_id": "96bf81f986d995dc5589a52cd3eb5a35ed4e516f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ce76f6903fc702671d943c5fe9717f08d77fe951"
+        },
+        "date": 1747331400838,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007401168710152035,
             "unit": "Mgas/s"
           }
         ]
