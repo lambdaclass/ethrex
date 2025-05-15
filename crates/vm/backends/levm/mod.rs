@@ -17,6 +17,7 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
+use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
 use ethrex_levm::EVMConfig;
@@ -582,9 +583,9 @@ pub fn generic_system_contract_levm(
     let coinbase_backup = db.cache.get(&block_header.coinbase).cloned();
     let env = Environment {
         origin: system_address,
-        // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls do not use intrinsic gas.
+        // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
         // So we add the base cost that will be taken in the execution.
-        gas_limit: 30_000_000 + 21_000,
+        gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
         block_number: block_header.number.into(),
         coinbase: block_header.coinbase,
         timestamp: block_header.timestamp.into(),
