@@ -5,6 +5,8 @@ use crate::{
         get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
         read_known_peers,
     },
+    DEFAULT_STOREDIR,
+    DEFAULT_JWT_PATH,
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
@@ -72,9 +74,10 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 }
 
 pub async fn init_store(data_dir: &str, network: &str) -> Store {
-    let path = PathBuf::from(data_dir);
+    let data_directory = data_dir.to_owned()+DEFAULT_STOREDIR;
+    let path = PathBuf::from(&data_dir);
     let store = if path.ends_with("memory") {
-        Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
+        Store::new(&data_directory.as_str(), EngineType::InMemory).expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
             if #[cfg(feature = "redb")] {
@@ -86,7 +89,7 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
                 panic!("Specify the desired database engine.");
             }
         }
-        Store::new(data_dir, engine_type).expect("Failed to create Store")
+        Store::new(&data_directory.as_str(), engine_type).expect("Failed to create Store")
     };
     let genesis = read_genesis_file(network);
     store
@@ -123,7 +126,7 @@ pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
 #[allow(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
-    authrpc_jwtsecret_path: &str,
+    data_dir: &str,
     #[cfg(feature = "l2")] l2_opts: &L2Options,
     signer: &SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
@@ -151,12 +154,19 @@ pub async fn init_rpc_api(
     )
     .await;
 
+    let authrpc_jwtsecret_path = if opts.authrpc_jwtsecret == DEFAULT_JWT_PATH[1..]
+    {
+        data_dir.to_owned() + &DEFAULT_JWT_PATH
+    } else {
+        opts.authrpc_jwtsecret.clone()
+    };
+
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
-        read_jwtsecret_file(authrpc_jwtsecret_path),
+        read_jwtsecret_file(&authrpc_jwtsecret_path),
         local_p2p_node,
         local_node_record,
         syncer,
