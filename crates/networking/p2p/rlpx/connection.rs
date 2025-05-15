@@ -297,6 +297,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     self.negotiated_snap_version = negotiated_snap_cap.1;
                 }
 
+                self.node.version = Some(hello_message.client_id);
+
                 Ok(())
             }
             Message::Disconnect(disconnect) => {
