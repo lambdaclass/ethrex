@@ -1,7 +1,7 @@
 use ethrex_common::types::Genesis;
 use std::fs::{self, read_dir};
 pub fn main() {
-    let genesis_files = read_dir("./test_data").unwrap();
+    let genesis_files = read_dir("../test_data").unwrap();
     for file in genesis_files {
         let file = file.unwrap();
         let path = file.path();
