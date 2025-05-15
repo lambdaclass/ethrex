@@ -87,13 +87,11 @@ contract OnChainProposer is
     /// @dev It sets the bridge address.
     /// @param _validium initialize the contract in validium mode.
     /// @param owner the address of the owner who can perform upgrades.
-    /// @param bridge the address of the bridge contract.
     /// @param r0verifier the address of the risc0 groth16 verifier.
     /// @param sp1verifier the address of the sp1 groth16 verifier.
     function initialize(
         bool _validium,
         address owner,
-        address bridge,
         address r0verifier,
         address sp1verifier,
         address picoverifier,
@@ -101,21 +99,6 @@ contract OnChainProposer is
         address[] calldata sequencerAddresses
     ) public initializer {
         VALIDIUM = _validium;
-
-        // Set the CommonBridge address
-        require(
-            BRIDGE == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
-            bridge != address(0),
-            "OnChainProposer: bridge is the zero address"
-        );
-        require(
-            bridge != address(this),
-            "OnChainProposer: bridge is the contract address"
-        );
-        BRIDGE = bridge;
 
         // Set the PicoGroth16Verifier address
         require(
@@ -174,6 +157,23 @@ contract OnChainProposer is
         }
 
         OwnableUpgradeable.__Ownable_init(owner);
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function initializeBridgeAddress(address bridge) public {
+        require(
+            BRIDGE == address(0),
+            "OnChainProposer: bridge already initialized"
+        );
+        require(
+            bridge != address(0),
+            "OnChainProposer: bridge is the zero address"
+        );
+        require(
+            bridge != address(this),
+            "OnChainProposer: bridge is the contract address"
+        );
+        BRIDGE = bridge;
     }
 
     /// @inheritdoc IOnChainProposer
