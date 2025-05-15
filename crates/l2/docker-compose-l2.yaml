@@ -37,7 +37,6 @@ services:
       - ETHREX_BRIDGE_OWNER=0x03d0a0aee676cc45bf7032649e0871927c947c8e
     depends_on:
       - ethrex
-    restart: on-failure:3
 
   ethrex_l2:
     restart: always
