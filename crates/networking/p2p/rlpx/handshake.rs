@@ -47,12 +47,12 @@ where
     let local_state = send_ack(remote_state.public_key, &mut stream).await?;
     let hashed_nonces: [u8; 32] =
         Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
-    let node = Node {
-        ip: peer_addr.ip(),
-        udp_port: peer_addr.port(),
-        tcp_port: peer_addr.port(),
-        public_key: remote_state.public_key,
-    };
+    let node = Node::new(
+        peer_addr.ip(),
+        peer_addr.port(),
+        peer_addr.port(),
+        remote_state.public_key,
+    );
     let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
     log_peer_debug(&node, "Completed handshake as receiver!");
     Ok(RLPxConnection::new(

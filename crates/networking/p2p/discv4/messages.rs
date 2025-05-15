@@ -1,5 +1,8 @@
 use super::helpers::current_unix_time;
-use crate::types::{Endpoint, Node, NodeRecord};
+use crate::{
+    rlpx::utils::node_id,
+    types::{Endpoint, Node, NodeRecord},
+};
 use bytes::BufMut;
 use ethrex_common::{H256, H512, H520};
 use ethrex_rlp::{
@@ -90,6 +93,10 @@ impl Packet {
 
     pub fn get_public_key(&self) -> H512 {
         self.public_key
+    }
+
+    pub fn get_node_id(&self) -> H256 {
+        node_id(&self.public_key)
     }
 }
 
@@ -638,20 +645,15 @@ mod tests {
     fn test_encode_neighbors_message() {
         let expiration: u64 = 17195043770;
         let public_key_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
-        let node_1 = Node {
-            ip: "127.0.0.1".parse().unwrap(),
-            udp_port: 30303,
-            tcp_port: 30303,
-            public_key: public_key_1,
-        };
+        let node_1 = Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1);
 
         let public_key_2 = H512::from_str("11f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f50").unwrap();
-        let node_2 = Node {
-            ip: "190.191.188.57".parse().unwrap(),
-            udp_port: 30303,
-            tcp_port: 30303,
-            public_key: public_key_2,
-        };
+        let node_2 = Node::new(
+            "190.191.188.57".parse().unwrap(),
+            30303,
+            30303,
+            public_key_2,
+        );
         let key_bytes =
             H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
                 .unwrap();
@@ -970,13 +972,7 @@ mod tests {
         let decoded = Message::decode_with_type(0x04, &decode_hex(encoded).unwrap()).unwrap();
         let expiration: u64 = 17195043770;
         let public_key = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
-        let node = Node {
-            ip: "127.0.0.1".parse().unwrap(),
-            udp_port: 30303,
-            tcp_port: 30303,
-            public_key,
-        };
-
+        let node = Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key);
         let expected = Message::Neighbors(NeighborsMessage::new(vec![node], expiration));
         assert_eq!(decoded, expected);
     }
