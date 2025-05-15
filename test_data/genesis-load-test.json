@@ -14,12 +14,10 @@
     "muirGlacierBlock": 0,
     "berlinBlock": 0,
     "londonBlock": 0,
-    "arrowGlacierBlock": null,
-    "grayGlacierBlock": null,
     "terminalTotalDifficulty": 0,
+    "terminalTotalDifficultyPassed": true,
     "shanghaiTime": 0,
     "cancunTime": 0,
-    "pragueTime": null,
     "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa",
     "blobSchedule": {
       "cancun": {
@@ -32,7 +30,8 @@
         "max": 9,
         "baseFeeUpdateFraction": 5007716
       }
-    }
+    },
+    "mergeNetsplitBlock": 0
   },
   "nonce": "0x0",
   "timestamp": "1554584971",
@@ -1089,6 +1088,5 @@
   },
   "baseFeePerGas": "0x1",
   "excessBlobGas": "0x0",
-  "requestsHash": null,
   "blobGasUsed": "0x0"
 }
