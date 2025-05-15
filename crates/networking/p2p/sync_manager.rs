@@ -117,7 +117,7 @@ impl SyncManager {
         let sync_head = self.last_fcu_head.clone();
 
         tokio::spawn(async move {
-            let mut current_head = 0;
+            let mut current_head = H256::default();
             if !cfg!(sync_test) && env::var("SYNC-LATEST").is_ok() {
                 let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
                     tracing::error!("Failed to fetch latest canonical block, unable to sync");
