@@ -231,7 +231,7 @@ impl PeerHandler {
             self.remove_peer(peer_id).await;
             return Err(BodyRequestError::InvalidBlockBody); // Retry
         }
-        return Some(blocks);
+        return Ok(blocks);
            
     }
 
