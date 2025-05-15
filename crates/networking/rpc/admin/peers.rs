@@ -58,7 +58,6 @@ impl From<PeerData> for RpcPeer {
                 Capability::UnsupportedCapability(_) => {}
             }
         }
-        dbg!(peer.node.udp_addr(), peer.node.tcp_addr());
         RpcPeer {
             caps: peer.supported_capabilities,
             enode: peer.node.enode_url(),
@@ -104,7 +103,10 @@ mod tests {
         peer.supported_capabilities = vec![Capability::Eth, Capability::Snap];
         // The first serialized peer shown in geth's documentation example: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-admin#admin-peers
         // The fields "localAddress", "static", "trusted" and "name" were removed as we do not have the necessary information to show them
-        let expected_serialized_peer = r#"{ caps : ["eth/68", "snap/1"], enode : "enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303", id : "6b36f791352f15eb3ec4f67787074ab8ad9d487e37c4401d383f0561a0a20507", network : { inbound : false, remoteAddress : "157.90.35.166:30303"}, protocols : { eth : { version : 68 }, snap : { version : 1 }}"#.to_string();
+        // Also the capability versions were removed as we don't currenlty store them in the Capability enum
+        // We should add them along with https://github.com/lambdaclass/ethrex/issues/1578
+        // Misc: Added 0x prefix to node id, there is no set spec for this method so the prefix shouldn't be a problem
+        let expected_serialized_peer = r#"{"caps":["eth","snap"],"enode":"enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303","id":"0x6b36f791352f15eb3ec4f67787074ab8ad9d487e37c4401d383f0561a0a20507","network":{"inbound":false,"remoteAddress":"157.90.35.166:30303"},"protocols":{"eth":{"version":68},"snap":{"version":1}}}"#.to_string();
         let serialized_peer =
             serde_json::to_string(&RpcPeer::from(peer)).expect("Failed to serialize peer");
         assert_eq!(serialized_peer, expected_serialized_peer);
