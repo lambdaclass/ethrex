@@ -1,6 +1,6 @@
 use crate::{rpc::RpcApiContext, utils::RpcErr};
 use core::net::SocketAddr;
-use ethrex_common::H512;
+use ethrex_common::H256;
 use ethrex_p2p::{kademlia::PeerData, rlpx::p2p::Capability};
 use serde::Serialize;
 use serde_json::Value;
@@ -10,7 +10,7 @@ use serde_json::Value;
 pub struct RpcPeer {
     caps: Vec<Capability>,
     enode: String,
-    id: H512,
+    id: H256,
     network: PeerNetwork,
     protocols: Protocols,
 }
@@ -61,7 +61,7 @@ impl From<PeerData> for RpcPeer {
         RpcPeer {
             caps: peer.supported_capabilities,
             enode: peer.node.enode_url(),
-            id: peer.node.node_id,
+            id: peer.node.node_id(),
             network: PeerNetwork {
                 remote_address: peer.node.udp_addr(),
                 inbound: peer.is_connection_inbound,
@@ -95,7 +95,7 @@ mod tests {
     fn test_peer_data_to_serialized_peer() {
         // Test that we can correctly serialize an active Peer
         let node = Node::from_enode_url("enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303").unwrap();
-        let record = NodeRecord::from_node(node, 17, &SigningKey::random(&mut OsRng)).unwrap();
+        let record = NodeRecord::from_node(&node, 17, &SigningKey::random(&mut OsRng)).unwrap();
         let mut peer = PeerData::new(node, record, true);
         // Set node capabilities and other relevant data
         peer.is_connected = true;
