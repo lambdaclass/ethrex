@@ -29,7 +29,8 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,address[])";
+    "initialize(bool,address,address,address,address,bytes32,address[])";
+const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 
 #[tokio::main]
@@ -322,7 +323,6 @@ async fn initialize_contracts(
         let calldata_values = vec![
             Value::Bool(opts.validium),
             Value::Address(opts.on_chain_proposer_owner),
-            Value::Address(bridge_address),
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
@@ -344,9 +344,23 @@ async fn initialize_contracts(
         .await?
     };
 
+    let initialize_bridge_address_tx_hash = {
+        let calldata_values = vec![Value::Address(bridge_address)];
+        let on_chain_proposer_initialization_calldata =
+            encode_calldata(INITIALIZE_BRIDGE_ADDRESS_SIGNATURE, &calldata_values)?;
+
+        initialize_contract(
+            on_chain_proposer_address,
+            on_chain_proposer_initialization_calldata,
+            &opts.private_key,
+            eth_client,
+        )
+        .await?
+    };
+
     spinner.success(&format!(
         "OnChainProposer:\n\tInitialized with tx hash {}",
-        format!("{initialize_tx_hash:#x}").bright_cyan()
+        format!("{initialize_tx_hash:#x} & {initialize_bridge_address_tx_hash:#x}").bright_cyan()
     ));
 
     let mut spinner = Spinner::new(
