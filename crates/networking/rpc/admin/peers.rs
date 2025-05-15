@@ -19,7 +19,7 @@ pub struct RpcPeer {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PeerNetwork {
-    // We can add more data about the connection here, such the local address, wether the peer is trusted, etc
+    // We can add more data about the connection here, such the local address, whether the peer is trusted, etc
     inbound: bool,
     remote_address: SocketAddr,
 }
