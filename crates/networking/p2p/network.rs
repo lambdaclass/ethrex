@@ -3,12 +3,9 @@ use crate::rlpx::p2p::Capability;
 use crate::rlpx::{
     connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
 };
-use crate::types::Node;
+use crate::types::{Node, NodeRecord};
 use crate::{
-    discv4::{
-        helpers::current_unix_time,
-        server::{DiscoveryError, Discv4Server},
-    },
+    discv4::server::{DiscoveryError, Discv4Server},
     rlpx::utils::log_peer_error,
 };
 use ethrex_blockchain::Blockchain;
@@ -51,40 +48,42 @@ pub struct P2PContext {
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: RLPxConnBroadcastSender,
     pub local_node: Node,
-    pub enr_seq: u64,
+    pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn start_network(
-    local_node: Node,
-    tracker: TaskTracker,
-    bootnodes: Vec<Node>,
-    signer: SigningKey,
-    peer_table: Arc<Mutex<KademliaTable>>,
-    storage: Store,
-    blockchain: Arc<Blockchain>,
-    client_version: String,
-) -> Result<(), NetworkError> {
-    let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
-        tokio::task::Id,
-        Arc<RLPxMessage>,
-    )>(MAX_MESSAGES_TO_BROADCAST);
+impl P2PContext {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        local_node: Node,
+        local_node_record: Arc<Mutex<NodeRecord>>,
+        tracker: TaskTracker,
+        signer: SigningKey,
+        peer_table: Arc<Mutex<KademliaTable>>,
+        storage: Store,
+        blockchain: Arc<Blockchain>,
+        client_version: String,
+    ) -> Self {
+        let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
+            tokio::task::Id,
+            Arc<RLPxMessage>,
+        )>(MAX_MESSAGES_TO_BROADCAST);
 
-    let context = P2PContext {
-        local_node,
-        // Note we are passing the current timestamp as the sequence number
-        // This is because we are not storing our local_node updates in the db
-        // see #1756
-        enr_seq: current_unix_time(),
-        tracker,
-        signer,
-        table: peer_table,
-        storage,
-        blockchain,
-        broadcast: channel_broadcast_send_end,
-        client_version,
-    };
+        P2PContext {
+            local_node,
+            local_node_record,
+            tracker,
+            signer,
+            table: peer_table,
+            storage,
+            blockchain,
+            broadcast: channel_broadcast_send_end,
+            client_version,
+        }
+    }
+}
+
+pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
     let discovery = Discv4Server::try_new(context.clone())
         .await
         .map_err(NetworkError::DiscoveryStart)?;
