@@ -26,7 +26,9 @@ pub fn read_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
 }
 
 pub fn write_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
-    info!("JWT secret not found in the provided path, generating JWT secret, path {jwt_secret_path}");
+    info!(
+        "JWT secret not found in the provided path, generating JWT secret, path {jwt_secret_path}"
+    );
     let secret = generate_jwt_secret();
     std::fs::write(jwt_secret_path, &secret).expect("Unable to write JWT secret file");
     hex::decode(secret)
@@ -96,7 +98,8 @@ pub fn set_datadir(datadir: &str, network: &Option<String>) -> String {
         None => &(String::from("")),
     };
     let data_dir = (datadir).to_owned() + &String::from("/") + sub_path;
-    let project_dir = ProjectDirs::from("", "", data_dir.as_str()).expect("Couldn't find home directory");
+    let project_dir =
+        ProjectDirs::from("", "", data_dir.as_str()).expect("Couldn't find home directory");
     project_dir
         .data_local_dir()
         .to_str()

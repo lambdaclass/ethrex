@@ -274,7 +274,7 @@ impl Subcommand {
 }
 
 pub fn remove_db(datadir: &str, force: bool, network: &Option<String>) {
-    let data_dir = set_datadir(datadir,network);
+    let data_dir = set_datadir(datadir, network);
     let path = Path::new(&data_dir);
 
     if path.exists() {
@@ -301,7 +301,7 @@ pub fn remove_db(datadir: &str, force: bool, network: &Option<String>) {
 }
 
 pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
-    let data_dir = set_datadir(data_dir,&Some(network.to_string()));
+    let data_dir = set_datadir(data_dir, &Some(network.to_string()));
 
     let store = init_store(&(data_dir.to_owned() + &String::from("/store")), network).await;
 

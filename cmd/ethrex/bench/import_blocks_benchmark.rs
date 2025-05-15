@@ -13,11 +13,10 @@ fn block_import() {
 
     let network = "../../test_data/genesis-perf-ci.json";
 
-    set_datadir(data_dir,&Some(network.to_string()));
+    set_datadir(data_dir, &Some(network.to_string()));
     remove_db(data_dir, true, &Some(network.to_string()));
 
     let evm_engine = EvmEngine::default();
-
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(
