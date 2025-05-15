@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747331908324,
+  "lastUpdate": 1747334905552,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7745,6 +7745,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007401168710152035,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "tomas.arjovsky@lambdaclass.com",
+            "name": "Tomás Arjovsky",
+            "username": "Arkenan"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "621ac953a3fab3f05efff24aa82db8591fab0bf2",
+          "message": "fix(core): timeout due to node inactivity instead of total load test time (#2530)\n\nChanges:\n\n- Timeout is now smarter. Instead of waiting a fixed amount of time\n(e.g. 10 minutes) for the whole load test to happen, which is a bit\nunpredictable, the load test waits at most 1 minute (configurable) of\nno-updates from the node. This way it's less machine dependent and more\nbased on responsiveness.\n- load-test-ci.json is fixed to be similar to perf-ci.json, but in\nprague and with the system smart contracts from l1-dev.json deployed.\n- logs are re-added.\n- Readme si fixed.\n- Re-add flamegraph reporter to CI so they are generated on every push.\n\nCloses #2522",
+          "timestamp": "2025-05-15T17:04:16Z",
+          "tree_id": "f64c37d48452480f6003549cb7916a399c25f745",
+          "url": "https://github.com/lambdaclass/ethrex/commit/621ac953a3fab3f05efff24aa82db8591fab0bf2"
+        },
+        "date": 1747334902487,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007386677924620656,
             "unit": "Mgas/s"
           }
         ]
