@@ -159,7 +159,12 @@ fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
             Value::Tuple(tuple_values) => {
                 if !is_dynamic(value) {
                     let tuple_encoding = encode_tuple(tuple_values)?;
-                    ret.extend_from_slice(&tuple_encoding);
+                    copy_into(
+                        &mut ret,
+                        &tuple_encoding,
+                        current_offset,
+                        tuple_encoding.len(),
+                    )?;
                 } else {
                     write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
 
@@ -171,7 +176,12 @@ fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
             Value::FixedArray(fixed_array_values) => {
                 if !is_dynamic(value) {
                     let fixed_array_encoding = encode_tuple(fixed_array_values)?;
-                    ret.extend_from_slice(&fixed_array_encoding);
+                    copy_into(
+                        &mut ret,
+                        &fixed_array_encoding,
+                        current_offset,
+                        fixed_array_encoding.len(),
+                    )?;
                 } else {
                     write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
 
