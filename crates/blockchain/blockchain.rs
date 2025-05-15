@@ -10,13 +10,13 @@ use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
-use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::{
     compute_receipts_root, validate_block_header, validate_cancun_header_fields,
     validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHash,
     BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_common::types::{BlobsBundle, Fork, ELASTICITY_MULTIPLIER};
+use ethrex_common::types::{BlockBody, MempoolTransaction};
 
 use ethrex_common::{Address, H256};
 use mempool::Mempool;
@@ -68,6 +68,14 @@ impl Blockchain {
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            // If the parent is not present, we store it as pending.
+            self.storage.add_pending_block(block.clone()).await?;
+            return Err(ChainError::ParentNotFound);
+        };
+        if find_parent_body(&block.header, &self.storage)
+            .await
+            .is_err()
+        {
             // If the parent is not present, we store it as pending.
             self.storage.add_pending_block(block.clone()).await?;
             return Err(ChainError::ParentNotFound);
@@ -549,6 +557,19 @@ pub fn find_parent_header(
 ) -> Result<BlockHeader, ChainError> {
     match storage.get_block_header_by_hash(block_header.parent_hash)? {
         Some(parent_header) => Ok(parent_header),
+        None => Err(ChainError::ParentNotFound),
+    }
+}
+
+pub async fn find_parent_body(
+    block_header: &BlockHeader,
+    storage: &Store,
+) -> Result<BlockBody, ChainError> {
+    match storage
+        .get_block_body_by_hash(block_header.parent_hash)
+        .await?
+    {
+        Some(parent_body) => Ok(parent_body),
         None => Err(ChainError::ParentNotFound),
     }
 }
