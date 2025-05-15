@@ -59,12 +59,12 @@ impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             Command::Init { opts } => {
-                let data_dir = set_datadir(&opts.node_opts.datadir);
+                let data_dir = set_datadir(&opts.node_opts.datadir,&opts.node_opts.network);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
                 let network = get_network(&opts.node_opts);
 
-                let store = init_store(&data_dir, &network).await;
+                let store = init_store(&(data_dir.to_owned() + &String::from("/store")), &network).await;
                 let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
                 let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
@@ -79,9 +79,17 @@ impl Command {
                 let tracker = TaskTracker::new();
 
                 let cancel_token = tokio_util::sync::CancellationToken::new();
-
+                
+                let authrpc_jwtsecret_path = if opts.authrpc_jwtsecret == "jwt.hex"
+                //Check if authrpc_jwtsecret is equal to default value.
+                {
+                    data_dir.to_owned() + &String::from("/") + &opts.authrpc_jwtsecret
+                } else {
+                    opts.authrpc_jwtsecret.clone()
+                };
                 init_rpc_api(
                     &opts.node_opts,
+                    authrpc_jwtsecret_path.as_str(),
                     &opts,
                     &signer,
                     peer_table.clone(),
