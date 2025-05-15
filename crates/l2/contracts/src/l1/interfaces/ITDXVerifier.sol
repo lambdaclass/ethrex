@@ -8,9 +8,9 @@ interface ITDXVerifier {
     /// @notice Verifies a proof with given payload and signature
     /// @dev The signature should correspond to an address previously registered with the verifier
     /// @param payload The payload to be verified
-    /// @param publicValues The associated signature
+    /// @param signature The associated signature
     function verify(
-        bytes calldata payload
+        bytes calldata payload,
         bytes memory signature
     ) external view;
 
@@ -19,5 +19,5 @@ interface ITDXVerifier {
     /// @param quote The TDX quote, which includes the address being registered
     function register(
         bytes calldata quote
-    ) external view;
+    ) external;
 }

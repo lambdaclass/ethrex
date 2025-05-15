@@ -27,9 +27,9 @@ contract TDXVerifier {
     /// @notice Verifies a proof with given payload and signature
     /// @dev The signature should correspond to an address previously registered with the verifier
     /// @param payload The payload to be verified
-    /// @param publicValues The associated signature
+    /// @param signature The associated signature
     function verify(
-        bytes calldata payload
+        bytes calldata payload,
         bytes memory signature
     ) external view {
         require(authorizedSignature != address(0), "TDX authorized signer not registered");
@@ -42,10 +42,16 @@ contract TDXVerifier {
     /// @param quote The TDX quote, which includes the address being registered
     function register(
         bytes calldata quote
-    ) external view {
+    ) external {
         // TODO: only allow the owner to update the key, to avoid DoS
         (bool success, bytes memory report) = quoteVerifier.verifyAndAttestOnChain(quote);
         require(success, "quote verification failed");
+        _validateReport(report);
+        authorizedSignature = _getAddress(report);
+    }
+
+    function _validateReport(bytes memory report) view internal {
+        
         require(_rangeEquals(report, 0, hex'0004'), "Unsupported quote version");
         require(report[2] == 0x81, "Quote is not of type TDX");
         require(report[6] == 0, "TCB_STATUS != OK");
@@ -55,10 +61,20 @@ contract TDXVerifier {
         require(_rangeEquals(report, 389, RTMR1), "RTMR1 mismatch");
         require(_rangeEquals(report, 437, RTMR2), "RTMR2 mismatch");
         // RTMR3 is ignored
-        authorizedSignature = address(report[533:553]);
     }
 
-    function expectedReportData(address addr) pure public returns (bytes memory) {
-        return abi.encodePacked(bytes20(addr), bytes20(0), bytes20(0), bytes4(0));
+    function _getAddress(bytes memory report) view internal returns (address) {
+        bytes20 addr;
+        for (uint8 i = 0; i < 20; i++) {
+            addr |= report[533 + i] >> (i * 8);
+        }
+        return address(addr);
+    }
+
+    function _rangeEquals(bytes memory report, uint256 offset, bytes memory other) pure internal returns (bool) {
+        for (uint256 i; i < other.length; i++) {
+            if (report[offset + i] != other[i]) return false;
+        }
+        return true;
     }
 }
