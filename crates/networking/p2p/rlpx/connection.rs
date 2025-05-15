@@ -50,8 +50,8 @@ const CAP_ETH_68: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP_1: (Capability, u8) = (Capability::Snap, 1);
 const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P_5, CAP_ETH_68, CAP_SNAP_1];
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
-const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
-const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
@@ -177,7 +177,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let mut table_lock = table.lock().await;
                 table_lock.insert_node_forced(self.node);
                 table_lock.init_backend_communication(
-                    self.node.public_key,
+                    self.node.node_id,
                     peer_channels,
                     capabilities,
                 );
@@ -228,7 +228,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     &self.node,
                     &format!("{error_text}: ({error}), discarding peer {remote_public_key}"),
                 );
-                table.lock().await.replace_peer(remote_public_key);
+                table.lock().await.replace_peer(self.node.node_id);
             }
         }
 

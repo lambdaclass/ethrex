@@ -278,7 +278,7 @@ contract OnChainProposer is
 
         if (SP1VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, sp1PublicValues);
+            _verifyPublicData(batchNumber, sp1PublicValues[16:]);
             ISP1Verifier(SP1VERIFIER).verifyProof(
                 sp1ProgramVKey,
                 sp1PublicValues,
@@ -314,13 +314,13 @@ contract OnChainProposer is
             batchCommitments[batchNumber].newStateRoot == finalStateRoot,
                 "OnChainProposer: final state root public inputs don't match with final state root"
         );
-        bytes32 withdrawalsMerkleRoot = bytes32(publicData[80:112]);
+        bytes32 withdrawalsMerkleRoot = bytes32(publicData[64:96]);
         require(
             batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
                 withdrawalsMerkleRoot,
             "OnChainProposer: withdrawals public inputs don't match with committed withdrawals"
         );
-        bytes32 depositsLogHash = bytes32(publicData[112:144]);
+        bytes32 depositsLogHash = bytes32(publicData[96:128]);
         require(
             batchCommitments[batchNumber].processedDepositLogsRollingHash ==
                 depositsLogHash,

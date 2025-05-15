@@ -73,7 +73,7 @@ impl Command {
 
                 let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
 
-                let peer_table = peer_table(signer.clone());
+                let peer_table = peer_table(local_p2p_node.node_id);
 
                 // TODO: Check every module starts properly.
                 let tracker = TaskTracker::new();
