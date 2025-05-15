@@ -1,4 +1,3 @@
-mod genesis;
 pub mod initializers;
 pub mod utils;
 

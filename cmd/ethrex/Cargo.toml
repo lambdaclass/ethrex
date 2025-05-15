@@ -96,6 +96,3 @@ harness = false
 [build-dependencies]
 vergen = { version = "9.0.0", features = ["rustc"] }
 
-[[bin]]
-name = "genesis-sorter"
-path = "./genesis.rs"

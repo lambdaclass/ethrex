@@ -13,9 +13,7 @@ tracing.workspace = true
 tinyvec = "1.6.0"
 ethereum-types.workspace = true
 serde.workspace = true
-# Preserve order is used to serialize the Genesis struct
-# with a specific key order.
-serde_json = { version = "1.0", features = [ "preserve_order" ] }
+serde_json.workspace = true
 thiserror.workspace = true
 k256.workspace = true
 # TODO(#1102): Move to Lambdaworks in the future
