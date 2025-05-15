@@ -114,10 +114,18 @@ impl SyncManager {
         let sync_head = self.last_fcu_head.clone();
 
         tokio::spawn(async move {
-            let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
-                tracing::error!("Failed to fetch latest canonical block, unable to sync");
-                return;
-            };
+            if !cfg!(sync-test) && env::var("SYNC-LATEST").is_ok() {
+                let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
+                    tracing::error!("Failed to fetch latest canonical block, unable to sync");
+                    return;
+                };
+            } else {
+                let block_number = env::var("SYNC-BLOCK-NUM").ok_or(0);
+                let Ok(Some(current_head)) = store.get_canonical_block_hash(block_number).await else {
+                    tracing::error!("Failed to fetch latest canonical block, unable to sync");
+                    return;
+                };
+            }
 
             // If we can't get hold of the syncer, then it means that there is an active sync in process
             let Ok(mut syncer) = syncer.try_lock() else {

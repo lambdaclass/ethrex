@@ -111,10 +111,14 @@ impl GetBlockHeaders {
         } else {
             (self.skip + 1) as i64
         };
-        let limit = if self.limit > BLOCK_HEADER_LIMIT {
-            BLOCK_HEADER_LIMIT
+        let limit = if !cfg!(sync-test) {
+            if self.limit > BLOCK_HEADER_LIMIT {
+                BLOCK_HEADER_LIMIT
+            } else {
+                self.limit
+            };
         } else {
-            self.limit
+            env::var("SYNC-BATCH-SIZE")
         };
         for _ in 0..limit {
             match storage.get_block_header(current_block as u64) {
