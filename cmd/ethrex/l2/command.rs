@@ -83,9 +83,9 @@ impl Command {
                 let authrpc_jwtsecret_path = if opts.authrpc_jwtsecret == "jwt.hex"
                 //Check if authrpc_jwtsecret is equal to default value.
                 {
-                    data_dir.to_owned() + &String::from("/") + &opts.authrpc_jwtsecret
+                    data_dir.to_owned() + &String::from("/") + &opts.node_opts.authrpc_jwtsecret
                 } else {
-                    opts.authrpc_jwtsecret.clone()
+                    opts.node_opts.authrpc_jwtsecret.clone()
                 };
                 init_rpc_api(
                     &opts.node_opts,
