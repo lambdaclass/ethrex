@@ -167,7 +167,7 @@ pub fn build_block_benchmark(c: &mut Criterion) {
         )
     });
     let input = (&mut blockchain, genesis_block, &store);
-    c.bench_function("my_bench", |b| {
+    c.bench_function("block payload building bench", |b| {
         b.to_async(tokio::runtime::Runtime::new().unwrap()).iter(|| {
             bench_payload(&input)
         })
