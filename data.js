@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747344571143,
+  "lastUpdate": 1747345086932,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8012,6 +8012,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007408435444280806,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c3c01438d5bdbd8f7e2f0203d670613a2a821c15",
+          "message": "fix(l1, levm): propagate error that we were ignoring when getting account (#2813)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n- We shouldn't ignore the case in which there's a StoreError or a\nTrieError when trying to get an account's info. It is something that\nprobably doesn't happen very often but I think it's a mistake to ignore\nit as we've been doing.",
+          "timestamp": "2025-05-15T19:34:48Z",
+          "tree_id": "edfe8cac6b4cda4e1fad038f6d41e59cd198bff2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c3c01438d5bdbd8f7e2f0203d670613a2a821c15"
+        },
+        "date": 1747345085201,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007375847018572825,
             "unit": "Mgas/s"
           }
         ]
