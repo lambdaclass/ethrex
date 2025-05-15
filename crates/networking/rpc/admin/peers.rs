@@ -77,7 +77,7 @@ pub fn peers(context: &RpcApiContext) -> Result<Value, RpcErr> {
         .read_connected_peers()
         .ok_or(RpcErr::Internal(String::from("Failed to read peers")))?
         .into_iter()
-        .map(|peer| RpcPeer::from(peer))
+        .map(RpcPeer::from)
         .collect::<Vec<_>>();
     Ok(serde_json::to_value(peers)?)
 }
