@@ -1,14 +1,13 @@
 use clap::{Parser, ValueEnum};
 use ethereum_types::{Address, H160, H256, U256};
-use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_l2_sdk::calldata::{self, Value};
+use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::eth::BlockByNumber;
 use ethrex_rpc::clients::{EthClient, EthClientError, Overrides};
 use ethrex_rpc::types::receipt::RpcReceipt;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hex::ToHex;
-use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 use std::fs;
 use std::path::Path;
@@ -82,27 +81,16 @@ const ETH_TRANSFER_VALUE: u64 = 1000;
 // Private key for the rich account present in the gesesis_l2.json file.
 const RICH_ACCOUNT: &str = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
 
-// TODO: this should be in common utils.
-fn address_from_pub_key(public_key: PublicKey) -> H160 {
-    let bytes = public_key.serialize_uncompressed();
-    let hash = keccak(&bytes[1..]);
-    let address_bytes: [u8; 20] = hash.as_ref().get(12..32).unwrap().try_into().unwrap();
-
-    Address::from(address_bytes)
-}
-
 async fn deploy_contract(
     client: EthClient,
     deployer: (PublicKey, SecretKey),
     contract: Vec<u8>,
 ) -> eyre::Result<Address> {
+    let address = get_address_from_secret_key(&deployer.1)
+        .map_err(|e| eyre::eyre!("Failed to get address from secret key: {}", e))?;
+
     let (_, contract_address) = client
-        .deploy(
-            address_from_pub_key(deployer.0),
-            deployer.1,
-            contract.into(),
-            Overrides::default(),
-        )
+        .deploy(address, deployer.1, contract.into(), Overrides::default())
         .await?;
 
     eyre::Ok(contract_address)
@@ -131,18 +119,21 @@ async fn claim_erc20_balances(
 ) -> eyre::Result<()> {
     let mut tasks = JoinSet::new();
 
-    for (pk, sk) in accounts {
+    for (_, sk) in accounts {
         let contract = contract_address;
         let client = client.clone();
-        let pk = *pk;
         let sk = *sk;
 
         tasks.spawn(async move {
             let claim_balance_calldata = calldata::encode_calldata("freeMint()", &[]).unwrap();
+            let address = get_address_from_secret_key(&sk)
+                .map_err(|e| eyre::eyre!("Failed to get address from secret key: {}", e))
+                .unwrap();
+
             let claim_tx = client
                 .build_eip1559_transaction(
                     contract,
-                    address_from_pub_key(pk),
+                    address,
                     claim_balance_calldata.into(),
                     Default::default(),
                 )
@@ -222,17 +213,19 @@ async fn load_test(
     tx_builder: TxBuilder,
 ) -> eyre::Result<()> {
     let mut tasks = FuturesUnordered::new();
-    for (pk, sk) in accounts {
-        let pk = *pk;
+    for (_, sk) in accounts {
         let sk = *sk;
         let client = client.clone();
         let tx_builder = tx_builder.clone();
         tasks.push(async move {
+            let address =
+                get_address_from_secret_key(&sk).expect("Failed to get address from secret key");
+
             let nonce = client
-                .get_nonce(address_from_pub_key(pk), BlockByNumber::Latest)
+                .get_nonce(address, BlockByNumber::Latest)
                 .await
                 .unwrap();
-            let src = address_from_pub_key(pk);
+            let src = address;
             let encoded_src: String = src.encode_hex();
 
             for i in 0..tx_amount {
@@ -248,7 +241,6 @@ async fn load_test(
                             nonce: Some(nonce + i),
                             max_fee_per_gas: Some(u64::MAX),
                             max_priority_fee_per_gas: Some(10),
-                            gas_limit: Some(TX_GAS_COST * 100),
                             ..Default::default()
                         },
                     )
@@ -282,10 +274,9 @@ async fn wait_until_all_included(
 ) -> Result<(), String> {
     let start_time = tokio::time::Instant::now();
 
-    for (pk, _) in accounts {
-        let pk = *pk;
+    for (_, sk) in accounts {
         let client = client.clone();
-        let src = address_from_pub_key(pk);
+        let src = get_address_from_secret_key(sk).expect("Failed to get address from secret key");
         let encoded_src: String = src.encode_hex();
         loop {
             let elapsed = start_time.elapsed();

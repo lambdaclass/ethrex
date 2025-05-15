@@ -49,6 +49,7 @@ pub struct BuildPayloadArgs {
     pub withdrawals: Option<Vec<Withdrawal>>,
     pub beacon_root: Option<H256>,
     pub version: u8,
+    pub elasticity_multiplier: u64,
 }
 
 impl BuildPayloadArgs {
@@ -111,6 +112,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
             parent_block.gas_limit,
             parent_block.gas_used,
             parent_block.base_fee_per_gas.unwrap_or_default(),
+            args.elasticity_multiplier,
         ),
         withdrawals_root: chain_config
             .is_shanghai_activated(args.timestamp)
@@ -575,7 +577,7 @@ impl std::ops::Deref for HeadTransaction {
 
 impl From<HeadTransaction> for Transaction {
     fn from(val: HeadTransaction) -> Self {
-        val.tx.into()
+        val.tx.transaction().clone()
     }
 }
 
@@ -585,7 +587,7 @@ impl TransactionQueue {
         mut txs: HashMap<Address, Vec<MempoolTransaction>>,
         base_fee: Option<u64>,
     ) -> Result<Self, ChainError> {
-        let mut heads = Vec::new();
+        let mut heads = Vec::with_capacity(100);
         for (_, txs) in txs.iter_mut() {
             // Pull the first tx from each list and add it to the heads list
             // This should be a newly filtered tx list so we are guaranteed to have a first element
