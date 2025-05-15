@@ -168,7 +168,7 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
-PROVER_SRC_FILES := $(shell find prover -type f)
+PROVER_SRC_FILES := $(shell find prover/src -type f)
 
 init-prover: ../../target/release/ethrex_prover ## 🚀 Initializes the Prover
 	../../target/release/ethrex_prover
