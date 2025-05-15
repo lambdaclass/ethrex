@@ -1,6 +1,9 @@
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use std::{
+    env,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use ethrex_blockchain::Blockchain;
@@ -114,14 +117,16 @@ impl SyncManager {
         let sync_head = self.last_fcu_head.clone();
 
         tokio::spawn(async move {
-            if !cfg!(sync-test) && env::var("SYNC-LATEST").is_ok() {
+            let current_head;
+            if !cfg!(sync_test) && env::var("SYNC-LATEST").is_ok() {
                 let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
                     tracing::error!("Failed to fetch latest canonical block, unable to sync");
                     return;
                 };
             } else {
                 let block_number = env::var("SYNC-BLOCK-NUM").ok_or(0);
-                let Ok(Some(current_head)) = store.get_canonical_block_hash(block_number).await else {
+                let Ok(Some(current_head)) = store.get_canonical_block_hash(block_number).await
+                else {
                     tracing::error!("Failed to fetch latest canonical block, unable to sync");
                     return;
                 };
