@@ -119,7 +119,7 @@ impl GetBlockHeaders {
                 self.limit
             };
         } else {
-            env::var("SYNC-BATCH-SIZE").ok_or(1024)
+            env::var("SYNC-BATCH-SIZE").as_deref.unwrap_or(1024)
         };
         for _ in 0..limit {
             match storage.get_block_header(current_block as u64) {
