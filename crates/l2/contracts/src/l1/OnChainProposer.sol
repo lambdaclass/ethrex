@@ -10,6 +10,8 @@ import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
+import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
+
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
@@ -306,7 +308,12 @@ contract OnChainProposer is
         }
 
         if (TDXVERIFIER != DEV_MODE) {
-
+            // If the verification fails, it will revert.
+            _verifyPublicData(batchNumber, tdxPublicValues);
+            ITDXVerifier(TDXVERIFIER).verifyProof(
+                tdxPublicValues,
+                tdxSignature
+            );
         }
 
         lastVerifiedBatch = batchNumber;

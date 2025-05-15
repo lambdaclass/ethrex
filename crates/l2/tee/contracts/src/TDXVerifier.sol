@@ -11,10 +11,10 @@ interface IAttestation {
         returns (bool success, bytes memory output);
 }
 
-contract Counter {
+contract TDXVerifier {
     IAttestation public quoteVerifier = IAttestation(address(0));
     address public authorizedSignature = address(0);
-    uint64 public current = 100;
+
     bytes public RTMR0 = hex'4f3d617a1c89bd9a89ea146c15b04383b7db7318f41a851802bba8eace5a6cf71050e65f65fd50176e4f006764a42643';
     bytes public RTMR1 = hex'ae6d959ed05ad39dea8b03c61c761612d40091c7d5082beaeb54b96231603c65ae7437dcb6794dbc55cfe76f79797532';
     bytes public RTMR2 = hex'0bcc11304c49a603385c460e63e250e212e5992856bb2f69b116a850133401f0e6613a5e62562cd4a55df757c7124045';
@@ -24,20 +24,25 @@ contract Counter {
         quoteVerifier = IAttestation(_dcap);
     }
 
-    function reset() public {
-        current = 100;
-        authorizedSignature = address(0);
-    }
-
-    function update(uint256 _to, bytes memory signature) public {
-        uint64 to = uint64(_to);
-        require(authorizedSignature != address(0), "authorized signer not set");
-        bytes32 signedHash = MessageHashUtils.toEthSignedMessageHash(abi.encodePacked(current, to));
+    /// @notice Verifies a proof with given payload and signature
+    /// @dev The signature should correspond to an address previously registered with the verifier
+    /// @param payload The payload to be verified
+    /// @param publicValues The associated signature
+    function verify(
+        bytes calldata payload
+        bytes memory signature
+    ) external view {
+        require(authorizedSignature != address(0), "TDX authorized signer not registered");
+        bytes32 signedHash = MessageHashUtils.toEthSignedMessageHash(payload);
         require(ECDSA.recover(signedHash, signature) == authorizedSignature, "invalid signature");
-        current = to;
     }
 
-    function updateKey(address signer, bytes memory quote) public {
+    /// @notice Registers the quote
+    /// @dev The data required to verify the quote must be loaded to the PCCS contracts beforehand
+    /// @param quote The TDX quote, which includes the address being registered
+    function register(
+        bytes calldata quote
+    ) external view {
         // TODO: only allow the owner to update the key, to avoid DoS
         (bool success, bytes memory report) = quoteVerifier.verifyAndAttestOnChain(quote);
         require(success, "quote verification failed");
@@ -50,15 +55,7 @@ contract Counter {
         require(_rangeEquals(report, 389, RTMR1), "RTMR1 mismatch");
         require(_rangeEquals(report, 437, RTMR2), "RTMR2 mismatch");
         // RTMR3 is ignored
-        require(_rangeEquals(report, 533, expectedReportData(signer)), "reportData mismatch");
-        authorizedSignature = signer;
-    }
-
-    function _rangeEquals(bytes memory report, uint256 offset, bytes memory other) pure internal returns (bool) {
-        for (uint256 i; i < other.length; i++) {
-            if (report[offset + i] != other[i]) return false;
-        }
-        return true;
+        authorizedSignature = address(report[533:553]);
     }
 
     function expectedReportData(address addr) pure public returns (bytes memory) {

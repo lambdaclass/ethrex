@@ -16,6 +16,7 @@ use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmError, ProverDB};
+use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, net::IpAddr};
 use tokio::{
@@ -45,6 +46,8 @@ struct ProofCoordinator {
     on_chain_proposer_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
+    rpc_url: String,
+    l1_private_key: SecretKey,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -184,6 +187,8 @@ impl ProofCoordinator {
             on_chain_proposer_address,
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             rollup_store,
+            rpc_url: eth_config.rpc_url.clone(),
+            l1_private_key: config.l1_private_key.clone(),
         })
     }
 
@@ -349,19 +354,16 @@ impl ProofCoordinator {
 
         match prover_type {
             ProverType::TDX => {
-                prepare_quote_prerequisites(
+                let _ = prepare_quote_prerequisites(
                     &self.eth_client,
-                    &std::env::var("RPC_URL").map_err(|_| {
-                        ProverServerError::Custom("Couldn't read RPC_URL".to_owned())
-                    })?,
-                    &std::env::var("PRIVATE_KEY").map_err(|_| {
-                        ProverServerError::Custom("Couldn't read PRIVATE_KEY".to_owned())
-                    })?,
+                    &self.rpc_url,
+                    &hex::encode(self.l1_private_key.as_ref()),
                     &hex::encode(payload),
                 )
                 .await
-                .map_err(|_| ProverServerError::Custom("Could not setup TDX key".to_owned()))?;
-                todo!() // send the update
+                .map_err(|_| ProverServerError::Custom("Could not setup TDX key".to_owned()));
+                // TODO: send quote to contract
+                error!("TDX SETUP NOT FULLY IMPLEMENTED");
             }
             _ => {
                 warn!("Setup requested for {prover_type}, which doesn't need setup.")

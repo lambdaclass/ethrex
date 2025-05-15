@@ -37,18 +37,18 @@ lib/openzeppelin-contracts:
 	mkdir -p lib
 	cd lib; git clone https://github.com/OpenZeppelin/openzeppelin-contracts
 
-solc_out/Counter.bin: src/Counter.sol lib/openzeppelin-contracts
+solc_out/TDXVerifier.bin: src/TDXVerifier.sol lib/openzeppelin-contracts
 	mkdir -p solc_out
-	solc src/Counter.sol --bin --allow-paths lib/ -o solc_out/ --overwrite
+	solc src/TDXVerifier.sol --bin --allow-paths lib/ -o solc_out/ --overwrite
 
-deploy: solc_out/Counter.bin
-	$(eval CONTRACT_BIN := $(shell cat solc_out/Counter.bin))
+deploy: solc_out/TDXVerifier.bin
+	$(eval CONTRACT_BIN := $(shell cat solc_out/TDXVerifier.bin))
 	$(eval DCAP_ADDRESS := $(shell cat ${DEPLOYMENT_PATH}/AutomataDcapAttestationFee))
 	rex deploy --print-address $(CONTRACT_BIN) 0 $(PRIVATE_KEY) -- \
-		"constructor(address)" $(DCAP_ADDRESS) > ${DEPLOYMENT_PATH}/Counter
+		"constructor(address)" $(DCAP_ADDRESS) > ${DEPLOYMENT_PATH}/TDXVerifier
 
 mkenv:
-	echo CONTRACT_ADDRESS=$(shell cat ${DEPLOYMENT_PATH}/Counter) > .env.out
+	echo TDX_VERIFIER=$(shell cat ${DEPLOYMENT_PATH}/TDXVerifier) > .env.out
 	echo ENCLAVE_ID_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataEnclaveIdentityDao)  >> .env.out
 	echo FMSPC_TCB_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataFmspcTcbDao)  >> .env.out
 	echo PCK_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataPckDao)  >> .env.out

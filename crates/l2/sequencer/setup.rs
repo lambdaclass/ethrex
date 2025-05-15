@@ -4,7 +4,7 @@ use ethrex_rpc::clients::eth::EthClient;
 use std::process::Command;
 
 const QPL_TOOL_PATH: &str =
-    "automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
+    "tee/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
 
 pub async fn prepare_quote_prerequisites(
     eth_client: &EthClient,
