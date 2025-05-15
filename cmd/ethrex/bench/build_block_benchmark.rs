@@ -1,9 +1,9 @@
-use std::{collections::HashMap, str::FromStr, sync::{atomic::AtomicU64, Arc, Mutex}, u64};
+use std::{collections::HashMap, str::FromStr};
 
 use bytes::Bytes;
-use criterion::{criterion_group, criterion_main, Criterion, async_executor::FuturesExecutor};
+use criterion::{criterion_group, criterion_main, Criterion};
 use ethrex::{
-    cli::{import_blocks, remove_db},
+    cli::remove_db,
     utils::set_datadir,
     DEFAULT_DATADIR,
 };
@@ -15,20 +15,10 @@ use ethrex_common::{
     types::{payload::PayloadBundle, Block, EIP1559Transaction, Genesis, GenesisAccount, LegacyTransaction, Signable, Transaction, TxKind},
     Address, H160, U256,
 };
-use ethrex_l2_sdk::{calldata::encode_calldata, get_address_from_secret_key};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
-use keccak_hash::keccak;
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
-use serde_json::json;
+use secp256k1::SecretKey;
 
-fn address_from_pub_key(public_key: PublicKey) -> H160 {
-    let bytes = public_key.serialize_uncompressed();
-    let hash = keccak(&bytes[1..]);
-    let address_bytes: [u8; 20] = hash.as_ref().get(12..32).unwrap().try_into().unwrap();
-
-    Address::from(address_bytes)
-}
 fn read_private_keys() -> Vec<SecretKey> {
     let file = include_str!("../../../test_data/private_keys_l1.txt");
     file.lines()
@@ -86,7 +76,6 @@ async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u
         version: 3,
         elasticity_multiplier: 1
     };
-    let hash = genesis_block.hash();
     let id = payload_args.id();
     let block = create_payload(&payload_args, &store).unwrap();
     return (block, id);
