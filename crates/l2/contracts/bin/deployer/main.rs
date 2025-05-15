@@ -9,30 +9,35 @@ use std::{
 use bytes::Bytes;
 use clap::Parser;
 use cli::{parse_private_key, DeployerOptions};
-use colored::Colorize;
 use error::DeployerError;
 use ethrex_common::{Address, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
-    compile_contract, deploy_contract, get_address_from_secret_key, initialize_contract,
+    compile_contract, deploy_contract, deploy_with_proxy, get_address_from_secret_key,
+    initialize_contract,
 };
 use ethrex_rpc::{
     clients::{eth::BlockByNumber, EthClientError, Overrides},
     EthClient,
 };
 use keccak_hash::H256;
-use spinoff::{spinner, spinners, Color, Spinner};
+use tracing::{debug, error, info, trace, Level};
 
 mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(address,address,address,address,address[])";
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
+    "initialize(bool,address,address,address,address,bytes32,address[])";
+const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
+const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
+const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployerError> {
+    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
+
+    trace!("Starting deployer binary");
     let opts = DeployerOptions::parse();
 
     let eth_client = EthClient::new_with_config(
@@ -79,21 +84,25 @@ async fn main() -> Result<(), DeployerError> {
         pico_verifier_address,
         risc0_verifier_address,
         opts.env_file_path,
-    )
+    )?;
+    trace!("Deployer binary finished successfully");
+    Ok(())
 }
 
 fn download_contract_deps(opts: &DeployerOptions) -> Result<(), DeployerError> {
+    trace!("Downloading contract dependencies");
     std::fs::create_dir_all(opts.contracts_path.join("lib")).map_err(|err| {
         DeployerError::DependencyError(format!("Failed to create contracts/lib: {err}"))
     })?;
 
     git_clone(
-        "https://github.com/OpenZeppelin/openzeppelin-contracts.git",
+        "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git",
         opts.contracts_path
-            .join("lib/openzeppelin-contracts")
+            .join("lib/openzeppelin-contracts-upgradeable")
             .to_str()
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
         None,
+        true,
     )?;
 
     git_clone(
@@ -103,6 +112,7 @@ fn download_contract_deps(opts: &DeployerOptions) -> Result<(), DeployerError> {
             .to_str()
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
         None,
+        false,
     )?;
 
     git_clone(
@@ -112,8 +122,10 @@ fn download_contract_deps(opts: &DeployerOptions) -> Result<(), DeployerError> {
             .to_str()
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
         Some("evm"),
+        false,
     )?;
 
+    trace!("Contract dependencies downloaded");
     Ok(())
 }
 
@@ -121,13 +133,19 @@ pub fn git_clone(
     repository_url: &str,
     outdir: &str,
     branch: Option<&str>,
+    submodules: bool,
 ) -> Result<ExitStatus, DeployerError> {
+    trace!(repository_url = %repository_url, outdir = %outdir, branch = ?branch, "Cloning git repository");
     let mut git_cmd = Command::new("git");
 
     let git_clone_cmd = git_cmd.arg("clone").arg(repository_url);
 
     if let Some(branch) = branch {
         git_clone_cmd.arg("--branch").arg(branch);
+    }
+
+    if submodules {
+        git_clone_cmd.arg("--recurse-submodules");
     }
 
     git_clone_cmd
@@ -139,6 +157,8 @@ pub fn git_clone(
 }
 
 fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
+    trace!("Compiling contracts");
+    compile_contract(&opts.contracts_path, "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol", false)?;
     compile_contract(&opts.contracts_path, "src/l1/OnChainProposer.sol", false)?;
     compile_contract(&opts.contracts_path, "src/l1/CommonBridge.sol", false)?;
     compile_contract(
@@ -151,6 +171,7 @@ fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
         "lib/pico-zkapp-template/contracts/src/PicoVerifier.sol",
         false,
     )?;
+    trace!("Contracts compiled");
     Ok(())
 }
 
@@ -162,13 +183,9 @@ async fn deploy_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
 ) -> Result<(Address, Address, Address, Address, Address), DeployerError> {
-    let deploy_frames = spinner!(["📭❱❱", "❱📬❱", "❱❱📫"], 220);
+    trace!("Deploying contracts");
 
-    let mut spinner = Spinner::new(
-        deploy_frames.clone(),
-        "Deploying OnChainProposer",
-        Color::Cyan,
-    );
+    info!("Deploying OnChainProposer");
 
     let salt = if opts.randomize_contract_deployment {
         H256::random().as_bytes().to_vec()
@@ -179,45 +196,44 @@ async fn deploy_contracts(
             .to_vec()
     };
 
-    let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) = deploy_contract(
-        &[&[0u8; 31][..], &[u8::from(opts.validium)]].concat(),
-        &opts.contracts_path.join("solc_out/OnChainProposer.bin"),
-        &opts.private_key,
-        &salt,
+    trace!("Attempting to deploy OnChainProposer contract");
+    let on_chain_proposer_deployment = deploy_with_proxy(
+        opts.private_key,
         eth_client,
+        &opts.contracts_path.join("solc_out"),
+        "OnChainProposer.bin",
+        &salt,
+    )
+    .await?;
+    info!(
+        "OnChainProposer deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
+        on_chain_proposer_deployment.proxy_address,
+        on_chain_proposer_deployment.proxy_tx_hash,
+        on_chain_proposer_deployment.implementation_address,
+        on_chain_proposer_deployment.implementation_tx_hash,
+    );
+
+    info!("Deploying CommonBridge");
+
+    let bridge_deployment = deploy_with_proxy(
+        opts.private_key,
+        eth_client,
+        &opts.contracts_path.join("solc_out"),
+        "CommonBridge.bin",
+        &salt,
     )
     .await?;
 
-    spinner.success(&format!(
-        "OnChainProposer:\n\tDeployed at address {}\n\tWith tx hash {}",
-        format!("{on_chain_proposer_address:#x}").bright_green(),
-        format!("{on_chain_proposer_deployment_tx_hash:#x}").bright_cyan()
-    ));
-
-    let mut spinner = Spinner::new(deploy_frames.clone(), "Deploying CommonBridge", Color::Cyan);
-    let (bridge_deployment_tx_hash, bridge_address) = deploy_contract(
-        &{
-            let deployer_address = get_address_from_secret_key(&opts.private_key)?;
-            let offset = 32 - deployer_address.as_bytes().len() % 32;
-            let mut encoded_owner = vec![0; offset];
-            encoded_owner.extend_from_slice(deployer_address.as_bytes());
-            encoded_owner
-        },
-        &opts.contracts_path.join("solc_out/CommonBridge.bin"),
-        &opts.private_key,
-        &salt,
-        eth_client,
-    )
-    .await?;
-
-    spinner.success(&format!(
-        "CommonBridge:\n\tDeployed at address {}\n\tWith tx hash {}",
-        format!("{bridge_address:#x}").bright_green(),
-        format!("{bridge_deployment_tx_hash:#x}").bright_cyan(),
-    ));
+    info!(
+        "CommonBridge deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
+        bridge_deployment.proxy_address,
+        bridge_deployment.proxy_tx_hash,
+        bridge_deployment.implementation_address,
+        bridge_deployment.implementation_tx_hash,
+    );
 
     let sp1_verifier_address = if opts.sp1_deploy_verifier {
-        let mut spinner = Spinner::new(deploy_frames.clone(), "Deploying SP1Verifier", Color::Cyan);
+        info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
         let (verifier_deployment_tx_hash, sp1_verifier_address) = deploy_contract(
             &[],
             &opts.contracts_path.join("solc_out/SP1Verifier.bin"),
@@ -227,11 +243,7 @@ async fn deploy_contracts(
         )
         .await?;
 
-        spinner.success(&format!(
-            "SP1Groth16Verifier:\n\tDeployed at address {}\n\tWith tx hash {}",
-            format!("{sp1_verifier_address:#x}").bright_green(),
-            format!("{verifier_deployment_tx_hash:#x}").bright_cyan(),
-        ));
+        info!(address = %format!("{sp1_verifier_address:#x}"), tx_hash = %format!("{verifier_deployment_tx_hash:#x}"), "SP1Verifier deployed");
         sp1_verifier_address
     } else {
         opts.sp1_verifier_address
@@ -241,7 +253,7 @@ async fn deploy_contracts(
     };
 
     let pico_verifier_address = if opts.pico_deploy_verifier {
-        let mut spinner = Spinner::new(deploy_frames, "Deploying PicoVerifier", Color::Cyan);
+        info!("Deploying PicoVerifier (if pico_deploy_verifier is true)");
         let (verifier_deployment_tx_hash, pico_verifier_address) = deploy_contract(
             &[],
             &opts.contracts_path.join("solc_out/PicoVerifier.bin"),
@@ -251,11 +263,7 @@ async fn deploy_contracts(
         )
         .await?;
 
-        spinner.success(&format!(
-            "PicoGroth16Verifier:\n\tDeployed at address {}\n\tWith tx hash {}",
-            format!("{pico_verifier_address:#x}").bright_green(),
-            format!("{verifier_deployment_tx_hash:#x}").bright_cyan(),
-        ));
+        info!(address = %format!("{pico_verifier_address:#x}"), tx_hash = %format!("{verifier_deployment_tx_hash:#x}"), "PicoVerifier deployed");
 
         pico_verifier_address
     } else {
@@ -272,9 +280,19 @@ async fn deploy_contracts(
                 "Risc0Verifier address is not set and risc0_deploy_verifier is false".to_string(),
             ))?;
 
+    trace!(
+        on_chain_proposer_proxy_address = ?on_chain_proposer_deployment.proxy_address,
+        bridge_proxy_address = ?bridge_deployment.proxy_address,
+        on_chain_proposer_implementation_address = ?on_chain_proposer_deployment.implementation_address,
+        bridge_implementation_address = ?bridge_deployment.implementation_address,
+        sp1_verifier_address = ?sp1_verifier_address,
+        pico_verifier_address = ?pico_verifier_address,
+        risc0_verifier_address = ?risc0_verifier_address,
+        "Contracts deployed"
+    );
     Ok((
-        on_chain_proposer_address,
-        bridge_address,
+        on_chain_proposer_deployment.proxy_address,
+        bridge_deployment.proxy_address,
         sp1_verifier_address,
         pico_verifier_address,
         risc0_verifier_address,
@@ -291,25 +309,29 @@ async fn initialize_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
 ) -> Result<(), DeployerError> {
-    let initialize_frames = spinner!(["🪄❱❱", "❱🪄❱", "❱❱🪄"], 200);
+    trace!("Initializing contracts");
 
-    let mut spinner = Spinner::new(
-        initialize_frames.clone(),
-        "Initializing OnChainProposer",
-        Color::Cyan,
-    );
+    info!("Initializing OnChainProposer");
+
+    trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
+
+    let genesis = read_genesis_file(&opts.genesis_l2_path);
+    let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
     let initialize_tx_hash = {
         let calldata_values = vec![
-            Value::Address(bridge_address),
+            Value::Bool(opts.validium),
+            Value::Address(deployer_address),
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
+            Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Array(vec![
                 Value::Address(opts.committer_l1_address),
                 Value::Address(opts.proof_sender_l1_address),
             ]),
         ];
+        trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
         let on_chain_proposer_initialization_calldata =
             encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values)?;
 
@@ -322,18 +344,55 @@ async fn initialize_contracts(
         .await?
     };
 
-    spinner.success(&format!(
-        "OnChainProposer:\n\tInitialized with tx hash {}",
-        format!("{initialize_tx_hash:#x}").bright_cyan()
-    ));
+    info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
 
-    let mut spinner = Spinner::new(
-        initialize_frames.clone(),
-        "Initializing CommonBridge",
-        Color::Cyan,
+    let initialize_bridge_address_tx_hash = {
+        let calldata_values = vec![Value::Address(bridge_address)];
+        let on_chain_proposer_initialization_calldata =
+            encode_calldata(INITIALIZE_BRIDGE_ADDRESS_SIGNATURE, &calldata_values)?;
+
+        initialize_contract(
+            on_chain_proposer_address,
+            on_chain_proposer_initialization_calldata,
+            &opts.private_key,
+            eth_client,
+        )
+        .await?
+    };
+
+    info!(
+        tx_hash = %format!("{initialize_bridge_address_tx_hash:#x}"),
+        "OnChainProposer bridge address initialized"
     );
+
+    if opts.on_chain_proposer_owner != deployer_address {
+        let transfer_ownership_tx_hash = {
+            let owener_transfer_calldata = encode_calldata(
+                TRANSFER_OWNERSHIP_SIGNATURE,
+                &[Value::Address(opts.on_chain_proposer_owner)],
+            )?;
+
+            initialize_contract(
+                on_chain_proposer_address,
+                owener_transfer_calldata,
+                &opts.private_key,
+                eth_client,
+            )
+            .await?
+        };
+
+        info!(
+            tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
+            "OnChainProposer ownership transfered"
+        );
+    }
+
+    info!("Initializing CommonBridge");
     let initialize_tx_hash = {
-        let calldata_values = vec![Value::Address(on_chain_proposer_address)];
+        let calldata_values = vec![
+            Value::Address(opts.bridge_owner),
+            Value::Address(on_chain_proposer_address),
+        ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
 
@@ -346,10 +405,8 @@ async fn initialize_contracts(
         .await?
     };
 
-    spinner.success(&format!(
-        "CommonBridge:\n\tInitialized with tx hash {}",
-        format!("{initialize_tx_hash:#x}").bright_cyan()
-    ));
+    info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
+    trace!("Contracts initialized");
     Ok(())
 }
 
@@ -358,6 +415,7 @@ async fn make_deposits(
     eth_client: &EthClient,
     opts: &DeployerOptions,
 ) -> Result<(), DeployerError> {
+    trace!("Making deposits");
     let genesis = read_genesis_file(&opts.genesis_l1_path);
     let pks = read_to_string(&opts.private_keys_file_path)
         .map_err(|_| DeployerError::FailedToGetStringFromPath)?;
@@ -382,9 +440,9 @@ async fn make_deposits(
         let calldata = encode_calldata("deposit((address,address,uint256,bytes))", &values)?;
 
         let Some(_) = genesis.alloc.get(&address) else {
-            println!(
-                "Skipping deposit for address {:?} as it is not in the genesis file",
-                address
+            debug!(
+                ?address,
+                "Skipping deposit for address as it is not in the genesis file"
             );
             continue;
         };
@@ -403,7 +461,6 @@ async fn make_deposits(
         let overrides = Overrides {
             value: Some(value_to_deposit),
             from: Some(address),
-            gas_limit: Some(21000 * 5),
             max_fee_per_gas: Some(gas_price),
             max_priority_fee_per_gas: Some(gas_price),
             ..Overrides::default()
@@ -418,20 +475,20 @@ async fn make_deposits(
             .await
         {
             Ok(hash) => {
-                println!(
-                    "Deposit transaction sent to L1 from {:?} with value {:?} and hash {:?}",
-                    address, value_to_deposit, hash
+                info!(
+                    ?address,
+                    ?value_to_deposit,
+                    ?hash,
+                    "Deposit transaction sent to L1"
                 );
             }
             Err(e) => {
-                println!(
-                    "Failed to deposit to {:?} with value {:?}",
-                    address, value_to_deposit
-                );
+                error!(?address, ?value_to_deposit, "Failed to deposit");
                 return Err(DeployerError::EthClientError(e));
             }
         }
     }
+    trace!("Deposits finished");
     Ok(())
 }
 
@@ -443,6 +500,7 @@ fn write_contract_addresses_to_env(
     risc0_verifier_address: Address,
     env_file_path: Option<PathBuf>,
 ) -> Result<(), DeployerError> {
+    trace!("Writing contract addresses to .env file");
     let env_file_path =
         env_file_path.unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.env")); // ethrex/crates/l2/.env
 
@@ -458,7 +516,7 @@ fn write_contract_addresses_to_env(
     let env_file = OpenOptions::new()
         .write(true)
         .truncate(true)
-        .open(env_file_path)?; // ethrex/crates/l2/.env
+        .open(&env_file_path)?; // ethrex/crates/l2/.env
     let mut writer = BufWriter::new(env_file);
     writeln!(
         writer,
@@ -478,6 +536,7 @@ fn write_contract_addresses_to_env(
         writer,
         "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={risc0_verifier_address:#x}"
     )?;
+    trace!(?env_file_path, "Contract addresses written to .env");
     Ok(())
 }
 
