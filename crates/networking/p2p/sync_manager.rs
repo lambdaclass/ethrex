@@ -14,7 +14,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    peer_handler::PeerHandler, sync::{SyncMode, Syncer}
+    peer_handler::PeerHandler,
+    sync::{SyncMode, Syncer},
 };
 
 /// Abstraction to interact with the active sync process without disturbing it

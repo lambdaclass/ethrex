@@ -8,7 +8,11 @@ use crate::{
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
-    kademlia::KademliaTable, network::public_key_from_signing_key, peer_handler::PeerHandler, sync_manager::SyncManager, types::{Node, NodeRecord}
+    kademlia::KademliaTable,
+    network::public_key_from_signing_key,
+    peer_handler::PeerHandler,
+    sync_manager::SyncManager,
+    types::{Node, NodeRecord},
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
