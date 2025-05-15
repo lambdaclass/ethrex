@@ -384,7 +384,7 @@ impl<'a> VM<'a> {
         // IMPORTANT:
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
         // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
-        for auth_tuple in self.tx.authorization_list().clone().unwrap_or_default() {
+        for auth_tuple in self.tx.authorization_list().cloned().unwrap_or_default() {
             let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id;
             let chain_id_not_zero = !auth_tuple.chain_id.is_zero();
 
@@ -555,14 +555,13 @@ impl<'a> VM<'a> {
         // Authorization List Cost
         // `unwrap_or_default` will return an empty vec when the `authorization_list` field is None.
         // If the vec is empty, the len will be 0, thus the authorization_list_cost is 0.
-        let amount_of_auth_tuples: u64 = self
-            .tx
-            .authorization_list()
-            .clone()
-            .unwrap_or_default()
-            .len()
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        let amount_of_auth_tuples = match self.tx.authorization_list() {
+            None => 0,
+            Some(list) => list
+                .len()
+                .try_into()
+                .map_err(|_| VMError::Internal(InternalError::ConversionError))?,
+        };
         let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
             .checked_mul(amount_of_auth_tuples)
             .ok_or(VMError::Internal(InternalError::GasOverflow))?;

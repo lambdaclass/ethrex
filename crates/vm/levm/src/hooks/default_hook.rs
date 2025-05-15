@@ -357,7 +357,7 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
 }
 
 pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
-    let Some(auth_list) = &vm.tx.authorization_list() else {
+    let Some(auth_list) = vm.tx.authorization_list() else {
         // vm.authorization_list should be Some at this point.
         return Err(VMError::Internal(InternalError::UndefinedState(-1)));
     };

@@ -1187,13 +1187,13 @@ impl Transaction {
         }
     }
 
-    pub fn authorization_list(&self) -> Option<AuthorizationList> {
+    pub fn authorization_list(&self) -> Option<&AuthorizationList> {
         match self {
             Transaction::LegacyTransaction(_) => None,
             Transaction::EIP2930Transaction(_) => None,
             Transaction::EIP1559Transaction(_) => None,
             Transaction::EIP4844Transaction(_) => None,
-            Transaction::EIP7702Transaction(tx) => Some(tx.authorization_list.clone()),
+            Transaction::EIP7702Transaction(tx) => Some(&tx.authorization_list),
             Transaction::PrivilegedL2Transaction(_) => None,
         }
     }
