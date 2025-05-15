@@ -1,5 +1,5 @@
 mod constants;
-pub mod db;
+mod db;
 mod errors;
 mod execution_result;
 mod helpers;

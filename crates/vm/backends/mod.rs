@@ -2,9 +2,10 @@ pub mod levm;
 pub mod revm;
 
 use self::revm::db::evm_state;
+use crate::db::StoreWrapper;
+use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
-use crate::{db::StoreWrapper, errors::EvmError};
 use crate::{ProverDB, ProverDBError};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
@@ -13,8 +14,8 @@ use ethrex_common::types::{
 use ethrex_common::{Address, H256};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::db::CacheDB;
+use ethrex_storage::AccountUpdate;
 use ethrex_storage::Store;
-use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;
@@ -70,18 +71,14 @@ impl std::fmt::Debug for Evm {
 impl Evm {
     /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
     pub fn new(engine: EvmEngine, store: Store, parent_hash: H256) -> Self {
+        let store_wrapper = StoreWrapper::new(store.clone(), parent_hash);
+
         match engine {
             EvmEngine::REVM => Evm::REVM {
-                state: evm_state(store.clone(), parent_hash),
+                state: evm_state(store_wrapper),
             },
             EvmEngine::LEVM => Evm::LEVM {
-                db: GeneralizedDatabase::new(
-                    Arc::new(StoreWrapper {
-                        store: store.clone(),
-                        block_hash: parent_hash,
-                    }),
-                    CacheDB::new(),
-                ),
+                db: GeneralizedDatabase::new(Arc::new(store_wrapper), CacheDB::new()),
             },
         }
     }
@@ -208,7 +205,7 @@ impl Evm {
 
     /// Wraps the [REVM::process_withdrawals] and [LEVM::process_withdrawals].
     /// Applies the withdrawals to the state or the block_chache if using [LEVM].
-    pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), StoreError> {
+    pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), EvmError> {
         match self {
             Evm::REVM { state } => REVM::process_withdrawals(state, withdrawals),
             Evm::LEVM { db } => LEVM::process_withdrawals(db, withdrawals),

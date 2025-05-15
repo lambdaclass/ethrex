@@ -12,7 +12,7 @@ use crate::helpers::spec_id;
 use db::EvmState;
 use ethrex_common::types::AccountInfo;
 use ethrex_common::{BigEndianHash, H256, U256};
-use ethrex_storage::{error::StoreError, AccountUpdate};
+use ethrex_storage::AccountUpdate;
 
 use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;
@@ -114,7 +114,7 @@ impl REVM {
     pub fn process_withdrawals(
         initial_state: &mut EvmState,
         withdrawals: &[Withdrawal],
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), EvmError> {
         //balance_increments is a vector of tuples (Address, increment as u128)
         let balance_increments = withdrawals
             .iter()
@@ -136,9 +136,7 @@ impl REVM {
                         continue;
                     }
 
-                    let account = db
-                        .load_account(address)
-                        .map_err(|err| StoreError::Custom(format!("revm CacheDB error: {err}")))?;
+                    let account = db.load_account(address)?;
 
                     account.info.balance += RevmU256::from(balance);
                     if account.account_state == RevmAccountState::None {
@@ -195,9 +193,9 @@ impl REVM {
             EvmState::Store(db) => db.basic(revm_addr)?,
             EvmState::Execution(cache_db) => cache_db.basic(revm_addr)?,
         }
-        .ok_or(EvmError::DB(StoreError::Custom(
+        .ok_or(EvmError::DB(
             "System contract address was not found after deployment".to_string(),
-        )))?;
+        ))?;
         Ok(account_info)
     }
     pub(crate) fn read_withdrawal_requests(
