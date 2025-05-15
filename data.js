@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747338281761,
+  "lastUpdate": 1747338704393,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7255,6 +7255,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 214059266089,
             "range": "± 656689088",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "47ffb22802baaee9c132c4b3e68cc8393b143fff",
+          "message": "fix(l2): contract deployer fixes (#2779)\n\n**Motivation**\n\nIf an integration test fails, it's really difficult to debug the\ncontract deployer and know that the problem was there in the first\nplace.\n\n**Description**\n\n- removes spinner\n- adds clearer logs and traces\n- make ethrex_l2 container depend on the deployer terminating\nsuccessfuly (so flow stops if deployer failed)",
+          "timestamp": "2025-05-15T18:57:07Z",
+          "tree_id": "dc79c11341afae3ba40d1e7f85e51ed842600a9c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/47ffb22802baaee9c132c4b3e68cc8393b143fff"
+        },
+        "date": 1747338700803,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 215684276859,
+            "range": "± 1122022987",
             "unit": "ns/iter"
           }
         ]
