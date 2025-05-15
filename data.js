@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747325363291,
+  "lastUpdate": 1747328107427,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7657,6 +7657,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007386677924620656,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c558c8db13a7f12dffe9cd13e979e0f551fbe6f0",
+          "message": "fix(l1): lowered time for periodic tx broadcast interval (#2751)\n\n**Motivation**\n\nA test that involved multiple clients was failing due to the clients not\ncommunicating their transactions between them before the tests asked for\na new block.\n\n**Description**\n\nThis pr reduces the checking time from 5 seconds to 500 miliseconds and\nadds the test to the CI.\n\nFixes \"Blob Transaction Ordering, Multiple Clients\" failing test in\n#1285.",
+          "timestamp": "2025-05-15T14:50:55Z",
+          "tree_id": "50badb1b21a128e454143540cf788d626270200a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c558c8db13a7f12dffe9cd13e979e0f551fbe6f0"
+        },
+        "date": 1747328106075,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007372243771372741,
             "unit": "Mgas/s"
           }
         ]
