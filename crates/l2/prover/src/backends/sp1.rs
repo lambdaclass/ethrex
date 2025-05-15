@@ -86,11 +86,11 @@ pub fn to_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::err
     // bytes calldata proofBytes
 
     // Correct way of saving the proof
-    let _ = proof.proof.save("/home/admin/proof");
-    std::fs::write("/home/admin/pub", proof.proof.public_values.clone())
+    let _ = proof.proof.save("/path/to/proof");
+    std::fs::write("/path/to/pub", proof.proof.public_values.clone())
         .expect("failed to save public inputs");
-    std::fs::write("/home/admin/vk", proof.vk.hash_bytes()).expect("failed to save vk hash");
-    std::fs::write("/home/admin/elf", PROGRAM_ELF).expect("failed to save elf file");
+    std::fs::write("/path/to/vk", proof.vk.hash_bytes()).expect("failed to save vk hash");
+    std::fs::write("/path/to/elf", PROGRAM_ELF).expect("failed to save elf file");
 
     let calldata = vec![
         Value::FixedBytes(bytes::Bytes::from_owner(proof.vk.bytes32_raw())),
