@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747323866308,
+  "lastUpdate": 1747324791974,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7598,6 +7598,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.000726226323387873,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "cba42cdcb2efcf1c3ab2fa204ccefffc1d37c5bf",
+          "message": "fix(l2): fix indices (#2802)\n\n**Motivation**\n\nThere was an error in verifyPublicData when running with SP1\n\n**Description**\n\nverifyPublicData didn't take into account that SP1 contains a 16 byte\nheader with the length of the data",
+          "timestamp": "2025-05-15T14:40:27Z",
+          "tree_id": "2d57562e6595c57822ebc83a1859e79da4a8d56d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cba42cdcb2efcf1c3ab2fa204ccefffc1d37c5bf"
+        },
+        "date": 1747324790549,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007386677924620656,
             "unit": "Mgas/s"
           }
         ]
