@@ -59,12 +59,13 @@ impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             Command::Init { opts } => {
-                let data_dir = set_datadir(&opts.node_opts.datadir,&opts.node_opts.network);
+                let data_dir = set_datadir(&opts.node_opts.datadir, &opts.node_opts.network);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
                 let network = get_network(&opts.node_opts);
 
-                let store = init_store(&(data_dir.to_owned() + &String::from("/store")), &network).await;
+                let store =
+                    init_store(&(data_dir.to_owned() + &String::from("/store")), &network).await;
                 let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
                 let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
@@ -79,7 +80,7 @@ impl Command {
                 let tracker = TaskTracker::new();
 
                 let cancel_token = tokio_util::sync::CancellationToken::new();
-                
+
                 init_rpc_api(
                     &opts.node_opts,
                     &data_dir,

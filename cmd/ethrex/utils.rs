@@ -1,4 +1,4 @@
-use crate::{decode,DEFAULT_CUSTOMDIR,DEFAULT_PUBLIC_NETWORKS};
+use crate::{decode, DEFAULT_CUSTOMDIR, DEFAULT_PUBLIC_NETWORKS};
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};

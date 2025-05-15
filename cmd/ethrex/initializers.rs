@@ -5,8 +5,7 @@ use crate::{
         get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
         read_known_peers,
     },
-    DEFAULT_STOREDIR,
-    DEFAULT_JWT_PATH,
+    DEFAULT_JWT_PATH, DEFAULT_STOREDIR,
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
@@ -74,10 +73,10 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 }
 
 pub async fn init_store(data_dir: &str, network: &str) -> Store {
-    let data_directory = data_dir.to_owned()+DEFAULT_STOREDIR;
+    let data_directory = data_dir.to_owned() + DEFAULT_STOREDIR;
     let path = PathBuf::from(&data_dir);
     let store = if path.ends_with("memory") {
-        Store::new(&data_directory.as_str(), EngineType::InMemory).expect("Failed to create Store")
+        Store::new(data_directory.as_str(), EngineType::InMemory).expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
             if #[cfg(feature = "redb")] {
@@ -89,7 +88,7 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
                 panic!("Specify the desired database engine.");
             }
         }
-        Store::new(&data_directory.as_str(), engine_type).expect("Failed to create Store")
+        Store::new(data_directory.as_str(), engine_type).expect("Failed to create Store")
     };
     let genesis = read_genesis_file(network);
     store
@@ -154,9 +153,8 @@ pub async fn init_rpc_api(
     )
     .await;
 
-    let authrpc_jwtsecret_path = if opts.authrpc_jwtsecret == DEFAULT_JWT_PATH[1..]
-    {
-        data_dir.to_owned() + &DEFAULT_JWT_PATH
+    let authrpc_jwtsecret_path = if opts.authrpc_jwtsecret == DEFAULT_JWT_PATH[1..] {
+        data_dir.to_owned() + DEFAULT_JWT_PATH
     } else {
         opts.authrpc_jwtsecret.clone()
     };
