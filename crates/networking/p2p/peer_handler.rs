@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use bytes::Bytes;
 use ethrex_common::{
     types::{AccountState, BlockBody, BlockHeader, Receipt},
-    H256, H512, U256,
+    H256, U256,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
@@ -64,7 +64,7 @@ impl PeerHandler {
     async fn get_peer_channel_with_retry(
         &self,
         capability: Capability,
-    ) -> Option<(H512, PeerChannels)> {
+    ) -> Option<(H256, PeerChannels)> {
         for _ in 0..PEER_SELECT_RETRY_ATTEMPTS {
             let table = self.peer_table.lock().await;
             if let Some((id, channels)) = table.get_peer_channels(capability.clone()) {
@@ -114,16 +114,7 @@ impl PeerHandler {
                                 .map(|header| header.compute_block_hash())
                                 .collect::<Vec<_>>();
 
-                            // Validate that, for each header, its parent root is equal to the previous header's
-                            // hash. If that's not true, then we have received an invalid header from our peer and we
-                            // have to discard it.
-                            let any_invalid = block_headers
-                                .iter()
-                                .skip(1) // Skip the first, since we know the current head is valid
-                                .zip(block_hashes.iter())
-                                .any(|(current_header, previous_hash)| {
-                                    current_header.parent_hash != *previous_hash
-                                });
+                            let any_invalid = PeerHandler::invalid_block_header_parents(&block_headers, &block_hashes);
 
                             if any_invalid {
                                 warn!("Received invalid headers from peer, discarding peer {peer_id} and retrying...");
@@ -158,7 +149,7 @@ impl PeerHandler {
     pub async fn request_block_bodies(
         &self,
         block_hashes: Vec<H256>,
-    ) -> Option<(Vec<BlockBody>, H512)> {
+    ) -> Option<(Vec<BlockBody>, H256)> {
         let block_hashes_len = block_hashes.len();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
@@ -667,7 +658,17 @@ impl PeerHandler {
         None
     }
 
-    pub async fn remove_peer(&self, peer_id: H512) {
+    /// Validates the block headers received from a peer by checking that the parent hash of each header
+    /// matches the hash of the previous one.
+    fn invalid_block_header_parents(block_headers: &[BlockHeader], block_hashes: &[H256]) -> bool {
+        block_headers
+            .iter()
+            .skip(1) // Skip the first, since we know the current head is valid
+            .zip(block_hashes.iter())
+            .any(|(current_header, previous_hash)| current_header.parent_hash != *previous_hash)
+    }
+
+    pub async fn remove_peer(&self, peer_id: H256) {
         debug!("Removing peer with id {:?}", peer_id);
         let mut table = self.peer_table.lock().await;
         table.replace_peer(peer_id);
