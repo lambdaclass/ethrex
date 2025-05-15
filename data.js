@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747350776958,
+  "lastUpdate": 1747352990637,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8154,6 +8154,35 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/lambdaclass/ethrex/commit/e1394a3058c308047c733289e917fb41e3552277"
         },
         "date": 1747350776358,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.000726226323387873,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e7a4a038c19709c129cdf7e3c93d9a6240a4481c",
+          "message": "ci(l1): comment flaky devp2p test Findnode/UnsolicitedNeighbors (#2817)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nCommenting the test until it's fixed, just the one that's flaky\nOpened issue: https://github.com/lambdaclass/ethrex/issues/2818\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-15T20:34:43Z",
+          "tree_id": "c13fc5b333fd0ce4619fa309398ef1e83e550aa3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e7a4a038c19709c129cdf7e3c93d9a6240a4481c"
+        },
+        "date": 1747352990284,
         "tool": "customBiggerIsBetter",
         "benches": [
           {
