@@ -39,7 +39,7 @@ async fn main() -> eyre::Result<()> {
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
-    let peer_table = peer_table(signer.clone());
+    let peer_table = peer_table(local_p2p_node.node_id());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -61,7 +61,7 @@ async fn main() -> eyre::Result<()> {
         &L2Options::default(),
         &signer,
         peer_table.clone(),
-        local_p2p_node,
+        local_p2p_node.clone(),
         store.clone(),
         blockchain.clone(),
         cancel_token.clone(),
