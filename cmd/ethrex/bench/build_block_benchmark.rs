@@ -24,8 +24,7 @@ fn read_private_keys() -> Vec<SecretKey> {
     file.lines()
         .map(|line| {
             let line = line.trim().strip_prefix("0x").unwrap();
-            let sk = SecretKey::from_str(line).unwrap();
-            sk
+            SecretKey::from_str(line).unwrap()
         })
         .collect()
 }
@@ -59,10 +58,10 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
             balance: u64::MAX.into(),
             nonce: 0,
         };
-        genesis.alloc.insert(address.clone(), account_info);
+        genesis.alloc.insert(*address, account_info);
     }
     store.add_initial_state(genesis.clone()).await.unwrap();
-    return (store, genesis);
+    (store, genesis)
 }
 
 async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u64) {
@@ -77,8 +76,8 @@ async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u
         elasticity_multiplier: 1
     };
     let id = payload_args.id();
-    let block = create_payload(&payload_args, &store).unwrap();
-    return (block, id);
+    let block = create_payload(&payload_args, store).unwrap();
+    (block, id)
 }
 
 async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
@@ -89,9 +88,9 @@ async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
                 Transaction::EIP1559Transaction(EIP1559Transaction {
                     nonce: n,
                     value: 1_u64.into(),
-                    gas_limit: 250000_u64.into(),
-                    max_fee_per_gas: u64::MAX.into(),
-                    max_priority_fee_per_gas: 10_u64.into(),
+                    gas_limit: 250000_u64,
+                    max_fee_per_gas: u64::MAX,
+                    max_priority_fee_per_gas: 10_u64,
                     chain_id: 9,
                     ..Default::default()
                 });
@@ -110,8 +109,8 @@ pub async fn bench_payload(input: &(&mut Blockchain, Block, &Store)) {
     // 1. engine_forkChoiceUpdated is called, which ends up calling fork_choice::build_payload,
     // which finally calls payload::create_payload(), this mimics this step without
     // the RPC handling. The payload is created and the id stored.
-    let (payload_block, payload_id) = create_payload_block(&genesis_block, store).await;
-    let _ = store.add_payload(payload_id, payload_block.clone()).await.unwrap();
+    let (payload_block, payload_id) = create_payload_block(genesis_block, store).await;
+    store.add_payload(payload_id, payload_block.clone()).await.unwrap();
     // 2. engine_getPayload is called, this code path ends up calling Store::get_payload(id),
     // so we also mimic that here without the RPC part.
     // We also need to updated the payload to set it as completed.
@@ -144,7 +143,7 @@ pub async fn bench_payload(input: &(&mut Blockchain, Block, &Store)) {
     b.add_block(&block).await.unwrap();
     // EXTRA: Sanity check to not benchmark n empty block.
     let hash = &block.hash();
-    assert!(store.get_block_body_by_hash(*hash).await.unwrap().unwrap().transactions.len() >= 1);
+    assert!(!store.get_block_body_by_hash(*hash).await.unwrap().unwrap().transactions.is_empty());
 }
 
 pub fn build_block_benchmark(c: &mut Criterion) {
