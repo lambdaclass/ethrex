@@ -178,3 +178,6 @@ rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 
 test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 	solc ./test_data/ERC20.sol -o $@
+
+sort-genesis-files:
+	cd ./tools && cargo run

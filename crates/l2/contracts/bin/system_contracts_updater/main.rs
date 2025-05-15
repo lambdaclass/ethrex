@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use bytes::Bytes;
 use clap::Parser;
 use cli::SystemContractsUpdaterOptions;
@@ -8,7 +6,8 @@ use ethrex_common::types::GenesisAccount;
 use ethrex_common::U256;
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::{compile_contract, COMMON_BRIDGE_L2_ADDRESS};
-
+use std::{collections::HashMap, io::ErrorKind, path::Path};
+use tools::genesis::write_genesis_as_json;
 mod cli;
 mod error;
 
@@ -34,9 +33,8 @@ fn update_genesis_file(l2_genesis_path: &str) -> Result<(), SystemContractsUpdat
         },
     );
 
-    let modified_genesis = serde_json::to_string(&genesis)?;
-
-    std::fs::write(l2_genesis_path, modified_genesis)?;
+    write_genesis_as_json(genesis, Path::new(l2_genesis_path))
+        .map_err(|err_msg| std::io::Error::new(ErrorKind::Other, err_msg))?;
 
     println!("Updated L2 genesis file.");
 
