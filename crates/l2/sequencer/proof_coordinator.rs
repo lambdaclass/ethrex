@@ -362,7 +362,13 @@ impl ProofCoordinator {
                 )
                 .await
                 .map_err(|_| ProverServerError::Custom("Could not setup TDX key".to_owned()));
-                register_tdx_key(&self.eth_client, &self.l1_private_key, self.on_chain_proposer_address, payload).await?;
+                register_tdx_key(
+                    &self.eth_client,
+                    &self.l1_private_key,
+                    self.on_chain_proposer_address,
+                    payload,
+                )
+                .await?;
                 // TODO: send quote to contract
                 error!("TDX SETUP NOT FULLY IMPLEMENTED");
             }
