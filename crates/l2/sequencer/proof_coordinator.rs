@@ -14,7 +14,7 @@ use ethrex_l2_common::{
     get_block_deposits, get_block_withdrawals, get_tx_and_receipts, prepare_state_diff, StateDiff,
 };
 use ethrex_rpc::clients::eth::EthClient;
-use ethrex_storage::Store;
+use ethrex_storage::{AccountUpdate, Store};
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmError, ProverDB};
 use serde::{Deserialize, Serialize};
@@ -358,9 +358,9 @@ impl ProofCoordinator {
         // Get all withdrawals and deposits
         let mut all_withdrawals = Vec::new();
         let mut all_deposits = Vec::new();
-        let mut all_account_updates = HashMap::new();
-        for block in blocks {
-            let txs_and_receipts = get_tx_and_receipts(block, self.store).await?;
+        let mut all_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
+        for block in &blocks {
+            let txs_and_receipts = get_tx_and_receipts(&block, self.store.clone()).await?;
             let withdrawals = get_block_withdrawals(&txs_and_receipts)?;
             let deposits = get_block_deposits(&txs_and_receipts);
 
@@ -389,12 +389,12 @@ impl ProofCoordinator {
         }
 
         let state_diff = prepare_state_diff(
-            first_block.header.number,
-            last_block.header,
-            self.store,
+            first_block.header.number.clone(),
+            last_block.header.clone(),
+            self.store.clone(),
             &all_withdrawals,
             &all_deposits,
-            all_account_updates,
+            all_account_updates.into_values().collect(),
         )
         .await?;
 

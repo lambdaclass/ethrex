@@ -58,7 +58,7 @@ pub enum StateDiffError {
     InternalError(String),
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountStateDiff {
     pub new_balance: Option<U256>,
     pub nonce_diff: u16,
@@ -76,21 +76,21 @@ pub enum AccountStateDiffType {
     BytecodeHash = 16,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WithdrawalLog {
     pub address: Address,
     pub amount: U256,
     pub tx_hash: H256,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DepositLog {
     pub address: Address,
     pub amount: U256,
     pub nonce: u64,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateDiff {
     pub version: u8,
     pub last_header: BlockHeader,
@@ -719,7 +719,7 @@ pub fn is_deposit_l2(tx: &Transaction) -> bool {
 }
 
 pub async fn get_tx_and_receipts(
-    block: Block,
+    block: &Block,
     store: Store,
 ) -> Result<Vec<(Transaction, Receipt)>, StateDiffError> {
     // Get block transactions and receipts
