@@ -3205,7 +3205,6 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
- "toml 0.8.20",
  "tracing",
  "zkvm_interface",
 ]
@@ -3290,6 +3289,7 @@ name = "ethrex-prover"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "clap 4.5.36",
  "ethereum-types",
  "ethrex-blockchain",
  "ethrex-common",
