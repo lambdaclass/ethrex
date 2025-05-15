@@ -160,7 +160,7 @@ contract OnChainProposer is
     }
 
     /// @inheritdoc IOnChainProposer
-    function initializeBridgeAddress(address bridge) public {
+    function initializeBridgeAddress(address bridge) public onlyOwner {
         require(
             BRIDGE == address(0),
             "OnChainProposer: bridge already initialized"
@@ -303,16 +303,20 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
-    function _verifyPublicData(uint256 batchNumber, bytes calldata publicData) internal view {
+    function _verifyPublicData(
+        uint256 batchNumber,
+        bytes calldata publicData
+    ) internal view {
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         require(
-            batchCommitments[lastVerifiedBatch].newStateRoot == initialStateRoot,
-                "OnChainProposer: initial state root public inputs don't match with initial state root"
-        ); 
+            batchCommitments[lastVerifiedBatch].newStateRoot ==
+                initialStateRoot,
+            "OnChainProposer: initial state root public inputs don't match with initial state root"
+        );
         bytes32 finalStateRoot = bytes32(publicData[32:64]);
         require(
             batchCommitments[batchNumber].newStateRoot == finalStateRoot,
-                "OnChainProposer: final state root public inputs don't match with final state root"
+            "OnChainProposer: final state root public inputs don't match with final state root"
         );
         bytes32 withdrawalsMerkleRoot = bytes32(publicData[64:96]);
         require(
