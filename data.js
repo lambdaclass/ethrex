@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747343053719,
+  "lastUpdate": 1747344571143,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7375,6 +7375,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 214262421000,
             "range": "± 448241860",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e7a4a038c19709c129cdf7e3c93d9a6240a4481c",
+          "message": "ci(l1): comment flaky devp2p test Findnode/UnsolicitedNeighbors (#2817)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nCommenting the test until it's fixed, just the one that's flaky\nOpened issue: https://github.com/lambdaclass/ethrex/issues/2818\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-15T20:34:43Z",
+          "tree_id": "c13fc5b333fd0ce4619fa309398ef1e83e550aa3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e7a4a038c19709c129cdf7e3c93d9a6240a4481c"
+        },
+        "date": 1747344568724,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 214406837672,
+            "range": "± 357355357",
             "unit": "ns/iter"
           }
         ]
