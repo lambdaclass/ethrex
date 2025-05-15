@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747345089336,
+  "lastUpdate": 1747346573055,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7435,6 +7435,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 213809807696,
             "range": "± 943858244",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "56402156+fkrause98@users.noreply.github.com",
+            "name": "Francisco Krause Arnim",
+            "username": "fkrause98"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d4d34595443f68a9f44c27d0d9db4a2ba67b9b1f",
+          "message": "chore(l1,l2): ordered genesis files (#2713)\n\n**Motivation**\n\nOrdered genesis files make it easy to diff with one another.\n\n**Description**\n\n- Add function to write a Genesis json file with its keys ordered.\n- Genesis files are now ordered by key.\n\n\nCloses #2706.",
+          "timestamp": "2025-05-15T21:07:01Z",
+          "tree_id": "a99724ca368c79f6c2a29142ed03c84a6b70413e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d4d34595443f68a9f44c27d0d9db4a2ba67b9b1f"
+        },
+        "date": 1747346571474,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 216993999533,
+            "range": "± 414996510",
             "unit": "ns/iter"
           }
         ]
