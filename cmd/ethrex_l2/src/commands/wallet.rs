@@ -331,7 +331,6 @@ impl Command {
                             },
                             nonce,
                             from: Some(cfg.wallet.address),
-                            gas_limit: Some(21000 * 100),
                             ..Default::default()
                         },
                     )

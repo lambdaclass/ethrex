@@ -778,6 +778,7 @@ impl EthClient {
         };
 
         transaction.from = from;
+        transaction.nonce = None;
         self.estimate_gas(transaction).await
     }
 
