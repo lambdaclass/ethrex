@@ -250,13 +250,8 @@ async fn load_test(
                 let client = client.clone();
                 sleep(Duration::from_micros(800)).await;
                 let _sent = client.send_eip1559_transaction(&tx, &sk).await?;
-                println!(
-                    "Tx number {} sent! From: {}. To: {}",
-                    nonce + i + 1,
-                    encoded_src,
-                    dst.encode_hex::<String>()
-                );
             }
+            println!("{} transactions have been sent for {}", tx_amount, encoded_src);
             Ok::<(), EthClientError>(())
         });
     }
@@ -390,7 +385,7 @@ async fn main() {
     };
 
     println!(
-        "Starting load test with {} transactions per account",
+        "Starting load test with {} transactions per account...",
         cli.tx_amount
     );
     let time_now = tokio::time::Instant::now();
