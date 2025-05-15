@@ -45,9 +45,9 @@ use super::{
     eth::transactions::NewPooledTransactionHashes, p2p::DisconnectReason, utils::log_peer_warn,
 };
 
-const CAP_P2P_5: Capability = Capability::P2p(5);
-const CAP_ETH_68: Capability = Capability::Eth(68);
-const CAP_SNAP_1: Capability = Capability::Snap(1);
+const CAP_P2P_5: Capability = Capability::p2p(5);
+const CAP_ETH_68: Capability = Capability::eth(68);
+const CAP_SNAP_1: Capability = Capability::snap(1);
 const SUPPORTED_CAPABILITIES: [Capability; 3] = [CAP_P2P_5, CAP_ETH_68, CAP_SNAP_1];
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
@@ -78,7 +78,7 @@ pub(crate) struct RLPxConnection<S> {
     framed: Framed<S, RLPxCodec>,
     storage: Store,
     blockchain: Arc<Blockchain>,
-    capabilities: Vec<(Capability, u8)>,
+    capabilities: Vec<Capability>,
     negotiated_eth_version: u8,
     negotiated_snap_version: u8,
     next_periodic_ping: Instant,
@@ -164,11 +164,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // Handshake OK: handle connection
             // Create channels to communicate directly to the peer
             let (peer_channels, sender, receiver) = PeerChannels::create();
-            let capabilities = self
-                .capabilities
-                .iter()
-                .map(|(cap, _)| cap.clone())
-                .collect();
+            let capabilities = self.capabilities.iter().map(|cap| cap.clone()).collect();
 
             // NOTE: if the peer came from the discovery server it will already be inserted in the table
             // but that might not always be the case, so we try to add it to the table
@@ -262,8 +258,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
         match msg {
             Message::Hello(hello_message) => {
-                let mut negotiated_eth_cap = (Capability::Eth, 0);
-                let mut negotiated_snap_cap = (Capability::Snap, 0);
+                let mut negotiated_eth_cap = Capability {
+                    protocol: "eth".into(),
+                    version: 0,
+                };
+                let mut negotiated_snap_cap = Capability {
+                    protocol: "snap".into(),
+                    version: 0,
+                };
 
                 log_peer_debug(
                     &self.node,
@@ -275,12 +277,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
                 // Check if we have any capability in common and store the highest version
                 for cap in &hello_message.capabilities {
-                    match *cap {
-                        CAP_ETH_68 if CAP_ETH_68.1 > negotiated_eth_cap.1 => {
-                            negotiated_eth_cap = CAP_ETH_68
+                    match cap.protocol {
+                        "eth" => {
+                            if CAP_ETH_68.version > negotiated_eth_cap.version {
+                                negotiated_eth_cap = CAP_ETH_68;
+                            }
                         }
-                        CAP_SNAP_1 if CAP_SNAP_1.1 > negotiated_snap_cap.1 => {
-                            negotiated_snap_cap = CAP_SNAP_1
+                        "snap" => {
+                            if CAP_SNAP_1.version > negotiated_snap_cap.version {
+                                negotiated_snap_cap = CAP_SNAP_1;
+                            }
                         }
                         _ => {}
                     }
@@ -288,13 +294,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
                 self.capabilities = hello_message.capabilities;
 
-                if negotiated_eth_cap.1 == 0 {
+                if negotiated_eth_cap.version == 0 {
                     return Err(RLPxError::NoMatchingCapabilities());
                 }
-                self.negotiated_eth_version = negotiated_eth_cap.1;
+                self.negotiated_eth_version = negotiated_eth_cap.version;
 
-                if negotiated_snap_cap.1 != 0 {
-                    self.negotiated_snap_version = negotiated_snap_cap.1;
+                if negotiated_snap_cap.version != 0 {
+                    self.negotiated_snap_version = negotiated_snap_cap.version;
                 }
 
                 Ok(())
@@ -319,10 +325,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
         // Subscribe this connection to the broadcasting channel.
         let mut broadcaster_receive = {
-            if self
-                .capabilities
-                .contains(&(Capability::Eth, self.negotiated_eth_version))
-            {
+            if self.capabilities.contains(&(Capability::eth(68))) {
                 Some(self.connection_broadcast_send.subscribe())
             } else {
                 None
@@ -565,10 +568,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
-        if self
-            .capabilities
-            .contains(&(Capability::Eth, self.negotiated_eth_version))
-        {
+        if self.capabilities.contains(
+            &(Capability {
+                protocol: "eth".into(),
+                version: self.negotiated_eth_version,
+            }),
+        ) {
             let status =
                 backend::get_status(&self.storage, self.negotiated_eth_version as u32).await?;
             log_peer_debug(&self.node, "Sending status");

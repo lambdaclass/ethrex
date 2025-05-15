@@ -194,7 +194,7 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
             .iter()
             .filter(|peer| -> bool {
                 peer.channels.as_ref().is_some()
-                    && peer.supported_capabilities.contains(&Capability::Snap)
+                    && peer.supported_capabilities.contains(&Capability::snap(1))
             })
             .count();
         info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");

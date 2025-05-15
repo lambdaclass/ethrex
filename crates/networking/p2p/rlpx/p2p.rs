@@ -1,3 +1,7 @@
+use super::{
+    message::RLPxMessage,
+    utils::{decompress_pubkey, snappy_compress},
+};
 use crate::rlpx::utils::{compress_pubkey, snappy_decompress};
 use bytes::BufMut;
 use ethrex_common::H512;
@@ -6,19 +10,36 @@ use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
     error::{RLPDecodeError, RLPEncodeError},
-    structs::{Decoder, Encoder},
 };
 use k256::PublicKey;
 
-use super::{
-    message::RLPxMessage,
-    utils::{decompress_pubkey, snappy_compress},
-};
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Capability {
-    protocol: String,
-    version: u8,
+    pub protocol: &'static str,
+    pub version: u8,
+}
+
+impl Capability {
+    pub const fn eth(version: u8) -> Self {
+        Capability {
+            protocol: "eth",
+            version,
+        }
+    }
+
+    pub const fn p2p(version: u8) -> Self {
+        Capability {
+            protocol: "p2p",
+            version,
+        }
+    }
+
+    pub const fn snap(version: u8) -> Self {
+        Capability {
+            protocol: "snap",
+            version,
+        }
+    }
 }
 
 impl RLPEncode for Capability {
@@ -32,8 +53,14 @@ impl RLPEncode for Capability {
 
 impl RLPDecode for Capability {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        //let (cap_string, rest) = String::decode_unfinished(rlp)?;
-        let decoder = Decoder::new(rlp)?;
+        let (protocol, rest) = String::decode_unfinished(&rlp[1..])?;
+        let (version, rest) = u8::decode_unfinished(rest)?;
+        match protocol.as_str() {
+            "eth" => Ok((Capability::eth(version), rest)),
+            "p2p" => Ok((Capability::p2p(version), rest)),
+            "snap" => Ok((Capability::snap(version), rest)),
+            _ => Err(RLPDecodeError::MalformedData),
+        }
     }
 }
 
@@ -77,8 +104,7 @@ impl RLPxMessage for HelloMessage {
         let (client_id, decoder): (String, _) = decoder.decode_field("clientId")?;
 
         // [[cap1, capVersion1], [cap2, capVersion2], ...]
-        let (capabilities, decoder): (Vec<(Capability, u8)>, _) =
-            decoder.decode_field("capabilities")?;
+        let (capabilities, decoder): (Vec<Capability>, _) = decoder.decode_field("capabilities")?;
 
         // This field should be ignored
         let (_listen_port, decoder): (u16, _) = decoder.decode_field("listenPort")?;
