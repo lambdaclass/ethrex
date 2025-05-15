@@ -100,9 +100,9 @@ contract SequencerRegistry is
         uint256 _currentBatch = IOnChainProposer(ON_CHAIN_PROPOSER)
             .lastCommittedBatch() + 1;
 
-        uint256 _targetBlock = _currentBatch + 1 + nBatchesInTheFuture;
+        uint256 _targetBatch = _currentBatch + nBatchesInTheFuture;
 
-        address _leader = sequencers[_targetBlock % _sequencers];
+        address _leader = sequencers[_targetBatch % _sequencers];
 
         return _leader;
     }
