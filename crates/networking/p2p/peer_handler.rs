@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountState, Block, BlockBody, BlockHeader, Receipt, validate_block_body},
+    types::{validate_block_body, AccountState, Block, BlockBody, BlockHeader, Receipt},
     H256, U256,
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -27,7 +27,6 @@ use crate::{
         },
     },
     snap::encodable_to_proof,
-
 };
 use tracing::{debug, info, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -58,7 +57,7 @@ pub enum BlockRequestOrder {
 pub enum BodyRequestError {
     BodiesReturnedEmpty,
     BodiesNotFound,
-    InvalidBlockBody
+    InvalidBlockBody,
 }
 
 impl PeerHandler {
@@ -206,8 +205,6 @@ impl PeerHandler {
         block_hashes: &mut Vec<H256>,
         headers_iter: &mut impl Iterator<Item = &BlockHeader>,
     ) -> Result<Vec<Block>, BodyRequestError> {
-
-        let block_bodies: Vec<BlockBody>;
         let Some((block_bodies, peer_id)) = self.request_block_bodies(block_hashes.clone()).await
         else {
             return Err(BodyRequestError::BodiesReturnedEmpty);
@@ -215,11 +212,10 @@ impl PeerHandler {
         let mut blocks: Vec<Block> = vec![];
         let block_bodies_len = block_bodies.len();
         // Push blocks
-        for (_, body) in block_hashes
-            .drain(..block_bodies_len)
-            .zip(block_bodies)
-        {
-            let header = headers_iter.next().ok_or(BodyRequestError::BodiesNotFound)?;
+        for (_, body) in block_hashes.drain(..block_bodies_len).zip(block_bodies) {
+            let header = headers_iter
+                .next()
+                .ok_or(BodyRequestError::BodiesNotFound)?;
             let block = Block::new(header.clone(), body);
             blocks.push(block);
         }
@@ -232,7 +228,6 @@ impl PeerHandler {
             return Err(BodyRequestError::InvalidBlockBody); // Retry
         }
         Ok(blocks)
-           
     }
 
     /// Requests all receipts in a set of blocks from any suitable peer given their block hashes
