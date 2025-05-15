@@ -110,8 +110,13 @@ pub fn verify_range(
     }
 
     // Process proofs to check if they are valid.
-    let (external_refs, _, num_right_refs) =
+    let (external_refs, (left_node, right_node), num_right_refs) =
         process_proof_nodes(proof, root.into(), (*first_key, Some(*last_key)))?;
+    if left_node.is_empty() || right_node.is_empty() {
+        return Err(TrieError::Verify(
+            "the left or right nodes are not present in the proof".to_string(),
+        ));
+    }
 
     // Reconstruct the internal nodes by inserting the elements on the range
     for (key, value) in keys.iter().zip(values.iter()) {
