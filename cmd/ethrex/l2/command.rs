@@ -7,6 +7,7 @@ use crate::{
     l2::options::Options,
     utils::{set_datadir, store_known_peers},
     DEFAULT_L2_DATADIR,
+    DEFAULT_JWT_PATH,
 };
 use clap::Subcommand;
 use ethrex_common::{Address, U256};
