@@ -326,7 +326,7 @@ impl KademliaTable {
         self.get_random_peer_with_filter(&filter).and_then(|peer| {
             peer.channels
                 .clone()
-                .map(|channel| (peer.node.node_id, channel))
+                .map(|channel| (peer.node.node_id(), channel))
         })
     }
 }

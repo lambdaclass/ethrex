@@ -26,7 +26,7 @@ use crate::{
             StorageRanges, TrieNodes,
         },
     },
-    snap::encodable_to_proof, sync::SyncError,
+    snap::encodable_to_proof,
 
 };
 use tracing::{debug, info, warn};
@@ -210,7 +210,7 @@ impl PeerHandler {
         let mut block_bodies: Vec<BlockBody>;
         let Some((block_bodies, peer_id)) = self.request_block_bodies(block_hashes).await
         else {
-            return BodyRequestError::BodiesReturnedEmpty;
+            return Err(BodyRequestError::BodiesReturnedEmpty);
         };
         let mut blocks: Vec<Block> = vec![];
         let block_bodies_len = block_bodies.len();
@@ -229,7 +229,7 @@ impl PeerHandler {
         {
             warn!("Invalid block body error {e}, discarding peer {peer_id}");
             self.remove_peer(peer_id).await;
-            return BodyRequestError::InvalidBlockBody; // Retry
+            return Err(BodyRequestError::InvalidBlockBody); // Retry
         }
         return Some(blocks);
            
