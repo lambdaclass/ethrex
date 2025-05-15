@@ -12,7 +12,7 @@ use crate::{
     rlpx::utils::log_peer_error,
 };
 use ethrex_blockchain::Blockchain;
-use ethrex_common::H512;
+use ethrex_common::{H256, H512};
 use ethrex_storage::Store;
 use k256::{
     ecdsa::SigningKey,
@@ -32,9 +32,8 @@ use tracing::{debug, error, info};
 // we should bump this limit.
 pub const MAX_MESSAGES_TO_BROADCAST: usize = 1000;
 
-pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
-    let local_node_id = node_id_from_signing_key(&signer);
-    Arc::new(Mutex::new(KademliaTable::new(local_node_id)))
+pub fn peer_table(node_id: H256) -> Arc<Mutex<KademliaTable>> {
+    Arc::new(Mutex::new(KademliaTable::new(node_id)))
 }
 
 #[derive(Debug)]
@@ -171,7 +170,7 @@ async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, io::Error> {
     TcpSocket::new_v4()?.connect(addr).await
 }
 
-pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {
+pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {
     let public_key = PublicKey::from(signer.verifying_key());
     let encoded = public_key.to_encoded_point(false);
     H512::from_slice(&encoded.as_bytes()[1..])

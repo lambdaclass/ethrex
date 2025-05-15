@@ -50,8 +50,8 @@ const CAP_ETH_68: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP_1: (Capability, u8) = (Capability::Snap, 1);
 const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P_5, CAP_ETH_68, CAP_SNAP_1];
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
-const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
-const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
@@ -59,7 +59,7 @@ pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
 pub(crate) struct RemoteState {
-    pub(crate) node_id: H512,
+    pub(crate) public_key: H512,
     pub(crate) nonce: H256,
     pub(crate) ephemeral_key: PublicKey,
     pub(crate) init_message: Vec<u8>,
@@ -223,12 +223,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 log_peer_debug(&self.node, "Peer already connected, don't replace it");
             }
             _ => {
-                let remote_node_id = self.node.node_id;
+                let remote_public_key = self.node.public_key;
                 log_peer_error(
                     &self.node,
-                    &format!("{error_text}: ({error}), discarding peer {remote_node_id}"),
+                    &format!("{error_text}: ({error}), discarding peer {remote_public_key}"),
                 );
-                table.lock().await.replace_peer(remote_node_id);
+                table.lock().await.replace_peer(self.node.node_id);
             }
         }
 

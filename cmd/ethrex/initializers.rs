@@ -9,7 +9,7 @@ use crate::{
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
     kademlia::KademliaTable,
-    network::node_id_from_signing_key,
+    network::public_key_from_signing_key,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
@@ -372,14 +372,14 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SigningKey) -> Node {
         udp_socket_addr.ip()
     };
 
-    let local_node_id = node_id_from_signing_key(signer);
+    let local_public_key = public_key_from_signing_key(signer);
 
-    let node = Node {
-        ip: p2p_node_ip,
-        udp_port: udp_socket_addr.port(),
-        tcp_port: tcp_socket_addr.port(),
-        node_id: local_node_id,
-    };
+    let node = Node::new(
+        p2p_node_ip,
+        udp_socket_addr.port(),
+        tcp_socket_addr.port(),
+        local_public_key,
+    );
 
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836

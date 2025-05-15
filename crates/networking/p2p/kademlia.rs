@@ -5,8 +5,7 @@ use crate::{
     rlpx::{message::Message as RLPxMessage, p2p::Capability},
     types::{Node, NodeRecord},
 };
-use ethrex_common::{H256, H512, U256};
-use sha3::{Digest, Keccak256};
+use ethrex_common::{H256, U256};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
@@ -23,12 +22,12 @@ pub struct Bucket {
 
 #[derive(Debug)]
 pub struct KademliaTable {
-    local_node_id: H512,
+    local_node_id: H256,
     buckets: Vec<Bucket>,
 }
 
 impl KademliaTable {
-    pub fn new(local_node_id: H512) -> Self {
+    pub fn new(local_node_id: H256) -> Self {
         let buckets: Vec<Bucket> = vec![Bucket::default(); NUMBER_OF_BUCKETS];
         Self {
             local_node_id,
@@ -41,7 +40,7 @@ impl KademliaTable {
         &self.buckets
     }
 
-    pub fn get_by_node_id(&self, node_id: H512) -> Option<&PeerData> {
+    pub fn get_by_node_id(&self, node_id: H256) -> Option<&PeerData> {
         let bucket = &self.buckets[bucket_number(node_id, self.local_node_id)];
         bucket
             .peers
@@ -49,7 +48,7 @@ impl KademliaTable {
             .find(|entry| entry.node.node_id == node_id)
     }
 
-    pub fn get_by_node_id_mut(&mut self, node_id: H512) -> Option<&mut PeerData> {
+    pub fn get_by_node_id_mut(&mut self, node_id: H256) -> Option<&mut PeerData> {
         let bucket = &mut self.buckets[bucket_number(node_id, self.local_node_id)];
         bucket
             .peers
@@ -63,8 +62,7 @@ impl KademliaTable {
     ///     1. PeerData: none if the peer was already in the table or as a potential replacement
     ///     2. A bool indicating if the node was inserted to the table
     pub fn insert_node(&mut self, node: Node) -> (Option<PeerData>, bool) {
-        let node_id = node.node_id;
-        let bucket_idx = bucket_number(node_id, self.local_node_id);
+        let bucket_idx = bucket_number(node.node_id, self.local_node_id);
 
         self.insert_node_inner(node, bucket_idx, false)
     }
@@ -75,8 +73,7 @@ impl KademliaTable {
     ///     1. PeerData: none if the peer was already in the table or as a potential replacement
     ///     2. A bool indicating if the node was inserted to the table
     pub fn insert_node_forced(&mut self, node: Node) -> (Option<PeerData>, bool) {
-        let node_id = node.node_id;
-        let bucket_idx = bucket_number(node_id, self.local_node_id);
+        let bucket_idx = bucket_number(node.node_id, self.local_node_id);
 
         self.insert_node_inner(node, bucket_idx, true)
     }
@@ -96,19 +93,17 @@ impl KademliaTable {
         bucket_idx: usize,
         force_push: bool,
     ) -> (Option<PeerData>, bool) {
-        let node_id = node.node_id;
-
         let peer_already_in_table = self.buckets[bucket_idx]
             .peers
             .iter()
-            .any(|p| p.node.node_id == node_id);
+            .any(|p| p.node.node_id == node.node_id);
         if peer_already_in_table {
             return (None, false);
         }
         let peer_already_in_replacements = self.buckets[bucket_idx]
             .replacements
             .iter()
-            .any(|p| p.node.node_id == node_id);
+            .any(|p| p.node.node_id == node.node_id);
         if peer_already_in_replacements {
             return (None, false);
         }
@@ -120,7 +115,7 @@ impl KademliaTable {
             self.insert_as_replacement(&peer, bucket_idx);
             (Some(peer), false)
         } else {
-            self.remove_from_replacements(node_id, bucket_idx);
+            self.remove_from_replacements(node.node_id, bucket_idx);
             self.buckets[bucket_idx].peers.push(peer.clone());
             (Some(peer), true)
         }
@@ -134,7 +129,7 @@ impl KademliaTable {
         bucket.replacements.push(node.clone());
     }
 
-    fn remove_from_replacements(&mut self, node_id: H512, bucket_idx: usize) {
+    fn remove_from_replacements(&mut self, node_id: H256, bucket_idx: usize) {
         let bucket = &mut self.buckets[bucket_idx];
 
         bucket.replacements = bucket
@@ -144,7 +139,7 @@ impl KademliaTable {
             .collect();
     }
 
-    pub fn get_closest_nodes(&self, node_id: H512) -> Vec<Node> {
+    pub fn get_closest_nodes(&self, node_id: H256) -> Vec<Node> {
         let mut nodes: Vec<(Node, usize)> = vec![];
 
         // todo see if there is a more efficient way of doing this
@@ -168,7 +163,7 @@ impl KademliaTable {
         nodes.iter().map(|a| a.0).collect()
     }
 
-    pub fn pong_answered(&mut self, node_id: H512, pong_at: u64) {
+    pub fn pong_answered(&mut self, node_id: H256, pong_at: u64) {
         let peer = self.get_by_node_id_mut(node_id);
         if peer.is_none() {
             return;
@@ -181,7 +176,7 @@ impl KademliaTable {
         peer.revalidation = peer.revalidation.and(Some(true));
     }
 
-    pub fn update_peer_ping(&mut self, node_id: H512, ping_hash: Option<H256>, ping_at: u64) {
+    pub fn update_peer_ping(&mut self, node_id: H256, ping_hash: Option<H256>, ping_at: u64) {
         let peer = self.get_by_node_id_mut(node_id);
         if peer.is_none() {
             return;
@@ -262,7 +257,7 @@ impl KademliaTable {
     /// # Returns
     ///
     /// A mutable reference to the inserted peer or None in case there was no replacement
-    pub fn replace_peer(&mut self, node_id: H512) -> Option<PeerData> {
+    pub fn replace_peer(&mut self, node_id: H256) -> Option<PeerData> {
         let bucket_idx = bucket_number(self.local_node_id, node_id);
         self.replace_peer_inner(node_id, bucket_idx)
     }
@@ -270,13 +265,13 @@ impl KademliaTable {
     #[cfg(test)]
     pub fn replace_peer_on_custom_bucket(
         &mut self,
-        node_id: H512,
+        node_id: H256,
         bucket_idx: usize,
     ) -> Option<PeerData> {
         self.replace_peer_inner(node_id, bucket_idx)
     }
 
-    fn replace_peer_inner(&mut self, node_id: H512, bucket_idx: usize) -> Option<PeerData> {
+    fn replace_peer_inner(&mut self, node_id: H256, bucket_idx: usize) -> Option<PeerData> {
         let idx_to_remove = self.buckets[bucket_idx]
             .peers
             .iter()
@@ -304,7 +299,7 @@ impl KademliaTable {
     /// This function should be called each time a connection is established so the backend can send requests to the peers
     pub(crate) fn init_backend_communication(
         &mut self,
-        node_id: H512,
+        node_id: H256,
         channels: PeerChannels,
         capabilities: Vec<Capability>,
     ) {
@@ -339,10 +334,8 @@ impl KademliaTable {
 /// Computes the distance between two nodes according to the discv4 protocol
 /// and returns the corresponding bucket number
 /// <https://github.com/ethereum/devp2p/blob/master/discv4.md#node-identities>
-pub fn bucket_number(node_id_1: H512, node_id_2: H512) -> usize {
-    let hash_1 = Keccak256::digest(node_id_1);
-    let hash_2 = Keccak256::digest(node_id_2);
-    let xor = H256(hash_1.into()) ^ H256(hash_2.into());
+pub fn bucket_number(node_id_1: H256, node_id_2: H256) -> usize {
+    let xor = node_id_1 ^ node_id_2;
     let distance = U256::from_big_endian(xor.as_bytes());
     distance.bits().saturating_sub(1)
 }
@@ -436,9 +429,10 @@ impl PeerChannels {
 
 #[cfg(test)]
 mod tests {
-    use crate::network::node_id_from_signing_key;
+    use crate::{network::public_key_from_signing_key, rlpx::utils::node_id};
 
     use super::*;
+    use ethrex_common::H512;
     use hex_literal::hex;
     use k256::{ecdsa::SigningKey, elliptic_curve::rand_core::OsRng};
     use std::{
@@ -448,8 +442,10 @@ mod tests {
 
     #[test]
     fn bucket_number_works_as_expected() {
-        let node_id_1 = H512(hex!("4dc429669029ceb17d6438a35c80c29e09ca2c25cc810d690f5ee690aa322274043a504b8d42740079c4f4cef50777c991010208b333b80bee7b9ae8e5f6b6f0"));
-        let node_id_2 = H512(hex!("034ee575a025a661e19f8cda2b6fd8b2fd4fe062f6f2f75f0ec3447e23c1bb59beb1e91b2337b264c7386150b24b621b8224180c9e4aaf3e00584402dc4a8386"));
+        let public_key_1 = H512(hex!("4dc429669029ceb17d6438a35c80c29e09ca2c25cc810d690f5ee690aa322274043a504b8d42740079c4f4cef50777c991010208b333b80bee7b9ae8e5f6b6f0"));
+        let public_key_2 = H512(hex!("034ee575a025a661e19f8cda2b6fd8b2fd4fe062f6f2f75f0ec3447e23c1bb59beb1e91b2337b264c7386150b24b621b8224180c9e4aaf3e00584402dc4a8386"));
+        let node_id_1 = node_id(&public_key_1);
+        let node_id_2 = node_id(&public_key_2);
         let expected_bucket = 255;
         let result = bucket_number(node_id_1, node_id_2);
         assert_eq!(result, expected_bucket);
@@ -459,13 +455,8 @@ mod tests {
         table: &mut KademliaTable,
         bucket_idx: usize,
     ) -> (Option<PeerData>, bool) {
-        let node_id = node_id_from_signing_key(&SigningKey::random(&mut OsRng));
-        let node = Node {
-            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-            tcp_port: 0,
-            udp_port: 0,
-            node_id,
-        };
+        let public_key = public_key_from_signing_key(&SigningKey::random(&mut OsRng));
+        let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0, 0, public_key);
         table.insert_node_on_custom_bucket(node, bucket_idx)
     }
 
@@ -479,7 +470,8 @@ mod tests {
 
     fn get_test_table() -> KademliaTable {
         let signer = SigningKey::random(&mut OsRng);
-        let local_node_id = node_id_from_signing_key(&signer);
+        let local_public_key = public_key_from_signing_key(&signer);
+        let local_node_id = node_id(&local_public_key);
 
         KademliaTable::new(local_node_id)
     }
@@ -487,14 +479,15 @@ mod tests {
     #[test]
     fn get_least_recently_pinged_peers_should_return_the_right_peers() {
         let mut table = get_test_table();
-        let node_1_id = node_id_from_signing_key(&SigningKey::random(&mut OsRng));
+        let node_1_pubkey = public_key_from_signing_key(&SigningKey::random(&mut OsRng));
         {
-            table.insert_node(Node {
-                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                tcp_port: 0,
-                udp_port: 0,
-                node_id: node_1_id,
-            });
+            table.insert_node(Node::new(
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                0,
+                0,
+                node_1_pubkey,
+            ));
+            let node_1_id = node_id(&node_1_pubkey);
             table.get_by_node_id_mut(node_1_id).unwrap().last_pong = (SystemTime::now()
                 - Duration::from_secs(12 * 60 * 60))
             .duration_since(UNIX_EPOCH)
@@ -502,14 +495,15 @@ mod tests {
             .as_secs();
         }
 
-        let node_2_id = node_id_from_signing_key(&SigningKey::random(&mut OsRng));
+        let node_2_pubkey = public_key_from_signing_key(&SigningKey::random(&mut OsRng));
         {
-            table.insert_node(Node {
-                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                tcp_port: 0,
-                udp_port: 0,
-                node_id: node_2_id,
-            });
+            table.insert_node(Node::new(
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                0,
+                0,
+                node_2_pubkey,
+            ));
+            let node_2_id = node_id(&node_2_pubkey);
             table.get_by_node_id_mut(node_2_id).unwrap().last_pong = (SystemTime::now()
                 - Duration::from_secs(36 * 60 * 60))
             .duration_since(UNIX_EPOCH)
@@ -517,14 +511,15 @@ mod tests {
             .as_secs();
         }
 
-        let node_3_id = node_id_from_signing_key(&SigningKey::random(&mut OsRng));
+        let node_3_pubkey = public_key_from_signing_key(&SigningKey::random(&mut OsRng));
         {
-            table.insert_node(Node {
-                ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                tcp_port: 0,
-                udp_port: 0,
-                node_id: node_3_id,
-            });
+            table.insert_node(Node::new(
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                0,
+                0,
+                node_3_pubkey,
+            ));
+            let node_3_id = node_id(&node_3_pubkey);
             table.get_by_node_id_mut(node_3_id).unwrap().last_pong = (SystemTime::now()
                 - Duration::from_secs(10 * 60 * 60))
             .duration_since(UNIX_EPOCH)
@@ -536,12 +531,12 @@ mod tests {
         let peers: Vec<H512> = table
             .get_least_recently_pinged_peers(2)
             .iter()
-            .map(|p| p.node.node_id)
+            .map(|p| p.node.public_key)
             .collect();
 
-        assert!(peers.contains(&node_1_id));
-        assert!(peers.contains(&node_2_id));
-        assert!(!peers.contains(&node_3_id));
+        assert!(peers.contains(&node_1_pubkey));
+        assert!(peers.contains(&node_2_pubkey));
+        assert!(!peers.contains(&node_3_pubkey));
     }
 
     #[test]
@@ -566,7 +561,10 @@ mod tests {
 
         {
             let bucket = &table.buckets[bucket_idx];
-            assert_eq!(first_node.node.node_id, bucket.replacements[0].node.node_id);
+            assert_eq!(
+                first_node.node.public_key,
+                bucket.replacements[0].node.public_key
+            );
         }
 
         // push one more element, this should replace the first one pushed
@@ -575,12 +573,15 @@ mod tests {
         assert!(!inserted_to_table);
 
         let bucket = &table.buckets[bucket_idx];
-        assert_ne!(first_node.node.node_id, bucket.replacements[0].node.node_id);
+        assert_ne!(
+            first_node.node.public_key,
+            bucket.replacements[0].node.public_key
+        );
         assert_eq!(
-            last.node.node_id,
+            last.node.public_key,
             bucket.replacements[MAX_NUMBER_OF_REPLACEMENTS - 1]
                 .node
-                .node_id
+                .public_key
         );
     }
 

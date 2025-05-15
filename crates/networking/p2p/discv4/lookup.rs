@@ -5,10 +5,11 @@ use super::{
 };
 use crate::{
     kademlia::{bucket_number, MAX_NODES_PER_BUCKET},
-    network::{node_id_from_signing_key, P2PContext},
+    network::{public_key_from_signing_key, P2PContext},
+    rlpx::utils::node_id,
     types::Node,
 };
-use ethrex_common::H512;
+use ethrex_common::{H256, H512};
 use k256::ecdsa::SigningKey;
 use rand::rngs::OsRng;
 use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
@@ -77,7 +78,7 @@ impl Discv4LookupHandler {
                 let self_clone = self.clone();
                 async move {
                     self_clone
-                        .recursive_lookup(self_clone.ctx.local_node.node_id)
+                        .recursive_lookup(self_clone.ctx.local_node.public_key)
                         .await
                 }
             });
@@ -89,7 +90,7 @@ impl Discv4LookupHandler {
                     let self_clone = self.clone();
                     async move {
                         self_clone
-                            .recursive_lookup(node_id_from_signing_key(&random_pub_key))
+                            .recursive_lookup(public_key_from_signing_key(&random_pub_key))
                             .await
                     }
                 });
@@ -99,25 +100,32 @@ impl Discv4LookupHandler {
         }
     }
 
+    /// We use the public key instead of the node_id as target as we might need to perform a FindNode request
     async fn recursive_lookup(&self, target: H512) {
         // lookups start with the closest nodes to the target from our table
-        let mut peers_to_ask: Vec<Node> = self.ctx.table.lock().await.get_closest_nodes(target);
+        let target_node_id = node_id(&target);
+        let mut peers_to_ask: Vec<Node> = self
+            .ctx
+            .table
+            .lock()
+            .await
+            .get_closest_nodes(target_node_id);
         // stores the peers in peers_to_ask + the peers that were in peers_to_ask but were replaced by closer targets
         let mut seen_peers: HashSet<H512> = HashSet::default();
         let mut asked_peers = HashSet::default();
 
-        seen_peers.insert(self.ctx.local_node.node_id);
+        seen_peers.insert(self.ctx.local_node.public_key);
         for node in &peers_to_ask {
-            seen_peers.insert(node.node_id);
+            seen_peers.insert(node.public_key);
         }
 
         loop {
             let (nodes_found, queries) = self.lookup(target, &mut asked_peers, &peers_to_ask).await;
 
             for node in nodes_found {
-                if !seen_peers.contains(&node.node_id) {
-                    seen_peers.insert(node.node_id);
-                    self.peers_to_ask_push(&mut peers_to_ask, target, node);
+                if !seen_peers.contains(&node.public_key) {
+                    seen_peers.insert(node.public_key);
+                    self.peers_to_ask_push(&mut peers_to_ask, target_node_id, node);
                 }
             }
 
@@ -129,6 +137,7 @@ impl Discv4LookupHandler {
         }
     }
 
+    /// We use the public key instead of the node_id as target as we might need to perform a FindNode request
     async fn lookup(
         &self,
         target: H512,
@@ -141,7 +150,7 @@ impl Discv4LookupHandler {
         let mut nodes = vec![];
 
         for node in nodes_to_ask {
-            if asked_peers.contains(&node.node_id) {
+            if asked_peers.contains(&node.public_key) {
                 continue;
             }
             let mut locked_table = self.ctx.table.lock().await;
@@ -155,7 +164,7 @@ impl Discv4LookupHandler {
                     drop(locked_table);
 
                     queries += 1;
-                    asked_peers.insert(node.node_id);
+                    asked_peers.insert(node.public_key);
                     if let Ok(mut found_nodes) = self
                         .find_node_and_wait_for_response(*node, target, &mut receiver)
                         .await
@@ -180,8 +189,8 @@ impl Discv4LookupHandler {
 
     /// Adds a node to `peers_to_ask` if there's space; otherwise, replaces the farthest node
     /// from `target` if the new node is closer.
-    fn peers_to_ask_push(&self, peers_to_ask: &mut Vec<Node>, target: H512, node: Node) {
-        let distance = bucket_number(target, node.node_id);
+    fn peers_to_ask_push(&self, peers_to_ask: &mut Vec<Node>, target_node_id: H256, node: Node) {
+        let distance = bucket_number(target_node_id, node.node_id);
 
         if peers_to_ask.len() < MAX_NODES_PER_BUCKET {
             peers_to_ask.push(node);
@@ -192,7 +201,7 @@ impl Discv4LookupHandler {
         let (mut idx_to_replace, mut highest_distance) = (None, 0);
 
         for (i, peer) in peers_to_ask.iter().enumerate() {
-            let current_distance = bucket_number(peer.node_id, target);
+            let current_distance = bucket_number(peer.node_id, target_node_id);
 
             if distance < current_distance && current_distance >= highest_distance {
                 highest_distance = current_distance;
@@ -208,12 +217,12 @@ impl Discv4LookupHandler {
     async fn find_node_and_wait_for_response(
         &self,
         node: Node,
-        target_id: H512,
+        target: H512,
         request_receiver: &mut tokio::sync::mpsc::UnboundedReceiver<Vec<Node>>,
     ) -> Result<Vec<Node>, DiscoveryError> {
         let expiration: u64 = get_msg_expiration_from_seconds(20);
 
-        let msg = Message::FindNode(FindNodeMessage::new(target_id, expiration));
+        let msg = Message::FindNode(FindNodeMessage::new(target, expiration));
 
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &self.ctx.signer);
@@ -320,7 +329,7 @@ mod tests {
         let lookup_handler = lookup_handler_from_server(server_b.clone());
         lookup_handler
             .lookup(
-                server_b.ctx.local_node.node_id,
+                server_b.ctx.local_node.public_key,
                 &mut HashSet::default(),
                 &nodes_to_ask,
             )
@@ -398,7 +407,7 @@ mod tests {
 
         // we'll run a recursive lookup closest to the server itself
         lookup_handler
-            .recursive_lookup(server_a.ctx.local_node.node_id)
+            .recursive_lookup(server_a.ctx.local_node.public_key)
             .await;
 
         // sometimes nodes can send ourselves as a neighbor

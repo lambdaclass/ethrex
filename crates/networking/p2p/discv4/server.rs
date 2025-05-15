@@ -11,7 +11,7 @@ use super::{
 use crate::{
     kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
     network::{handle_peer_as_initiator, P2PContext},
-    rlpx::connection::MAX_PEERS_TCP_CONNECTIONS,
+    rlpx::{connection::MAX_PEERS_TCP_CONNECTIONS, utils::node_id},
     types::{Endpoint, Node, NodeRecord},
 };
 use ethrex_common::H256;
@@ -118,7 +118,7 @@ impl Discv4Server {
                 Ok(packet) => {
                     let msg = packet.get_message();
                     let msg_name = msg.to_string();
-                    debug!("Message: {:?} from {}", msg, packet.get_node_id());
+                    debug!("Message: {:?} from {}", msg, packet.get_public_key());
                     if let Err(e) = self.handle_message(packet, from).await {
                         debug!("Error while processing {} message: {:?}", msg_name, e);
                     };
@@ -134,17 +134,17 @@ impl Discv4Server {
                     return Err(DiscoveryError::MessageExpired);
                 };
 
-                let node = Node {
-                    ip: from.ip(),
-                    udp_port: from.port(),
-                    tcp_port: msg.from.tcp_port,
-                    node_id: packet.get_node_id(),
-                };
+                let node = Node::new(
+                    from.ip(),
+                    from.port(),
+                    msg.from.tcp_port,
+                    packet.get_public_key(),
+                );
                 self.pong(packet.get_hash(), node).await?;
 
                 let peer = {
                     let table = self.ctx.table.lock().await;
-                    table.get_by_node_id(packet.get_node_id()).cloned()
+                    table.get_by_node_id(node.node_id).cloned()
                 };
 
                 let Some(peer) = peer else {
@@ -251,7 +251,7 @@ impl Discv4Server {
 
                 let nodes = {
                     let table = self.ctx.table.lock().await;
-                    table.get_closest_nodes(msg.target)
+                    table.get_closest_nodes(node_id(&msg.target))
                 };
                 let nodes_chunks = nodes.chunks(4);
                 let expiration = get_msg_expiration_from_seconds(20);
@@ -438,7 +438,7 @@ impl Discv4Server {
                 peer.record = msg.node_record.clone();
                 debug!(
                     "Node with id {:?} record has been successfully updated",
-                    peer.node.node_id
+                    peer.node.public_key
                 );
                 Ok(())
             }
@@ -507,7 +507,7 @@ impl Discv4Server {
                 .get_least_recently_pinged_peers(3);
             previously_pinged_peers = HashSet::default();
             for peer in peers {
-                debug!("Pinging peer {:?} to re-validate!", peer.node.node_id);
+                debug!("Pinging peer {:?} to re-validate!", peer.node.public_key);
                 let _ = self.ping(peer.node).await;
                 previously_pinged_peers.insert(peer.node.node_id);
                 let mut table = self.ctx.table.lock().await;
@@ -641,7 +641,7 @@ impl Discv4Server {
 pub(super) mod tests {
     use super::*;
     use crate::{
-        network::{node_id_from_signing_key, serve_p2p_requests, MAX_MESSAGES_TO_BROADCAST},
+        network::{public_key_from_signing_key, serve_p2p_requests, MAX_MESSAGES_TO_BROADCAST},
         rlpx::message::Message as RLPxMessage,
     };
     use ethrex_blockchain::Blockchain;
@@ -655,13 +655,8 @@ pub(super) mod tests {
         table: Arc<Mutex<KademliaTable>>,
         bucket_idx: usize,
     ) {
-        let node_id = node_id_from_signing_key(&SigningKey::random(&mut OsRng));
-        let node = Node {
-            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-            tcp_port: 0,
-            udp_port: 0,
-            node_id,
-        };
+        let public_key = public_key_from_signing_key(&SigningKey::random(&mut OsRng));
+        let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0, 0, public_key);
         table
             .lock()
             .await
@@ -682,18 +677,13 @@ pub(super) mod tests {
     ) -> Result<Discv4Server, DiscoveryError> {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
         let signer = SigningKey::random(&mut OsRng);
-        let node_id = node_id_from_signing_key(&signer);
-        let local_node = Node {
-            ip: addr.ip(),
-            node_id,
-            udp_port,
-            tcp_port: udp_port,
-        };
+        let public_key = public_key_from_signing_key(&signer);
+        let local_node = Node::new(addr.ip(), udp_port, udp_port, public_key);
 
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let table = Arc::new(Mutex::new(KademliaTable::new(node_id)));
+        let table = Arc::new(Mutex::new(KademliaTable::new(local_node.node_id)));
         let (broadcast, _) = tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<RLPxMessage>)>(
             MAX_MESSAGES_TO_BROADCAST,
         );

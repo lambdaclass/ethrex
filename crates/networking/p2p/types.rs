@@ -1,5 +1,5 @@
 use bytes::{BufMut, Bytes};
-use ethrex_common::{H264, H512};
+use ethrex_common::{H256, H264, H512};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -13,6 +13,8 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
 };
+
+use crate::rlpx::utils::node_id;
 
 const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
 
@@ -60,7 +62,8 @@ pub struct Node {
     pub ip: IpAddr,
     pub udp_port: u16,
     pub tcp_port: u16,
-    pub node_id: H512,
+    pub public_key: H512,
+    pub node_id: H256,
 }
 
 impl RLPDecode for Node {
@@ -69,15 +72,10 @@ impl RLPDecode for Node {
         let (ip, decoder) = decoder.decode_field("ip")?;
         let (udp_port, decoder) = decoder.decode_field("upd_port")?;
         let (tcp_port, decoder) = decoder.decode_field("tcp_port")?;
-        let (node_id, decoder) = decoder.decode_field("node_id")?;
+        let (public_key, decoder) = decoder.decode_field("public_key")?;
         let remaining = decoder.finish_unchecked();
 
-        let node = Node {
-            ip,
-            udp_port,
-            tcp_port,
-            node_id,
-        };
+        let node = Node::new(ip, udp_port, tcp_port, public_key);
         Ok((node, remaining))
     }
 }
@@ -104,8 +102,19 @@ impl FromStr for Node {
 }
 
 impl Node {
+    pub fn new(ip: IpAddr, udp_port: u16, tcp_port: u16, public_key: H512) -> Self {
+        Self {
+            ip,
+            udp_port,
+            tcp_port,
+            public_key,
+            node_id: node_id(&public_key),
+        }
+    }
+
     pub fn from_enode_url(enode: &str) -> Result<Self, String> {
-        let node_id = H512::from_str(&enode[8..136]).map_err(|_| "Could not parse node_id")?;
+        let public_key =
+            H512::from_str(&enode[8..136]).map_err(|_| "Could not parse public_key")?;
 
         let address_start = 137;
         let address_part = &enode[address_start..];
@@ -129,12 +138,7 @@ impl Node {
             None => port,
         };
 
-        Ok(Self {
-            node_id,
-            ip,
-            tcp_port: port,
-            udp_port,
-        })
+        Ok(Self::new(ip, udp_port, port, public_key))
     }
 
     pub fn from_enr_url(enr: &str) -> Result<Self, String> {
@@ -146,7 +150,7 @@ impl Node {
         let verifying_key = VerifyingKey::from_sec1_bytes(public_key.as_bytes())
             .map_err(|_| "public key could no be built from msg pub key bytes")?;
         let encoded = verifying_key.to_encoded_point(false);
-        let node_id = H512::from_slice(&encoded.as_bytes()[1..]);
+        let public_key = H512::from_slice(&encoded.as_bytes()[1..]);
 
         let ip = pairs
             .ip
@@ -164,23 +168,18 @@ impl Node {
             .or(pairs.udp_port)
             .ok_or("No port found in record")?;
 
-        Ok(Self {
-            ip,
-            node_id,
-            tcp_port,
-            udp_port,
-        })
+        Ok(Self::new(ip, udp_port, tcp_port, public_key))
     }
 
     pub fn enode_url(&self) -> String {
-        let node_id = hex::encode(self.node_id);
+        let public_key = hex::encode(self.public_key);
         let node_ip = self.ip;
         let discovery_port = self.udp_port;
         let listener_port = self.tcp_port;
         if discovery_port != listener_port {
-            format!("enode://{node_id}@{node_ip}:{listener_port}?discport={discovery_port}")
+            format!("enode://{public_key}@{node_ip}:{listener_port}?discport={discovery_port}")
         } else {
-            format!("enode://{node_id}@{node_ip}:{listener_port}")
+            format!("enode://{public_key}@{node_ip}:{listener_port}")
         }
     }
 
@@ -197,7 +196,7 @@ impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&format!(
             "{0}({1}:{2})",
-            self.node_id, self.ip, self.tcp_port
+            self.public_key, self.ip, self.tcp_port
         ))
     }
 }
@@ -379,7 +378,7 @@ impl RLPEncode for Node {
             .encode_field(&self.ip)
             .encode_field(&self.udp_port)
             .encode_field(&self.tcp_port)
-            .encode_field(&self.node_id)
+            .encode_field(&self.public_key)
             .finish();
     }
 }
@@ -387,7 +386,7 @@ impl RLPEncode for Node {
 #[cfg(test)]
 mod tests {
     use crate::{
-        network::node_id_from_signing_key,
+        network::public_key_from_signing_key,
         types::{Node, NodeRecord},
     };
     use ethrex_common::H512;
@@ -398,16 +397,16 @@ mod tests {
     fn parse_node_from_enode_string() {
         let input = "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303";
         let bootnode = Node::from_enode_url(input).unwrap();
-        let node_id = H512::from_str(
+        let public_key = H512::from_str(
             "d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666")
             .unwrap();
         let socket_address = SocketAddr::from_str("18.138.108.67:30303").unwrap();
-        let expected_bootnode = Node {
-            ip: socket_address.ip(),
-            node_id,
-            tcp_port: socket_address.port(),
-            udp_port: socket_address.port(),
-        };
+        let expected_bootnode = Node::new(
+            socket_address.ip(),
+            socket_address.port(),
+            socket_address.port(),
+            public_key,
+        );
         assert_eq!(bootnode, expected_bootnode);
     }
 
@@ -415,16 +414,16 @@ mod tests {
     fn parse_node_with_discport_from_enode_string() {
         let input = "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303?discport=30305";
         let node = Node::from_enode_url(input).unwrap();
-        let node_id = H512::from_str(
+        let public_key = H512::from_str(
             "d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666")
             .unwrap();
         let socket_address = SocketAddr::from_str("18.138.108.67:30303").unwrap();
-        let expected_bootnode = Node {
-            ip: socket_address.ip(),
-            node_id,
-            tcp_port: socket_address.port(),
-            udp_port: 30305,
-        };
+        let expected_bootnode = Node::new(
+            socket_address.ip(),
+            30305,
+            socket_address.port(),
+            public_key,
+        );
         assert_eq!(node, expected_bootnode);
     }
 
@@ -433,16 +432,16 @@ mod tests {
         // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors
         let enr_string = "enr:-IS4QHCYrYZbAKWCBRlAy5zzaDZXJBGkcnh4MHcBFZntXNFrdvJjX04jRzjzCBOonrkTfj499SZuOh8R33Ls8RRcy5wBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQPKY0yuDUmstAHYpMa2_oxVtw0RW_QAdpzBQA8yWM0xOIN1ZHCCdl8";
         let node = Node::from_enr_url(enr_string).unwrap();
-        let node_id =
+        let public_key =
             H512::from_str("0xca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd31387574077f301b421bc84df7266c44e9e6d569fc56be00812904767bf5ccd1fc7f")
                 .unwrap();
         let socket_address = SocketAddr::from_str("127.0.0.1:30303").unwrap();
-        let expected_node = Node {
-            ip: socket_address.ip(),
-            node_id,
-            tcp_port: socket_address.port(),
-            udp_port: socket_address.port(),
-        };
+        let expected_node = Node::new(
+            socket_address.ip(),
+            socket_address.port(),
+            socket_address.port(),
+            public_key,
+        );
         assert_eq!(node, expected_node);
     }
 
@@ -455,12 +454,12 @@ mod tests {
         ])
         .unwrap();
         let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
-        let node = Node {
-            ip: addr.ip(),
-            node_id: node_id_from_signing_key(&signer),
-            tcp_port: addr.port(),
-            udp_port: addr.port(),
-        };
+        let node = Node::new(
+            addr.ip(),
+            addr.port(),
+            addr.port(),
+            public_key_from_signing_key(&signer),
+        );
         let record = NodeRecord::from_node(node, 0, &signer).unwrap();
         let expected_enr_string = "enr:-Iu4QDOLZWVEdbtRUtrZ8PU1vxUJ0t_TUpVghJhJuakBUyYKE_ZfvhR2EKxDyJ8Z5wwoJE4mTSItAcYsErU0NrB7uzCAgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 
