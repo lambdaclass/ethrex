@@ -11,7 +11,3 @@ mod networks;
 
 pub const DEFAULT_DATADIR: &str = "ethrex";
 pub const DEFAULT_L2_DATADIR: &str = "ethrex-l2";
-pub const DEFAULT_STOREDIR: &str = "/store";
-pub const DEFAULT_CUSTOMDIR: &str = "custom";
-pub const DEFAULT_PUBLIC_NETWORKS: [&str; 4] = ["holesky", "sepolia", "hoodi", "mainnet"];
-pub const DEFAULT_JWT_PATH: &str = "/jwt.hex";

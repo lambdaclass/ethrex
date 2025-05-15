@@ -4,6 +4,7 @@ use ethrex::{
     utils::set_datadir,
     DEFAULT_DATADIR,
 };
+use ethrex_p2p::network;
 use ethrex_vm::EvmEngine;
 
 #[inline]

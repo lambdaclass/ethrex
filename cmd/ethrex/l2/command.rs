@@ -81,9 +81,16 @@ impl Command {
 
                 let cancel_token = tokio_util::sync::CancellationToken::new();
 
+                let authrpc_jwtsecret_path = if opts.node_opts.authrpc_jwtsecret == "jwt.hex"
+                //Check if authrpc_jwtsecret is equal to default value.
+                {
+                    data_dir.to_owned() + &String::from("/") + &opts.node_opts.authrpc_jwtsecret
+                } else {
+                    opts.node_opts.authrpc_jwtsecret.clone()
+                };
                 init_rpc_api(
                     &opts.node_opts,
-                    &data_dir,
+                    authrpc_jwtsecret_path.as_str(),
                     &opts,
                     &signer,
                     peer_table.clone(),
