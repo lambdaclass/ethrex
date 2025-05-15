@@ -9,7 +9,7 @@ use ethrex_levm::db::{gen_db::GeneralizedDatabase, CacheDB};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{
     backends::revm::db::{evm_state, EvmState},
-    db::StoreWrapper,
+    StoreWrapper,
 };
 
 /// Loads initial state, used for REVM as it contains EvmState.

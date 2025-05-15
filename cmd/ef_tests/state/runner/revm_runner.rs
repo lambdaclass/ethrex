@@ -14,8 +14,7 @@ use ethrex_storage::AccountUpdate;
 use ethrex_vm::{
     self,
     backends::{self, revm::db::EvmState},
-    db::StoreWrapper,
-    fork_to_spec_id, EvmError,
+    fork_to_spec_id, EvmError, StoreWrapper,
 };
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 use revm::{

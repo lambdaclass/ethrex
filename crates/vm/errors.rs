@@ -142,9 +142,3 @@ impl From<StoreError> for ProverDBError {
         ProverDBError::Store(err.to_string())
     }
 }
-
-impl From<EvmError> for ProverDBError {
-    fn from(err: EvmError) -> Self {
-        ProverDBError::Store(err.to_string())
-    }
-}
