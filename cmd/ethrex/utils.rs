@@ -84,8 +84,19 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-pub fn set_datadir(datadir: &str) -> String {
-    let project_dir = ProjectDirs::from("", "", datadir).expect("Couldn't find home directory");
+pub fn set_datadir(datadir: &str, network: &Option<String>) -> String {
+    let sub_path = match network {
+        Some(network) => {
+            if ["holesky", "sepolia", "hoodi", "mainnet"].contains(&network.as_str()) {
+                &network.clone()
+            } else {
+                &(String::from("custom/").to_owned() + &network.clone())
+            }
+        }
+        None => &(String::from("")),
+    };
+    let data_dir = (datadir).to_owned() + &String::from("/") + sub_path;
+    let project_dir = ProjectDirs::from("", "", data_dir.as_str()).expect("Couldn't find home directory");
     project_dir
         .data_local_dir()
         .to_str()

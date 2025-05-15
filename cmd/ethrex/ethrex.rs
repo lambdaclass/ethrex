@@ -27,18 +27,7 @@ async fn main() -> eyre::Result<()> {
         return subcommand.run(&opts).await;
     }
 
-    let sub_path = match &opts.network {
-        Some(network) => {
-            if ["holesky", "sepolia", "hoodi", "mainnet"].contains(&network.as_str()) {
-                &network.clone()
-            } else {
-                &(String::from("custom/").to_owned() + &network.clone())
-            }
-        }
-        None => &(String::from("")),
-    };
-    let data_dir =
-        set_datadir(((opts.datadir).to_owned() + &String::from("/") + sub_path).as_str());
+    let data_dir = set_datadir(&opts.datadir, &opts.network);
 
     let network = get_network(&opts);
 
