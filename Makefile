@@ -109,7 +109,7 @@ setup-hive: hive ## 🐝 Set up Hive testing framework
 
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 4
-EVM_BACKEND := revm
+EVM_BACKEND := levm
 SIM_PARALLELISM := 16
 SYNCMODE := full
 
@@ -180,4 +180,4 @@ test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 	solc ./test_data/ERC20.sol -o $@
 
 sort-genesis-files:
-	cargo run --bin genesis-sorter
+	cd ./tools && cargo run

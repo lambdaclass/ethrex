@@ -2,7 +2,6 @@
   "config": {
     "chainId": 3503995874084926,
     "homesteadBlock": 0,
-    "daoForkBlock": null,
     "daoForkSupport": false,
     "eip150Block": 0,
     "eip155Block": 0,
@@ -17,9 +16,9 @@
     "arrowGlacierBlock": 0,
     "grayGlacierBlock": 0,
     "terminalTotalDifficulty": 131072,
+    "terminalTotalDifficultyPassed": false,
     "shanghaiTime": 0,
     "cancunTime": 0,
-    "pragueTime": null,
     "depositContractAddress": "0x4242424242424242424242424242424242424242",
     "blobSchedule": {
       "cancun": {
@@ -32,7 +31,8 @@
         "max": 9,
         "baseFeeUpdateFraction": 5007716
       }
-    }
+    },
+    "mergeNetsplitBlock": 0
   },
   "nonce": "0x0",
   "timestamp": "0",
@@ -63,6 +63,5 @@
   },
   "baseFeePerGas": "0x7",
   "excessBlobGas": "0x0",
-  "requestsHash": null,
   "blobGasUsed": "0x0"
 }

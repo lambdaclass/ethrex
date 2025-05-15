@@ -5,7 +5,7 @@ use crate::{
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
     utils::*,
-    vm::{StateBackup, VM},
+    vm::{Substate, VM},
 };
 
 use bytes::Bytes;
@@ -14,14 +14,14 @@ impl<'a> VM<'a> {
     pub fn handle_precompile_result(
         &mut self,
         precompile_result: Result<Bytes, VMError>,
-        backup: StateBackup,
+        backup: Substate,
         current_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         match precompile_result {
             Ok(output) => Ok(ExecutionReport {
                 result: TxResult::Success,
                 gas_used: current_call_frame.gas_used,
-                gas_refunded: self.env.refunded_gas,
+                gas_refunded: self.accrued_substate.refunded_gas,
                 output,
                 logs: std::mem::take(&mut current_call_frame.logs),
             }),
@@ -35,7 +35,7 @@ impl<'a> VM<'a> {
                 Ok(ExecutionReport {
                     result: TxResult::Revert(error),
                     gas_used: current_call_frame.gas_limit,
-                    gas_refunded: self.env.refunded_gas,
+                    gas_refunded: self.accrued_substate.refunded_gas,
                     output: Bytes::new(),
                     logs: vec![],
                 })
@@ -153,7 +153,7 @@ impl<'a> VM<'a> {
         executed_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         let backup = self
-            .backups
+            .substate_backups
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         // On successful create check output validity
@@ -207,7 +207,7 @@ impl<'a> VM<'a> {
                     return Ok(ExecutionReport {
                         result: TxResult::Revert(error),
                         gas_used: executed_call_frame.gas_used,
-                        gas_refunded: self.env.refunded_gas,
+                        gas_refunded: self.accrued_substate.refunded_gas,
                         output: std::mem::take(&mut executed_call_frame.output),
                         logs: vec![],
                     });
@@ -218,7 +218,7 @@ impl<'a> VM<'a> {
         Ok(ExecutionReport {
             result: TxResult::Success,
             gas_used: executed_call_frame.gas_used,
-            gas_refunded: self.env.refunded_gas,
+            gas_refunded: self.accrued_substate.refunded_gas,
             output: std::mem::take(&mut executed_call_frame.output),
             logs: std::mem::take(&mut executed_call_frame.logs),
         })
@@ -230,7 +230,7 @@ impl<'a> VM<'a> {
         executed_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         let backup = self
-            .backups
+            .substate_backups
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         if error.should_propagate() {

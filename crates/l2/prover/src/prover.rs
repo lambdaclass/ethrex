@@ -1,7 +1,6 @@
-use crate::{prove, to_calldata};
+use crate::{config::ProverConfig, prove, to_calldata};
 use ethrex_l2::{
-    sequencer::proof_coordinator::ProofData,
-    utils::{config::prover::ProverConfig, prover::proving_systems::ProofCalldata},
+    sequencer::proof_coordinator::ProofData, utils::prover::proving_systems::ProofCalldata,
 };
 use std::time::Duration;
 use tokio::{
@@ -83,7 +82,8 @@ impl Prover {
                         input:  ProgramInput {
                             blocks: input.blocks,
                             parent_block_header: input.parent_block_header,
-                            db: input.db
+                            db: input.db,
+                            elasticity_multiplier: input.elasticity_multiplier,
                         }
                     };
                     Ok(prover_data)

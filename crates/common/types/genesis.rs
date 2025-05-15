@@ -493,7 +493,6 @@ fn sort_config(genesis_map: &mut Map<String, Value>) -> Result<Map<String, Value
     }
     Ok(ordered_config)
 }
-
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
