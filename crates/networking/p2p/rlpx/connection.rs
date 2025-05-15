@@ -258,14 +258,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
         match msg {
             Message::Hello(hello_message) => {
-                let mut negotiated_eth_cap = Capability {
-                    protocol: "eth".into(),
-                    version: 0,
-                };
-                let mut negotiated_snap_cap = Capability {
-                    protocol: "snap".into(),
-                    version: 0,
-                };
+                let mut negotiated_eth_cap = Capability::eth(0);
+                let mut negotiated_snap_cap = Capability::snap(0);
 
                 log_peer_debug(
                     &self.node,
@@ -568,12 +562,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
-        if self.capabilities.contains(
-            &(Capability {
-                protocol: "eth".into(),
-                version: self.negotiated_eth_version,
-            }),
-        ) {
+        if self
+            .capabilities
+            .contains(&(Capability::eth(self.negotiated_eth_version)))
+        {
             let status =
                 backend::get_status(&self.storage, self.negotiated_eth_version as u32).await?;
             log_peer_debug(&self.node, "Sending status");

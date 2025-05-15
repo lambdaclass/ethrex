@@ -95,10 +95,7 @@ impl PeerHandler {
                 reverse: matches!(order, BlockRequestOrder::NewToOld),
             });
             let peer = self
-                .get_peer_channel_with_retry(Capability {
-                    protocol: "eth",
-                    version: 68,
-                })
+                .get_peer_channel_with_retry(Capability::eth(68))
                 .await?;
             let mut receiver = peer.receiver.lock().await;
             if let Err(err) = peer.sender.send(request).await {
