@@ -24,11 +24,6 @@ pub trait VmDatabase: Send + Sync {
     fn get_block_hash(&self, block_number: u64) -> Result<Option<H256>, EvmError>;
     fn get_chain_config(&self) -> ChainConfig;
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, EvmError>;
-    fn get_account_info_by_hash(
-        &self,
-        block_hash: BlockHash,
-        address: Address,
-    ) -> Result<Option<AccountInfo>, EvmError>;
 }
 
 #[derive(Clone)]
@@ -65,16 +60,6 @@ impl VmDatabase for StoreWrapperInner {
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, EvmError> {
         self.store
             .get_account_code(code_hash)
-            .map_err(|e| EvmError::DB(e.to_string()))
-    }
-
-    fn get_account_info_by_hash(
-        &self,
-        block_hash: BlockHash,
-        address: Address,
-    ) -> Result<Option<AccountInfo>, EvmError> {
-        self.store
-            .get_account_info_by_hash(block_hash, address)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 }
