@@ -537,7 +537,7 @@ impl<'a> VM<'a> {
 
         // Access List Cost
         let mut access_lists_cost: u64 = 0;
-        for (_, keys) in &self.tx.access_list() {
+        for (_, keys) in self.tx.access_list() {
             access_lists_cost = access_lists_cost
                 .checked_add(ACCESS_LIST_ADDRESS_COST)
                 .ok_or(OutOfGasError::ConsumedGasOverflow)?;
@@ -641,7 +641,7 @@ impl<'a> VM<'a> {
         }
 
         // Add access lists contents to touched accounts and touched storage slots.
-        for (address, keys) in self.tx.access_list() {
+        for (address, keys) in self.tx.access_list().clone() {
             initial_touched_accounts.insert(address);
             let mut warm_slots = BTreeSet::new();
             for slot in keys {
