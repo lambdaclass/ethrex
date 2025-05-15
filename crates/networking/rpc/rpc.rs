@@ -545,7 +545,7 @@ mod tests {
             .await
             .unwrap();
         let context = default_context_with_storage(storage).await;
-        let local_p2p_node = context.node_data.local_p2p_node;
+        let local_p2p_node = context.node_data.local_p2p_node.clone();
 
         let enr_url = context.node_data.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
