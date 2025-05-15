@@ -12,7 +12,10 @@ use std::{
     fmt::Display,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
+    sync::OnceLock,
 };
+
+use crate::rlpx::utils::node_id;
 
 const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
 
@@ -55,12 +58,13 @@ impl RLPDecode for Endpoint {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
     pub ip: IpAddr,
     pub udp_port: u16,
     pub tcp_port: u16,
     pub public_key: H512,
+    node_id: OnceLock<H256>,
 }
 
 impl RLPDecode for Node {
@@ -72,12 +76,7 @@ impl RLPDecode for Node {
         let (public_key, decoder) = decoder.decode_field("public_key")?;
         let remaining = decoder.finish_unchecked();
 
-        let node = Node {
-            ip,
-            udp_port,
-            tcp_port,
-            public_key,
-        };
+        let node = Node::new(ip, udp_port, tcp_port, public_key);
         Ok((node, remaining))
     }
 }
@@ -104,6 +103,16 @@ impl FromStr for Node {
 }
 
 impl Node {
+    pub fn new(ip: IpAddr, udp_port: u16, tcp_port: u16, public_key: H512) -> Self {
+        Self {
+            ip,
+            udp_port,
+            tcp_port,
+            public_key,
+            node_id: OnceLock::new(),
+        }
+    }
+
     pub fn from_enode_url(enode: &str) -> Result<Self, String> {
         let public_key =
             H512::from_str(&enode[8..136]).map_err(|_| "Could not parse public_key")?;
@@ -130,12 +139,7 @@ impl Node {
             None => port,
         };
 
-        Ok(Self {
-            public_key,
-            ip,
-            tcp_port: port,
-            udp_port,
-        })
+        Ok(Self::new(ip, udp_port, port, public_key))
     }
 
     pub fn from_enr_url(enr: &str) -> Result<Self, String> {
@@ -165,12 +169,7 @@ impl Node {
             .or(pairs.udp_port)
             .ok_or("No port found in record")?;
 
-        Ok(Self {
-            ip,
-            public_key,
-            tcp_port,
-            udp_port,
-        })
+        Ok(Self::new(ip, udp_port, tcp_port, public_key))
     }
 
     pub fn enode_url(&self) -> String {
@@ -185,21 +184,16 @@ impl Node {
         }
     }
 
-    pub fn udp_addr(self) -> SocketAddr {
+    pub fn udp_addr(&self) -> SocketAddr {
         SocketAddr::new(self.ip, self.udp_port)
     }
 
-    pub fn tcp_addr(self) -> SocketAddr {
+    pub fn tcp_addr(&self) -> SocketAddr {
         SocketAddr::new(self.ip, self.tcp_port)
     }
 
-    /// Returns the keccak256 hash of the node's public key
     pub fn node_id(&self) -> H256 {
-        H256(
-            Keccak256::new_with_prefix(self.public_key)
-                .finalize()
-                .into(),
-        )
+        *self.node_id.get_or_init(|| node_id(&self.public_key))
     }
 }
 
@@ -274,7 +268,7 @@ impl NodeRecord {
         Ok(result)
     }
 
-    pub fn from_node(node: Node, seq: u64, signer: &SigningKey) -> Result<Self, String> {
+    pub fn from_node(node: &Node, seq: u64, signer: &SigningKey) -> Result<Self, String> {
         let mut record = NodeRecord {
             seq,
             ..Default::default()
@@ -412,12 +406,12 @@ mod tests {
             "d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666")
             .unwrap();
         let socket_address = SocketAddr::from_str("18.138.108.67:30303").unwrap();
-        let expected_bootnode = Node {
-            ip: socket_address.ip(),
+        let expected_bootnode = Node::new(
+            socket_address.ip(),
+            socket_address.port(),
+            socket_address.port(),
             public_key,
-            tcp_port: socket_address.port(),
-            udp_port: socket_address.port(),
-        };
+        );
         assert_eq!(bootnode, expected_bootnode);
     }
 
@@ -429,12 +423,12 @@ mod tests {
             "d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666")
             .unwrap();
         let socket_address = SocketAddr::from_str("18.138.108.67:30303").unwrap();
-        let expected_bootnode = Node {
-            ip: socket_address.ip(),
+        let expected_bootnode = Node::new(
+            socket_address.ip(),
+            30305,
+            socket_address.port(),
             public_key,
-            tcp_port: socket_address.port(),
-            udp_port: 30305,
-        };
+        );
         assert_eq!(node, expected_bootnode);
     }
 
@@ -447,12 +441,12 @@ mod tests {
             H512::from_str("0xca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd31387574077f301b421bc84df7266c44e9e6d569fc56be00812904767bf5ccd1fc7f")
                 .unwrap();
         let socket_address = SocketAddr::from_str("127.0.0.1:30303").unwrap();
-        let expected_node = Node {
-            ip: socket_address.ip(),
+        let expected_node = Node::new(
+            socket_address.ip(),
+            socket_address.port(),
+            socket_address.port(),
             public_key,
-            tcp_port: socket_address.port(),
-            udp_port: socket_address.port(),
-        };
+        );
         assert_eq!(node, expected_node);
     }
 
@@ -465,13 +459,13 @@ mod tests {
         ])
         .unwrap();
         let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
-        let node = Node {
-            ip: addr.ip(),
-            public_key: public_key_from_signing_key(&signer),
-            tcp_port: addr.port(),
-            udp_port: addr.port(),
-        };
-        let record = NodeRecord::from_node(node, 0, &signer).unwrap();
+        let node = Node::new(
+            addr.ip(),
+            addr.port(),
+            addr.port(),
+            public_key_from_signing_key(&signer),
+        );
+        let record = NodeRecord::from_node(&node, 0, &signer).unwrap();
         let expected_enr_string = "enr:-Iu4QDOLZWVEdbtRUtrZ8PU1vxUJ0t_TUpVghJhJuakBUyYKE_ZfvhR2EKxDyJ8Z5wwoJE4mTSItAcYsErU0NrB7uzCAgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 
         assert_eq!(record.enr_url().unwrap(), expected_enr_string);
