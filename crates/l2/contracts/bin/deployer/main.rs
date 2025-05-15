@@ -203,7 +203,13 @@ async fn deploy_contracts(
         &salt,
     )
     .await?;
-    info!(address = %format!("{:#x}", on_chain_proposer_deployment.proxy_address), tx_hash = %format!("{:#x}", on_chain_proposer_deployment.proxy_tx_hash), "OnChainProposer deployed");
+    info!(
+        proxy_address = %format!("{:#x}", on_chain_proposer_deployment.proxy_address),
+        proxy_tx_hash = %format!("{:#x}", on_chain_proposer_deployment.proxy_tx_hash),
+        implementation_address = %format!("{:#x}", on_chain_proposer_deployment.implementation_address),
+        implementation_tx_hash = %format!("{:#x}", on_chain_proposer_deployment.implementation_tx_hash),
+        "OnChainProposer deployed"
+    );
 
     info!("Deploying CommonBridge");
 
@@ -216,7 +222,13 @@ async fn deploy_contracts(
     )
     .await?;
 
-    info!(address = %format!("{:#x}", bridge_deployment.proxy_address), tx_hash = %format!("{:#x}", bridge_deployment.proxy_tx_hash), "CommonBridge deployed");
+    info!(
+        proxy_address = %format!("{:#x}", bridge_deployment.proxy_address),
+        proxy_tx_hash = %format!("{:#x}", bridge_deployment.proxy_tx_hash),
+        implementation_address = %format!("{:#x}", bridge_deployment.implementation_address),
+        implementation_tx_hash = %format!("{:#x}", bridge_deployment.implementation_tx_hash),
+        "CommonBridge deployed"
+    );
 
     let sp1_verifier_address = if opts.sp1_deploy_verifier {
         info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
@@ -269,6 +281,8 @@ async fn deploy_contracts(
     trace!(
         on_chain_proposer_proxy_address = ?on_chain_proposer_deployment.proxy_address,
         bridge_proxy_address = ?bridge_deployment.proxy_address,
+        on_chain_proposer_implementation_address = ?on_chain_proposer_deployment.implementation_address,
+        bridge_implementation_address = ?bridge_deployment.implementation_address,
         sp1_verifier_address = ?sp1_verifier_address,
         pico_verifier_address = ?pico_verifier_address,
         risc0_verifier_address = ?risc0_verifier_address,
