@@ -12,18 +12,21 @@ use ethrex_rpc::{
 use ethrex_storage::Store;
 use keccak_hash::keccak;
 use std::{cmp::min, sync::Arc};
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use super::errors::SequencerError;
 use super::utils::sleep_random;
+use super::SequencerState;
 
 pub async fn start_l1_watcher(
     store: Store,
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
+    sequencer_state: Arc<Mutex<SequencerState>>,
 ) -> Result<(), SequencerError> {
     let mut l1_watcher = L1Watcher::new_from_config(&cfg.l1_watcher, &cfg.eth).await?;
-    l1_watcher.run(&store, &blockchain).await;
+    l1_watcher.run(&store, &blockchain, sequencer_state).await;
     Ok(())
 }
 
@@ -55,11 +58,21 @@ impl L1Watcher {
         })
     }
 
-    pub async fn run(&mut self, store: &Store, blockchain: &Blockchain) {
+    pub async fn run(
+        &mut self,
+        store: &Store,
+        blockchain: &Blockchain,
+        sequencer_state: Arc<Mutex<SequencerState>>,
+    ) {
         loop {
-            if let Err(err) = self.main_logic(store, blockchain).await {
+            if let Err(err) = self
+                .main_logic(store, blockchain, sequencer_state.clone())
+                .await
+            {
                 error!("L1 Watcher Error: {}", err);
             }
+
+            sleep_random(self.check_interval).await;
         }
     }
 
@@ -67,19 +80,29 @@ impl L1Watcher {
         &mut self,
         store: &Store,
         blockchain: &Blockchain,
+        sequencer_state: Arc<Mutex<SequencerState>>,
     ) -> Result<(), L1WatcherError> {
-        loop {
-            sleep_random(self.check_interval).await;
-
-            let logs = self.get_logs().await?;
-
-            // We may not have a deposit nor a withdrawal, that means no events -> no logs.
-            if logs.is_empty() {
-                continue;
-            }
-
-            let _deposit_txs = self.process_logs(logs, store, blockchain).await?;
+        match *sequencer_state.lock().await {
+            SequencerState::Sequencing => self.watch(store, blockchain).await,
+            SequencerState::Following => Ok(()),
         }
+    }
+
+    pub(crate) async fn watch(
+        &mut self,
+        store: &Store,
+        blockchain: &Blockchain,
+    ) -> Result<(), L1WatcherError> {
+        let logs = self.get_logs().await?;
+
+        // We may not have a deposit nor a withdrawal, that means no events -> no logs.
+        if logs.is_empty() {
+            return Ok(());
+        }
+
+        let _deposit_txs = self.process_logs(logs, store, blockchain).await?;
+
+        Ok(())
     }
 
     pub async fn get_logs(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {

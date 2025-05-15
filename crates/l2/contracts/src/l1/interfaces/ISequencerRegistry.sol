@@ -22,4 +22,10 @@ interface ISequencerRegistry {
     function increaseCollateral(address sequencer) external payable;
 
     function decreaseCollateral(address sequencer, uint256 amount) external;
+
+    function leaderSequencer() external view returns (address);
+
+    function futureLeaderSequencer(
+        uint256 nBatchesInTheFuture
+    ) external view returns (address);
 }

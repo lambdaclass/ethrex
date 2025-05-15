@@ -5,6 +5,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "../interfaces/ISequencerRegistry.sol";
+import "../interfaces/IOnChainProposer.sol";
 
 contract SequencerRegistry is
     ISequencerRegistry,
@@ -12,12 +13,24 @@ contract SequencerRegistry is
     UUPSUpgradeable,
     OwnableUpgradeable
 {
-    uint256 constant MIN_COLLATERAL = 1 ether;
-    uint256 constant MAX_COLLATERAL = 100 ether;
+    uint256 public constant MIN_COLLATERAL = 1 ether;
+    uint256 public constant MAX_COLLATERAL = 100 ether;
+
+    address public ON_CHAIN_PROPOSER;
 
     mapping(address => uint256) public collateral;
+    address[] public sequencers;
 
-    function initialize(address owner) public initializer {
+    function initialize(
+        address owner,
+        address onChainProposer
+    ) public initializer {
+        require(
+            onChainProposer != address(0),
+            "SequencerRegistry: Invalid onChainProposer"
+        );
+        ON_CHAIN_PROPOSER = onChainProposer;
+
         _validateOwner(owner);
         OwnableUpgradeable.__Ownable_init(owner);
     }
@@ -26,6 +39,7 @@ contract SequencerRegistry is
         _validateRegisterRequest(sequencer, msg.value);
 
         collateral[sequencer] = msg.value;
+        sequencers.push(sequencer);
 
         emit SequencerRegistered(sequencer, msg.value);
     }
@@ -35,6 +49,13 @@ contract SequencerRegistry is
 
         uint256 amount = collateral[sequencer];
         collateral[sequencer] = 0;
+        for (uint256 i = 0; i < sequencers.length; i++) {
+            if (sequencers[i] == sequencer) {
+                sequencers[i] = sequencers[sequencers.length - 1];
+                sequencers.pop();
+                break;
+            }
+        }
 
         payable(sequencer).transfer(amount);
 
@@ -42,7 +63,7 @@ contract SequencerRegistry is
     }
 
     function isRegistered(address sequencer) public view returns (bool) {
-        return collateral[sequencer] > MIN_COLLATERAL;
+        return collateral[sequencer] >= MIN_COLLATERAL;
     }
 
     function increaseCollateral(address sequencer) public payable {
@@ -63,7 +84,30 @@ contract SequencerRegistry is
         emit CollateralDecreased(sequencer, amount);
     }
 
-    function _validateOwner(address potentialOwner) internal view {
+    function leaderSequencer() public view returns (address) {
+        return futureLeaderSequencer(0);
+    }
+
+    function futureLeaderSequencer(
+        uint256 nBatchesInTheFuture
+    ) public view returns (address) {
+        uint256 _sequencers = sequencers.length;
+
+        if (_sequencers == 0) {
+            return address(0);
+        }
+
+        uint256 _currentBatch = IOnChainProposer(ON_CHAIN_PROPOSER)
+            .lastCommittedBatch() + 1;
+
+        uint256 _targetBlock = _currentBatch + 1 + nBatchesInTheFuture;
+
+        address _leader = sequencers[_targetBlock % _sequencers];
+
+        return _leader;
+    }
+
+    function _validateOwner(address potentialOwner) internal pure {
         require(
             potentialOwner != address(0),
             "SequencerRegistry: Invalid owner"

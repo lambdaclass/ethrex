@@ -6,7 +6,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use execution_cache::ExecutionCache;
-use tokio::task::JoinSet;
+use tokio::{sync::Mutex, task::JoinSet};
 use tracing::{error, info};
 
 pub mod block_producer;
@@ -17,6 +17,7 @@ pub mod l1_watcher;
 pub mod metrics;
 pub mod proof_coordinator;
 pub mod state_diff;
+pub mod state_updater;
 
 pub mod execution_cache;
 
@@ -30,7 +31,11 @@ pub async fn start_l2(
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
 ) {
-    info!("Starting Proposer");
+    let initial_state = SequencerState::default();
+
+    info!("Starting Sequencer in {initial_state} mode");
+
+    let shared_state = Arc::new(Mutex::new(initial_state));
 
     let execution_cache = Arc::new(ExecutionCache::default());
 
@@ -39,24 +44,34 @@ pub async fn start_l2(
         store.clone(),
         blockchain.clone(),
         cfg.clone(),
+        shared_state.clone(),
     ));
     task_set.spawn(l1_committer::start_l1_committer(
         store.clone(),
         rollup_store.clone(),
         execution_cache.clone(),
         cfg.clone(),
+        shared_state.clone(),
     ));
     task_set.spawn(proof_coordinator::start_proof_coordinator(
         store.clone(),
         rollup_store,
         cfg.clone(),
     ));
-    task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
+    task_set.spawn(l1_proof_sender::start_l1_proof_sender(
+        cfg.clone(),
+        shared_state.clone(),
+    ));
     task_set.spawn(start_block_producer(
         store.clone(),
         blockchain,
         execution_cache,
         cfg.clone(),
+        shared_state.clone(),
+    ));
+    task_set.spawn(state_updater::start_state_updater(
+        cfg.clone(),
+        shared_state.clone(),
     ));
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer(cfg));
@@ -75,5 +90,21 @@ pub async fn start_l2(
                 break;
             }
         };
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub enum SequencerState {
+    Sequencing,
+    #[default]
+    Following,
+}
+
+impl std::fmt::Display for SequencerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SequencerState::Sequencing => write!(f, "Sequencing"),
+            SequencerState::Following => write!(f, "Following"),
+        }
     }
 }

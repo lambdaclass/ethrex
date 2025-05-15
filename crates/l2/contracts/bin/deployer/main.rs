@@ -29,7 +29,7 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,address,address,address[])";
+    "initialize(bool,address,address,address,address,address,address)";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 
 #[tokio::main]
@@ -370,10 +370,6 @@ async fn initialize_contracts(
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
             Value::Address(sequencer_registry_address),
-            Value::Array(vec![
-                Value::Address(opts.committer_l1_address),
-                Value::Address(opts.proof_sender_l1_address),
-            ]),
         ];
         let on_chain_proposer_initialization_calldata =
             encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values)?;
@@ -426,9 +422,12 @@ async fn initialize_contracts(
     );
 
     let initialize_tx_hash = {
-        let calldata_values = vec![Value::Address(on_chain_proposer_address)];
+        let calldata_values = vec![
+            Value::Address(opts.sequencer_registry_owner),
+            Value::Address(on_chain_proposer_address),
+        ];
         let sequencer_registry_initialization_calldata =
-            encode_calldata("initialize(address)", &calldata_values)?;
+            encode_calldata("initialize(address,address)", &calldata_values)?;
 
         initialize_contract(
             sequencer_registry_address,
@@ -573,7 +572,7 @@ fn write_contract_addresses_to_env(
     )?;
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_SEQUENCER_REGISTRY={sequencer_registry_address:#x}"
+        "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS={sequencer_registry_address:#x}"
     )?;
     Ok(())
 }

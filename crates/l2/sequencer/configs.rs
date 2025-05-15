@@ -9,6 +9,7 @@ pub struct SequencerConfig {
     pub eth: EthConfig,
     pub l1_watcher: L1WatcherConfig,
     pub proof_coordinator: ProofCoordinatorConfig,
+    pub state_updater: StateUpdaterConfig,
 }
 
 // TODO: Move to blockchain/dev
@@ -56,4 +57,10 @@ pub struct ProofCoordinatorConfig {
     pub listen_port: u16,
     pub proof_send_interval_ms: u64,
     pub dev_mode: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct StateUpdaterConfig {
+    pub sequencer_registry: Address,
+    pub check_interval_ms: u64,
 }

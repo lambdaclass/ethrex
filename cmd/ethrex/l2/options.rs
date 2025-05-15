@@ -2,8 +2,8 @@ use crate::{cli::Options as NodeOptions, utils};
 use clap::Parser;
 use ethrex_common::Address;
 use ethrex_l2::{
-    BlockProducerConfig, CommitterConfig, EthConfig, L1WatcherConfig, ProofCoordinatorConfig,
-    SequencerConfig,
+    sequencer::configs::StateUpdaterConfig, BlockProducerConfig, CommitterConfig, EthConfig,
+    L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use ethrex_rpc::clients::eth::get_address_from_secret_key;
 use secp256k1::SecretKey;
@@ -41,6 +41,8 @@ pub struct SequencerOptions {
     pub committer_opts: CommitterOptions,
     #[command(flatten)]
     pub proof_coordinator_opts: ProofCoordinatorOptions,
+    #[command(flatten)]
+    pub based_opts: BasedOptions,
 }
 
 impl From<SequencerOptions> for SequencerConfig {
@@ -89,6 +91,10 @@ impl From<SequencerOptions> for SequencerConfig {
                 listen_port: opts.proof_coordinator_opts.listen_port,
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
                 dev_mode: opts.proof_coordinator_opts.dev_mode,
+            },
+            state_updater: StateUpdaterConfig {
+                sequencer_registry: opts.based_opts.state_updater_opts.sequencer_registry,
+                check_interval_ms: opts.based_opts.state_updater_opts.check_interval_ms,
             },
         }
     }
@@ -358,6 +364,39 @@ impl Default for ProofCoordinatorOptions {
             dev_mode: true,
         }
     }
+}
+
+#[derive(Parser, Default)]
+pub struct BasedOptions {
+    #[clap(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_BASED",
+        help_heading = "Based options"
+    )]
+    pub based: bool,
+    #[clap(flatten)]
+    pub state_updater_opts: StateUpdaterOptions,
+}
+
+#[derive(Parser, Default)]
+pub struct StateUpdaterOptions {
+    #[arg(
+        long = "state-updater.sequencer-registry",
+        value_name = "ADDRESS",
+        env = "ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY",
+        help_heading = "Based options"
+    )]
+    pub sequencer_registry: Address,
+    #[arg(
+        long = "state-updater.check-interval",
+        default_value = "1000",
+        value_name = "UINT64",
+        env = "ETHREX_STATE_UPDATER_CHECK_INTERVAL",
+        help_heading = "Based options"
+    )]
+    pub check_interval_ms: u64,
 }
 
 #[cfg(feature = "based")]

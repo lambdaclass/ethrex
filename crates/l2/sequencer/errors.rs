@@ -217,3 +217,13 @@ pub enum ExecutionCacheError {
     #[error("Failed (de)serializing result: {0}")]
     Bincode(#[from] bincode::Error),
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum StateUpdaterError {
+    #[error("{0}")]
+    EthClientError(#[from] EthClientError),
+    #[error("{0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("{0}")]
+    CalldataParsingError(String),
+}

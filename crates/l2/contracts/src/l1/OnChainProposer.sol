@@ -10,6 +10,7 @@ import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
+import {ISequencerRegistry} from "./interfaces/ISequencerRegistry.sol";
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
@@ -55,10 +56,6 @@ contract OnChainProposer is
     /// @dev This is crucial for ensuring that only subsequents batches are committed in the contract.
     uint256 public lastCommittedBatch;
 
-    /// @dev The sequencer addresses that are authorized to commit and verify batches.
-    mapping(address _authorizedAddress => bool)
-        public authorizedSequencerAddresses;
-
     address public BRIDGE;
     address public PICOVERIFIER;
     address public R0VERIFIER;
@@ -75,10 +72,12 @@ contract OnChainProposer is
     /// @dev This value is immutable and can only be set during contract deployment.
     bool public VALIDIUM;
 
-    modifier onlySequencer() {
+    // TODO: Check against leader Sequencer. Right now check against registered
+    // sequencers.
+    modifier onlyRegisteredSequencer() {
         require(
-            authorizedSequencerAddresses[msg.sender],
-            "OnChainProposer: caller is not the sequencer"
+            ISequencerRegistry(SEQUENCER_REGISTRY).isRegistered(msg.sender),
+            "OnChainProposer: caller is not a registered sequencer"
         );
         _;
     }
@@ -98,8 +97,7 @@ contract OnChainProposer is
         address r0verifier,
         address sp1verifier,
         address picoverifier,
-        address sequencer_registry,
-        address[] calldata sequencerAddresses
+        address sequencer_registry
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -178,10 +176,6 @@ contract OnChainProposer is
         );
         SEQUENCER_REGISTRY = sequencer_registry;
 
-        for (uint256 i = 0; i < sequencerAddresses.length; i++) {
-            authorizedSequencerAddresses[sequencerAddresses[i]] = true;
-        }
-
         OwnableUpgradeable.__Ownable_init(owner);
     }
 
@@ -192,7 +186,7 @@ contract OnChainProposer is
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash
-    ) external override onlySequencer {
+    ) external override onlyRegisteredSequencer {
         // TODO: Refactor validation
         require(
             batchNumber == lastCommittedBatch + 1,

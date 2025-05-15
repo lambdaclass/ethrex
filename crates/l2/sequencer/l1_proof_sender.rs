@@ -1,4 +1,4 @@
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
@@ -8,6 +8,7 @@ use ethrex_rpc::{
 };
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
+use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -19,7 +20,7 @@ use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 
-use super::{errors::SequencerError, utils::sleep_random};
+use super::{errors::SequencerError, utils::sleep_random, SequencerState};
 
 const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -28,10 +29,13 @@ const DEV_MODE_ADDRESS: H160 = H160([
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatch(uint256,bytes,bytes32,bytes,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
-pub async fn start_l1_proof_sender(cfg: SequencerConfig) -> Result<(), SequencerError> {
+pub async fn start_l1_proof_sender(
+    cfg: SequencerConfig,
+    sequencer_state: Arc<Mutex<SequencerState>>,
+) -> Result<(), SequencerError> {
     let proof_sender =
         L1ProofSender::new(&cfg.proof_coordinator, &cfg.l1_committer, &cfg.eth).await?;
-    proof_sender.run().await;
+    proof_sender.run(sequencer_state).await;
     Ok(())
 }
 
@@ -95,11 +99,11 @@ impl L1ProofSender {
         })
     }
 
-    async fn run(&self) {
+    async fn run(&self, sequencer_state: Arc<Mutex<SequencerState>>) {
+        info!("Running L1 Proof Sender");
+        info!("Needed proof systems: {:?}", self.needed_proof_types);
         loop {
-            info!("Running L1 Proof Sender");
-            info!("Needed proof systems: {:?}", self.needed_proof_types);
-            if let Err(err) = self.main_logic().await {
+            if let Err(err) = self.main_logic(sequencer_state.clone()).await {
                 error!("L1 Proof Sender Error: {}", err);
             }
 
@@ -107,7 +111,17 @@ impl L1ProofSender {
         }
     }
 
-    async fn main_logic(&self) -> Result<(), ProofSenderError> {
+    async fn main_logic(
+        &self,
+        sequencer_state: Arc<Mutex<SequencerState>>,
+    ) -> Result<(), ProofSenderError> {
+        match *sequencer_state.lock().await {
+            SequencerState::Sequencing => self.send().await,
+            SequencerState::Following => Ok(()),
+        }
+    }
+
+    async fn send(&self) -> Result<(), ProofSenderError> {
         let batch_to_verify = 1 + self
             .eth_client
             .get_last_verified_batch(self.on_chain_proposer_address)
