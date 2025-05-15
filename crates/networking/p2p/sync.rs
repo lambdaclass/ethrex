@@ -35,7 +35,9 @@ use trie_rebuild::TrieRebuilder;
 
 use crate::{
     kademlia::KademliaTable,
-    peer_handler::{BlockRequestOrder, BodyRequestError, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST},
+    peer_handler::{
+        BlockRequestOrder, BodyRequestError, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST,
+    },
 };
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
@@ -386,10 +388,18 @@ impl Syncer {
                 .request_and_validate_blocks(&mut current_block_hashes_chunk, &mut headers_iter)
                 .await;
             match block_request_result {
-                Ok(blcks) => { blocks = blcks; }
-                Err(BodyRequestError::BodiesNotFound) => { return Err(SyncError::BodiesNotFound); }
-                Err(BodyRequestError::BodiesReturnedEmpty) => { break; }
-                Err(BodyRequestError::InvalidBlockBody) => { continue; }
+                Ok(blcks) => {
+                    blocks = blcks;
+                }
+                Err(BodyRequestError::BodiesNotFound) => {
+                    return Err(SyncError::BodiesNotFound);
+                }
+                Err(BodyRequestError::BodiesReturnedEmpty) => {
+                    break;
+                }
+                Err(BodyRequestError::InvalidBlockBody) => {
+                    continue;
+                }
             }
 
             let blocks_len = blocks.len();
