@@ -1,4 +1,5 @@
 use crate::{
+    call_frame::CallFrameBackup,
     constants::*,
     db::gen_db::GeneralizedDatabase,
     errors::{InternalError, OutOfGasError, TxValidationError, VMError},
@@ -121,6 +122,19 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
     }
 
     Ok(valid_jump_destinations)
+}
+
+// ================== Backup related functions =======================
+
+/// Merge the a previous callframe backup into the current callframe backup.
+/// This prevails the previous values over the current ones.
+pub fn merge_callframe_backup(current: &mut CallFrameBackup, previous: CallFrameBackup) {
+    for (addr, acc) in previous.original_accounts_info {
+        current.original_accounts_info.insert(addr, acc);
+    }
+    for (addr, storage) in previous.original_account_storage_slots {
+        current.original_account_storage_slots.insert(addr, storage);
+    }
 }
 
 // ================= Blob hash related functions =====================

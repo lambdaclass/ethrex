@@ -17,6 +17,7 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
+use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
 use ethrex_levm::EVMConfig;
@@ -141,6 +142,64 @@ impl LEVM {
 
         vm.execute().map_err(VMError::into)
     }
+
+    pub fn execute_tx_l2(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transactions recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+    ) -> Result<(ExecutionReport, CallFrameBackup), EvmError> {
+        let chain_config = db.store.get_chain_config();
+        let gas_price: U256 = tx
+            .effective_gas_price(block_header.base_fee_per_gas)
+            .ok_or(VMError::TxValidation(
+                TxValidationError::InsufficientMaxFeePerGas,
+            ))?
+            .into();
+
+        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        let env = Environment {
+            origin: tx_sender,
+            gas_limit: tx.gas_limit(),
+            config,
+            block_number: block_header.number.into(),
+            coinbase: block_header.coinbase,
+            timestamp: block_header.timestamp.into(),
+            prev_randao: Some(block_header.prev_randao),
+            chain_id: chain_config.chain_id.into(),
+            base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
+            gas_price,
+            block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
+            block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+            tx_blob_hashes: tx.blob_versioned_hashes(),
+            tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
+            tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
+            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
+            tx_nonce: tx.nonce(),
+            block_gas_limit: block_header.gas_limit,
+            difficulty: block_header.difficulty,
+            is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
+        };
+
+        let mut vm = VM::new(env, db, tx)?;
+
+        let report_result = vm.execute().map_err(EvmError::from)?;
+
+        // Here we differ from the execute_tx function from the L1.
+        // We need to check if the transaction exceeded the blob size limit.
+        // If it did, we need to revert the state changes made by the transaction and return the error.
+        let call_frame_backup = vm
+            .call_frames
+            .pop()
+            .ok_or(VMError::OutOfBounds)?
+            .call_frame_backup;
+
+        Ok((report_result, call_frame_backup))
+    }
+
     pub fn simulate_tx_from_generic(
         // The transaction to execute.
         tx: &GenericTransaction,

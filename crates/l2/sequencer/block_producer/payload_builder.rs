@@ -153,8 +153,9 @@ pub async fn fill_transactions(
         let previous_context = context.clone();
 
         // Execute tx
-        let receipt = match blockchain.apply_transaction(&head_tx, context) {
-            Ok(receipt) => {
+        let receipt = match blockchain.apply_transaction_l2(&head_tx, context) {
+            Ok((receipt, call_frame_backup)) => {
+                dbg!(call_frame_backup);
                 // This call is the part that differs from the original `fill_transactions`.
                 if !update_state_diff_size(
                     &mut acc_withdrawals_size,
