@@ -35,11 +35,7 @@ impl LeafNode {
             Leaf { SelfValue } -> Branch { [ Leaf { Value }, Self, ... ], None}
         */
         // If the path matches the stored path, update the value and return self
-        let is_same_path = match value {
-            ValueOrHash::Value(_) => self.partial == path,
-            ValueOrHash::Hash(_) => self.partial == path || self.partial == path.append_new(16),
-        };
-        if is_same_path {
+        if self.partial == path {
             match value {
                 ValueOrHash::Value(value) => self.value = value,
                 ValueOrHash::Hash(_) => {
@@ -52,7 +48,7 @@ impl LeafNode {
         } else {
             let match_index = path.count_prefix(&self.partial);
             let self_choice_idx = self.partial.at(match_index);
-            let new_leaf_choice_idx = path.at(match_index); // TODO: <-- Fix out of bounds here in a test.
+            let new_leaf_choice_idx = path.at(match_index);
             self.partial = self.partial.offset(match_index + 1);
 
             let branch_node = if self_choice_idx == 16 {

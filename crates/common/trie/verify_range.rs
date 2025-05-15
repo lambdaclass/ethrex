@@ -110,13 +110,8 @@ pub fn verify_range(
     }
 
     // Process proofs to check if they are valid.
-    let (external_refs, (left_node, right_node), num_right_refs) =
+    let (external_refs, _, num_right_refs) =
         process_proof_nodes(proof, root.into(), (*first_key, Some(*last_key)))?;
-    if left_node.is_empty() || right_node.is_empty() {
-        return Err(TrieError::Verify(
-            "the left or right nodes are not present in the proof".to_string(),
-        ));
-    }
 
     // Reconstruct the internal nodes by inserting the elements on the range
     for (key, value) in keys.iter().zip(values.iter()) {
@@ -126,6 +121,21 @@ pub fn verify_range(
     // Fill up the state with the nodes from the proof
     let mut trie = ProofTrie::from(trie);
     for (partial_path, external_ref) in external_refs {
+        // TODO: Move to proper place.
+        // External refs contains nodes within the path. They should NOT be there.
+        {
+            let bounds = (
+                Nibbles::from_bytes(&first_key.0),
+                Nibbles::from_bytes(&last_key.0),
+            );
+
+            if bounds.0.compare_prefix(&partial_path) == Ordering::Equal
+                || bounds.1.compare_prefix(&partial_path) == Ordering::Equal
+            {
+                continue;
+            }
+        }
+
         trie.insert(partial_path, external_ref)?;
     }
 
@@ -213,7 +223,13 @@ fn process_proof_nodes(
 
                         stack.push_back((partial_path, node));
                     }
-                    None => external_refs.push((partial_path, hash)),
+                    None => {
+                        if cmp_l == Ordering::Equal || cmp_r.is_some_and(|x| x == Ordering::Equal) {
+                            return Err(TrieError::Verify(format!("proof node missing: {hash:?}")));
+                        }
+
+                        external_refs.push((partial_path, hash));
+                    }
                 }
 
                 // Increment right-reference counter.
@@ -231,27 +247,29 @@ fn process_proof_nodes(
             .ok_or(TrieError::Verify(format!("proof node missing: {root:?}")))?,
     )]);
     while let Some((mut current_path, current_node)) = stack.pop_front() {
-        match current_node {
+        let value = match current_node {
             Node::Branch(node) => {
                 for (index, choice) in node.choices.into_iter().enumerate() {
                     if choice.is_valid() {
                         process_child(&mut stack, current_path.append_new(index as u8), choice)?;
                     }
                 }
+                node.value
             }
             Node::Extension(node) => {
                 current_path.extend(&node.prefix);
-                process_child(&mut stack, current_path, node.child)?;
+                process_child(&mut stack, current_path.clone(), node.child)?;
+                Vec::new()
             }
-            Node::Leaf(node) => {
-                if !node.value.is_empty() {
-                    if current_path == bounds.0 {
-                        left_value = node.value.clone();
-                    }
-                    if bounds.1.as_ref().is_some_and(|x| &current_path == x) {
-                        right_value = node.value.clone();
-                    }
-                }
+            Node::Leaf(node) => node.value,
+        };
+
+        if !value.is_empty() {
+            if current_path == bounds.0 {
+                left_value = value.clone();
+            }
+            if bounds.1.as_ref().is_some_and(|x| &current_path == x) {
+                right_value = value.clone();
             }
         }
     }
@@ -443,7 +461,7 @@ mod tests {
                 if first_key == data[start -1] {
                     // Skip test
                     return Ok(());
-            }
+                }
             }
             // Generate proofs
             let mut proof = trie.get_proof(&first_key).unwrap();
