@@ -105,21 +105,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Both of these simulators have only 1 suite where we can find tests for 3 different forks.
             // To get the total tests and the passed tests a filtes is done each time so we do not clone the test cases each time.
-            if json_data.name.as_str() == "eest/consume-rlp" || json_data.name.as_str() == "eest/consume-engine" {
+            if json_data.name.as_str() == "eest/consume-rlp"
+                || json_data.name.as_str() == "eest/consume-engine"
+            {
                 // Cancun
-                let cancun_total_tests = json_data.test_cases.iter().filter(|(_, test_case)| test_case.name.starts_with("tests/cancun")).count();
-                let cancun_passed_tests = json_data.test_cases.iter().filter(|(_, test_case)| test_case.name.starts_with("tests/cancun") && test_case.summary_result.pass).count();
-                let result_cancun = HiveResult::new(json_data.name.clone(), "Cancun".to_string(), cancun_passed_tests, cancun_total_tests);
+                let cancun_total_tests = json_data
+                    .test_cases
+                    .iter()
+                    .filter(|(_, test_case)| test_case.name.starts_with("tests/cancun"))
+                    .count();
+                let cancun_passed_tests = json_data
+                    .test_cases
+                    .iter()
+                    .filter(|(_, test_case)| {
+                        test_case.name.starts_with("tests/cancun") && test_case.summary_result.pass
+                    })
+                    .count();
+                let result_cancun = HiveResult::new(
+                    json_data.name.clone(),
+                    "Cancun".to_string(),
+                    cancun_passed_tests,
+                    cancun_total_tests,
+                );
 
                 // Shangai
-                let shangai_total_tests = json_data.test_cases.iter().filter(|(_, test_case)| test_case.name.starts_with("tests/shangai")).count();
-                let shangai_passed_tests = json_data.test_cases.iter().filter(|(_, test_case)| test_case.name.starts_with("tests/shangai") && test_case.summary_result.pass).count();
-                let result_shangai = HiveResult::new(json_data.name.clone(), "Shangai".to_string(), shangai_passed_tests, shangai_total_tests);
+                let shangai_total_tests = json_data
+                    .test_cases
+                    .iter()
+                    .filter(|(_, test_case)| test_case.name.starts_with("tests/shangai"))
+                    .count();
+                let shangai_passed_tests = json_data
+                    .test_cases
+                    .iter()
+                    .filter(|(_, test_case)| {
+                        test_case.name.starts_with("tests/shangai") && test_case.summary_result.pass
+                    })
+                    .count();
+                let result_shangai = HiveResult::new(
+                    json_data.name.clone(),
+                    "Shangai".to_string(),
+                    shangai_passed_tests,
+                    shangai_total_tests,
+                );
 
                 // Prague
-                let prague_total_tests = json_data.test_cases.iter().filter(|(_, test_case)| test_case.name.starts_with("tests/prague")).count();
-                let prague_passed_tests = json_data.test_cases.iter().filter(|(_, test_case)| test_case.name.starts_with("tests/prague") && test_case.summary_result.pass).count();
-                let result_prague = HiveResult::new(json_data.name.clone(), "Prague".to_string(), prague_passed_tests, prague_total_tests);
+                let prague_total_tests = json_data
+                    .test_cases
+                    .iter()
+                    .filter(|(_, test_case)| test_case.name.starts_with("tests/prague"))
+                    .count();
+                let prague_passed_tests = json_data
+                    .test_cases
+                    .iter()
+                    .filter(|(_, test_case)| {
+                        test_case.name.starts_with("tests/prague") && test_case.summary_result.pass
+                    })
+                    .count();
+                let result_prague = HiveResult::new(
+                    json_data.name.clone(),
+                    "Prague".to_string(),
+                    prague_passed_tests,
+                    prague_total_tests,
+                );
 
                 results.push(result_cancun);
                 results.push(result_shangai);
@@ -131,8 +178,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .values()
                     .filter(|test_case| test_case.summary_result.pass)
                     .count();
-    
-                let result = HiveResult::new(json_data.name, String::new(), passed_tests, total_tests);
+
+                let result =
+                    HiveResult::new(json_data.name, String::new(), passed_tests, total_tests);
                 if !result.should_skip() {
                     results.push(result);
                 }
