@@ -2,7 +2,6 @@
   "config": {
     "chainId": 1729,
     "homesteadBlock": 0,
-    "daoForkBlock": 0,
     "daoForkSupport": false,
     "eip150Block": 0,
     "eip155Block": 0,
@@ -11,13 +10,13 @@
     "constantinopleBlock": 0,
     "petersburgBlock": 0,
     "istanbulBlock": 0,
-    "muirGlacierBlock": 0,
     "berlinBlock": 0,
     "londonBlock": 0,
     "terminalTotalDifficulty": 0,
     "terminalTotalDifficultyPassed": true,
     "shanghaiTime": 0,
     "cancunTime": 0,
+    "pragueTime": 0,
     "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa",
     "blobSchedule": {
       "cancun": {
@@ -33,11 +32,11 @@
     },
     "mergeNetsplitBlock": 0
   },
-  "nonce": "0x0",
-  "timestamp": "1554584971",
+  "nonce": "0x1234",
+  "timestamp": "1718040081",
   "extraData": "0x",
   "gasLimit": "0x8f0d180",
-  "difficulty": "0x0",
+  "difficulty": "0x1",
   "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
   "coinbase": "0x0000000000000000000000000000000000000000",
   "alloc": {
@@ -1085,8 +1084,5 @@
       "balance": "0xc097ce7bc90715b34b9f1000000000",
       "nonce": "0x0"
     }
-  },
-  "baseFeePerGas": "0x1",
-  "excessBlobGas": "0x0",
-  "blobGasUsed": "0x0"
+  }
 }
