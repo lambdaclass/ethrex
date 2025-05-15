@@ -185,7 +185,7 @@ impl Trie {
     pub fn get_proofs(
         &self,
         paths: &[PathRLP],
-    ) -> Result<(Option<NodeRLP>, HashSet<NodeRLP>), TrieError> {
+    ) -> Result<(Option<NodeRLP>, Vec<NodeRLP>), TrieError> {
         if self.root.is_valid() {
             let encoded_root = self
                 .root
@@ -200,9 +200,9 @@ impl Trie {
                 node_path.extend(nodes);
             }
 
-            Ok((Some(encoded_root), node_path))
+            Ok((Some(encoded_root), node_path.into_iter().collect()))
         } else {
-            Ok((None, HashSet::new()))
+            Ok((None, Vec::new()))
         }
     }
 
