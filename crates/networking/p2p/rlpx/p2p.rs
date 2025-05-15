@@ -13,6 +13,11 @@ use ethrex_rlp::{
 };
 use k256::PublicKey;
 
+pub const CAP_P2P_5: Capability = Capability::p2p(5);
+pub const CAP_ETH_68: Capability = Capability::eth(68);
+pub const CAP_SNAP_1: Capability = Capability::snap(1);
+pub const SUPPORTED_CAPABILITIES: [Capability; 3] = [CAP_P2P_5, CAP_ETH_68, CAP_SNAP_1];
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Capability {
     pub protocol: &'static str,

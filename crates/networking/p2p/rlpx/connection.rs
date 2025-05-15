@@ -10,7 +10,10 @@ use crate::{
         },
         frame::RLPxCodec,
         message::Message,
-        p2p::{self, Capability, DisconnectMessage, PingMessage, PongMessage},
+        p2p::{
+            self, Capability, DisconnectMessage, PingMessage, PongMessage, CAP_ETH_68, CAP_SNAP_1,
+            SUPPORTED_CAPABILITIES,
+        },
         utils::{log_peer_debug, log_peer_error},
     },
     snap::{
@@ -45,10 +48,6 @@ use super::{
     eth::transactions::NewPooledTransactionHashes, p2p::DisconnectReason, utils::log_peer_warn,
 };
 
-const CAP_P2P_5: Capability = Capability::p2p(5);
-const CAP_ETH_68: Capability = Capability::eth(68);
-const CAP_SNAP_1: Capability = Capability::snap(1);
-const SUPPORTED_CAPABILITIES: [Capability; 3] = [CAP_P2P_5, CAP_ETH_68, CAP_SNAP_1];
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
@@ -318,7 +317,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
         // Subscribe this connection to the broadcasting channel.
         let mut broadcaster_receive = {
-            if self.capabilities.contains(&(Capability::eth(68))) {
+            if self
+                .capabilities
+                .contains(&(Capability::eth(self.negotiated_eth_version)))
+            {
                 Some(self.connection_broadcast_send.subscribe())
             } else {
                 None
