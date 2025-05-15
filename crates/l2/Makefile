@@ -148,7 +148,7 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 		FEATURES="metrics,based"; \
 		echo "Running ethrex L2 with based"; \
 	fi; \
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features $$FEATURES -- \
+	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root --release --manifest-path ../../Cargo.toml --bin ethrex --features $$FEATURES -- \
 	l2 init \
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \

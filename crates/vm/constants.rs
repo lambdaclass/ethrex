@@ -1,4 +1,4 @@
-use ethrex_common::Address;
+use ethrex_common::{Address, H256};
 use std::{str::FromStr, sync::LazyLock};
 
 pub static SYSTEM_ADDRESS: LazyLock<Address> =
@@ -11,6 +11,10 @@ pub static WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS: LazyLock<Address> =
     LazyLock::new(|| Address::from_str("00000961Ef480Eb55e80D19ad83579A64c007002").unwrap());
 pub static CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS: LazyLock<Address> =
     LazyLock::new(|| Address::from_str("0000BBdDc7CE488642fb579F8B00f3a590007251").unwrap());
+
+pub static WITHDRAWAL_EVENT_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
+    H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2").unwrap()
+});
 
 pub static COMMON_BRIDGE_L2_ADDRESS: LazyLock<Address> = LazyLock::new(|| {
     Address::from_slice(&[

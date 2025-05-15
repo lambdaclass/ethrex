@@ -1,4 +1,4 @@
-use std::{collections::HashMap, str::FromStr};
+use std::collections::HashMap;
 
 use ethrex_common::{
     types::{BlockHeader, Log, Receipt, Transaction, TxKind, SAFE_BYTES_PER_BLOB},
@@ -7,7 +7,11 @@ use ethrex_common::{
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_storage::AccountUpdate;
 
-use crate::{constants::COMMON_BRIDGE_L2_ADDRESS, state_diff::prepare_state_diff, EvmError};
+use crate::{
+    constants::{COMMON_BRIDGE_L2_ADDRESS, WITHDRAWAL_EVENT_SELECTOR},
+    state_diff::prepare_state_diff,
+    EvmError,
+};
 
 use super::LEVM;
 pub fn get_nonce_diff(
@@ -102,9 +106,7 @@ pub fn update_state_diff_size(
 
 fn is_withdrawal_l2(tx: &Transaction, logs: &[Log]) -> Result<bool, EvmError> {
     // WithdrawalInitiated(address,address,uint256)
-    let withdrawal_event_selector: H256 =
-        H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2")
-            .map_err(|e| EvmError::Custom(e.to_string()))?;
+    let withdrawal_event_selector: H256 = *WITHDRAWAL_EVENT_SELECTOR;
 
     let is_withdrawal = match tx.to() {
         TxKind::Call(to) if to == *COMMON_BRIDGE_L2_ADDRESS => logs.iter().any(|log| {
