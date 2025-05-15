@@ -203,7 +203,7 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_and_validate_blocks<'a>(
         &self,
-        block_hashes: Vec<H256>,
+        block_hashes: &mut Vec<H256>,
         headers_iter: &mut impl Iterator<Item = &BlockHeader>,
     ) -> Result<Vec<Block>, BodyRequestError> {
 
