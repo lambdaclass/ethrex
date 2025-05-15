@@ -306,7 +306,7 @@ async fn initialize_contracts(
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
             Value::Address(
-                Address::from_str("0xcbEAF3BDe82155F56486Fb5a1072cb8baAf547cc").unwrap(), //alignedProofAggregatorService contract
+                Address::from_str("0xFD471836031dc5108809D173A067e8486B9047A3").unwrap(), //alignedProofAggregatorService contract
             ),
             Value::Array(vec![
                 Value::Address(opts.committer_l1_address),
