@@ -807,7 +807,7 @@ impl EthClient {
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
             max_fee_per_gas: self
-                .get_fee_from_override_or_get_gas_price(overrides.max_priority_fee_per_gas)
+                .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
                 .await?,
             max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(
                 self.get_max_priority_fee()
@@ -861,7 +861,7 @@ impl EthClient {
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
             max_fee_per_gas: self
-                .get_fee_from_override_or_get_gas_price(overrides.max_priority_fee_per_gas)
+                .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
                 .await?,
             max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(
                 self.get_max_priority_fee()
@@ -917,7 +917,7 @@ impl EthClient {
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
             max_fee_per_gas: self
-                .get_fee_from_override_or_get_gas_price(overrides.max_priority_fee_per_gas)
+                .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
                 .await?,
             max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(
                 self.get_max_priority_fee()
