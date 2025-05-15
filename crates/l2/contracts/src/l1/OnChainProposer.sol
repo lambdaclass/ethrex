@@ -181,7 +181,7 @@ contract OnChainProposer is
         );
         TDXVERIFIER = tdxverifier;
         
-                batchCommitments[0] = BatchCommitmentInfo(
+        batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
             bytes32(0),
             bytes32(0),
@@ -258,12 +258,13 @@ contract OnChainProposer is
         bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
+        //tdx
+        bytes calldata tdxPublicValues,
+        bytes memory tdxSignature,
         //pico
         bytes32 picoRiscvVkey,
         bytes calldata picoPublicValues,
-        uint256[8] memory picoProof,
-        bytes calldata tdxPublicValues,
-        bytes memory tdxSignature
+        uint256[8] calldata picoProof
     ) external override onlySequencer {
         // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
@@ -310,7 +311,7 @@ contract OnChainProposer is
         if (TDXVERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, tdxPublicValues);
-            ITDXVerifier(TDXVERIFIER).verifyProof(
+            ITDXVerifier(TDXVERIFIER).verify(
                 tdxPublicValues,
                 tdxSignature
             );
@@ -334,6 +335,7 @@ contract OnChainProposer is
     }
 
     function _verifyPublicData(uint256 batchNumber, bytes calldata publicData) internal view {
+        require(publicData.length == 128, "OnChainProposer: invaid public data length");
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         require(
             batchCommitments[lastVerifiedBatch].newStateRoot == initialStateRoot,
@@ -344,13 +346,13 @@ contract OnChainProposer is
             batchCommitments[batchNumber].newStateRoot == finalStateRoot,
                 "OnChainProposer: final state root public inputs don't match with final state root"
         );
-        bytes32 withdrawalsMerkleRoot = bytes32(publicData[80:112]);
+        bytes32 withdrawalsMerkleRoot = bytes32(publicData[64:96]);
         require(
             batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
                 withdrawalsMerkleRoot,
             "OnChainProposer: withdrawals public inputs don't match with committed withdrawals"
         );
-        bytes32 depositsLogHash = bytes32(publicData[112:144]);
+        bytes32 depositsLogHash = bytes32(publicData[96:128]);
         require(
             batchCommitments[batchNumber].processedDepositLogsRollingHash ==
                 depositsLogHash,

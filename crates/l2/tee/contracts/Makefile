@@ -1,6 +1,8 @@
 DETERMINISTIC_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C
 DEPLOYMENT_PATH := deploydeps/automata-dcap-attestation/evm/deployment
 
+DEV_MODE ?= false
+
 deploy-p256:
 	rex send $(DETERMINISTIC_DEPLOYER) 0 $(PRIVATE_KEY) --calldata $(shell cat assets/p256.hex)
 
@@ -45,7 +47,7 @@ deploy: solc_out/TDXVerifier.bin
 	$(eval CONTRACT_BIN := $(shell cat solc_out/TDXVerifier.bin))
 	$(eval DCAP_ADDRESS := $(shell cat ${DEPLOYMENT_PATH}/AutomataDcapAttestationFee))
 	rex deploy --print-address $(CONTRACT_BIN) 0 $(PRIVATE_KEY) -- \
-		"constructor(address)" $(DCAP_ADDRESS) > ${DEPLOYMENT_PATH}/TDXVerifier
+		"constructor(address,bool)" $(DCAP_ADDRESS) $(DEV_MODE) > ${DEPLOYMENT_PATH}/TDXVerifier
 
 mkenv:
 	echo TDX_VERIFIER=$(shell cat ${DEPLOYMENT_PATH}/TDXVerifier) > .env.out

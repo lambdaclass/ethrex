@@ -54,6 +54,9 @@ interface IOnChainProposer {
     /// @param sp1PublicValues Values used to perform the execution
     /// @param sp1ProofBytes Groth16 proof
     /// ----------------------------------------------------------------------
+    /// @param tdxPublicValues Values used to perform the execution
+    /// @param tdxSignature TDX signature
+    /// ----------------------------------------------------------------------
     /// @param picoRiscvVkey Public verifying key
     /// @param picoPublicValues Values used to perform the execution
     /// @param picoProof Groth16 proof
@@ -67,12 +70,13 @@ interface IOnChainProposer {
         bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
+        //tdx
+        bytes calldata tdxPublicValues,
+        bytes memory tdxSignature,
         //pico
         bytes32 picoRiscvVkey,
         bytes calldata picoPublicValues,
-        uint256[8] memory picoProof,
-        bytes calldata tdxPublicValues,
-        bytes memory tdxSignature
+        uint256[8] memory picoProof
     ) external;
     // TODO: imageid, programvkey and riscvvkey should be constants
     // TODO: organize each zkvm proof arguments in their own structs

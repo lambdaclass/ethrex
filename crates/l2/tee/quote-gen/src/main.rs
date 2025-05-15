@@ -192,7 +192,7 @@ fn get_quote(private_key: &SecretKey) -> Result<Bytes, String> {
     create_tdx_quote(digest_slice)
         .or_else(|err| {
             println!("Error creating quote: {err}");
-            Ok(vec![])
+            Ok(address.as_bytes().into())
         })
         .map(Bytes::from)
 }

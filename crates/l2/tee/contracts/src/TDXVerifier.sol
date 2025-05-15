@@ -14,14 +14,19 @@ interface IAttestation {
 contract TDXVerifier {
     IAttestation public quoteVerifier = IAttestation(address(0));
     address public authorizedSignature = address(0);
+    bool public isDevMode = false;
 
     bytes public RTMR0 = hex'4f3d617a1c89bd9a89ea146c15b04383b7db7318f41a851802bba8eace5a6cf71050e65f65fd50176e4f006764a42643';
     bytes public RTMR1 = hex'ae6d959ed05ad39dea8b03c61c761612d40091c7d5082beaeb54b96231603c65ae7437dcb6794dbc55cfe76f79797532';
     bytes public RTMR2 = hex'0bcc11304c49a603385c460e63e250e212e5992856bb2f69b116a850133401f0e6613a5e62562cd4a55df757c7124045';
     bytes public MRTD = hex'91eb2b44d141d4ece09f0c75c2c53d247a3c68edd7fafe8a3520c942a604a407de03ae6dc5f87f27428b2538873118b7';
 
-    constructor(address _dcap) {
+    /// @notice Initializes the contract
+    /// @param _dcap DCAP contract.
+    /// @param _isDevMode Disables quote verification
+    constructor(address _dcap, bool _isDevMode) {
         quoteVerifier = IAttestation(_dcap);
+        isDevMode = _isDevMode;
     }
 
     /// @notice Verifies a proof with given payload and signature
@@ -44,14 +49,17 @@ contract TDXVerifier {
         bytes calldata quote
     ) external {
         // TODO: only allow the owner to update the key, to avoid DoS
+        if (isDevMode) {
+            authorizedSignature = _getAddress(quote, 0);
+            return;
+        }
         (bool success, bytes memory report) = quoteVerifier.verifyAndAttestOnChain(quote);
         require(success, "quote verification failed");
         _validateReport(report);
-        authorizedSignature = _getAddress(report);
+        authorizedSignature = _getAddress(report, 533);
     }
 
     function _validateReport(bytes memory report) view internal {
-        
         require(_rangeEquals(report, 0, hex'0004'), "Unsupported quote version");
         require(report[2] == 0x81, "Quote is not of type TDX");
         require(report[6] == 0, "TCB_STATUS != OK");
@@ -63,12 +71,12 @@ contract TDXVerifier {
         // RTMR3 is ignored
     }
 
-    function _getAddress(bytes memory report) view internal returns (address) {
-        bytes20 addr;
+    function _getAddress(bytes memory report, uint256 offset) pure public returns (address) {
+        uint256 addr;
         for (uint8 i = 0; i < 20; i++) {
-            addr |= report[533 + i] >> (i * 8);
+            addr = (addr << 8) | uint8(report[offset + i]);
         }
-        return address(addr);
+        return address(uint160(addr));
     }
 
     function _rangeEquals(bytes memory report, uint256 offset, bytes memory other) pure internal returns (bool) {

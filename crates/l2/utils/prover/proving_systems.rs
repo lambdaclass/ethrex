@@ -34,7 +34,7 @@ impl ProverType {
                 vec![
                     Value::Bytes(vec![].into()),
                     Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                    Value::Bytes(vec![].into()),
                 ]
             }
             ProverType::SP1 => {

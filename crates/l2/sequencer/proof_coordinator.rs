@@ -1,5 +1,5 @@
 use crate::sequencer::errors::ProverServerError;
-use crate::sequencer::setup::prepare_quote_prerequisites;
+use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use crate::utils::prover::save_state::{
     batch_number_has_state_file, write_state, StateFileType, StateType,
@@ -358,10 +358,11 @@ impl ProofCoordinator {
                     &self.eth_client,
                     &self.rpc_url,
                     &hex::encode(self.l1_private_key.as_ref()),
-                    &hex::encode(payload),
+                    &hex::encode(&payload),
                 )
                 .await
                 .map_err(|_| ProverServerError::Custom("Could not setup TDX key".to_owned()));
+                register_tdx_key(&self.eth_client, &self.l1_private_key, self.on_chain_proposer_address, payload).await?;
                 // TODO: send quote to contract
                 error!("TDX SETUP NOT FULLY IMPLEMENTED");
             }
