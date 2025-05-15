@@ -94,7 +94,7 @@ impl L1ProofSender {
                 }
             }
         } else {
-            needed_proof_types.push(ProverType::SP1);
+            needed_proof_types.push(ProverType::Exec);
         }
 
         Ok(Self {
