@@ -87,7 +87,6 @@ mod tests {
     use ethrex_p2p::types::{Node, NodeRecord};
     use k256::ecdsa::SigningKey;
     use rand::rngs::OsRng;
-    use std::str::FromStr;
 
     use super::*;
 
