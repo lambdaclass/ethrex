@@ -72,12 +72,11 @@ contract OnChainProposer is
     /// @dev This value is immutable and can only be set during contract deployment.
     bool public VALIDIUM;
 
-    // TODO: Check against leader Sequencer. Right now check against registered
-    // sequencers.
-    modifier onlyRegisteredSequencer() {
+    modifier onlyLeaderSequencer() {
         require(
-            ISequencerRegistry(SEQUENCER_REGISTRY).isRegistered(msg.sender),
-            "OnChainProposer: caller is not a registered sequencer"
+            msg.sender ==
+                ISequencerRegistry(SEQUENCER_REGISTRY).leaderSequencer(),
+            "OnChainProposer: caller has no sequencing rights"
         );
         _;
     }
@@ -186,7 +185,7 @@ contract OnChainProposer is
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash
-    ) external override onlyRegisteredSequencer {
+    ) external override onlyLeaderSequencer {
         // TODO: Refactor validation
         require(
             batchNumber == lastCommittedBatch + 1,
