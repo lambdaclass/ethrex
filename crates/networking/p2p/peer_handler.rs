@@ -208,7 +208,7 @@ impl PeerHandler {
     ) -> Result<Vec<Block>, BodyRequestError> {
 
         let mut block_bodies: Vec<BlockBody>;
-        let Some((block_bodies, peer_id)) = self.request_block_bodies(block_hashes).await
+        let Some((block_bodies, peer_id)) = self.request_block_bodies(block_hashes.clone()).await
         else {
             return Err(BodyRequestError::BodiesReturnedEmpty);
         };
