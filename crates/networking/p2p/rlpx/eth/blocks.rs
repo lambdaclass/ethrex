@@ -117,9 +117,9 @@ impl GetBlockHeaders {
                 BLOCK_HEADER_LIMIT
             } else {
                 self.limit
-            };
+            }
         } else {
-            env::var("SYNC-BATCH-SIZE").as_deref().unwrap_or(1024)
+            env::var("SYNC-BATCH-SIZE").as_deref().unwrap_or("1024").parse().expect("Error parsing environmental variable")
         };
         for _ in 0..limit {
             match storage.get_block_header(current_block as u64) {
