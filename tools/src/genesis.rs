@@ -1,5 +1,120 @@
 use ethrex_common::types::Genesis;
+use serde_json::{Map, Value};
 use std::fs::{self, read_dir};
+use std::path::Path;
+
+fn sort_config(genesis_map: &mut Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let config_keys_order = [
+        "chainId",
+        "homesteadBlock",
+        "daoForkBlock",
+        "daoForkSupport",
+        "eip150Block",
+        "eip150Hash",
+        "eip155Block",
+        "eip158Block",
+        "byzantiumBlock",
+        "constantinopleBlock",
+        "petersburgBlock",
+        "istanbulBlock",
+        "muirGlacierBlock",
+        "berlinBlock",
+        "londonBlock",
+        "arrowGlacierBlock",
+        "grayGlacierBlock",
+        "terminalTotalDifficulty",
+        "shanghaiTime",
+        "cancunTime",
+        "pragueTime",
+        "ethash",
+        "depositContractAddress",
+        "blobSchedule",
+    ];
+    let config = genesis_map
+        .get_mut("config")
+        .ok_or_else(|| "Genesis file is missing config".to_owned())?;
+    let mut ordered_config: Map<String, Value> = Map::new();
+    for key in config_keys_order {
+        // If a key is not present in the config, this means
+        // we're reading a genesis file that simply does not support
+        // a certain configuration from the genesis block,
+        // so we simply ignore it.
+        if let Some(value) = config.get(key).take() {
+            ordered_config.insert(key.to_owned(), value.clone());
+        };
+    }
+    Ok(ordered_config)
+}
+
+pub fn write_genesis_as_json(genesis: Genesis, path: &Path) -> Result<(), String> {
+    let genesis_json = serde_json::to_string(&genesis)
+        .map_err(|e| format!("Could not convert genesis to string: {}", e))?;
+    let mut genesis_as_map: Map<String, Value> = serde_json::from_str(&genesis_json)
+        .map_err(|e| format!("Failed to de-serialize genesis file: {}", e))?;
+    // Keys sorting based off this ethpandaops example:
+    // https://github.com/ethpandaops/ethereum-genesis-generator/blob/master/apps/el-gen/mainnet/genesis.json
+    // We actually want 'config' as the first key, but we sort that
+    // separately.
+    let keys = [
+        "nonce",
+        "timestamp",
+        "extraData",
+        "gasLimit",
+        "difficulty",
+        "mixHash",
+        "coinbase",
+        "alloc",
+    ];
+    let ordered_config = sort_config(&mut genesis_as_map)?;
+    // Some keys that are in our genesis file,
+    // but are not in the example above or
+    // viceversa.
+    let optional_keys = [
+        "number",
+        "gasUsed",
+        "parentHash",
+        "baseFeePerGas",
+        "excessBlobGas",
+        "requestsHash",
+        "blobGasUsed",
+    ];
+    // This map will preserve insertion order because this crate uses the 'preserve_order'
+    // feature from serde_json.
+    let mut ordered_map: Map<String, Value> = serde_json::Map::new();
+    ordered_map.insert(
+        "config".to_owned(),
+        serde_json::Value::Object(ordered_config),
+    );
+    for k in keys {
+        let Some(v) = genesis_as_map.get(k) else {
+            return Err(format!("Missing key in read genesis file: {}", k));
+        };
+        ordered_map.insert(k.to_owned(), v.clone().take());
+    }
+    for k in optional_keys {
+        if let Some(v) = genesis_as_map.get(k) {
+            ordered_map.insert(k.to_owned(), v.clone().take());
+        }
+    }
+    // Check 1: check we're not missing any keys.
+    for k in genesis_as_map.keys() {
+        if ordered_map.contains_key(k) != genesis_as_map.contains_key(k) {
+            return Err(format!("Genesis serialization is missing a key: {}", k));
+        }
+    }
+    // Check 2: the new ordered map can be turned into a genesis struct.
+    let _: Genesis = serde_json::from_value(ordered_map.clone().into())
+        .map_err(|e| format!("Error turning into genesis: {e}"))?;
+    let to_write = serde_json::to_string_pretty(&ordered_map)
+        .map_err(|e| format!("Could not turn map into json: {e}"))?;
+    std::fs::write(path, &to_write).map_err(|e| {
+        format!(
+            "Could not write genesis json to path: {}, error: {}",
+            path.display(),
+            e
+        )
+    })
+}
 pub fn main() {
     let genesis_files = read_dir("../test_data").unwrap();
     for file in genesis_files {
@@ -18,7 +133,7 @@ pub fn main() {
                 "File {} is not a valid genesis json",
                 path.to_string_lossy()
             ));
-            current_genesis.write_as_json(&path).unwrap();
+            write_genesis_as_json(current_genesis, &path).unwrap();
         }
     }
 }

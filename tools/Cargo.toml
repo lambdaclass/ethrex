@@ -1,5 +1,3 @@
-[workspace]
-
 [package]
 name = "tools"
 edition = "2021"
