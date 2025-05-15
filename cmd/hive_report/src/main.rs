@@ -6,6 +6,7 @@ use std::io::BufReader;
 #[serde(rename_all = "camelCase")]
 struct TestCase {
     summary_result: SummaryResult,
+    name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,7 +31,7 @@ struct HiveResult {
 }
 
 impl HiveResult {
-    fn new(suite: String, passed_tests: usize, total_tests: usize) -> Self {
+    fn new(suite: String, fork: String, passed_tests: usize, total_tests: usize) -> Self {
         let success_percentage = (passed_tests as f64 / total_tests as f64) * 100.0;
 
         let (category, display_name) = match suite.as_str() {
@@ -44,6 +45,8 @@ impl HiveResult {
             "snap" => ("P2P", "Snap capability"),
             "rpc-compat" => ("RPC", "RPC API Compatibility"),
             "sync" => ("Sync", "Node Syncing"),
+            "eest/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
+            "eest/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
             other => {
                 eprintln!("Warn: Unknown suite: {}. Skipping", other);
                 ("", "")
@@ -100,16 +103,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let total_tests = json_data.test_cases.len();
-            let passed_tests = json_data
-                .test_cases
-                .values()
-                .filter(|test_case| test_case.summary_result.pass)
-                .count();
+            // Both of these simulators have only 1 suite where we can find tests for 3 different forks.
+            // To get the total tests and the passed tests a filtes is done each time so we do not clone the test cases each time.
+            if json_data.name.as_str() == "eest/consume-rlp" || json_data.name.as_str() == "eest/consume-engine" {
+                // Cancun
+                let cancun_total_tests = json_data.test_cases.iter().filter(|(_, test_case)| test_case.name.starts_with("tests/cancun")).count();
+                let cancun_passed_tests = json_data.test_cases.iter().filter(|(_, test_case)| test_case.name.starts_with("tests/cancun") && test_case.summary_result.pass).count();
+                let result_cancun = HiveResult::new(json_data.name.clone(), "Cancun".to_string(), cancun_passed_tests, cancun_total_tests);
 
-            let result = HiveResult::new(json_data.name, passed_tests, total_tests);
-            if !result.should_skip() {
-                results.push(result);
+                // Shangai
+                let shangai_total_tests = json_data.test_cases.iter().filter(|(_, test_case)| test_case.name.starts_with("tests/shangai")).count();
+                let shangai_passed_tests = json_data.test_cases.iter().filter(|(_, test_case)| test_case.name.starts_with("tests/shangai") && test_case.summary_result.pass).count();
+                let result_shangai = HiveResult::new(json_data.name.clone(), "Shangai".to_string(), shangai_passed_tests, shangai_total_tests);
+
+                // Prague
+                let prague_total_tests = json_data.test_cases.iter().filter(|(_, test_case)| test_case.name.starts_with("tests/prague")).count();
+                let prague_passed_tests = json_data.test_cases.iter().filter(|(_, test_case)| test_case.name.starts_with("tests/prague") && test_case.summary_result.pass).count();
+                let result_prague = HiveResult::new(json_data.name.clone(), "Prague".to_string(), prague_passed_tests, prague_total_tests);
+
+                results.push(result_cancun);
+                results.push(result_shangai);
+                results.push(result_prague);
+            } else {
+                let total_tests = json_data.test_cases.len();
+                let passed_tests = json_data
+                    .test_cases
+                    .values()
+                    .filter(|test_case| test_case.summary_result.pass)
+                    .count();
+    
+                let result = HiveResult::new(json_data.name, String::new(), passed_tests, total_tests);
+                if !result.should_skip() {
+                    results.push(result);
+                }
             }
         }
     }

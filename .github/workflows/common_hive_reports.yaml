@@ -37,17 +37,17 @@ jobs:
           - { 
               name: "Sync tests", 
               file_name: sync, 
-              simulation: ethereum/sync, 
+              simulation: ethereum/sync,
             }
           - {
-              name: "Consume engine ef tests",
+              name: "Consume Engine EF tests",
               filename: consume-engine,
               simulation: ethereum/eest/consume-engine,
             }
           - { 
-              name: "Consume rlp ef tests",
+              name: "Consume RLP EF tests",
               filename: consume-rlp,
-              simulation: ethereum/eest/consume-rlp, 
+              simulation: ethereum/eest/consume-rlp,
             }
 
     steps:
