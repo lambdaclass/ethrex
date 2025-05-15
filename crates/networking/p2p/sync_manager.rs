@@ -124,7 +124,7 @@ impl SyncManager {
                     return;
                 };
             } else {
-                let block_number = env::var("SYNC-BLOCK-NUM").as_deref.unwrap_or(0);
+                let block_number = env::var("SYNC-BLOCK-NUM").as_deref().unwrap_or(0);
                 let Ok(Some(current_head)) = store.get_canonical_block_hash(block_number).await
                 else {
                     tracing::error!("Failed to fetch latest canonical block, unable to sync");
