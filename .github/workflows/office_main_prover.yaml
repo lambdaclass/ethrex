@@ -1,8 +1,7 @@
-name: L2 (SP1 Backend) (Office GPU Runner)
+name: L2 (SP1 Backend) (Office GPU)
 on:
-  pull_request:
-      branches: ["**"]
-  merge_group:
+  push:
+    branches: ["main"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -68,11 +67,10 @@ jobs:
         run: |
           cargo test l2 --no-run --release
 
-      - name: Deploy L1 Contracts
+      - name: Start L1 & Deploy contracts
         if: ${{ always() }}
         run: |
           cd crates/l2
-          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           touch .env
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
