@@ -84,6 +84,7 @@ async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u
         withdrawals: None,
         beacon_root: genesis_block.header.parent_beacon_block_root,
         version: 3,
+        elasticity_multiplier: 1
     };
     let hash = genesis_block.hash();
     let id = payload_args.id();
