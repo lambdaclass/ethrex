@@ -164,7 +164,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // Handshake OK: handle connection
             // Create channels to communicate directly to the peer
             let (peer_channels, sender, receiver) = PeerChannels::create();
-            let capabilities = self.capabilities.iter().map(|cap| cap.clone()).collect();
 
             // NOTE: if the peer came from the discovery server it will already be inserted in the table
             // but that might not always be the case, so we try to add it to the table
@@ -175,7 +174,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 table_lock.init_backend_communication(
                     self.node.node_id(),
                     peer_channels,
-                    capabilities,
+                    self.capabilities.clone(),
                 );
             }
             if let Err(e) = self.connection_loop(sender, receiver).await {
