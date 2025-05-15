@@ -22,7 +22,7 @@ use ethrex_rpc::{
     EthClient,
 };
 use keccak_hash::H256;
-use tracing::{debug, error, info, trace, Level};
+use tracing::{debug, error, info, trace, warn, Level};
 
 mod cli;
 mod error;
@@ -299,7 +299,13 @@ async fn initialize_contracts(
 
     trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
 
-    let sp1_vk_string = read_to_string(&opts.sp1_vk_path)?;
+    let sp1_vk_string = read_to_string(&opts.sp1_vk_path).unwrap_or_else(|_| {
+        warn!(
+            path = opts.sp1_vk_path,
+            "Failed to read SP1 verification key file, will use 0x00..00, this is expected in dev mode"
+        );
+        "0x00".to_string()
+    });
     let sp1_vk = hex::decode(sp1_vk_string.trim_start_matches("0x"))
         .map_err(|err| {
             DeployerError::DecodingError(format!(
