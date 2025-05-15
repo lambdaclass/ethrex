@@ -121,21 +121,6 @@ pub fn verify_range(
     // Fill up the state with the nodes from the proof
     let mut trie = ProofTrie::from(trie);
     for (partial_path, external_ref) in external_refs {
-        // TODO: Move to proper place.
-        // External refs contains nodes within the path. They should NOT be there.
-        {
-            let bounds = (
-                Nibbles::from_bytes(&first_key.0),
-                Nibbles::from_bytes(&last_key.0),
-            );
-
-            if bounds.0.compare_prefix(&partial_path) == Ordering::Equal
-                || bounds.1.compare_prefix(&partial_path) == Ordering::Equal
-            {
-                continue;
-            }
-        }
-
         trie.insert(partial_path, external_ref)?;
     }
 
