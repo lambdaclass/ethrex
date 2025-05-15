@@ -9,12 +9,12 @@ use revm::{
 };
 
 use crate::{
-    db::StoreWrapperInner,
-    errors::{EvmError, ProverDBError},
-};
-use crate::{
     db::{VmDatabase, VmDbWrapper},
     prover_db::ProverDB,
+};
+use crate::{
+    errors::{EvmError, ProverDBError},
+    StoreWrapper,
 };
 
 /// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
@@ -23,7 +23,7 @@ use crate::{
 ///
 /// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
 pub enum EvmState {
-    Store(revm::db::State<VmDbWrapper<StoreWrapperInner>>),
+    Store(revm::db::State<StoreWrapper>),
     Execution(Box<revm::db::CacheDB<ProverDB>>),
 }
 
@@ -32,16 +32,14 @@ pub enum EvmState {
 impl Clone for EvmState {
     fn clone(&self) -> Self {
         match self {
-            EvmState::Store(state) => {
-                EvmState::Store(revm::db::State::<VmDbWrapper<StoreWrapperInner>> {
-                    cache: state.cache.clone(),
-                    database: state.database.clone(),
-                    transition_state: state.transition_state.clone(),
-                    bundle_state: state.bundle_state.clone(),
-                    use_preloaded_bundle: state.use_preloaded_bundle,
-                    block_hashes: state.block_hashes.clone(),
-                })
-            }
+            EvmState::Store(state) => EvmState::Store(revm::db::State::<StoreWrapper> {
+                cache: state.cache.clone(),
+                database: state.database.clone(),
+                transition_state: state.transition_state.clone(),
+                bundle_state: state.bundle_state.clone(),
+                use_preloaded_bundle: state.use_preloaded_bundle,
+                block_hashes: state.block_hashes.clone(),
+            }),
             EvmState::Execution(execution) => {
                 EvmState::Execution(Box::new(Into::<revm::db::CacheDB<ProverDB>>::into(
                     *execution.clone(),
@@ -62,7 +60,7 @@ impl EvmState {
 }
 
 /// Builds EvmState from a Store
-pub fn evm_state(db: VmDbWrapper<StoreWrapperInner>) -> EvmState {
+pub fn evm_state(db: StoreWrapper) -> EvmState {
     EvmState::Store(
         revm::db::State::builder()
             .with_database(db)

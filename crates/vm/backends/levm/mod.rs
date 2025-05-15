@@ -8,7 +8,7 @@ use crate::constants::{
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::db::{StoreWrapperInner, VmDbWrapper};
-use crate::{EvmError, ExecutionResult, ProverDB, ProverDBError};
+use crate::{EvmError, ExecutionResult, ProverDB, ProverDBError, StoreWrapper};
 use bytes::Bytes;
 use ethrex_common::{
     types::{
@@ -249,7 +249,7 @@ impl LEVM {
             let mut account = db.cache.get(&address).cloned().unwrap_or({
                 db.store
                     .get_account(address)
-                    .map_err(|e| EvmError::Custom(e.to_string()))?
+                    .map_err(|e| EvmError::DB(e.to_string()))?
             });
 
             account.info.balance += increment.into();
@@ -386,10 +386,7 @@ impl LEVM {
             return Err(ProverDBError::Custom("Unable to get last block".into()));
         };
 
-        let store_wrapper = VmDbWrapper(StoreWrapperInner {
-            store: store.clone(),
-            block_hash: first_block_parent_hash,
-        });
+        let store_wrapper = StoreWrapper::new(store.clone(), first_block_parent_hash);
 
         let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(
             store_wrapper,
