@@ -3,10 +3,8 @@ use crate::{
         errors::CommitterError,
         state_diff::{get_nonce_diff, AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
     },
-    utils::{
-        config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
-        helpers::is_withdrawal_l2,
-    },
+    utils::helpers::is_withdrawal_l2,
+    CommitterConfig, EthConfig, SequencerConfig,
 };
 
 use ethrex_common::{
@@ -33,7 +31,11 @@ use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
-use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::sleep_random};
+use super::{
+    errors::{BlobEstimationError, SequencerError},
+    execution_cache::ExecutionCache,
+    utils::sleep_random,
+};
 
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
 
@@ -54,13 +56,11 @@ pub async fn start_l1_committer(
     store: Store,
     rollup_store: StoreRollup,
     execution_cache: Arc<ExecutionCache>,
-) -> Result<(), ConfigError> {
-    let eth_config = EthConfig::from_env()?;
-    let committer_config = CommitterConfig::from_env()?;
-
+    cfg: SequencerConfig,
+) -> Result<(), SequencerError> {
     let mut committer = Committer::new_from_config(
-        &committer_config,
-        eth_config,
+        &cfg.l1_committer,
+        &cfg.eth,
         store,
         rollup_store,
         execution_cache,
@@ -72,16 +72,20 @@ pub async fn start_l1_committer(
 impl Committer {
     pub fn new_from_config(
         committer_config: &CommitterConfig,
-        eth_config: EthConfig,
+        eth_config: &EthConfig,
         store: Store,
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
     ) -> Self {
         Self {
-            eth_client: EthClient::new_with_maximum_fees(
+            eth_client: EthClient::new_with_config(
                 &eth_config.rpc_url,
-                eth_config.maximum_allowed_max_fee_per_gas,
-                eth_config.maximum_allowed_max_fee_per_blob_gas,
+                eth_config.max_number_of_retries,
+                eth_config.backoff_factor,
+                eth_config.min_retry_delay,
+                eth_config.max_retry_delay,
+                Some(eth_config.maximum_allowed_max_fee_per_gas),
+                Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
             ),
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             store,
@@ -230,11 +234,7 @@ impl Committer {
                     let mut vm =
                         Evm::default(self.store.clone(), block_to_commit.header.parent_hash);
                     vm.execute_block(&block_to_commit)?;
-                    let fork = self
-                        .store
-                        .get_chain_config()?
-                        .fork(block_to_commit.header.timestamp);
-                    vm.get_state_transitions(fork)?
+                    vm.get_state_transitions()?
                 }
             };
 
