@@ -121,7 +121,8 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--deposit-rich \
 	--private-keys-file-path ../../test_data/private_keys_l1.txt \
-	--genesis-l1-path ../../test_data/genesis-l1-dev.json
+	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
+	--genesis-l2-path ../../test_data/genesis-l2.json
 
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 deploy-l1-testnet: ## 📜 Deploys the L1 contracts
