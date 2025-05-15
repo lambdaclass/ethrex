@@ -387,9 +387,9 @@ impl Syncer {
                 .await;
             match block_request_result {
                 Ok(blcks) => { blocks = blcks; }
-                BodyRequestError::BodiesNotFound => { return SyncError::BodiesNotFound; }
-                BodyRequestError::BodiesReturnedEmpty => { break; }
-                BodyRequestError::InvalidBlockBody => { continue; }
+                Err(BodyRequestError::BodiesNotFound) => { return Err(SyncError::BodiesNotFound); }
+                Err(BodyRequestError::BodiesReturnedEmpty) => { break; }
+                Err(BodyRequestError::InvalidBlockBody) => { continue; }
             }
 
             let blocks_len = blocks.len();
