@@ -104,7 +104,7 @@ impl LevmDatabase for StoreWrapper {
         let acc_info = self
             .store
             .get_account_info_by_hash(self.block_hash, address)
-            .unwrap_or(None)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default();
 
         let acc_code = self

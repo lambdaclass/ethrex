@@ -369,25 +369,15 @@ pub mod test_utils {
     pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
     pub fn example_p2p_node() -> Node {
         let public_key_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
-        Node {
-            ip: "127.0.0.1".parse().unwrap(),
-            udp_port: 30303,
-            tcp_port: 30303,
-            public_key: public_key_1,
-        }
+        Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1)
     }
 
     pub fn example_local_node_record() -> NodeRecord {
         let public_key_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
-        let node = Node {
-            ip: "127.0.0.1".parse().unwrap(),
-            udp_port: 30303,
-            tcp_port: 30303,
-            public_key: public_key_1,
-        };
+        let node = Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1);
         let signer = SigningKey::random(&mut rand::rngs::OsRng);
 
-        NodeRecord::from_node(node, 0, &signer).unwrap()
+        NodeRecord::from_node(&node, 0, &signer).unwrap()
     }
 
     // Util to start an api for testing on ports 8500 and 8501,
