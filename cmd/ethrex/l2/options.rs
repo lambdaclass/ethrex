@@ -194,6 +194,7 @@ pub struct WatcherOptions {
         default_value_t = 0,
         value_name = "UINT64",
         env = "ETHREX_WATCHER_BLOCK_DELAY",
+        help = "Number of blocks the L1 watcher waits before trusting an L1 block.",
         help_heading = "L1 Watcher options"
     )]
     pub watcher_block_delay: u64,
