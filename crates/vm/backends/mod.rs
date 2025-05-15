@@ -2,10 +2,10 @@ pub mod levm;
 pub mod revm;
 
 use self::revm::db::evm_state;
-use crate::db::VmDbWrapper;
+use crate::db::StoreWrapper;
+use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
-use crate::{db::StoreWrapper, errors::EvmError};
 use crate::{ProverDB, ProverDBError};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
@@ -71,22 +71,15 @@ impl std::fmt::Debug for Evm {
 impl Evm {
     /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
     pub fn new(engine: EvmEngine, store: Store, parent_hash: H256) -> Self {
+        let store_wrapper = StoreWrapper::new(store.clone(), parent_hash);
+
         match engine {
             EvmEngine::REVM => Evm::REVM {
-                state: evm_state(store.clone(), parent_hash),
+                state: evm_state(store_wrapper),
             },
-            EvmEngine::LEVM => {
-                let store = StoreWrapper {
-                    store: store.clone(),
-                    block_hash: parent_hash,
-                };
-
-                let store_wrapper = VmDbWrapper(store);
-
-                Evm::LEVM {
-                    db: GeneralizedDatabase::new(Arc::new(store_wrapper), CacheDB::new()),
-                }
-            }
+            EvmEngine::LEVM => Evm::LEVM {
+                db: GeneralizedDatabase::new(Arc::new(store_wrapper), CacheDB::new()),
+            },
         }
     }
 

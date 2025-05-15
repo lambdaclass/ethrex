@@ -8,9 +8,17 @@ use ethrex_storage::Store;
 use crate::EvmError;
 
 #[derive(Clone)]
-pub struct VmDbWrapper<T>(pub T);
+pub struct VmDbWrapper<T: VmDatabase>(pub T);
 
-pub trait Database: Send + Sync {
+pub type StoreWrapper = VmDbWrapper<StoreWrapperInner>;
+
+impl StoreWrapper {
+    pub fn new(store: Store, block_hash: BlockHash) -> Self {
+        VmDbWrapper(StoreWrapperInner { store, block_hash })
+    }
+}
+
+pub trait VmDatabase: Send + Sync {
     fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError>;
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError>;
     fn get_block_hash(&self, block_number: u64) -> Result<Option<H256>, EvmError>;
@@ -24,12 +32,12 @@ pub trait Database: Send + Sync {
 }
 
 #[derive(Clone)]
-pub struct StoreWrapper {
+pub struct StoreWrapperInner {
     pub store: Store,
     pub block_hash: BlockHash,
 }
 
-impl Database for StoreWrapper {
+impl VmDatabase for StoreWrapperInner {
     fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
         self.store
             .get_account_info_by_hash(self.block_hash, address)

@@ -8,7 +8,7 @@ mod prover_db;
 pub mod backends;
 
 pub use backends::{BlockExecutionResult, Evm, EvmEngine};
-pub use db::StoreWrapper;
+pub use db::StoreWrapperInner;
 pub use errors::{EvmError, ProverDBError};
 pub use execution_result::ExecutionResult;
 pub use helpers::{create_contract_address, fork_to_spec_id, SpecId};

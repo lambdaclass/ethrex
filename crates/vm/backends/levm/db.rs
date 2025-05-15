@@ -4,7 +4,7 @@ use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::constants::EMPTY_CODE_HASH;
 use ethrex_levm::db::Database as LevmDatabase;
 
-use crate::db::{Database, VmDbWrapper};
+use crate::db::{VmDatabase, VmDbWrapper};
 use crate::ProverDB;
 use ethrex_levm::db::error::DatabaseError;
 use std::collections::HashMap;
@@ -99,7 +99,7 @@ impl LevmDatabase for DatabaseLogger {
     }
 }
 
-impl<T: Database> LevmDatabase for VmDbWrapper<T> {
+impl<T: VmDatabase> LevmDatabase for VmDbWrapper<T> {
     fn get_account(&self, address: CoreAddress) -> Result<Account, DatabaseError> {
         let acc_info = self
             .0

@@ -1,8 +1,4 @@
-use ethrex_common::{
-    types::{BlockHash, ChainConfig},
-    Address as CoreAddress, H256 as CoreH256,
-};
-use ethrex_storage::Store;
+use ethrex_common::{types::ChainConfig, Address as CoreAddress, H256 as CoreH256};
 use ethrex_trie::{Node, NodeRLP, PathRLP, Trie};
 use revm::{
     primitives::{
@@ -13,11 +9,11 @@ use revm::{
 };
 
 use crate::{
-    db::StoreWrapper,
+    db::StoreWrapperInner,
     errors::{EvmError, ProverDBError},
 };
 use crate::{
-    db::{Database, VmDbWrapper},
+    db::{VmDatabase, VmDbWrapper},
     prover_db::ProverDB,
 };
 
@@ -27,7 +23,7 @@ use crate::{
 ///
 /// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
 pub enum EvmState {
-    Store(revm::db::State<VmDbWrapper<StoreWrapper>>),
+    Store(revm::db::State<VmDbWrapper<StoreWrapperInner>>),
     Execution(Box<revm::db::CacheDB<ProverDB>>),
 }
 
@@ -37,7 +33,7 @@ impl Clone for EvmState {
     fn clone(&self) -> Self {
         match self {
             EvmState::Store(state) => {
-                EvmState::Store(revm::db::State::<VmDbWrapper<StoreWrapper>> {
+                EvmState::Store(revm::db::State::<VmDbWrapper<StoreWrapperInner>> {
                     cache: state.cache.clone(),
                     database: state.database.clone(),
                     transition_state: state.transition_state.clone(),
@@ -66,10 +62,10 @@ impl EvmState {
 }
 
 /// Builds EvmState from a Store
-pub fn evm_state(store: Store, block_hash: BlockHash) -> EvmState {
+pub fn evm_state(db: VmDbWrapper<StoreWrapperInner>) -> EvmState {
     EvmState::Store(
         revm::db::State::builder()
-            .with_database(VmDbWrapper(StoreWrapper { store, block_hash }))
+            .with_database(db)
             .with_bundle_update()
             .without_state_clear()
             .build(),
@@ -127,7 +123,7 @@ impl DatabaseRef for ProverDB {
     }
 }
 
-impl<T: Database> revm::Database for VmDbWrapper<T> {
+impl<T: VmDatabase> revm::Database for VmDbWrapper<T> {
     type Error = EvmError;
 
     fn basic(&mut self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
@@ -177,7 +173,7 @@ impl<T: Database> revm::Database for VmDbWrapper<T> {
     }
 }
 
-impl<T: Database> revm::DatabaseRef for VmDbWrapper<T> {
+impl<T: VmDatabase> revm::DatabaseRef for VmDbWrapper<T> {
     type Error = EvmError;
 
     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {

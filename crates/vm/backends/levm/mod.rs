@@ -7,8 +7,8 @@ use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::db::VmDbWrapper;
-use crate::{EvmError, ExecutionResult, ProverDB, ProverDBError, StoreWrapper};
+use crate::db::{StoreWrapperInner, VmDbWrapper};
+use crate::{EvmError, ExecutionResult, ProverDB, ProverDBError};
 use bytes::Bytes;
 use ethrex_common::{
     types::{
@@ -386,7 +386,7 @@ impl LEVM {
             return Err(ProverDBError::Custom("Unable to get last block".into()));
         };
 
-        let store_wrapper = VmDbWrapper(StoreWrapper {
+        let store_wrapper = VmDbWrapper(StoreWrapperInner {
             store: store.clone(),
             block_hash: first_block_parent_hash,
         });
@@ -409,7 +409,7 @@ impl LEVM {
             }
 
             // Update de block_hash for the next execution.
-            let new_store = VmDbWrapper(StoreWrapper {
+            let new_store = VmDbWrapper(StoreWrapperInner {
                 store: store.clone(),
                 block_hash: block.hash(),
             });
