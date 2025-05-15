@@ -383,7 +383,7 @@ impl Syncer {
             debug!("Requesting Block Bodies");
             let block_request_result = self
                 .peers
-                .request_and_validate_blocks(current_block_hashes_chunk.clone(), &mut headers_iter)
+                .request_and_validate_blocks(&mut current_block_hashes_chunk, &mut headers_iter)
                 .await;
             match block_request_result {
                 Ok(blcks) => { blocks = blcks; }
