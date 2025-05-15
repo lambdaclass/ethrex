@@ -94,7 +94,7 @@ const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 // 0x08c379a0 == Error(String)
 pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct WithdrawalProof {
     pub batch_number: u64,
     pub index: usize,
@@ -758,6 +758,7 @@ impl EthClient {
         };
 
         transaction.from = from;
+        transaction.nonce = None;
         self.estimate_gas(transaction).await
     }
 
