@@ -78,6 +78,7 @@ impl From<SequencerOptions> for SequencerConfig {
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 l2_proposer_private_key: opts.watcher_opts.l2_proposer_private_key,
+                watcher_block_delay: opts.watcher_opts.watcher_block_delay,
             },
             proof_coordinator: ProofCoordinatorConfig {
                 l1_address: get_address_from_secret_key(
@@ -188,6 +189,14 @@ pub struct WatcherOptions {
         help_heading = "L1 Watcher options",
     )]
     pub l2_proposer_private_key: SecretKey,
+    #[arg(
+        long = "watcher-block-delay",
+        default_value_t = 0,
+        value_name = "UINT64",
+        env = "ETHREX_WATCHER_BLOCK_DELAY",
+        help_heading = "L1 Watcher options"
+    )]
+    pub watcher_block_delay: u64,
 }
 
 impl Default for WatcherOptions {
@@ -202,6 +211,7 @@ impl Default for WatcherOptions {
                 "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
             )
             .unwrap(),
+            watcher_block_delay: 0,
         }
     }
 }
