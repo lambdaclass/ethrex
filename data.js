@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747267042167,
+  "lastUpdate": 1747323242864,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7105,6 +7105,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 213977625223,
             "range": "± 486410635",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "cba42cdcb2efcf1c3ab2fa204ccefffc1d37c5bf",
+          "message": "fix(l2): fix indices (#2802)\n\n**Motivation**\n\nThere was an error in verifyPublicData when running with SP1\n\n**Description**\n\nverifyPublicData didn't take into account that SP1 contains a 16 byte\nheader with the length of the data",
+          "timestamp": "2025-05-15T14:40:27Z",
+          "tree_id": "2d57562e6595c57822ebc83a1859e79da4a8d56d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cba42cdcb2efcf1c3ab2fa204ccefffc1d37c5bf"
+        },
+        "date": 1747323240121,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211524278737,
+            "range": "± 407033651",
             "unit": "ns/iter"
           }
         ]
