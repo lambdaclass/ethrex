@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747341737527,
+  "lastUpdate": 1747343053719,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7345,6 +7345,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 214211258971,
             "range": "± 457946020",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "56402156+fkrause98@users.noreply.github.com",
+            "name": "Francisco Krause Arnim",
+            "username": "fkrause98"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e1394a3058c308047c733289e917fb41e3552277",
+          "message": "ci(l1,l2): run \"main-prover-l1\" only on merge to main (#2815)\n\n**Motivation**\n\nThis is not a required check anymore, so we only will run it on a merge\nto main instead of each PR.\n**Description**\n\n- Simply make the yml worklfow run on a merge to main",
+          "timestamp": "2025-05-15T20:09:59Z",
+          "tree_id": "321c0ba74181e40108d72208066a32e99250d2e6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e1394a3058c308047c733289e917fb41e3552277"
+        },
+        "date": 1747343050392,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 214262421000,
+            "range": "± 448241860",
             "unit": "ns/iter"
           }
         ]
