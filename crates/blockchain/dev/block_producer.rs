@@ -39,12 +39,12 @@ pub async fn start_block_producer(
             .await
         {
             Ok(response) => {
-                tracing::debug!("ForkChoiceV3 response: {response:?}");
+                tracing::debug!("engine_forkchoiceUpdatedV3 response: {response:?}");
                 response
             }
             Err(error) => {
                 tracing::error!(
-                    "Failed to produce block: error sending engine_forkchoiceUpdateV3 with PayloadAttributes: {error}"
+                    "Failed to produce block: error sending engine_forkchoiceUpdatedV3 with PayloadAttributes: {error}"
                 );
                 tries += 1;
                 continue;
@@ -56,12 +56,12 @@ pub async fn start_block_producer(
         let execution_payload_response = match engine_client.engine_get_payload_v4(payload_id).await
         {
             Ok(response) => {
-                tracing::debug!("GetPayloadV3 response: {response:?}");
+                tracing::debug!("engine_getPayloadV4 response: {response:?}");
                 response
             }
             Err(error) => {
                 tracing::error!(
-                    "Failed to produce block: error sending engine_getPayloadV3: {error}"
+                    "Failed to produce block: error sending engine_getPayloadV4: {error}"
                 );
                 tries += 1;
                 continue;
@@ -89,12 +89,12 @@ pub async fn start_block_producer(
             .await
         {
             Ok(response) => {
-                tracing::debug!("NewPayloadV3 response: {response:?}");
+                tracing::debug!("engine_newPayloadV4 response: {response:?}");
                 response
             }
             Err(error) => {
                 tracing::error!(
-                    "Failed to produce block: error sending engine_newPayloadV3: {error}"
+                    "Failed to produce block: error sending engine_newPayloadV4: {error}"
                 );
                 tries += 1;
                 continue;

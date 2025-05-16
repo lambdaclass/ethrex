@@ -519,11 +519,11 @@ pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
         chain_id: tx.chain_id(),
         access_list: tx
             .access_list()
-            .into_iter()
+            .iter()
             .map(|(addr, list)| {
                 let (address, storage_keys) = (
                     RevmAddress(addr.0.into()),
-                    list.into_iter()
+                    list.iter()
                         .map(|a| FixedBytes::from_slice(a.as_bytes()))
                         .collect(),
                 );
@@ -547,7 +547,7 @@ pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
         // - rust 1.82.X is needed
         // - rust-toolchain 1.82.X is needed (this can be found in ethrex/crates/vm/levm/rust-toolchain.toml)
         authorization_list: tx.authorization_list().map(|list| {
-            list.into_iter()
+            list.iter()
                 .map(|auth_t| {
                     SignedAuthorization::new_unchecked(
                         RevmAuthorization {
