@@ -12,7 +12,7 @@ mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::nibbles::Nibbles;
@@ -204,6 +204,58 @@ impl Trie {
         } else {
             Ok((None, Vec::new()))
         }
+    }
+
+    pub fn from_nodes(root: Option<&NodeRLP>, nodes: &[NodeRLP]) -> Result<Self, TrieError> {
+        let Some(root) = root else {
+            return Ok(Trie::stateless());
+        };
+
+        let mut storage = nodes
+            .iter()
+            .map(|node| {
+                (
+                    NodeHash::from_slice(&Keccak256::new_with_prefix(node).finalize()),
+                    node,
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        fn inner(
+            storage: &mut HashMap<NodeHash, &Vec<u8>>,
+            node: &NodeRLP,
+        ) -> Result<Node, TrieError> {
+            Ok(match Node::decode_raw(node)? {
+                Node::Branch(mut node) => {
+                    for choice in &mut node.choices {
+                        let NodeRef::Hash(hash) = *choice else {
+                            unreachable!()
+                        };
+
+                        let rlp = storage.remove(&hash).ok_or(TrieError::InconsistentTree)?;
+                        *choice = inner(storage, rlp)?.into();
+                    }
+
+                    node.into()
+                }
+                Node::Extension(mut node) => {
+                    let NodeRef::Hash(hash) = node.child else {
+                        unreachable!()
+                    };
+
+                    let rlp = storage.remove(&hash).ok_or(TrieError::InconsistentTree)?;
+                    node.child = inner(storage, rlp)?.into();
+
+                    node.into()
+                }
+                Node::Leaf(node) => node.into(),
+            })
+        }
+
+        let mut trie = Trie::stateless();
+        trie.root = inner(&mut storage, root)?.into();
+
+        Ok(trie)
     }
 
     /// Builds an in-memory trie from the given elements and returns its hash
