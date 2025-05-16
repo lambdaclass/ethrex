@@ -180,12 +180,10 @@ pub async fn fill_transactions(
         let mut new_accounts_diff_size = 0;
 
         for (address, diff) in merged_diffs.iter() {
-            let (r, encoded) = diff
-                .encode()
+            let encoded = diff
+                .encode(address)
                 .map_err(|_| BlockProducerError::Custom("CHANGE ERROR diff encode".to_owned()))?;
             new_accounts_diff_size += encoded.len();
-            new_accounts_diff_size += r.to_be_bytes().len();
-            new_accounts_diff_size += address.as_bytes().len();
         }
 
         if is_deposit_l2(&head_tx) {

@@ -153,10 +153,8 @@ impl StateDiff {
         encoded.extend(modified_accounts_len.to_be_bytes());
 
         for (address, diff) in &self.modified_accounts {
-            let (r#type, diff_encoded) = diff.encode()?;
-            encoded.extend(r#type.to_be_bytes());
-            encoded.extend(address.0);
-            encoded.extend(diff_encoded);
+            let account_encoded = diff.encode(address)?;
+            encoded.extend(account_encoded);
         }
 
         let withdrawal_len: u16 = self.withdrawal_logs.len().try_into()?;
@@ -298,7 +296,7 @@ impl StateDiff {
 }
 
 impl AccountStateDiff {
-    pub fn encode(&self) -> Result<(u8, Bytes), StateDiffError> {
+    pub fn encode(&self, address: &Address) -> Result<Vec<u8>, StateDiffError> {
         if self.bytecode.is_some() && self.bytecode_hash.is_some() {
             return Err(StateDiffError::BytecodeAndBytecodeHashSet);
         }
@@ -351,7 +349,12 @@ impl AccountStateDiff {
             return Err(StateDiffError::EmptyAccountDiff);
         }
 
-        Ok((r#type, Bytes::from(encoded)))
+        let mut result = Vec::with_capacity(1 + address.0.len() + encoded.len());
+        result.extend(r#type.to_be_bytes());
+        result.extend(address.0);
+        result.extend(encoded);
+
+        Ok(result)
     }
 
     /// Returns a tuple of the number of bytes read, the address of the account
