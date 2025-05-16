@@ -53,7 +53,6 @@ ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain
 ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics-l2.overrides.yaml
 CI_ETHREX_WORKDIR := /usr/local/bin
 
-ethrex_L2_CONFIGS_PATH=$(shell pwd)/configs
 ethrex_L2_CONTRACTS_PATH=./contracts
 L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
@@ -170,13 +169,16 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
+PROVER_SRC_FILES := $(shell find prover/src -type f)
+
 init-prover: ../../target/release/ethrex_prover ## 🚀 Initializes the Prover
-	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
 	../../target/release/ethrex_prover
 
-build-prover: ../../target/release/ethrex_prover
+build-prover:
+	rm -f ../../target/release/ethrex_prover
+	$(MAKE) ../../target/release/ethrex_prover
 
-../../target/release/ethrex_prover:
+../../target/release/ethrex_prover: $(PROVER_SRC_FILES)
 	@if [ -z "$$PROVER" ]; then \
 		echo "Error: ProverType (PROVER) is missing. Running in exec mode."; \
 		echo "Please provide it as an argument:"; \
@@ -190,7 +192,6 @@ build-prover: ../../target/release/ethrex_prover
 		GPU=",gpu"; \
 	fi; \
 
-	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
 	RUSTFLAGS='-C target-cpu=native' \
 	cargo build --release --features "$$PROVER$$GPU,l2" \
 	--manifest-path ./prover/Cargo.toml  \

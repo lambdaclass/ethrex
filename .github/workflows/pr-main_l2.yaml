@@ -123,7 +123,7 @@ jobs:
         run: |
           cargo test l2 --no-run --release
 
-      - name: Deploy L1 Contracts
+      - name: Start L1 & Deploy contracts
         run: |
           cd crates/l2
           touch .env
@@ -188,11 +188,11 @@ jobs:
           sudo add-apt-repository ppa:ethereum/ethereum
           sudo apt-get update && sudo apt-get -y install solc
 
-      - name: Deploy L1 Contracts
+      - name: Start L1 & Deploy contracts
         run: |
           cd crates/l2
           touch .env
-          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up --detach contract_deployer
+          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Run tests
         run: |
