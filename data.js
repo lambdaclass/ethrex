@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747435447674,
+  "lastUpdate": 1747438069466,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7735,6 +7735,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211851230370,
             "range": "± 466345296",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "56402156+fkrause98@users.noreply.github.com",
+            "name": "Francisco Krause Arnim",
+            "username": "fkrause98"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "437a4eea001e763280cd25aae6bdf862a0038c92",
+          "message": "fix(core): restore fixed genesis file for load test (#2828)\n\n**Motivation**\n\nSome changes (probably #2713) undid the fixed changes for the load test\ngenesis file,\nthis PR restores it.",
+          "timestamp": "2025-05-16T22:33:30Z",
+          "tree_id": "0bff90767f240894bed19e509b5763687cbd32c4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/437a4eea001e763280cd25aae6bdf862a0038c92"
+        },
+        "date": 1747438067197,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211152125175,
+            "range": "± 672305743",
             "unit": "ns/iter"
           }
         ]
