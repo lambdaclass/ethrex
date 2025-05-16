@@ -1,10 +1,12 @@
-use std::{
-    env,
+use std::{ 
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
 };
+
+#[cfg(feature = "sync-test")]
+use std::env;  
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
