@@ -280,13 +280,10 @@ async fn deploy_contracts(
             ))?;
 
     let tdx_verifier_address = if opts.tdx_deploy_verifier {
-        let mut spinner = Spinner::new(deploy_frames, "Deploying TDXerifier", Color::Cyan);
+        info!("Deploying TDXVerifier (if tdx_deploy_verifier is true)");
         let tdx_verifier_address = deploy_tdx_contracts(opts)?;
 
-        spinner.success(&format!(
-            "TDXVerifier:\n\tDeployed at address {}",
-            format!("{tdx_verifier_address:#x}").bright_green()
-        ));
+        info!(address = %format!("{tdx_verifier_address:#x}"), "TDXVerifier deployed");
         tdx_verifier_address
     } else {
         opts.tdx_verifier_address
@@ -303,7 +300,7 @@ async fn deploy_contracts(
         sp1_verifier_address = ?sp1_verifier_address,
         pico_verifier_address = ?pico_verifier_address,
         risc0_verifier_address = ?risc0_verifier_address,
-        tdx_verifier_address = ?tdx_verifier_address
+        tdx_verifier_address = ?tdx_verifier_address,
         "Contracts deployed"
     );
     Ok((
