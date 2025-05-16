@@ -23,10 +23,7 @@ use tracing::{debug, error};
 use crate::{
     sequencer::{
         errors::BlockProducerError,
-        state_diff::{
-            AccountStateDiff, L2_DEPOSIT_SIZE, L2_WITHDRAWAL_SIZE, LAST_HEADER_FIELDS_SIZE,
-            TX_STATE_DIFF_SIZE,
-        },
+        state_diff::{AccountStateDiff, DepositLog, WithdrawalLog, SIMPLE_TX_STATE_DIFF_SIZE},
     },
     utils::helpers::{is_deposit_l2, is_withdrawal_l2},
 };
@@ -74,8 +71,13 @@ pub async fn fill_transactions(
     context: &mut PayloadBuildContext,
     store: &Store,
 ) -> Result<(), BlockProducerError> {
+    // Maybe we can cache this to not calculate it every time
+    let header_encoded_len = context.payload.header.encode_for_state_diff().len();
+    let withdrawals_log_len = WithdrawalLog::default().encode().len();
+    let deposits_log_len = DepositLog::default().encode().len();
+
     // version (u8) + header fields (struct) + withdrawals_len (u16) + deposits_len (u16) + accounts_diffs_len (u16)
-    let mut size_without_accounts = 1 + LAST_HEADER_FIELDS_SIZE + 2 + 2 + 2;
+    let mut size_without_accounts = 1 + header_encoded_len + 2 + 2 + 2;
     let mut size_accounts_diffs = 0;
     let mut actual_account_diffs = HashMap::new();
 
@@ -99,7 +101,9 @@ pub async fn fill_transactions(
         };
 
         // Check if we have enough space for the StateDiff to run more transactions
-        if size_without_accounts + size_accounts_diffs + TX_STATE_DIFF_SIZE > SAFE_BYTES_PER_BLOB {
+        if size_without_accounts + size_accounts_diffs + SIMPLE_TX_STATE_DIFF_SIZE
+            > SAFE_BYTES_PER_BLOB
+        {
             error!("No more StateDiff space to run transactions");
             break;
         };
@@ -187,10 +191,10 @@ pub async fn fill_transactions(
         }
 
         if is_deposit_l2(&head_tx) {
-            tx_state_diff_size += L2_DEPOSIT_SIZE;
+            tx_state_diff_size += deposits_log_len;
         }
         if is_withdrawal_l2(&head_tx.clone().into(), &receipt)? {
-            tx_state_diff_size += L2_WITHDRAWAL_SIZE;
+            tx_state_diff_size += withdrawals_log_len;
         }
 
         if size_without_accounts + tx_state_diff_size + new_accounts_diff_size > SAFE_BYTES_PER_BLOB

@@ -24,7 +24,7 @@ pub const L2_DEPOSIT_SIZE: usize = 52;
 
 // State diff size for a simple transfer.
 // Two `AccountUpdates` with new_balance, one of which also has nonce_diff.
-pub const TX_STATE_DIFF_SIZE: usize = 116;
+pub const SIMPLE_TX_STATE_DIFF_SIZE: usize = 116;
 
 #[derive(Clone, Debug)]
 pub struct AccountStateDiff {
@@ -44,7 +44,7 @@ pub enum AccountStateDiffType {
     BytecodeHash = 16,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct WithdrawalLog {
     pub address: Address,
     pub amount: U256,
@@ -61,7 +61,7 @@ impl WithdrawalLog {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct DepositLog {
     pub address: Address,
     pub amount: U256,
