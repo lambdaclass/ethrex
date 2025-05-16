@@ -123,14 +123,8 @@ impl StateDiff {
         encoded.push(self.version);
 
         // Last header fields
-        encoded.extend(self.last_header.transactions_root.0);
-        encoded.extend(self.last_header.receipts_root.0);
-        encoded.extend(self.last_header.parent_hash.0);
-        encoded.extend(self.last_header.gas_limit.to_be_bytes());
-        encoded.extend(self.last_header.gas_used.to_be_bytes());
-        encoded.extend(self.last_header.timestamp.to_be_bytes());
-        encoded.extend(self.last_header.number.to_be_bytes());
-        encoded.extend(self.last_header.base_fee_per_gas.unwrap_or(0).to_be_bytes());
+        let header_encoded = self.last_header.encode_for_state_diff();
+        encoded.extend(header_encoded);
 
         let modified_accounts_len: u16 = self
             .modified_accounts
