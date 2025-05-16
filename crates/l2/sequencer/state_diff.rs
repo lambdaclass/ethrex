@@ -141,7 +141,6 @@ impl StateDiff {
         let mut encoded: Vec<u8> = Vec::new();
         encoded.push(self.version);
 
-        // Last header fields
         let header_encoded = self.last_header.encode_for_state_diff();
         encoded.extend(header_encoded);
 

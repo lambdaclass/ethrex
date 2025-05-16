@@ -135,9 +135,7 @@ async fn claim_erc20_balances(
                     contract,
                     address,
                     claim_balance_calldata.into(),
-                    Overrides {
-                        ..Default::default()
-                    },
+                    Overrides::default(),
                 )
                 .await
                 .unwrap();

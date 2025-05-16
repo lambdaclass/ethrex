@@ -18,7 +18,7 @@ use ethrex_storage::Store;
 use ethrex_vm::backends::CallFrameBackup;
 use std::ops::Div;
 use tokio::time::Instant;
-use tracing::{debug, error};
+use tracing::debug;
 
 use crate::{
     sequencer::{
@@ -79,7 +79,7 @@ pub async fn fill_transactions(
     // version (u8) + header fields (struct) + withdrawals_len (u16) + deposits_len (u16) + accounts_diffs_len (u16)
     let mut size_without_accounts = 1 + header_encoded_len + 2 + 2 + 2;
     let mut size_accounts_diffs = 0;
-    let mut actual_account_diffs = HashMap::new();
+    let mut account_diffs = HashMap::new();
 
     let chain_config = store.get_chain_config()?;
     let max_blob_number_per_block: usize = chain_config
@@ -104,7 +104,7 @@ pub async fn fill_transactions(
         if size_without_accounts + size_accounts_diffs + SIMPLE_TX_STATE_DIFF_SIZE
             > SAFE_BYTES_PER_BLOB
         {
-            error!("No more StateDiff space to run transactions");
+            debug!("No more StateDiff space to run transactions");
             break;
         };
         if !blob_txs.is_empty() && context.blobs_bundle.blobs.len() >= max_blob_number_per_block {
@@ -177,8 +177,8 @@ pub async fn fill_transactions(
             }
         };
 
-        let account_diffs_actual_tx = get_tx_diffs(&call_frame_backup, context)?;
-        let merged_diffs = merge_diffs(&actual_account_diffs, account_diffs_actual_tx);
+        let account_diffs_in_tx = get_tx_diffs(&call_frame_backup, context)?;
+        let merged_diffs = merge_diffs(&account_diffs, account_diffs_in_tx);
 
         let mut tx_state_diff_size = 0;
         let mut new_accounts_diff_size = 0;
@@ -186,7 +186,7 @@ pub async fn fill_transactions(
         for (address, diff) in merged_diffs.iter() {
             let encoded = diff
                 .encode(address)
-                .map_err(|_| BlockProducerError::Custom("CHANGE ERROR diff encode".to_owned()))?;
+                .map_err(BlockProducerError::FailedToEncodeAccountStateDiff)?;
             new_accounts_diff_size += encoded.len();
         }
 
@@ -199,13 +199,13 @@ pub async fn fill_transactions(
 
         if size_without_accounts + tx_state_diff_size + new_accounts_diff_size > SAFE_BYTES_PER_BLOB
         {
-            error!(
-                "No more StateDiff space to run transactions. Skipping transaction: {:?}",
+            debug!(
+                "No more StateDiff space to run this transactions. Skipping transaction: {:?}",
                 tx_hash
             );
             txs.pop();
 
-            // REVERT DIFF IN VM
+            // This transaction is too big, we need to restore the state
             context.vm.restore_cache_state(call_frame_backup)?;
 
             continue;
@@ -219,7 +219,7 @@ pub async fn fill_transactions(
         size_without_accounts += tx_state_diff_size;
         size_accounts_diffs = new_accounts_diff_size;
         // Include the new accounts diffs
-        actual_account_diffs = merged_diffs;
+        account_diffs = merged_diffs;
         // Add transaction to block
         debug!("Adding transaction: {} to payload", tx_hash);
         context.payload.body.transactions.push(head_tx.into());
@@ -234,11 +234,12 @@ fn get_tx_diffs(
     context: &PayloadBuildContext,
 ) -> Result<HashMap<Address, AccountStateDiff>, BlockProducerError> {
     let mut modified_accounts = HashMap::new();
-
-    // get diffs
-    // CHECK if indeed only the written accounts are backed up in this callframe backup
     match &context.vm {
-        ethrex_vm::Evm::REVM { .. } => todo!(),
+        ethrex_vm::Evm::REVM { .. } => {
+            return Err(BlockProducerError::EvmError(
+                ethrex_vm::EvmError::InvalidEVM("REVM not supported for L2".to_string()),
+            ))
+        }
         ethrex_vm::Evm::LEVM { db } => {
             // First we add the account info
             for (address, original_account) in call_frame_backup.original_accounts_info.iter() {
@@ -285,7 +286,6 @@ fn get_tx_diffs(
                     .ok_or(BlockProducerError::StorageDataIsNone)?;
 
                 let mut added_storage = HashMap::new();
-                // CHECK: if new slots are created, from zero to non-zero, are they here?
                 for key in original_storage_slots.keys() {
                     added_storage.insert(
                         *key,
@@ -323,11 +323,8 @@ fn merge_diffs(
         if let Some(existing_diff) = merged_diffs.get_mut(&address) {
             existing_diff.new_balance = diff.new_balance;
             existing_diff.nonce_diff = diff.nonce_diff;
-            // merge storage
-            for (k, v) in diff.storage.iter() {
-                existing_diff.storage.insert(*k, *v);
-            }
-            // Do we need to stay with the original bytecode if the new one is empty?
+            // we need to overwrite the storage with the new values
+            existing_diff.storage.extend(diff.storage);
             existing_diff.bytecode = diff.bytecode;
             existing_diff.bytecode_hash = diff.bytecode_hash;
         } else {

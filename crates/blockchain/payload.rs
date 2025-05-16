@@ -466,7 +466,9 @@ impl Blockchain {
         context: &mut PayloadBuildContext,
     ) -> Result<(Receipt, CallFrameBackup), ChainError> {
         match **head {
-            Transaction::EIP4844Transaction(_) => todo!(),
+            Transaction::EIP4844Transaction(_) => Err(ChainError::Custom(
+                "L2 blob transactions not supported".to_string(),
+            )),
             _ => self.apply_plain_transaction_l2(head, context),
         }
     }
