@@ -1,4 +1,4 @@
-use std::{fs::File, io::Write};
+use std::fs::File;
 
 use clap::Parser;
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
@@ -9,12 +9,6 @@ use ethrex_prover_bench::{
 use ethrex_prover_lib::execute;
 use serde_json::json;
 use zkvm_interface::io::ProgramInput;
-
-#[cfg(not(any(feature = "sp1", feature = "risc0", feature = "pico")))]
-compile_error!(
-    "Choose prover backends (sp1, risc0, pico).
-- Pass a feature flag to cargo (--feature or -F) with the desired backed. e.g: cargo build --workspace --no-default-features -F sp1. NOTE: Don't forget to pass --no-default-features, if not, the default prover will be used instead."
-);
 
 #[derive(Parser, Debug)]
 struct Args {
