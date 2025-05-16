@@ -190,7 +190,7 @@ pub struct WatcherOptions {
     )]
     pub l2_proposer_private_key: SecretKey,
     #[arg(
-        long = "watcher-block-delay",
+        long = "watcher.block-delay",
         default_value_t = 0,
         value_name = "UINT64",
         env = "ETHREX_WATCHER_BLOCK_DELAY",
