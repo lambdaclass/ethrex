@@ -167,13 +167,13 @@ impl LEVM {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.cache.iter() {
             // In case the account is not in immutable_cache (rare) we search for it in the actual database.
-            let initial_state_account =
-                db.immutable_cache.get(address).cloned().unwrap_or_else(|| {
-                    db.store
-                        .get_account(*address)
-                        .map_err(|e| EvmError::Custom(e.to_string()))
-                        .expect("Failed to get account from database")
-                });
+            let initial_state_account = if let Some(account) = db.immutable_cache.get(address) {
+                account
+            } else {
+                &db.store.get_account(*address).map_err(|e| {
+                    EvmError::Custom(format!("Failed to get account from database: {}", e))
+                })?
+            };
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -197,15 +197,14 @@ impl LEVM {
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = HashMap::new();
 
-            for (key, &new_value) in &new_state_account.storage {
+            for (key, new_value) in &new_state_account.storage {
                 let old_value = initial_state_account
                     .storage
                     .get(key)
-                    .copied()
-                    .expect("Failed to get old value from initial_state_account.storage");
+                    .unwrap_or_else(|| panic!("Failed to get old value from account's initial storage for address: {address}"));
 
                 if new_value != old_value {
-                    added_storage.insert(*key, new_value);
+                    added_storage.insert(*key, *new_value);
                     storage_updated = true;
                 }
             }
@@ -216,15 +215,14 @@ impl LEVM {
                 None
             };
 
-            let mut removed = !initial_state_account.is_empty() && new_state_account.is_empty();
-
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-            // Note: An account can be empty but still exist in the trie (if that's the case we remove it)
-            if new_state_account.is_empty() {
-                removed = true;
+            let removed = new_state_account.is_empty();
 
-                // https://eips.ethereum.org/EIPS/eip-161
-                // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
+            // https://eips.ethereum.org/EIPS/eip-161
+            // If account is now empty and it didn't exist in the trie before, no need to make changes.
+            // This check is necessary just in case we keep empty accounts in the trie. If we're sure we don't, this code can be removed.
+            // `initial_state_account.is_empty()` check can be removed but I added it so the likelihood of hitting the db is low.
+            if removed && initial_state_account.is_empty() {
                 if !db.store.account_exists(*address) {
                     continue;
                 }
