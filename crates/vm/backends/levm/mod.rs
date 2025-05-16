@@ -17,9 +17,11 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
+use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
+use ethrex_levm::utils::restore_cache_state;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
@@ -142,6 +144,72 @@ impl LEVM {
 
         vm.execute().map_err(VMError::into)
     }
+
+    pub fn execute_tx_l2(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transactions recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+    ) -> Result<(ExecutionReport, CallFrameBackup), EvmError> {
+        let chain_config = db.store.get_chain_config();
+        let gas_price: U256 = tx
+            .effective_gas_price(block_header.base_fee_per_gas)
+            .ok_or(VMError::TxValidation(
+                TxValidationError::InsufficientMaxFeePerGas,
+            ))?
+            .into();
+
+        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        let env = Environment {
+            origin: tx_sender,
+            gas_limit: tx.gas_limit(),
+            config,
+            block_number: block_header.number.into(),
+            coinbase: block_header.coinbase,
+            timestamp: block_header.timestamp.into(),
+            prev_randao: Some(block_header.prev_randao),
+            chain_id: chain_config.chain_id.into(),
+            base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
+            gas_price,
+            block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
+            block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+            tx_blob_hashes: tx.blob_versioned_hashes(),
+            tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
+            tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
+            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
+            tx_nonce: tx.nonce(),
+            block_gas_limit: block_header.gas_limit,
+            difficulty: block_header.difficulty,
+            is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
+        };
+
+        let mut vm = VM::new(env, db, tx);
+
+        let report_result = vm.execute().map_err(EvmError::from)?;
+
+        // Here we differ from the execute_tx function from the L1.
+        // We need to check if the transaction exceeded the blob size limit.
+        // If it did, we need to revert the state changes made by the transaction and return the error.
+        let call_frame_backup = vm
+            .call_frames
+            .pop()
+            .ok_or(VMError::OutOfBounds)?
+            .call_frame_backup;
+
+        Ok((report_result, call_frame_backup))
+    }
+
+    pub fn restore_cache_state(
+        db: &mut GeneralizedDatabase,
+        call_frame_backup: CallFrameBackup,
+    ) -> Result<(), EvmError> {
+        restore_cache_state(db, call_frame_backup).map_err(VMError::from)?;
+        Ok(())
+    }
+
     pub fn simulate_tx_from_generic(
         // The transaction to execute.
         tx: &GenericTransaction,
@@ -225,6 +293,80 @@ impl LEVM {
 
             let account_update = AccountUpdate {
                 address,
+                removed,
+                info,
+                code,
+                added_storage,
+            };
+
+            account_updates.push(account_update);
+        }
+        Ok(account_updates)
+    }
+
+    pub fn get_state_transitions_no_drain(
+        db: &mut GeneralizedDatabase,
+    ) -> Result<Vec<AccountUpdate>, EvmError> {
+        let mut account_updates: Vec<AccountUpdate> = vec![];
+        for (address, new_state_account) in db.cache.iter() {
+            let initial_state_account = db.store.get_account(*address)?;
+            let account_existed = db.store.account_exists(*address);
+
+            let mut acc_info_updated = false;
+            let mut storage_updated = false;
+
+            // 1. Account Info has been updated if balance, nonce or bytecode changed.
+            if initial_state_account.info.balance != new_state_account.info.balance {
+                acc_info_updated = true;
+            }
+
+            if initial_state_account.info.nonce != new_state_account.info.nonce {
+                acc_info_updated = true;
+            }
+
+            let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
+                acc_info_updated = true;
+                Some(new_state_account.code.clone())
+            } else {
+                None
+            };
+
+            // 2. Storage has been updated if the current value is different from the one before execution.
+            let mut added_storage = HashMap::new();
+            for (key, storage_slot) in &new_state_account.storage {
+                let storage_before_block = db.store.get_storage_value(*address, *key)?;
+                if *storage_slot != storage_before_block {
+                    added_storage.insert(*key, *storage_slot);
+                    storage_updated = true;
+                }
+            }
+
+            let info = if acc_info_updated {
+                Some(new_state_account.info.clone())
+            } else {
+                None
+            };
+
+            let mut removed = !initial_state_account.is_empty() && new_state_account.is_empty();
+
+            // https://eips.ethereum.org/EIPS/eip-161
+            // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
+            if !account_existed && new_state_account.is_empty() {
+                continue;
+            }
+            // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
+            // Note: An account can be empty but still exist in the trie (if that's the case we remove it)
+            if new_state_account.is_empty() {
+                removed = true;
+            }
+
+            if !removed && !acc_info_updated && !storage_updated {
+                // Account hasn't been updated
+                continue;
+            }
+
+            let account_update = AccountUpdate {
+                address: *address,
                 removed,
                 info,
                 code,

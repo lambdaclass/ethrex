@@ -11,6 +11,7 @@ use ethrex_common::types::{
     AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
 };
 use ethrex_common::{Address, H256};
+pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::db::CacheDB;
 use ethrex_storage::Store;
@@ -156,6 +157,47 @@ impl Evm {
         }
     }
 
+    pub fn execute_tx_l2(
+        &mut self,
+        tx: &Transaction,
+        block_header: &BlockHeader,
+        remaining_gas: &mut u64,
+        sender: Address,
+    ) -> Result<(Receipt, u64, CallFrameBackup), EvmError> {
+        match self {
+            Evm::REVM { .. } => Err(EvmError::InvalidEVM(
+                "L2 transactions are not supported in REVM".to_string(),
+            )),
+            Evm::LEVM { db } => {
+                let (execution_report, call_frame_backup) =
+                    LEVM::execute_tx_l2(tx, sender, block_header, db)?;
+
+                *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
+
+                let receipt = Receipt::new(
+                    tx.tx_type(),
+                    execution_report.is_success(),
+                    block_header.gas_limit - *remaining_gas,
+                    execution_report.logs.clone(),
+                );
+
+                Ok((receipt, execution_report.gas_used, call_frame_backup))
+            }
+        }
+    }
+
+    pub fn restore_cache_state(
+        &mut self,
+        call_frame_backup: CallFrameBackup,
+    ) -> Result<(), EvmError> {
+        match self {
+            Evm::REVM { .. } => Err(EvmError::InvalidEVM(
+                "Cache state is not supported in REVM".to_string(),
+            )),
+            Evm::LEVM { db } => LEVM::restore_cache_state(db, call_frame_backup),
+        }
+    }
+
     /// Wraps [REVM::beacon_root_contract_call], [REVM::process_block_hash_history]
     /// and [LEVM::beacon_root_contract_call], [LEVM::process_block_hash_history].
     /// This function is used to run/apply all the system contracts to the state.
@@ -203,6 +245,13 @@ impl Evm {
         match self {
             Evm::REVM { state } => Ok(REVM::get_state_transitions(state)),
             Evm::LEVM { db } => LEVM::get_state_transitions(db),
+        }
+    }
+
+    pub fn get_state_transitions_no_drain(&mut self) -> Result<Vec<AccountUpdate>, EvmError> {
+        match self {
+            Evm::REVM { .. } => todo!(),
+            Evm::LEVM { db } => LEVM::get_state_transitions_no_drain(db),
         }
     }
 

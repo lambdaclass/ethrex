@@ -1,3 +1,7 @@
+#[cfg(feature = "l2")]
+use crate::call_frame::CallFrameBackup;
+#[cfg(feature = "l2")]
+use crate::utils::merge_callframe_backup;
 use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
@@ -95,6 +99,11 @@ impl<'a> VM<'a> {
             return Err(e);
         }
 
+        // Here we need to backup the callframe because in the L2 we want to revert a transaction if it exceeds blob size
+        // even if the transaction succeeds.
+        #[cfg(feature = "l2")]
+        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
+
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame_mut()?.call_frame_backup.clear();
@@ -111,6 +120,15 @@ impl<'a> VM<'a> {
         let mut report = self.run_execution()?;
 
         self.finalize_execution(&mut report)?;
+
+        // We want to restore to the initial state, this includes reverting the changes made by the prepare execution
+        // and the changes made by the execution itself.
+        #[cfg(feature = "l2")]
+        {
+            let current_backup: &mut CallFrameBackup =
+                &mut self.current_call_frame_mut()?.call_frame_backup;
+            merge_callframe_backup(current_backup, callframe_backup);
+        }
         Ok(report)
     }
 
