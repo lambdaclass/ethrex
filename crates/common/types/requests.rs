@@ -173,7 +173,7 @@ impl Deposit {
 
         // Compare two numbers with different byte count without padding
         let is_eq = |bytes: [u8; 32], u: usize| -> bool {
-            bytes[..16] == [0; 16] && bytes[16..] == u.to_le_bytes()
+            bytes[..24] == [0; 24] && bytes[24..] == u.to_le_bytes()
         };
 
         // Validate Offsets & Sizes
