@@ -534,9 +534,9 @@ impl Store {
             .snapshots
             .get_storage_at_hash(block_hash, address, storage_key)
         {
-            Ok(Some(value)) => return Ok(value),
-            // Not found in snapshots
-            Ok(None) => {}
+            Ok(Some(Some(value))) => return Ok(Some(value)),
+            // It may be none, but until the disk layer is fixed we can't trust it.
+            Ok(_) => {}
             // snapshot errors are non-fatal
             Err(snapshot_error) => {
                 debug!("failed to fetch snapshot (storage): {}", snapshot_error);
