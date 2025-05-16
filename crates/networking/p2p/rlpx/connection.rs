@@ -6,6 +6,7 @@ use crate::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts},
+            status::StatusMessage,
             transactions::{GetPooledTransactions, Transactions},
         },
         frame::RLPxCodec,
@@ -447,7 +448,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 backend::validate_status(
                     msg_data,
                     &self.storage,
-                    self.negotiated_eth_version as u32,
+                    &Capability::eth(self.negotiated_eth_version),
                 )
                 .await?
             }
@@ -568,7 +569,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             .contains(&(Capability::eth(self.negotiated_eth_version)))
         {
             let status =
-                backend::get_status(&self.storage, self.negotiated_eth_version as u32).await?;
+                StatusMessage::new(&self.storage, &Capability::eth(self.negotiated_eth_version))
+                    .await?;
+
             log_peer_debug(&self.node, "Sending status");
             self.send(Message::Status(status)).await?;
             // The next immediate message in the ETH protocol is the
@@ -584,7 +587,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     backend::validate_status(
                         msg_data,
                         &self.storage,
-                        self.negotiated_eth_version as u32,
+                        &Capability::eth(self.negotiated_eth_version),
                     )
                     .await?
                 }
