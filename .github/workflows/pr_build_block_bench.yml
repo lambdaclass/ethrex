@@ -1,0 +1,29 @@
+name: '"Build block" benchmark'
+
+on:
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  build-ethrex-trie:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Benchmarks
+        uses: boa-dev/criterion-compare-action@v3
+        with:
+          cwd: "cmd/ethrex/bench"
+          benchName: "build_block"
+          branchName: ${{ github.base_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
