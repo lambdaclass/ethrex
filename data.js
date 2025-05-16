@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747431148721,
+  "lastUpdate": 1747433198865,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7675,6 +7675,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 212766253430,
             "range": "± 308242943",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e965019cf45c637aa1786a6c0fefd6dd1a214b78",
+          "message": "feat(l2): add flag to delay the watcher until a trusted block (#2816)\n\n**Motivation**\n\nL1 reorgs can left the L2 in a bad state if a reorged block deposits'\nare processed.\n\n**Description**\n\n- Add the flag `watcher_block_delay` with default value 0 that\nrepresents the amount of blocks of delay the l1 watcher has.\n- If the latest block in l1 is 100 and we set this delay to 10 l1\nwatcher will look for deposits until block 90\n- Add logs and return empty from the function if \n   - We are too close to genesis (current_block - block_delay < 0)\n- We changed the block delay and now the last block verified by the\ncontract is no longer a trusted block\n\n\nCloses #2187\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: Manuel Iñaki Bilbao <manuel.bilbao@lambdaclass.com>",
+          "timestamp": "2025-05-16T21:11:17Z",
+          "tree_id": "217e4cece58c4a4a0debb27e9747cc98574d950c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e965019cf45c637aa1786a6c0fefd6dd1a214b78"
+        },
+        "date": 1747433196151,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 208995667996,
+            "range": "± 1043990459",
             "unit": "ns/iter"
           }
         ]
