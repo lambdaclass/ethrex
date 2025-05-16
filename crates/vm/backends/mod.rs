@@ -186,6 +186,19 @@ impl Evm {
         }
     }
 
+    pub fn restore_cache_state(
+        &mut self,
+        tx: &Transaction,
+        call_frame_backup: CallFrameBackup,
+    ) -> Result<(), EvmError> {
+        match self {
+            Evm::REVM { .. } => Err(EvmError::InvalidEVM(
+                "Cache state is not supported in REVM".to_string(),
+            )),
+            Evm::LEVM { db } => LEVM::restore_cache_state(db, tx, call_frame_backup),
+        }
+    }
+
     /// Wraps [REVM::beacon_root_contract_call], [REVM::process_block_hash_history]
     /// and [LEVM::beacon_root_contract_call], [LEVM::process_block_hash_history].
     /// This function is used to run/apply all the system contracts to the state.

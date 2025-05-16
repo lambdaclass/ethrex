@@ -200,6 +200,19 @@ impl LEVM {
         Ok((report_result, call_frame_backup))
     }
 
+    pub fn restore_cache_state(
+        db: &mut GeneralizedDatabase,
+        tx: &Transaction,
+        call_frame_backup: CallFrameBackup,
+    ) -> Result<(), EvmError> {
+        let env = Environment::default();
+
+        let mut vm = VM::new(env, db, tx)?;
+        vm.restore_cache_state(call_frame_backup)
+            .map_err(VMError::from)?;
+        Ok(())
+    }
+
     pub fn simulate_tx_from_generic(
         // The transaction to execute.
         tx: &GenericTransaction,
