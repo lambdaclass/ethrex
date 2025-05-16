@@ -20,6 +20,7 @@ use ethrex_common::{
 use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
+use ethrex_levm::utils::restore_cache_state;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
@@ -204,7 +205,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         call_frame_backup: CallFrameBackup,
     ) -> Result<(), EvmError> {
-        VM::restore_cache_state(db, &call_frame_backup).map_err(VMError::from)?;
+        restore_cache_state(db, call_frame_backup).map_err(VMError::from)?;
         Ok(())
     }
 

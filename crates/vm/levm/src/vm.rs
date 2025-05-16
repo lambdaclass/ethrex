@@ -1,11 +1,14 @@
+#[cfg(feature = "l2")]
+use crate::call_frame::CallFrameBackup;
+#[cfg(feature = "l2")]
+use crate::utils::merge_callframe_backup;
 use crate::{
-    call_frame::{CallFrame, CallFrameBackup},
+    call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
     errors::{ExecutionReport, OpcodeResult, VMError},
     hooks::hook::Hook,
     precompiles::execute_precompile,
-    utils::merge_callframe_backup,
     TransientStorage,
 };
 use ethrex_common::{
@@ -92,8 +95,7 @@ impl<'a> VM<'a> {
 
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
-            let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
-            Self::restore_cache_state(self.db, &callframe_backup)?;
+            self.restore_cache_state()?;
             return Err(e);
         }
 
@@ -177,8 +179,7 @@ impl<'a> VM<'a> {
     }
 
     pub fn restore_state(&mut self, backup: Substate) -> Result<(), VMError> {
-        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
-        Self::restore_cache_state(self.db, &callframe_backup)?;
+        self.restore_cache_state()?;
         self.substate = backup;
         Ok(())
     }
