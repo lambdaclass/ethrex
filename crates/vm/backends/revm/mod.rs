@@ -12,6 +12,7 @@ use crate::helpers::spec_id;
 use db::EvmState;
 use ethrex_common::types::AccountInfo;
 use ethrex_common::{BigEndianHash, H256, U256};
+use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 
 use revm::db::states::bundle_state::BundleRetention;
@@ -681,13 +682,15 @@ pub(crate) fn generic_system_contract_revm(
     let tx_env = TxEnv {
         caller: RevmAddress::from_slice(system_address.as_bytes()),
         transact_to: RevmTxKind::Call(RevmAddress::from_slice(contract_address.as_bytes())),
-        gas_limit: 30_000_000,
+        // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
+        // So we add the base cost that will be taken in the execution.
+        gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
         data: calldata,
         ..Default::default()
     };
     let mut block_env = block_env(block_header, spec_id);
     block_env.basefee = RevmU256::ZERO;
-    block_env.gas_limit = RevmU256::from(30_000_000);
+    block_env.gas_limit = RevmU256::from(u64::MAX); // System calls, have no constraint on the block's gas limit.
 
     match state {
         EvmState::Store(db) => {
