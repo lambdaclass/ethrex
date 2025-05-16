@@ -46,11 +46,11 @@ jobs:
 
       - name: Show test summary -- full
         run: |
-          cd crates/vm/levm && awk '/Summary: /,0' test_result_pr.txt
+          cd cmd/ef_tests/state && awk '/Summary: /,0' test_result_pr.txt
 
       - name: Show test summary -- short
         run: |
-          bash .github/scripts/parse_test_result.sh crates/vm/levm/test_result_pr.txt | tee crates/vm/levm/test_result_pr_short.txt
+          bash .github/scripts/parse_test_result.sh cmd/ef_tests/state/test_result_pr.txt | tee crates/vm/levm/test_result_pr_short.txt
           echo "PR's test results:"
           cat crates/vm/levm/test_result_pr_short.txt
 
