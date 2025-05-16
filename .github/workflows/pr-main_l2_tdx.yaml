@@ -49,6 +49,11 @@ jobs:
         with:
           toolchain: 1.85.0
 
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
         with:
