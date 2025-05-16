@@ -188,14 +188,13 @@ impl Evm {
 
     pub fn restore_cache_state(
         &mut self,
-        tx: &Transaction,
         call_frame_backup: CallFrameBackup,
     ) -> Result<(), EvmError> {
         match self {
             Evm::REVM { .. } => Err(EvmError::InvalidEVM(
                 "Cache state is not supported in REVM".to_string(),
             )),
-            Evm::LEVM { db } => LEVM::restore_cache_state(db, tx, call_frame_backup),
+            Evm::LEVM { db } => LEVM::restore_cache_state(db, call_frame_backup),
         }
     }
 

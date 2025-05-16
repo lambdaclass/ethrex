@@ -92,7 +92,8 @@ impl<'a> VM<'a> {
 
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
-            self.restore_cache_state()?;
+            let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
+            Self::restore_cache_state(self.db, &callframe_backup)?;
             return Err(e);
         }
 
@@ -176,7 +177,8 @@ impl<'a> VM<'a> {
     }
 
     pub fn restore_state(&mut self, backup: Substate) -> Result<(), VMError> {
-        self.restore_cache_state()?;
+        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
+        Self::restore_cache_state(self.db, &callframe_backup)?;
         self.substate = backup;
         Ok(())
     }

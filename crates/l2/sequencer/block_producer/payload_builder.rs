@@ -204,9 +204,7 @@ pub async fn fill_transactions(
             txs.pop();
 
             // REVERT DIFF IN VM
-            context
-                .vm
-                .restore_cache_state(&head_tx, call_frame_backup)?;
+            context.vm.restore_cache_state(call_frame_backup)?;
 
             continue;
         }

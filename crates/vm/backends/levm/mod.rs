@@ -17,7 +17,7 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
-use ethrex_levm::call_frame::{CallFrame, CallFrameBackup};
+use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
 use ethrex_levm::EVMConfig;
@@ -202,18 +202,9 @@ impl LEVM {
 
     pub fn restore_cache_state(
         db: &mut GeneralizedDatabase,
-        tx: &Transaction,
         call_frame_backup: CallFrameBackup,
     ) -> Result<(), EvmError> {
-        let env = Environment::default();
-
-        let mut vm = VM::new(env, db, tx);
-        let call_frame = CallFrame {
-            call_frame_backup,
-            ..Default::default()
-        };
-        vm.call_frames.push(call_frame);
-        vm.restore_cache_state().map_err(VMError::from)?;
+        VM::restore_cache_state(db, &call_frame_backup).map_err(VMError::from)?;
         Ok(())
     }
 

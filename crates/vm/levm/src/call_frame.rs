@@ -1,6 +1,6 @@
 use crate::{
     constants::STACK_LIMIT,
-    db::cache,
+    db::{cache, gen_db::GeneralizedDatabase},
     errors::{InternalError, OutOfGasError, VMError},
     memory::Memory,
     opcodes::Opcode,
@@ -213,25 +213,27 @@ impl<'a> VM<'a> {
     }
 
     /// Restores the cache state to the state before changes made during a callframe.
-    pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
-        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
-        for (address, account) in callframe_backup.original_accounts_info {
-            if let Some(current_account) = cache::get_account_mut(&mut self.db.cache, &address) {
-                current_account.info = account.info;
-                current_account.code = account.code;
+    pub fn restore_cache_state(
+        db: &mut GeneralizedDatabase,
+        callframe_backup: &CallFrameBackup,
+    ) -> Result<(), VMError> {
+        for (address, account) in callframe_backup.original_accounts_info.iter() {
+            if let Some(current_account) = cache::get_account_mut(&mut db.cache, address) {
+                current_account.info = account.info.clone();
+                current_account.code = account.code.clone();
             }
         }
 
-        for (address, storage) in callframe_backup.original_account_storage_slots {
+        for (address, storage) in callframe_backup.original_account_storage_slots.iter() {
             // This call to `get_account_mut` should never return None, because we are looking up accounts
             // that had their storage modified, which means they should be in the cache. That's why
             // we return an internal error in case we haven't found it.
-            let account = cache::get_account_mut(&mut self.db.cache, &address).ok_or(
+            let account = cache::get_account_mut(&mut db.cache, address).ok_or(
                 VMError::Internal(crate::errors::InternalError::AccountNotFound),
             )?;
 
             for (key, value) in storage {
-                account.storage.insert(key, value);
+                account.storage.insert(*key, *value);
             }
         }
 
