@@ -54,6 +54,12 @@ pub async fn apply_fork_choice(
         return Err(InvalidForkChoice::Syncing);
     };
 
+    let body_res = store.get_block_body_by_hash(head_hash).await?;
+
+    let Some(_) = body_res else {
+        return Err(InvalidForkChoice::Syncing);
+    };
+
     let latest = store.get_latest_block_number().await?;
 
     // If the head block is an already present head ancestor, skip the update.
