@@ -5,7 +5,7 @@ use crate::rpc::{get_account, get_block, retry};
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountInfo, AccountState, Block, Fork, TxKind},
+    types::{AccountInfo, AccountState, Block, TxKind},
     Address, H256, U256,
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
@@ -60,7 +60,7 @@ impl RpcDB {
             TxKind::Call(to) => Some(to),
             TxKind::Create => None,
         });
-        let accessed_storage: Vec<_> = txs.iter().flat_map(|tx| tx.access_list()).collect();
+        let accessed_storage: Vec<_> = txs.iter().flat_map(|tx| tx.access_list().clone()).collect();
 
         // dedup accounts and concatenate accessed storage keys
         let mut accounts = HashMap::new();
@@ -237,14 +237,11 @@ impl RpcDB {
     pub fn to_exec_db(&self, block: &Block) -> Result<ethrex_vm::ProverDB, ProverDBError> {
         // TODO: Simplify this function and potentially merge with the implementation for
         // StoreWrapper.
-
         let chain_config = *CANCUN_CONFIG;
-        let fork = chain_config.fork(block.header.timestamp);
-
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()), CacheDB::new());
 
         // pre-execute and get all state changes
-        let result = LEVM::execute_block(block, &mut db).map_err(Box::new)?;
+        let _result = LEVM::execute_block(block, &mut db).map_err(Box::new)?;
         let execution_updates = LEVM::get_state_transitions(&mut db).map_err(Box::new)?;
 
         let index: Vec<(Address, Vec<H256>)> = self
@@ -254,15 +251,15 @@ impl RpcDB {
             .iter()
             .map(|(address, account)| match account {
                 Account::Existing {
-                    account_state,
+                    account_state: _,
                     storage,
-                    account_proof,
-                    storage_proofs,
-                    code,
+                    account_proof: _,
+                    storage_proofs: _,
+                    code: _,
                 } => (*address, storage.keys().cloned().collect()),
                 Account::NonExisting {
-                    account_proof,
-                    storage_proofs,
+                    account_proof: _,
+                    storage_proofs: _,
                 } => {
                     let address_account_update = execution_updates
                         .iter()
@@ -317,7 +314,6 @@ impl RpcDB {
             pub account_state: &'a AccountState,
             pub storage: &'a HashMap<H256, U256>,
             pub code: &'a Option<Bytes>,
-            pub storage_proofs: &'a HashMap<H256, Vec<NodeRLP>>,
         }
 
         let existing_accs = initial_accounts.iter().filter_map(|(address, account)| {
@@ -325,7 +321,6 @@ impl RpcDB {
                 account_state,
                 storage,
                 code,
-                storage_proofs,
                 ..
             } = account
             {
@@ -335,7 +330,6 @@ impl RpcDB {
                         account_state,
                         storage,
                         code,
-                        storage_proofs,
                     },
                 ))
             } else {

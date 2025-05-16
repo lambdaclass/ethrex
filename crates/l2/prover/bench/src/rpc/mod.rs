@@ -1,9 +1,7 @@
+use std::collections::HashMap;
 use std::time::Duration;
-use std::{collections::HashMap, future::Future};
 
 use again::{RetryPolicy, Task};
-use tokio::time::timeout;
-
 use bytes::Bytes;
 use ethrex_common::{
     types::{AccountState, Block, EMPTY_KECCACK_HASH},
