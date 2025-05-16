@@ -17,14 +17,16 @@ use std::collections::{HashMap, HashSet};
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::nibbles::Nibbles;
 pub use self::verify_range::verify_range;
-pub use self::{node::Node, node_hash::NodeHash};
+pub use self::{
+    node::{Node, NodeRef},
+    node_hash::NodeHash,
+};
 
 pub use self::error::TrieError;
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
 use lazy_static::lazy_static;
-use node::NodeRef;
 
 lazy_static! {
     // Hash value for an empty trie, equal to keccak(RLP_NULL)
