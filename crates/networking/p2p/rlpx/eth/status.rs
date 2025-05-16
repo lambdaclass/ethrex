@@ -1,4 +1,5 @@
 use super::eth68::status::StatusMessage68;
+use super::eth69::status::StatusMessage69;
 use crate::rlpx::message::RLPxMessage;
 use crate::rlpx::utils::snappy_decompress;
 use crate::rlpx::{error::RLPxError, p2p::Capability};
@@ -12,6 +13,7 @@ use ethrex_storage::Store;
 #[derive(Debug)]
 pub enum StatusMessage {
     StatusMessage68(StatusMessage68),
+    StatusMessage69(StatusMessage69),
 }
 
 impl RLPxMessage for StatusMessage {
@@ -19,6 +21,7 @@ impl RLPxMessage for StatusMessage {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         match self {
             StatusMessage::StatusMessage68(msg) => msg.encode(buf),
+            StatusMessage::StatusMessage69(msg) => msg.encode(buf),
         }
     }
 
@@ -29,6 +32,9 @@ impl RLPxMessage for StatusMessage {
 
         match eth_version {
             68 => Ok(StatusMessage::StatusMessage68(StatusMessage68::decode(
+                msg_data,
+            )?)),
+            69 => Ok(StatusMessage::StatusMessage69(StatusMessage69::decode(
                 msg_data,
             )?)),
             _ => Err(RLPDecodeError::IncompatibleProtocol),
@@ -70,6 +76,14 @@ impl StatusMessage {
                 genesis,
                 fork_id,
             })),
+            69 => Ok(StatusMessage::StatusMessage69(StatusMessage69 {
+                eth_version: eth.version,
+                network_id,
+                total_difficulty,
+                block_hash,
+                genesis,
+                fork_id,
+            })),
             _ => Err(RLPxError::IncompatibleProtocol),
         }
     }
@@ -77,24 +91,28 @@ impl StatusMessage {
     pub fn get_network_id(&self) -> u64 {
         match self {
             StatusMessage::StatusMessage68(msg) => msg.network_id,
+            StatusMessage::StatusMessage69(msg) => msg.network_id,
         }
     }
 
     pub fn get_eth_version(&self) -> u8 {
         match self {
             StatusMessage::StatusMessage68(msg) => msg.eth_version,
+            StatusMessage::StatusMessage69(msg) => msg.eth_version,
         }
     }
 
     pub fn get_fork_id(&self) -> ForkId {
         match self {
             StatusMessage::StatusMessage68(msg) => msg.fork_id.clone(),
+            StatusMessage::StatusMessage69(msg) => msg.fork_id.clone(),
         }
     }
 
     pub fn get_genesis(&self) -> BlockHash {
         match self {
             StatusMessage::StatusMessage68(msg) => msg.genesis,
+            StatusMessage::StatusMessage69(msg) => msg.genesis,
         }
     }
 }
