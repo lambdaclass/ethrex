@@ -77,6 +77,27 @@ impl std::fmt::Display for HiveResult {
     }
 }
 
+fn create_fork_result(json_data: &JsonFile, fork: &str, test_pattern: &str) -> HiveResult {
+    let total_tests = json_data
+        .test_cases
+        .iter()
+        .filter(|(_, test_case)| test_case.name.starts_with(test_pattern))
+        .count();
+    let passed_tests = json_data
+        .test_cases
+        .iter()
+        .filter(|(_, test_case)| {
+            test_case.name.starts_with(test_pattern) && test_case.summary_result.pass
+        })
+        .count();
+    HiveResult::new(
+        json_data.name.clone(),
+        fork.to_string(),
+        passed_tests,
+        total_tests,
+    )
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut results = Vec::new();
 
@@ -109,65 +130,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 || json_data.name.as_str() == "eest/consume-engine"
             {
                 // Cancun
-                let cancun_total_tests = json_data
-                    .test_cases
-                    .iter()
-                    .filter(|(_, test_case)| test_case.name.starts_with("tests/cancun"))
-                    .count();
-                let cancun_passed_tests = json_data
-                    .test_cases
-                    .iter()
-                    .filter(|(_, test_case)| {
-                        test_case.name.starts_with("tests/cancun") && test_case.summary_result.pass
-                    })
-                    .count();
-                let result_cancun = HiveResult::new(
-                    json_data.name.clone(),
-                    "Cancun".to_string(),
-                    cancun_passed_tests,
-                    cancun_total_tests,
-                );
-
+                let result_cancun = create_fork_result(&json_data, "Cancun", "tests/cancun");
                 // Shanghai
-                let shanghai_total_tests = json_data
-                    .test_cases
-                    .iter()
-                    .filter(|(_, test_case)| test_case.name.starts_with("tests/shanghai"))
-                    .count();
-                let shanghai_passed_tests = json_data
-                    .test_cases
-                    .iter()
-                    .filter(|(_, test_case)| {
-                        test_case.name.starts_with("tests/shanghai")
-                            && test_case.summary_result.pass
-                    })
-                    .count();
-                let result_shanghai = HiveResult::new(
-                    json_data.name.clone(),
-                    "Shanghai".to_string(),
-                    shanghai_passed_tests,
-                    shanghai_total_tests,
-                );
-
+                let result_shanghai = create_fork_result(&json_data, "Shanghai", "tests/shanghai");
                 // Prague
-                let prague_total_tests = json_data
-                    .test_cases
-                    .iter()
-                    .filter(|(_, test_case)| test_case.name.starts_with("tests/prague"))
-                    .count();
-                let prague_passed_tests = json_data
-                    .test_cases
-                    .iter()
-                    .filter(|(_, test_case)| {
-                        test_case.name.starts_with("tests/prague") && test_case.summary_result.pass
-                    })
-                    .count();
-                let result_prague = HiveResult::new(
-                    json_data.name.clone(),
-                    "Prague".to_string(),
-                    prague_passed_tests,
-                    prague_total_tests,
-                );
+                let result_prague = create_fork_result(&json_data, "Create", "tests/prague");
 
                 results.push(result_cancun);
                 results.push(result_shanghai);
