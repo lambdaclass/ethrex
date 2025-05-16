@@ -22,6 +22,7 @@ pub fn main() {
         parent_block_header,
         mut db,
         elasticity_multiplier,
+        state_diff
     } = sp1_zkvm::io::read::<ProgramInput>();
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
@@ -107,6 +108,10 @@ pub fn main() {
         parent_header = block.header;
     }
 
+    // Check state diffs are valid
+    #[cfg(feature = "l2")]
+    let state_diff_updates = state_diff.to_account_updates(&state_trie).expect("failed to calculate account updates from state diffs");
+    
     // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
     let Ok(withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
@@ -128,6 +133,11 @@ pub fn main() {
     let final_state_hash = state_trie.hash_no_commit();
     if final_state_hash != last_block_state_root {
         panic!("invalid final state trie");
+    }
+
+    #[cfg(feature = "l2")]
+    if state_diff_updates != acc_account_updates {
+        panic!("invalid state diffs")
     }
 
     // Output gas for measurement purposes

@@ -79,11 +79,12 @@ impl Prover {
                     info!("Received Response for batch_number: {batch_number}");
                     let prover_data = ProverData{
                         batch_number,
-                        input:  ProgramInput {
+                        input: ProgramInput {
                             blocks: input.blocks,
                             parent_block_header: input.parent_block_header,
                             db: input.db,
                             elasticity_multiplier: input.elasticity_multiplier,
+                            state_diff: input.state_diff
                         }
                     };
                     Ok(prover_data)

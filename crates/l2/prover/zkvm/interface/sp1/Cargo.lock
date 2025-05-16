@@ -1251,6 +1251,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "keccak-hash",
+ "serde",
  "thiserror",
 ]
 
