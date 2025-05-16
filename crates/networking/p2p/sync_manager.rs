@@ -138,7 +138,7 @@ impl SyncManager {
                 .parse()
                 .expect("Error converting block number environmental variable to int");
             #[cfg(feature = "sync-test")]
-            let mut get_block_hash = async {
+            let mut get_block_hash = || async {
                 if get_latest {
                     store.get_latest_canonical_block_hash().await
                 } else {
