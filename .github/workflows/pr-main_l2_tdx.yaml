@@ -65,7 +65,7 @@ jobs:
 
       - name: Build L2
         run: |
-          cargo build --release --manifest-path ../../Cargo.toml --bin ethrex --features l2,rollup_storage_libmdbx,metrics
+          cargo build --release --bin ethrex --features l2,rollup_storage_libmdbx,metrics
 
       - name: Install rex
         run: |
