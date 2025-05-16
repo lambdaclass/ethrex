@@ -154,10 +154,6 @@ pub async fn fill_transactions(
         let (receipt, call_frame_backup) = match blockchain.apply_transaction_l2(&head_tx, context)
         {
             Ok((receipt, call_frame_backup)) => {
-                txs.shift()?;
-                // Pull transaction from the mempool
-                blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
-
                 metrics!(METRICS_TX.inc_tx_with_status_and_type(
                     MetricsTxStatus::Succeeded,
                     MetricsTxType(head_tx.tx_type())
@@ -210,6 +206,10 @@ pub async fn fill_transactions(
 
             continue;
         }
+
+        txs.shift()?;
+        // Pull transaction from the mempool
+        blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
 
         // We only add the withdrawals and deposits length because the accounts diffs may change
         acc_state_diff_size += tx_state_diff_size;
