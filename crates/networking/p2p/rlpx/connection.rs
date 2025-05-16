@@ -426,7 +426,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         sender: mpsc::Sender<Message>,
     ) -> Result<(), RLPxError> {
         let peer_supports_eth = self.negotiated_eth_version != 0;
-        let is_synced = self.storage.is_synced().await?;
         match message {
             Message::Disconnect(msg_data) => {
                 log_peer_debug(
@@ -457,7 +456,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             // TODO(#1129) Add the transaction to the mempool once received.
             Message::Transactions(txs) if peer_supports_eth => {
-                if is_synced {
+                if self.blockchain.is_synced() {
                     let mut valid_txs = vec![];
                     for tx in &txs.transactions {
                         if let Err(e) = self.blockchain.add_transaction_to_pool(tx.clone()).await {
@@ -507,7 +506,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::PooledTransactions(response)).await?;
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
-                if is_synced {
+                if self.blockchain.is_synced() {
                     msg.handle(&self.node, &self.blockchain).await?;
                 }
             }
