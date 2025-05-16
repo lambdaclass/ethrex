@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747411879365,
+  "lastUpdate": 1747414329554,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7525,6 +7525,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209532389868,
             "range": "± 629754806",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "73589782ecbbff8d1c9f38efe5c9439748cbbdbe",
+          "message": "fix(l2): fix fixed array and static tuple calldata encoding (#2821)\n\n**Motivation**\n\nFixes a bug when encoding calldata including fixed arrays or static\ntuples. The code for `encode_calldata` preallocates the entire static\nregion of calldata, but the code was mistakenly extending it instead of\njust copying into the static region the encoded fixed array/static tuple\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-16T15:58:33Z",
+          "tree_id": "4f057b6150156d992b95b3576c98591de32cb0d1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/73589782ecbbff8d1c9f38efe5c9439748cbbdbe"
+        },
+        "date": 1747414327202,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 208134830896,
+            "range": "± 317899704",
             "unit": "ns/iter"
           }
         ]
