@@ -21,7 +21,7 @@ use crate::l2;
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author = "Lambdaclass", version=get_client_version(), about, about = "ethrex Execution client")]
+#[command(name="ethrex", author = "Lambdaclass", version=get_client_version(), about = "ethrex Execution client")]
 pub struct CLI {
     #[command(flatten)]
     pub opts: Options,
@@ -95,7 +95,7 @@ pub struct Options {
     pub dev: bool,
     #[arg(
         long = "evm",
-        default_value = "levm",
+        default_value_t = EvmEngine::default(),
         value_name = "EVM_BACKEND",
         help = "Has to be `levm` or `revm`",
         value_parser = utils::parse_evm_engine,

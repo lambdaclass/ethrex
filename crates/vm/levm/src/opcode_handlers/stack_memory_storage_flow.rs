@@ -30,7 +30,7 @@ impl<'a> VM<'a> {
         let key = self.current_call_frame_mut()?.stack.pop()?;
         let to = self.current_call_frame()?.to;
         let value = self
-            .env
+            .accrued_substate
             .transient_storage
             .get(&(to, key))
             .cloned()
@@ -63,7 +63,9 @@ impl<'a> VM<'a> {
             let value = current_call_frame.stack.pop()?;
             (key, value, current_call_frame.to)
         };
-        self.env.transient_storage.insert((to, key), value);
+        self.accrued_substate
+            .transient_storage
+            .insert((to, key), value);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -113,7 +115,7 @@ impl<'a> VM<'a> {
     // MSTORE8 operation
     pub fn op_mstore8(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
-        // TODO: modify expansion cost to accept U256
+
         let offset = current_call_frame.stack.pop()?;
 
         let new_memory_size = calculate_memory_size(offset, 1)?;
@@ -136,7 +138,6 @@ impl<'a> VM<'a> {
 
     // SLOAD operation
     pub fn op_sload(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let (storage_slot_key, address) = {
             let current_call_frame = self.current_call_frame_mut()?;
             let storage_slot_key = current_call_frame.stack.pop()?;
@@ -150,7 +151,7 @@ impl<'a> VM<'a> {
 
         let current_call_frame = self.current_call_frame_mut()?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold, fork)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
 
         current_call_frame.stack.push(value)?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
@@ -187,27 +188,12 @@ impl<'a> VM<'a> {
 
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
-        let mut gas_refunds = self.env.refunded_gas;
-        let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost) =
-            match self.env.config.fork {
-                // https://eips.ethereum.org/EIPS/eip-1283#specification
-                Fork::Constantinople => (15000, 19800, 4800),
-                // https://eips.ethereum.org/EIPS/eip-2200
-                f if f >= Fork::Istanbul && f < Fork::Berlin => (15000, 19200, 4200),
-                // https://eips.ethereum.org/EIPS/eip-2929
-                _ => (4800, 19900, 2800),
-            };
+        let mut gas_refunds = self.accrued_substate.refunded_gas;
 
-        if self.env.config.fork < Fork::Istanbul && self.env.config.fork != Fork::Constantinople {
-            if !current_value.is_zero() && new_storage_slot_value.is_zero() {
-                gas_refunds = gas_refunds
-                    .checked_add(15000)
-                    .ok_or(VMError::GasRefundsOverflow)?;
-            }
-        } else if (self.env.config.fork == Fork::Constantinople
-            || self.env.config.fork >= Fork::Istanbul)
-            && new_storage_slot_value != current_value
-        {
+        // https://eips.ethereum.org/EIPS/eip-2929
+        let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost) = (4800, 19900, 2800);
+
+        if new_storage_slot_value != current_value {
             if current_value == original_value {
                 if original_value != U256::zero() && new_storage_slot_value == U256::zero() {
                     gas_refunds = gas_refunds
@@ -240,8 +226,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        self.env.refunded_gas = gas_refunds;
-        let fork = self.env.config.fork;
+        self.accrued_substate.refunded_gas = gas_refunds;
 
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::sstore(
@@ -249,7 +234,6 @@ impl<'a> VM<'a> {
                 current_value,
                 new_storage_slot_value,
                 storage_slot_was_cold,
-                fork,
             )?)?;
 
         self.update_account_storage(to, key, new_storage_slot_value)?;

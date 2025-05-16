@@ -9,7 +9,7 @@ use crate::{
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
     kademlia::KademliaTable,
-    network::node_id_from_signing_key,
+    network::public_key_from_signing_key,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
@@ -35,7 +35,6 @@ use crate::l2::L2Options;
 #[cfg(feature = "l2")]
 use ::{
     ethrex_common::Address,
-    ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode},
     ethrex_storage_rollup::{EngineTypeRollup, StoreRollup},
     secp256k1::SecretKey,
 };
@@ -138,7 +137,7 @@ pub async fn init_rpc_api(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let local_node_record = NodeRecord::from_node(local_p2p_node, enr_seq, signer)
+    let local_node_record = NodeRecord::from_node(&local_p2p_node, enr_seq, signer)
         .expect("Node record could not be created from local node");
 
     // Create SyncManager
@@ -303,22 +302,22 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
 
     if network == networks::HOLESKY_GENESIS_PATH {
         info!("Adding holesky preset bootnodes");
-        bootnodes.extend(networks::HOLESKY_BOOTNODES.iter());
+        bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
     }
 
     if network == networks::SEPOLIA_GENESIS_PATH {
         info!("Adding sepolia preset bootnodes");
-        bootnodes.extend(networks::SEPOLIA_BOOTNODES.iter());
+        bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
     }
 
     if network == networks::HOODI_GENESIS_PATH {
         info!("Adding hoodi preset bootnodes");
-        bootnodes.extend(networks::HOODI_BOOTNODES.iter());
+        bootnodes.extend(networks::HOODI_BOOTNODES.clone());
     }
 
     if network == networks::MAINNET_GENESIS_PATH {
         info!("Adding mainnet preset bootnodes");
-        bootnodes.extend(networks::MAINNET_BOOTNODES.iter());
+        bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
     }
 
     if bootnodes.is_empty() {
@@ -373,14 +372,14 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SigningKey) -> Node {
         udp_socket_addr.ip()
     };
 
-    let local_node_id = node_id_from_signing_key(signer);
+    let local_public_key = public_key_from_signing_key(signer);
 
-    let node = Node {
-        ip: p2p_node_ip,
-        udp_port: udp_socket_addr.port(),
-        tcp_port: tcp_socket_addr.port(),
-        node_id: local_node_id,
-    };
+    let node = Node::new(
+        p2p_node_ip,
+        udp_socket_addr.port(),
+        tcp_socket_addr.port(),
+        local_public_key,
+    );
 
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836
@@ -424,15 +423,5 @@ pub fn get_sponsor_pk(opts: &L2Options) -> SecretKey {
     if let Some(pk) = opts.sponsor_private_key {
         return pk;
     }
-
-    warn!("Sponsor private key not provided. Trying to read from the .env file.");
-
-    if let Err(e) = read_env_file_by_config(ConfigMode::Sequencer) {
-        panic!("Failed to read .env file: {e}");
-    }
-    let pk = std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY").unwrap_or_default();
-    pk.strip_prefix("0x")
-        .unwrap_or(&pk)
-        .parse::<SecretKey>()
-        .expect("Failed to parse a secret key to sponsor transactions")
+    opts.sequencer_opts.watcher_opts.l2_proposer_private_key
 }
