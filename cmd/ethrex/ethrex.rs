@@ -6,7 +6,7 @@ use ethrex::{
         init_store, init_tracing,
     },
     utils::{set_datadir, store_known_peers},
-    DEFAULT_JWT_PATH, DEFAULT_STORE_DIR,
+    DEFAULT_JWT_PATH,
 };
 use ethrex_p2p::network::peer_table;
 use std::{path::PathBuf, time::Duration};
@@ -32,7 +32,7 @@ async fn main() -> eyre::Result<()> {
 
     let network = get_network(&opts);
 
-    let store = init_store(&(data_dir.to_owned() + DEFAULT_STORE_DIR), &network).await;
+    let store = init_store(&data_dir, &network).await;
 
     let blockchain = init_blockchain(opts.evm, store.clone());
 

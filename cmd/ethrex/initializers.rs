@@ -5,6 +5,7 @@ use crate::{
         get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
         read_known_peers,
     },
+    DEFAULT_STORE_DIR,
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
@@ -72,9 +73,10 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 }
 
 pub async fn init_store(data_dir: &str, network: &str) -> Store {
-    let path = PathBuf::from(data_dir);
+    let data_dir_path = &(data_dir.to_owned() + DEFAULT_STORE_DIR);
+    let path = PathBuf::from(data_dir_path);
     let store = if path.ends_with("memory") {
-        Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
+        Store::new(data_dir_path, EngineType::InMemory).expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
             if #[cfg(feature = "redb")] {
@@ -86,7 +88,7 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
                 panic!("Specify the desired database engine.");
             }
         }
-        Store::new(data_dir, engine_type).expect("Failed to create Store")
+        Store::new(data_dir_path, engine_type).expect("Failed to create Store")
     };
     let genesis = read_genesis_file(network);
     store
