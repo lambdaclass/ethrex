@@ -201,10 +201,7 @@ async fn do_loop(private_key: &SecretKey) -> Result<u64, String> {
     let (batch_number, input) = get_batch().await?;
     let output = calculate_transition(input)?;
     let signature = sign_eip191(&output, private_key);
-    let calldata = vec![
-        Value::Bytes(output.into()),
-        Value::Bytes(signature.into()),
-    ];
+    let calldata = vec![Value::Bytes(output.into()), Value::Bytes(signature.into())];
     submit_proof(
         batch_number,
         ProofCalldata {

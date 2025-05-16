@@ -188,7 +188,7 @@ impl ProofCoordinator {
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             rollup_store,
             rpc_url: eth_config.rpc_url.clone(),
-            l1_private_key: config.l1_private_key.clone(),
+            l1_private_key: config.l1_private_key,
         })
     }
 

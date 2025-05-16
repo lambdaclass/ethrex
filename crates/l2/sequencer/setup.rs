@@ -89,7 +89,7 @@ pub async fn register_tdx_key(
         .await?;
 
     info!("Registered TDX key with transaction hash {verify_tx_hash:#x}");
-    return Ok(());
+    Ok(())
 }
 
 async fn get_tdx_address(
