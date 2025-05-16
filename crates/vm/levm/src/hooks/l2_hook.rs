@@ -99,7 +99,7 @@ impl Hook for L2Hook {
 
         // [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
         // Transaction is type 4 if authorization_list is Some
-        if vm.authorization_list.is_some() {
+        if vm.tx.authorization_list().is_some() {
             default_hook::validate_type_4_tx(vm)?;
         }
 

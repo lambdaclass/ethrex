@@ -164,7 +164,7 @@ pub fn prepare_vm_for_tx<'a>(
         }),
     };
 
-    VM::new(
+    Ok(VM::new(
         Environment {
             origin: test_tx.sender,
             gas_limit: test_tx.gas_limit,
@@ -189,8 +189,7 @@ pub fn prepare_vm_for_tx<'a>(
         },
         db,
         &tx,
-    )
-    .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))
+    ))
 }
 
 pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError> {
