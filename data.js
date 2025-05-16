@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747352990637,
+  "lastUpdate": 1747355219553,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8188,6 +8188,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.000726226323387873,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6efc8891ed386e1410a747995d793c4e9442586f",
+          "message": "chore(core): fix block producer logs. (#2806)\n\n**Motivation**\nLogs say v3, pero it is sending v4.",
+          "timestamp": "2025-05-15T20:44:08Z",
+          "tree_id": "45a01330683f0da442fd7f61d4d44d67dbf73dc6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6efc8891ed386e1410a747995d793c4e9442586f"
+        },
+        "date": 1747355218762,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007272762891566265,
             "unit": "Mgas/s"
           }
         ]
