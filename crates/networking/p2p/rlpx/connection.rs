@@ -489,7 +489,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 for hash in block_hashes.iter() {
                     receipts.push(self.storage.get_receipts_for_block(hash)?);
                 }
-                let response = Receipts { id, receipts };
+                let response =
+                    Receipts::new(id, receipts, &Capability::eth(self.negotiated_eth_version))?;
                 self.send(Message::Receipts(response)).await?;
             }
             Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)

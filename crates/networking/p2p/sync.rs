@@ -12,6 +12,12 @@ use ethrex_common::{
     types::{Block, BlockHash, BlockHeader},
     BigEndianHash, H256, U256, U512,
 };
+
+use crate::rlpx::p2p::{CAP_ETH_68, CAP_SNAP_1};
+use crate::{
+    kademlia::KademliaTable,
+    peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST},
+};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{error::StoreError, EngineType, Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState};
@@ -32,11 +38,6 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use trie_rebuild::TrieRebuilder;
-
-use crate::{
-    kademlia::KademliaTable,
-    peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST},
-};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
@@ -102,7 +103,7 @@ impl Syncer {
     ) -> Self {
         Self {
             snap_enabled,
-            peers: PeerHandler::new(peer_table),
+            peers: PeerHandler::new(peer_table, CAP_ETH_68, CAP_SNAP_1),
             last_snap_pivot: 0,
             trie_rebuilder: None,
             cancel_token,
@@ -116,7 +117,7 @@ impl Syncer {
         let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
         Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
-            peers: PeerHandler::new(dummy_peer_table),
+            peers: PeerHandler::new(dummy_peer_table, CAP_ETH_68, CAP_SNAP_1),
             last_snap_pivot: 0,
             trie_rebuilder: None,
             // This won't be used
