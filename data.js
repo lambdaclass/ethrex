@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747429972976,
+  "lastUpdate": 1747431148721,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7645,6 +7645,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210783276694,
             "range": "± 515032646",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "90105443+DiegoCivi@users.noreply.github.com",
+            "name": "DiegoC",
+            "username": "DiegoCivi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c8fbd5cedcc04e131104d4e169c1e944d9a6b87c",
+          "message": "chore(l1): fix remaining EIP-7002 and EIP-7251 ef tests (#2738)\n\n**Motivation**\n\nThere are tests from EIPs 7002 and 7251 that are being skipped on LEVM\nand REVM.\n\n**Description**\n\nAccording to\n[EIP-7002](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md)\nand\n[EIP-7251](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md),\nintrinsic gas does not count on system calls defined in this especific\nEIPs. In order to avoid introducing complexity elsewhere in the codebase\n(such as in intrinsic gas computation), system call contexts were\nupdated to include an extra 21,000 gas, the base cost of any\ntransaction.",
+          "timestamp": "2025-05-16T20:38:37Z",
+          "tree_id": "0c81c56b154b0d56e62aa57d5ed7a29b05647775",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c8fbd5cedcc04e131104d4e169c1e944d9a6b87c"
+        },
+        "date": 1747431147262,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212766253430,
+            "range": "± 308242943",
             "unit": "ns/iter"
           }
         ]
