@@ -78,6 +78,10 @@ jobs:
           ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
           docker compose -f docker-compose-l2.yaml up contract_deployer
 
+      - name: Clean .env
+        if: ${{ always() }}
+        run: rm -rf crates/l2/.env
+
       - name: Start Sequencer
         if: ${{ always() }}
         run: |
