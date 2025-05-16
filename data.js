@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747433198865,
+  "lastUpdate": 1747435447674,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7705,6 +7705,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208995667996,
             "range": "± 1043990459",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c6a0008475a45a9280a91fb85dc555658e95a20b",
+          "message": "feat(l2): allow changing listen addresses in Makefile (#2834)\n\n**Motivation**\n\nFor running TDX, it's useful to set proof_coordinator_listen_ip to\n0.0.0.0 while in other contexts 127.0.0.1 might make more sense.\n\n**Description**\n\nThis PR adds support for setting listen ips in the l2 Makefile for\nproof_coordinator_listen_ip and the L1&L2 RPCs.",
+          "timestamp": "2025-05-16T21:46:07Z",
+          "tree_id": "505212ec954d47a240b0d37ce3c9f214dff76391",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c6a0008475a45a9280a91fb85dc555658e95a20b"
+        },
+        "date": 1747435445460,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211851230370,
+            "range": "± 466345296",
             "unit": "ns/iter"
           }
         ]
