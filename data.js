@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747357420545,
+  "lastUpdate": 1747411660930,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7465,6 +7465,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 216993999533,
             "range": "± 414996510",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e3b8c3bf4d377f0c5232da117f35018993807041",
+          "message": "refactor(levm): refactor the main execution flow methods (#2796)\n\n**Motivation**\n\n- Make LEVM a little bit more understandable and clean. It is a first\nimprovement of the main parts of the code. Improvements can still be\nmade there and even more changes can be made in other functions/methods.\n\n**Description**\n\nSome changes:\n- `VM::new()` doesn't return a `Result` anymore. Just a `VM`.\n- Some logic that was in `VM::new()` was moved to a new method\n`self.setup_vm()`\n- Created some methods for VM for callframe interaction. Just for having\ncleaner code.\n- Changed some variable names.\n- Popping callframe only when really necessary (after Call or Create),\nso no more popping and pushing back when we didn't want to pop in the\nfirst place. We now pop it inside handle_return because that method's\npurpose is handle interaction between callframes.\n- Delete some fields from VM and replaced those for a `Transaction`\nfield. Fields replaced were access_list, authorization_list and tx_kind\n- Early revert when creating an address that already exists is more\ngraceful and explicit now (in `execute()`).\n- Logic in generic_call for executing precompiles changed a bit so that\nwe don't call run_execution but instead we execute the precompile and\nhandle the return after doing so. So now we never call `run_execution`\nrecursively.\n- Moved some code mostly to utils.rs so that vm.rs is cleaner\n- Overall tidy all main methods (new, execute and run_execution)\n- Added and changed some comments where I considered appropriate doing\nso\n\nThe diff is hard to review. The code works as intended.\nThe most important thing is how the main functions changed.\nBefore and After `vm.rs`:\n\n[main](https://github.com/lambdaclass/ethrex/blob/76521daffea5dfb35562c67903f4cbd028eeb77c/crates/vm/levm/src/vm.rs)\n- [this\nbranch](https://github.com/lambdaclass/ethrex/blob/levm/refactor_new/crates/vm/levm/src/vm.rs)",
+          "timestamp": "2025-05-16T15:14:39Z",
+          "tree_id": "57f8ae0d879337b87451f7e5149687038293f539",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e3b8c3bf4d377f0c5232da117f35018993807041"
+        },
+        "date": 1747411657070,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209179635152,
+            "range": "± 1143289486",
             "unit": "ns/iter"
           }
         ]
