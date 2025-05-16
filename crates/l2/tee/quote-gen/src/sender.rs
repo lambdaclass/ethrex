@@ -67,7 +67,7 @@ pub async fn submit_quote(quote: Bytes) -> Result<(), String> {
 async fn connect_to_prover_server_wr(
     write: &ProofData,
 ) -> Result<ProofData, Box<dyn std::error::Error>> {
-    let addr = if std::env::var("DEV_MODE").is_ok() {
+    let addr = if std::env::var("ETHREX_TDX_DEV_MODE").is_ok() {
         SERVER_URL_DEV
     } else {
         SERVER_URL

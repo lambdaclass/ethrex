@@ -15,7 +15,7 @@ use tracing::{debug, info};
 use std::process::Command;
 
 const QPL_TOOL_PATH: &str =
-    "tee/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
+    "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
 
 pub async fn prepare_quote_prerequisites(
     eth_client: &EthClient,
@@ -39,6 +39,8 @@ pub async fn prepare_quote_prerequisites(
             "--quote_hex",
             quote,
         ])
+        .env("RPC_URL", rpc_url)
+        .env("CHAIN_ID", format!("{chain_id}"))
         .output()
         .map_err(ProverServerError::ComandError)?;
     Ok(())

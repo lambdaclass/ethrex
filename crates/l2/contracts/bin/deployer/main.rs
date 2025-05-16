@@ -1,5 +1,5 @@
 use std::{
-    fs::{read_to_string, File, OpenOptions}, io::{BufWriter, Write}, path::PathBuf, process::{Command, ExitStatus}, str::FromStr
+    fs::{read_to_string, File, OpenOptions}, io::{BufWriter, Write}, path::PathBuf, process::{Command, ExitStatus, Stdio}, str::FromStr
 };
 
 use bytes::Bytes;
@@ -77,6 +77,7 @@ async fn main() -> Result<(), DeployerError> {
         sp1_verifier_address,
         pico_verifier_address,
         risc0_verifier_address,
+        tdx_verifier_address,
         opts.env_file_path,
     )
 }
@@ -256,7 +257,7 @@ async fn deploy_contracts(
     };
 
     let pico_verifier_address = if opts.pico_deploy_verifier {
-        let mut spinner = Spinner::new(deploy_frames, "Deploying PicoVerifier", Color::Cyan);
+        let mut spinner = Spinner::new(deploy_frames.clone(), "Deploying PicoVerifier", Color::Cyan);
         let (verifier_deployment_tx_hash, pico_verifier_address) = deploy_contract(
             &[],
             &opts.contracts_path.join("solc_out/PicoVerifier.bin"),
@@ -287,11 +288,21 @@ async fn deploy_contracts(
                 "Risc0Verifier address is not set and risc0_deploy_verifier is false".to_string(),
             ))?;
 
-    let tdx_verifier_address =
-    opts.tdx_verifier_address
-        .ok_or(DeployerError::InternalError(
-            "TDXVerifierAddress address is not set and tdx_verifier_address is false".to_string(),
-        ))?;
+    let tdx_verifier_address = if opts.tdx_deploy_verifier {
+        let mut spinner = Spinner::new(deploy_frames, "Deploying TDXerifier", Color::Cyan);
+        let tdx_verifier_address = deploy_tdx_contracts(opts)?;
+
+        spinner.success(&format!(
+            "TDXVerifier:\n\tDeployed at address {}",
+            format!("{tdx_verifier_address:#x}").bright_green()
+        ));
+        tdx_verifier_address
+    } else {
+        opts.tdx_verifier_address
+            .ok_or(DeployerError::InternalError(
+                "TDXVerifier address is not set and tdx_deploy_verifier is false".to_string(),
+            ))?
+    };
 
     Ok((
         on_chain_proposer_deployment.proxy_address,
@@ -301,6 +312,31 @@ async fn deploy_contracts(
         risc0_verifier_address,
         tdx_verifier_address
     ))
+}
+
+fn deploy_tdx_contracts(opts: &DeployerOptions) -> Result<Address, DeployerError> {
+    Command::new("make")
+        .arg("deploy-all")
+        .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
+        .env("RPC_URL", &opts.rpc_url)
+        .current_dir("tee/contracts")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| DeployerError::DependencyError(format!("Failed to spawn make: {err}")))?
+        .wait()
+        .map_err(|err| DeployerError::DependencyError(format!("Failed to wait for make: {err}")))?;
+
+    let address = read_tdx_deployment_address("TDXVerifier");
+    Ok(address)
+}
+
+fn read_tdx_deployment_address(name: &str) -> Address {
+    let path = format!("tee/contracts/deploydeps/automata-dcap-attestation/evm/deployment/{name}");
+    let Ok(contents) = read_to_string(path) else {
+        return Address::zero();
+    };
+    Address::from_str(&contents).unwrap_or(Address::zero())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -472,6 +508,7 @@ fn write_contract_addresses_to_env(
     sp1_verifier_address: Address,
     pico_verifier_address: Address,
     risc0_verifier_address: Address,
+    tdx_verifier_address: Address,
     env_file_path: Option<PathBuf>,
 ) -> Result<(), DeployerError> {
     let env_file_path =
@@ -508,6 +545,27 @@ fn write_contract_addresses_to_env(
     writeln!(
         writer,
         "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={risc0_verifier_address:#x}"
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER={tdx_verifier_address:#x}"
+    )?;
+    // TDX aux contracts, qpl-tool depends on exact env var naming
+    writeln!(
+        writer,
+        "ENCLAVE_ID_DAO={:#x}", read_tdx_deployment_address("AutomataEnclaveIdentityDao")
+    )?;
+    writeln!(
+        writer,
+        "FMSPC_TCB_DAO={:#x}", read_tdx_deployment_address("AutomataFmspcTcbDao")
+    )?;
+    writeln!(
+        writer,
+        "PCK_DAO={:#x}", read_tdx_deployment_address("AutomataPckDao")
+    )?;
+    writeln!(
+        writer,
+        "PCS_DAO={:#x}", read_tdx_deployment_address("AutomataPcsDao")
     )?;
     Ok(())
 }

@@ -1,7 +1,7 @@
 DETERMINISTIC_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C
 DEPLOYMENT_PATH := deploydeps/automata-dcap-attestation/evm/deployment
 
-DEV_MODE ?= false
+ETHREX_TDX_DEV_MODE ?= false
 
 deploy-p256:
 	rex send $(DETERMINISTIC_DEPLOYER) 0 $(PRIVATE_KEY) --calldata $(shell cat assets/p256.hex)
@@ -47,18 +47,24 @@ deploy: solc_out/TDXVerifier.bin
 	$(eval CONTRACT_BIN := $(shell cat solc_out/TDXVerifier.bin))
 	$(eval DCAP_ADDRESS := $(shell cat ${DEPLOYMENT_PATH}/AutomataDcapAttestationFee))
 	rex deploy --print-address $(CONTRACT_BIN) 0 $(PRIVATE_KEY) -- \
-		"constructor(address,bool)" $(DCAP_ADDRESS) $(DEV_MODE) > ${DEPLOYMENT_PATH}/TDXVerifier
-
-mkenv:
-	echo TDX_VERIFIER=$(shell cat ${DEPLOYMENT_PATH}/TDXVerifier) > .env.out
-	echo ENCLAVE_ID_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataEnclaveIdentityDao)  >> .env.out
-	echo FMSPC_TCB_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataFmspcTcbDao)  >> .env.out
-	echo PCK_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataPckDao)  >> .env.out
-	echo PCS_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataPcsDao)  >> .env.out
+		"constructor(address,bool)" $(DCAP_ADDRESS) $(ETHREX_TDX_DEV_MODE) > ${DEPLOYMENT_PATH}/TDXVerifier
 
 deploy-deps: deploy-dcap setup-pccs-ca
 
+automata-dcap-qpl:
+	git clone https://github.com/automata-network/automata-dcap-qpl
+	cd automata-dcap-qpl/automata-dcap-qpl-tool; git clone https://github.com/automata-network/pccs-reader-rs
+	rm automata-dcap-qpl/Cargo.toml
+	echo "" >> automata-dcap-qpl/automata-dcap-qpl-tool/Cargo.toml
+	echo "[workspace]" >> automata-dcap-qpl/automata-dcap-qpl-tool/Cargo.toml
+	cd automata-dcap-qpl/automata-dcap-qpl-tool; cargo build --release
+
+deploy-all:
+	make deploy-deps
+	make deploy
+	make automata-dcap-qpl
+
 clean:
-	rm -rf deploydeps cache out deployment/*
+	rm -rf deploydeps cache out deployment/* automata-dcap-qpl
 
 .PHONY: deploy-all deploy deploy-pccs deploy-dcap clean

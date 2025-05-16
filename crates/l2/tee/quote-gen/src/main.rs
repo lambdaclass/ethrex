@@ -218,6 +218,7 @@ async fn do_loop(private_key: &SecretKey) -> Result<u64, String> {
 
 async fn setup(private_key: &SecretKey) -> Result<(), String> {
     let quote = get_quote(private_key)?;
+    println!("Sending quote {}", hex::encode(&quote));
     submit_quote(quote).await?;
     Ok(())
 }

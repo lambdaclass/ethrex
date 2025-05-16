@@ -258,13 +258,13 @@ contract OnChainProposer is
         bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
-        //tdx
-        bytes calldata tdxPublicValues,
-        bytes memory tdxSignature,
         //pico
         bytes32 picoRiscvVkey,
         bytes calldata picoPublicValues,
-        uint256[8] calldata picoProof
+        uint256[8] calldata picoProof,
+        //tdx
+        bytes calldata tdxPublicValues,
+        bytes memory tdxSignature
     ) external override onlySequencer {
         // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants

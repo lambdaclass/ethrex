@@ -354,14 +354,14 @@ impl ProofCoordinator {
 
         match prover_type {
             ProverType::TDX => {
-                let _ = prepare_quote_prerequisites(
+                prepare_quote_prerequisites(
                     &self.eth_client,
                     &self.rpc_url,
                     &hex::encode(self.l1_private_key.as_ref()),
                     &hex::encode(&payload),
                 )
                 .await
-                .map_err(|_| ProverServerError::Custom("Could not setup TDX key".to_owned()));
+                .map_err(|e| ProverServerError::Custom(format!("Could not setup TDX key {e}")))?;
                 register_tdx_key(
                     &self.eth_client,
                     &self.l1_private_key,
@@ -369,8 +369,6 @@ impl ProofCoordinator {
                     payload,
                 )
                 .await?;
-                // TODO: send quote to contract
-                error!("TDX SETUP NOT FULLY IMPLEMENTED");
             }
             _ => {
                 warn!("Setup requested for {prover_type}, which doesn't need setup.")
