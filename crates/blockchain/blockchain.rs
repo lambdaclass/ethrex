@@ -480,7 +480,7 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Marks the node's chain is up to date with the actual chain
+    /// Marks the node's chain as up to date with the current chain
     /// Once the initial sync has taken place, the node will be consireded as sync
     pub fn set_synced(&self) {
         self.is_synced.store(true, Ordering::Relaxed);
