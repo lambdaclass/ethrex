@@ -62,7 +62,7 @@ impl GeneralizedDatabase {
         Ok((account, address_was_cold))
     }
 
-    /// Gets account from storage, storing in InMemoryDB for efficiency when getting AccountUpdates.
+    /// Gets account from storage, storing in Immutable Cache for efficiency when getting AccountUpdates.
     pub fn get_account_from_database(
         &mut self,
         address: Address,
@@ -72,7 +72,7 @@ impl GeneralizedDatabase {
         Ok(account)
     }
 
-    /// Gets storage slot from Database, storing in InMemoryDB for efficiency when getting AccountUpdates.
+    /// Gets storage slot from Database, storing in Immutable Cache for efficiency when getting AccountUpdates.
     pub fn get_value_from_database(
         &mut self,
         address: Address,
