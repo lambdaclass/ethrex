@@ -62,7 +62,7 @@ struct Cli {
         long,
         short = 'w',
         default_value_t = 0,
-        help = "Timeout to wait for all transactions to be included. If 0 is specified, wait indefinitely."
+        help = "Timeout in minutes. If the node doesn't provide updates in this time, it's considered stuck and the load test fails. If 0 is specified, the load test will wait indefinitely."
     )]
     wait: u64,
 }
@@ -248,13 +248,11 @@ async fn load_test(
                 let client = client.clone();
                 sleep(Duration::from_micros(800)).await;
                 let _sent = client.send_eip1559_transaction(&tx, &sk).await?;
-                println!(
-                    "Tx number {} sent! From: {}. To: {}",
-                    nonce + i + 1,
-                    encoded_src,
-                    dst.encode_hex::<String>()
-                );
             }
+            println!(
+                "{} transactions have been sent for {}",
+                tx_amount, encoded_src
+            );
             Ok::<(), EthClientError>(())
         });
     }
@@ -268,18 +266,18 @@ async fn load_test(
 // Waits until the nonce of each account has reached the tx_amount.
 async fn wait_until_all_included(
     client: EthClient,
-    wait: Option<Duration>,
+    timeout: Option<Duration>,
     accounts: &[Account],
     tx_amount: u64,
 ) -> Result<(), String> {
-    let start_time = tokio::time::Instant::now();
-
     for (_, sk) in accounts {
         let client = client.clone();
         let src = get_address_from_secret_key(sk).expect("Failed to get address from secret key");
         let encoded_src: String = src.encode_hex();
+        let mut last_updated = tokio::time::Instant::now();
+        let mut last_nonce = 0;
+
         loop {
-            let elapsed = start_time.elapsed();
             let nonce = client.get_nonce(src, BlockByNumber::Latest).await.unwrap();
             if nonce >= tx_amount {
                 println!(
@@ -289,14 +287,23 @@ async fn wait_until_all_included(
                 break;
             } else {
                 println!(
-                    "Waiting for transactions to be included from {}. Nonce: {}. Needs: {}. Percentage: {:2}%. Elapsed time: {}s.",
-                    encoded_src, nonce, tx_amount, (nonce as f64 / tx_amount as f64) * 100.0, elapsed.as_secs()
+                    "Waiting for transactions to be included from {}. Nonce: {}. Needs: {}. Percentage: {:2}%.",
+                    encoded_src, nonce, tx_amount, (nonce as f64 / tx_amount as f64) * 100.0
                 );
             }
 
-            if let Some(wait) = wait {
-                if elapsed > wait {
-                    return Err("Timeout reached for transactions to be included".to_string());
+            if let Some(timeout) = timeout {
+                if last_nonce == nonce {
+                    let inactivity_time = last_updated.elapsed();
+                    if inactivity_time > timeout {
+                        return Err(format!(
+                            "Node inactive for {} seconds. Timeout reached.",
+                            inactivity_time.as_secs()
+                        ));
+                    }
+                } else {
+                    last_nonce = nonce;
+                    last_updated = tokio::time::Instant::now();
                 }
             }
 
@@ -379,7 +386,7 @@ async fn main() {
     };
 
     println!(
-        "Starting load test with {} transactions per account",
+        "Starting load test with {} transactions per account...",
         cli.tx_amount
     );
     let time_now = tokio::time::Instant::now();

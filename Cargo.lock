@@ -3531,10 +3531,11 @@ dependencies = [
  "lazy_static",
  "secp256k1",
  "serde_json",
- "spinoff",
  "thiserror 2.0.12",
  "tokio",
+ "tools",
  "tracing",
+ "tracing-subscriber 0.3.19",
 ]
 
 [[package]]
@@ -10246,6 +10247,14 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "tools"
+version = "0.0.0"
+dependencies = [
+ "ethrex-common",
+ "serde_json",
 ]
 
 [[package]]
