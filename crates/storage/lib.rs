@@ -4,6 +4,7 @@ mod account_update;
 
 #[cfg(any(feature = "libmdbx", feature = "redb"))]
 mod rlp;
+#[cfg(feature = "snapshots")]
 mod snapshot;
 mod store;
 mod store_db;
