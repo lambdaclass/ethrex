@@ -84,15 +84,6 @@ jobs:
           make init-local-l1; \
           make deploy-l1
 
-      - name: Run L1 and deploy
-        run: |
-          cd crates/l2
-          touch .env
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
-          ETHREX_TDX_DEV_MODE=true \
-          make init-local-l1
-
       - name: Start Sequencer
         run: |
           cd crates/l2
