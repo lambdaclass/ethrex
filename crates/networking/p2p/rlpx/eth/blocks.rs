@@ -123,8 +123,9 @@ impl GetBlockHeaders {
 
         #[cfg(feature = "sync-test")]
         let limit = env::var("SYNC-BATCH-SIZE")
+            .expect("Error getting environmental variable for batch size")
             .parse()
-            .expect("Error parsing environmental variable");
+            .expect("Error parsing batch size environmental variable to int");
 
         for _ in 0..limit {
             match storage.get_block_header(current_block as u64) {

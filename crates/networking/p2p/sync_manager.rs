@@ -1,12 +1,10 @@
-use std::{ 
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
 };
 
 #[cfg(feature = "sync-test")]
-use std::env;  
+use std::env;
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
@@ -136,8 +134,9 @@ impl SyncManager {
             };
             #[cfg(feature = "sync-test")]
             let block_number = env::var("SYNC-BLOCK-NUM")
+                .expect("Failed to retrieve sync block number from environment")
                 .parse()
-                .expect("Failed to retrieve sync block number from environment");
+                .expect("Error converting block number environmental variable to int");
             #[cfg(feature = "sync-test")]
             let mut get_block_hash = || {
                 if get_latest {
