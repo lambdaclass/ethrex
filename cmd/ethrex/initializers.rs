@@ -136,7 +136,7 @@ pub async fn init_rpc_api(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let local_node_record = NodeRecord::from_node(local_p2p_node, enr_seq, signer)
+    let local_node_record = NodeRecord::from_node(&local_p2p_node, enr_seq, signer)
         .expect("Node record could not be created from local node");
 
     // Create SyncManager
@@ -301,22 +301,22 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
 
     if network == networks::HOLESKY_GENESIS_PATH {
         info!("Adding holesky preset bootnodes");
-        bootnodes.extend(networks::HOLESKY_BOOTNODES.iter());
+        bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
     }
 
     if network == networks::SEPOLIA_GENESIS_PATH {
         info!("Adding sepolia preset bootnodes");
-        bootnodes.extend(networks::SEPOLIA_BOOTNODES.iter());
+        bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
     }
 
     if network == networks::HOODI_GENESIS_PATH {
         info!("Adding hoodi preset bootnodes");
-        bootnodes.extend(networks::HOODI_BOOTNODES.iter());
+        bootnodes.extend(networks::HOODI_BOOTNODES.clone());
     }
 
     if network == networks::MAINNET_GENESIS_PATH {
         info!("Adding mainnet preset bootnodes");
-        bootnodes.extend(networks::MAINNET_BOOTNODES.iter());
+        bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
     }
 
     if bootnodes.is_empty() {
@@ -373,12 +373,12 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SigningKey) -> Node {
 
     let local_public_key = public_key_from_signing_key(signer);
 
-    let node = Node {
-        ip: p2p_node_ip,
-        udp_port: udp_socket_addr.port(),
-        tcp_port: tcp_socket_addr.port(),
-        public_key: local_public_key,
-    };
+    let node = Node::new(
+        p2p_node_ip,
+        udp_socket_addr.port(),
+        tcp_socket_addr.port(),
+        local_public_key,
+    );
 
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836

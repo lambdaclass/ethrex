@@ -1,5 +1,5 @@
 use crate::kademlia::{self, KademliaTable};
-use crate::rlpx::p2p::Capability;
+use crate::rlpx::p2p::CAP_SNAP_1;
 use crate::rlpx::{
     connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
 };
@@ -12,7 +12,7 @@ use crate::{
     rlpx::utils::log_peer_error,
 };
 use ethrex_blockchain::Blockchain;
-use ethrex_common::H512;
+use ethrex_common::{H256, H512};
 use ethrex_storage::Store;
 use k256::{
     ecdsa::SigningKey,
@@ -32,9 +32,8 @@ use tracing::{debug, error, info};
 // we should bump this limit.
 pub const MAX_MESSAGES_TO_BROADCAST: usize = 1000;
 
-pub fn peer_table(signer: SigningKey) -> Arc<Mutex<KademliaTable>> {
-    let local_public_key = public_key_from_signing_key(&signer);
-    Arc::new(Mutex::new(KademliaTable::new(local_public_key)))
+pub fn peer_table(node_id: H256) -> Arc<Mutex<KademliaTable>> {
+    Arc::new(Mutex::new(KademliaTable::new(node_id)))
 }
 
 #[derive(Debug)]
@@ -153,16 +152,16 @@ pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
         Ok(result) => result,
         Err(e) => {
             log_peer_error(&node, &format!("Error creating tcp connection {e}"));
-            context.table.lock().await.replace_peer(node.public_key);
+            context.table.lock().await.replace_peer(node.node_id());
             return;
         }
     };
     let table = context.table.clone();
-    match handshake::as_initiator(context, node, stream).await {
+    match handshake::as_initiator(context, node.clone(), stream).await {
         Ok(mut conn) => conn.start(table).await,
         Err(e) => {
             log_peer_error(&node, &format!("Error creating tcp connection {e}"));
-            table.lock().await.replace_peer(node.public_key);
+            table.lock().await.replace_peer(node.node_id());
         }
     };
 }
@@ -194,7 +193,7 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
             .iter()
             .filter(|peer| -> bool {
                 peer.channels.as_ref().is_some()
-                    && peer.supported_capabilities.contains(&Capability::Snap)
+                    && peer.supported_capabilities.contains(&CAP_SNAP_1)
             })
             .count();
         info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");

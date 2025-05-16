@@ -97,6 +97,7 @@ impl From<SequencerOptions> for SequencerConfig {
                 bridge_address: opts.watcher_opts.bridge_address,
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
+                watcher_block_delay: opts.watcher_opts.watcher_block_delay,
             },
             proof_coordinator: ProofCoordinatorConfig {
                 l1_address: get_address_from_secret_key(
@@ -211,6 +212,15 @@ pub struct WatcherOptions {
         help_heading = "L1 Watcher options"
     )]
     pub max_block_step: u64,
+    #[arg(
+        long = "watcher.block-delay",
+        default_value_t = 128, // 2 L1 epochs.
+        value_name = "UINT64",
+        env = "ETHREX_WATCHER_BLOCK_DELAY",
+        help = "Number of blocks the L1 watcher waits before trusting an L1 block.",
+        help_heading = "L1 Watcher options"
+    )]
+    pub watcher_block_delay: u64,
 }
 
 impl Default for WatcherOptions {
@@ -221,6 +231,7 @@ impl Default for WatcherOptions {
                 .unwrap(),
             watch_interval_ms: 1000,
             max_block_step: 5000,
+            watcher_block_delay: 128,
         }
     }
 }
