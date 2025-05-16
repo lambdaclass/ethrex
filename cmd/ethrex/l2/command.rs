@@ -83,7 +83,6 @@ impl Command {
                 init_rpc_api(
                     &opts.node_opts,
                     &data_dir,
-                    authrpc_jwtsecret_path.as_str(),
                     &opts,
                     &signer,
                     peer_table.clone(),
