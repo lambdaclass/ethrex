@@ -651,7 +651,8 @@ pub fn extract_all_requests_levm(
         .output
         .into();
 
-    let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts);
+    let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts)
+        .ok_or(EvmError::InvalidDepositRequest)?;
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
     let consolidation = Requests::from_consolidation_data(consolidation_data);
 
