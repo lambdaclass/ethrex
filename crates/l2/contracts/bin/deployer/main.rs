@@ -1,5 +1,9 @@
 use std::{
-    fs::{read_to_string, File, OpenOptions}, io::{BufWriter, Write}, path::PathBuf, process::{Command, ExitStatus, Stdio}, str::FromStr
+    fs::{read_to_string, File, OpenOptions},
+    io::{BufWriter, Write},
+    path::PathBuf,
+    process::{Command, ExitStatus, Stdio},
+    str::FromStr,
 };
 
 use bytes::Bytes;
@@ -56,7 +60,7 @@ async fn main() -> Result<(), DeployerError> {
         sp1_verifier_address,
         pico_verifier_address,
         risc0_verifier_address,
-        tdx_verifier_address
+        tdx_verifier_address,
     ) = deploy_contracts(&eth_client, &opts).await?;
 
     initialize_contracts(
@@ -309,7 +313,7 @@ async fn deploy_contracts(
         sp1_verifier_address,
         pico_verifier_address,
         risc0_verifier_address,
-        tdx_verifier_address
+        tdx_verifier_address,
     ))
 }
 
@@ -585,19 +589,23 @@ fn write_contract_addresses_to_env(
     // TDX aux contracts, qpl-tool depends on exact env var naming
     writeln!(
         writer,
-        "ENCLAVE_ID_DAO={:#x}", read_tdx_deployment_address("AutomataEnclaveIdentityDao")
+        "ENCLAVE_ID_DAO={:#x}",
+        read_tdx_deployment_address("AutomataEnclaveIdentityDao")
     )?;
     writeln!(
         writer,
-        "FMSPC_TCB_DAO={:#x}", read_tdx_deployment_address("AutomataFmspcTcbDao")
+        "FMSPC_TCB_DAO={:#x}",
+        read_tdx_deployment_address("AutomataFmspcTcbDao")
     )?;
     writeln!(
         writer,
-        "PCK_DAO={:#x}", read_tdx_deployment_address("AutomataPckDao")
+        "PCK_DAO={:#x}",
+        read_tdx_deployment_address("AutomataPckDao")
     )?;
     writeln!(
         writer,
-        "PCS_DAO={:#x}", read_tdx_deployment_address("AutomataPcsDao")
+        "PCS_DAO={:#x}",
+        read_tdx_deployment_address("AutomataPcsDao")
     )?;
     trace!(?env_file_path, "Contract addresses written to .env");
     Ok(())
