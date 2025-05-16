@@ -42,7 +42,7 @@ clone-ef-tests: ## 📥 Download Ethereum Tests repository with submodules
 	cp -r $(TESTS_REPO)/LegacyTests/Constantinople/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Constantinople/GeneralStateTests/
 	cp -r $(TESTS_REPO)/LegacyTests/Cancun/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Cancun/GeneralStateTests/;
 
-download-state-tests: $(VECTORS_DIR) ## 📥 Download and setup state tests fixtures
+download-evm-ef-tests: $(VECTORS_DIR) ## 📥 Download and setup state tests fixtures
 
 clean-evm-ef-tests: ## 🗑️ Clean test vectors and temporary files
 	rm -rf $(VECTORS_DIR)

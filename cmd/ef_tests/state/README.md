@@ -25,6 +25,16 @@ cargo test --package ef_tests-state --test all --release -- <flags>
 make refresh-evm-ef-tests
 ```
 
+## Running the tests with either levm or revm
+
+```bash
+make test-levm
+```
+or
+```bash
+cargo test-revm
+```
+
 **Flags**
 - forks: Forks for which we want to run the tests for.
 - tests: Tests (.json files) we want to run
