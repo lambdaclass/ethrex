@@ -7,14 +7,14 @@ use std::{
     },
 };
 
-use crate::{api::StoreEngine, cache::Cache};
+use crate::api::StoreEngine;
 use ethrex_common::{
     types::{AccountState, BlockHash},
     H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
 
-use super::{difflayer::DiffLayer, error::SnapshotError, tree::Layers};
+use super::{cache::DiskCache, difflayer::DiffLayer, error::SnapshotError, tree::Layers};
 
 /// A disk layer is the bottom most layer.
 ///
@@ -23,7 +23,7 @@ use super::{difflayer::DiffLayer, error::SnapshotError, tree::Layers};
 #[derive(Clone)]
 pub struct DiskLayer {
     pub(super) db: Arc<dyn StoreEngine>,
-    pub(super) cache: Cache,
+    pub(super) cache: DiskCache,
     pub(super) block_hash: BlockHash,
     pub(super) state_root: H256,
     pub(super) stale: Arc<AtomicBool>,
@@ -46,7 +46,7 @@ impl DiskLayer {
             block_hash,
             state_root,
             db,
-            cache: Cache::new(10000, 10000),
+            cache: DiskCache::new(10000, 10000),
             stale: Arc::new(AtomicBool::new(false)),
         }
     }

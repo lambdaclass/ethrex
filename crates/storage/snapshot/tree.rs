@@ -327,14 +327,14 @@ impl SnapshotTree {
         let accounts = diff_value.accounts();
 
         // TODO: Need to make sure it's correct to leave the cache as is
-        prev_disk.cache.accounts.invalidate_all();
+        prev_disk.cache.accounts.clear();
 
         for (hash, acc) in accounts.iter() {
             prev_disk.cache.accounts.insert(*hash, acc.clone());
         }
 
         // TODO: Need to make sure it's correct to leave the cache as is
-        prev_disk.cache.storages.invalidate_all();
+        prev_disk.cache.storages.clear();
 
         let storage = diff_value.storage();
         for (account_hash, storage) in storage.iter() {

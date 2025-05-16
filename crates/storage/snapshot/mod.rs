@@ -1,3 +1,4 @@
+mod cache;
 pub(super) mod difflayer;
 pub(super) mod disklayer;
 pub mod error;

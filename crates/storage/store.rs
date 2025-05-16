@@ -1121,6 +1121,7 @@ impl Store {
             .await
     }
 
+    #[cfg(feature = "snapshots-task")]
     /// Creates a snapshot of the block adding a diff (or disk) layer.
     ///
     /// Uses owned parameter values due to moving them into am (non-awaited) task.

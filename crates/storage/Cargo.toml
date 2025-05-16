@@ -24,15 +24,20 @@ libmdbx = { workspace = true, optional = true }
 redb = { workspace = true, optional = true }
 # NOTE: intentionally avoiding the workspace dep as it brings "full" features, breaking the provers
 # We only need the runtime for the blocking databases to spawn blocking tasks
-tokio = { version = "1.41.1", default-features = false, features = ["rt"] }
+tokio = { version = "1.41.1", optional = true, default-features = false, features = [
+    "rt",
+] }
 
-# in memory concurrent cache
-moka = { version = "0.12.10", features = ["sync"]}
+# in memory concurrent cache (used in snapshot)
+quick_cache = "0.6.14"
 
 [features]
-default = []
-libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx"]
-redb = ["dep:redb"]
+default = ["snapshots-task"]
+# Enables the store add_block_snapshot which internally needs tokio to fire up a task, enabling the use of snapshot layers to speed up.
+# This is mainly because some other crates that depend on this (sp1) can't depend on tokio.
+snapshots-task = ["dep:tokio"]
+libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx", "dep:tokio"]
+redb = ["dep:redb", "dep:tokio"]
 
 [dev-dependencies]
 hex.workspace = true
