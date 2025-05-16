@@ -280,8 +280,8 @@ impl RpcDB {
         // TODO: remove unwraps
 
         let initial_account_proofs = initial_accounts
-            .iter()
-            .map(|(_, account)| account.get_account_proof());
+            .values()
+            .map(|account| account.get_account_proof());
         let final_account_proofs = final_accounts
             .iter()
             .map(|(address, account)| (address, account.get_account_proof()));
@@ -302,7 +302,7 @@ impl RpcDB {
             .map(|(address, proofs)| {
                 let nodes: Vec<_> = proofs
                     .iter()
-                    .filter_map(|(key, proof)| get_potential_child_nodes(proof, &hash_key(&key)))
+                    .filter_map(|(key, proof)| get_potential_child_nodes(proof, &hash_key(key)))
                     .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
                     .collect();
                 (address, nodes)
@@ -374,7 +374,6 @@ impl RpcDB {
         let state_root = initial_account_proofs
             .clone()
             .next()
-            .clone()
             .and_then(|proof| proof.first().cloned());
         let other_state_nodes = initial_account_proofs
             .flat_map(|proof| proof.iter().skip(1).cloned())
@@ -493,7 +492,7 @@ impl LevmDatabase for RpcDB {
         let hash = tokio::task::block_in_place(|| {
             handle.block_on(retry(|| get_block(&self.rpc_url, block_number as usize)))
         })
-        .map_err(|e| DatabaseError::Custom(e))
+        .map_err(DatabaseError::Custom)
         .map(|block| block.hash())?;
         self.block_hashes.lock().unwrap().insert(block_number, hash);
         Ok(Some(hash))
