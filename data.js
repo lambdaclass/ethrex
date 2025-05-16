@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747423043741,
+  "lastUpdate": 1747426673252,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7585,6 +7585,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 212032059435,
             "range": "± 1028418602",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "eb946a3d71e628701a32d6296064b07ff0ffa0b5",
+          "message": "fix(l2): rebuild prover when necessary with init-prover (#2810)\n\n**Motivation**\n\nRunning `make init-prover` didn't rebuild the binary when changes were\nmade to the crate, this lead to errors and bad dev experience.\n\n**Description**\n\n- Remove outdated `ethrex_L2_CONFIGS_PATH` var in Makefile\n- `build-prover` now deletes the existing prover executable and always\nrebuilds it\n- `init-prover` depends on target `../../target/release/ethrex_prover`\n- if the executable is outdated it's rebuilt & run otherwise it's just\nrun\n- `../../target/release/ethrex_prover` now depends on all the source\nfiles from `prover/` folder so it is only run if any of the files has a\nlater modified date than `../../target/release/ethrex_prover`\n\nOne thing to keep in mind if that you can't change the prover backend by\ndoing `make init-prover`.\nFor example if you first do `make init-prover PROVER=sp1` and then do\n`make init-prover PROVER=risc0` the prover won't be rebuilt, you need to\nuse `make build-prover PROVER=risc0` to do this or delete the executable\nat `../../target/release/ethrex_prover`\n\n\nCloses #2794",
+          "timestamp": "2025-05-16T19:24:23Z",
+          "tree_id": "bd3b1b96f0fd03a6279a9b5fd7b4d2f8b2182e0f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/eb946a3d71e628701a32d6296064b07ff0ffa0b5"
+        },
+        "date": 1747426670308,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210629379672,
+            "range": "± 559780210",
             "unit": "ns/iter"
           }
         ]
