@@ -193,7 +193,6 @@ jobs:
         run: |
           cd crates/l2
           touch .env
-          mkdir -p prover/zkvm/interface/sp1/out && touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
           CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Run tests

@@ -29,6 +29,8 @@ mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
     "initialize(bool,address,address,address,address,address,bytes32,bytes32,address[])";
+const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
+const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 
 #[tokio::main]
@@ -203,7 +205,14 @@ async fn deploy_contracts(
         &salt,
     )
     .await?;
-    info!(address = %format!("{:#x}", on_chain_proposer_deployment.proxy_address), tx_hash = %format!("{:#x}", on_chain_proposer_deployment.proxy_tx_hash), "OnChainProposer deployed");
+
+    info!(
+        "OnChainProposer deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
+        on_chain_proposer_deployment.proxy_address,
+        on_chain_proposer_deployment.proxy_tx_hash,
+        on_chain_proposer_deployment.implementation_address,
+        on_chain_proposer_deployment.implementation_tx_hash,
+    );
 
     info!("Deploying CommonBridge");
 
@@ -216,7 +225,13 @@ async fn deploy_contracts(
     )
     .await?;
 
-    info!(address = %format!("{:#x}", bridge_deployment.proxy_address), tx_hash = %format!("{:#x}", bridge_deployment.proxy_tx_hash), "CommonBridge deployed");
+    info!(
+        "CommonBridge deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
+        bridge_deployment.proxy_address,
+        bridge_deployment.proxy_tx_hash,
+        bridge_deployment.implementation_address,
+        bridge_deployment.implementation_tx_hash,
+    );
 
     let sp1_verifier_address = if opts.sp1_deploy_verifier {
         info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
@@ -269,6 +284,8 @@ async fn deploy_contracts(
     trace!(
         on_chain_proposer_proxy_address = ?on_chain_proposer_deployment.proxy_address,
         bridge_proxy_address = ?bridge_deployment.proxy_address,
+        on_chain_proposer_implementation_address = ?on_chain_proposer_deployment.implementation_address,
+        bridge_implementation_address = ?bridge_deployment.implementation_address,
         sp1_verifier_address = ?sp1_verifier_address,
         pico_verifier_address = ?pico_verifier_address,
         risc0_verifier_address = ?risc0_verifier_address,
@@ -315,12 +332,12 @@ async fn initialize_contracts(
         .into();
 
     let genesis = read_genesis_file(&opts.genesis_l2_path);
+    let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
     let initialize_tx_hash = {
         let calldata_values = vec![
             Value::Bool(opts.validium),
-            Value::Address(opts.on_chain_proposer_owner),
-            Value::Address(bridge_address),
+            Value::Address(deployer_address),
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
@@ -345,6 +362,47 @@ async fn initialize_contracts(
     };
 
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
+
+    let initialize_bridge_address_tx_hash = {
+        let calldata_values = vec![Value::Address(bridge_address)];
+        let on_chain_proposer_initialization_calldata =
+            encode_calldata(INITIALIZE_BRIDGE_ADDRESS_SIGNATURE, &calldata_values)?;
+
+        initialize_contract(
+            on_chain_proposer_address,
+            on_chain_proposer_initialization_calldata,
+            &opts.private_key,
+            eth_client,
+        )
+        .await?
+    };
+
+    info!(
+        tx_hash = %format!("{initialize_bridge_address_tx_hash:#x}"),
+        "OnChainProposer bridge address initialized"
+    );
+
+    if opts.on_chain_proposer_owner != deployer_address {
+        let transfer_ownership_tx_hash = {
+            let owener_transfer_calldata = encode_calldata(
+                TRANSFER_OWNERSHIP_SIGNATURE,
+                &[Value::Address(opts.on_chain_proposer_owner)],
+            )?;
+
+            initialize_contract(
+                on_chain_proposer_address,
+                owener_transfer_calldata,
+                &opts.private_key,
+                eth_client,
+            )
+            .await?
+        };
+
+        info!(
+            tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
+            "OnChainProposer ownership transfered"
+        );
+    }
 
     info!("Initializing CommonBridge");
     let initialize_tx_hash = {

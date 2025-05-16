@@ -89,13 +89,11 @@ contract OnChainProposer is
     /// @dev It sets the bridge address.
     /// @param _validium initialize the contract in validium mode.
     /// @param owner the address of the owner who can perform upgrades.
-    /// @param bridge the address of the bridge contract.
     /// @param r0verifier the address of the risc0 groth16 verifier.
     /// @param sp1verifier the address of the sp1 groth16 verifier.
     function initialize(
         bool _validium,
         address owner,
-        address bridge,
         address r0verifier,
         address sp1verifier,
         address picoverifier,
@@ -104,21 +102,6 @@ contract OnChainProposer is
         address[] calldata sequencerAddresses
     ) public initializer {
         VALIDIUM = _validium;
-
-        // Set the CommonBridge address
-        require(
-            BRIDGE == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
-            bridge != address(0),
-            "OnChainProposer: bridge is the zero address"
-        );
-        require(
-            bridge != address(this),
-            "OnChainProposer: bridge is the contract address"
-        );
-        BRIDGE = bridge;
 
         // Set the PicoGroth16Verifier address
         require(
@@ -184,6 +167,23 @@ contract OnChainProposer is
         }
 
         OwnableUpgradeable.__Ownable_init(owner);
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function initializeBridgeAddress(address bridge) public onlyOwner {
+        require(
+            BRIDGE == address(0),
+            "OnChainProposer: bridge already initialized"
+        );
+        require(
+            bridge != address(0),
+            "OnChainProposer: bridge is the zero address"
+        );
+        require(
+            bridge != address(this),
+            "OnChainProposer: bridge is the contract address"
+        );
+        BRIDGE = bridge;
     }
 
     /// @inheritdoc IOnChainProposer
@@ -287,7 +287,7 @@ contract OnChainProposer is
 
         if (SP1VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, sp1PublicValues);
+            _verifyPublicData(batchNumber, sp1PublicValues[16:]);
             ISP1Verifier(SP1VERIFIER).verifyProof(
                 SP1_VERIFICATION_KEY,
                 sp1PublicValues,
@@ -312,24 +312,28 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
-    function _verifyPublicData(uint256 batchNumber, bytes calldata publicData) internal view {
+    function _verifyPublicData(
+        uint256 batchNumber,
+        bytes calldata publicData
+    ) internal view {
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         require(
-            batchCommitments[lastVerifiedBatch].newStateRoot == initialStateRoot,
-                "OnChainProposer: initial state root public inputs don't match with initial state root"
-        ); 
+            batchCommitments[lastVerifiedBatch].newStateRoot ==
+                initialStateRoot,
+            "OnChainProposer: initial state root public inputs don't match with initial state root"
+        );
         bytes32 finalStateRoot = bytes32(publicData[32:64]);
         require(
             batchCommitments[batchNumber].newStateRoot == finalStateRoot,
-                "OnChainProposer: final state root public inputs don't match with final state root"
+            "OnChainProposer: final state root public inputs don't match with final state root"
         );
-        bytes32 withdrawalsMerkleRoot = bytes32(publicData[80:112]);
+        bytes32 withdrawalsMerkleRoot = bytes32(publicData[64:96]);
         require(
             batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
                 withdrawalsMerkleRoot,
             "OnChainProposer: withdrawals public inputs don't match with committed withdrawals"
         );
-        bytes32 depositsLogHash = bytes32(publicData[112:144]);
+        bytes32 depositsLogHash = bytes32(publicData[96:128]);
         require(
             batchCommitments[batchNumber].processedDepositLogsRollingHash ==
                 depositsLogHash,
