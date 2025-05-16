@@ -17,6 +17,7 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
+use ethrex_levm::db::error::DatabaseError;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
 use ethrex_levm::EVMConfig;
@@ -165,9 +166,13 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (address, new_state_account) in db.cache.drain() {
-            let initial_state_account = db.store.get_account(address)?;
-            let account_existed = db.store.account_exists(address);
+        for (address, new_state_account) in db.cache.iter() {
+            let initial_state_account =
+                db.immutable_cache.get(address).cloned().ok_or_else(|| {
+                    DatabaseError::Custom(
+                        "Initial account state not found in immutable_cache".to_string(),
+                    )
+                })?;
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -190,10 +195,16 @@ impl LEVM {
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = HashMap::new();
-            for (key, storage_slot) in &new_state_account.storage {
-                let storage_before_block = db.store.get_storage_value(address, *key)?;
-                if *storage_slot != storage_before_block {
-                    added_storage.insert(*key, *storage_slot);
+
+            for (key, &new_value) in &new_state_account.storage {
+                let old_value = initial_state_account
+                    .storage
+                    .get(key)
+                    .copied()
+                    .expect("Failed to get old value from initial_state_account.storage");
+
+                if new_value != old_value {
+                    added_storage.insert(*key, new_value);
                     storage_updated = true;
                 }
             }
@@ -206,15 +217,16 @@ impl LEVM {
 
             let mut removed = !initial_state_account.is_empty() && new_state_account.is_empty();
 
-            // https://eips.ethereum.org/EIPS/eip-161
-            // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
-            if !account_existed && new_state_account.is_empty() {
-                continue;
-            }
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
             // Note: An account can be empty but still exist in the trie (if that's the case we remove it)
             if new_state_account.is_empty() {
                 removed = true;
+
+                // https://eips.ethereum.org/EIPS/eip-161
+                // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
+                if !db.store.account_exists(*address) {
+                    continue;
+                }
             }
 
             if !removed && !acc_info_updated && !storage_updated {
@@ -223,7 +235,7 @@ impl LEVM {
             }
 
             let account_update = AccountUpdate {
-                address,
+                address: *address,
                 removed,
                 info,
                 code,
