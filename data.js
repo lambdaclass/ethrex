@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747411660930,
+  "lastUpdate": 1747411879365,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7495,6 +7495,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209179635152,
             "range": "± 1143289486",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e22c4dad2c151ad1f0aad8182f4d992c273c086e",
+          "message": "fix(core): remove hardcoded max_fee_per_gas & max_priority_fee_per_gas (#2803)\n\n**Motivation**\n\nThis values should be set dinmically \n\n**Description**\n\n- Add `get_max_priority_fee` to `EthClient` to call\n`eth_maxPriorityFeePerGas` endpoint\n- When calling `build_xxxx_transaction` without `max_fee_per_gas`\noverride\n   - Set it to the result of calling `eth_gasPrice` endpoint\n- When calling `build_xxxx_transaction` without `max_fee_per_gas`\noverride\n  - Set it to the result of calling `eth_maxPriorityFeePerGas`\n- Because `eth_maxPriorityFeePerGas` in Ethrex can return null if it\ndoes set it to the result of calling `eth_gasPrice`\n\nCloses #2795",
+          "timestamp": "2025-05-16T15:17:30Z",
+          "tree_id": "6a3cf40f41ba17e606890b097ccae13050f573a4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e22c4dad2c151ad1f0aad8182f4d992c273c086e"
+        },
+        "date": 1747411876523,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209532389868,
+            "range": "± 629754806",
             "unit": "ns/iter"
           }
         ]
