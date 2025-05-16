@@ -32,6 +32,7 @@ reqwest.workspace = true
 [dev-dependencies]
 hex-literal.workspace = true
 
+
 [features]
 default = []
 c-kzg = ["dep:c-kzg"]

@@ -1,8 +1,7 @@
 name: L2 (SP1 Backend)
 on:
-  pull_request:
-    branches: ["**"]
-  merge_group:
+  push:
+    branches: ["main"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
