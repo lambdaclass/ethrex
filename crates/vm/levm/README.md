@@ -120,11 +120,11 @@ We'll run flamegraph or Samply over the VM to identify bottlenecks and improve t
 **Paris**: 2886/2886 (100.00%)
 
 
-### How to run EF tests locally
+### How to run EF tests 
 
-```
-make download-evm-ef-tests run-evm-ef-tests QUIET=true
-```
+For running EF state tests go [here](ef_tests/state/README.md).
+
+For running EF blockchain tests go [here](ef_tests/blockchain/README.md).
 
 ## Benchmarks
 
