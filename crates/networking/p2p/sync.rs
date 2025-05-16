@@ -35,7 +35,9 @@ use trie_rebuild::TrieRebuilder;
 
 use crate::{
     kademlia::KademliaTable,
-    peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST},
+    peer_handler::{
+        BlockRequestOrder, BodyRequestError, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST,
+    },
 };
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
@@ -190,7 +192,7 @@ impl Syncer {
         loop {
             debug!("Requesting Block Headers from {search_head}");
 
-            let Some(mut block_headers) = self
+            let Some((mut block_headers, mut block_hashes)) = self
                 .peers
                 .request_block_headers(search_head, BlockRequestOrder::OldToNew)
                 .await
@@ -218,11 +220,6 @@ impl Syncer {
                 search_head = first_block_header.parent_hash;
                 continue;
             }
-
-            let mut block_hashes = block_headers
-                .iter()
-                .map(|header| header.compute_block_hash())
-                .collect::<Vec<_>>();
 
             debug!(
                 "Received {} block headers| First Number: {} Last Number: {}",
@@ -386,34 +383,38 @@ impl Syncer {
         let since = Instant::now();
         loop {
             debug!("Requesting Block Bodies");
-            let Some(block_bodies) = self
+            let block_request_result = self
                 .peers
-                .request_block_bodies(current_block_hashes_chunk.clone())
-                .await
-            else {
-                break;
-            };
+                .request_and_validate_block_bodies(
+                    &mut current_block_hashes_chunk,
+                    &mut headers_iter,
+                )
+                .await;
+            match block_request_result {
+                Ok(blcks) => {
+                    blocks.extend(blcks);
+                }
+                Err(BodyRequestError::BodiesNotFound) => {
+                    return Err(SyncError::BodiesNotFound);
+                }
+                Err(BodyRequestError::BodiesReturnedEmpty) => {
+                    break;
+                }
+                Err(BodyRequestError::InvalidBlockBody) => {
+                    continue;
+                }
+            }
 
-            let block_bodies_len = block_bodies.len();
+            let blocks_len = blocks.len();
 
             let first_block_hash = current_block_hashes_chunk
                 .first()
                 .map_or(H256::default(), |a| *a);
 
             debug!(
-                "Received {} Block Bodies, starting from block hash {:?}",
-                block_bodies_len, first_block_hash
+                "Received {} Blocks, starting from block hash {:?}",
+                blocks_len, first_block_hash
             );
-
-            // Push blocks
-            for (_, body) in current_block_hashes_chunk
-                .drain(..block_bodies_len)
-                .zip(block_bodies)
-            {
-                let header = headers_iter.next().ok_or(SyncError::BodiesNotFound)?;
-                let block = Block::new(header.clone(), body);
-                blocks.push(block);
-            }
 
             if current_block_hashes_chunk.is_empty() {
                 current_chunk_idx += 1;
@@ -472,6 +473,7 @@ impl Syncer {
                     .set_latest_valid_ancestor(sync_head, last_valid_hash)
                     .await?;
             }
+            // NOTE: Do we want to discard the peer if an execution or validation error happens?
 
             return Err(error.into());
         }
@@ -535,7 +537,7 @@ async fn store_block_bodies(
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
+        if let Some((block_bodies, _)) = peers.request_block_bodies(block_hashes.clone()).await {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_hashes = block_hashes.drain(..block_bodies.len());
