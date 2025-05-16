@@ -5,7 +5,7 @@ use crate::rpc::{get_account, get_block, retry};
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountInfo, AccountState, Block, Fork, TxKind},
+    types::{AccountInfo, AccountState, Block, TxKind},
     Address, H256, U256,
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
@@ -239,12 +239,11 @@ impl RpcDB {
         // StoreWrapper.
 
         let chain_config = *CANCUN_CONFIG;
-        let fork = chain_config.fork(block.header.timestamp);
 
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()), CacheDB::new());
 
         // pre-execute and get all state changes
-        let result = LEVM::execute_block(block, &mut db).map_err(Box::new)?;
+        let _ = LEVM::execute_block(block, &mut db).map_err(Box::new)?;
         let execution_updates = LEVM::get_state_transitions(&mut db).map_err(Box::new)?;
 
         let index: Vec<(Address, Vec<H256>)> = self
@@ -254,15 +253,15 @@ impl RpcDB {
             .iter()
             .map(|(address, account)| match account {
                 Account::Existing {
-                    account_state,
+                    account_state: _,
                     storage,
-                    account_proof,
-                    storage_proofs,
-                    code,
+                    account_proof: _,
+                    storage_proofs: _,
+                    code: _,
                 } => (*address, storage.keys().cloned().collect()),
                 Account::NonExisting {
-                    account_proof,
-                    storage_proofs,
+                    account_proof: _,
+                    storage_proofs: _,
                 } => {
                     let address_account_update = execution_updates
                         .iter()
@@ -283,8 +282,8 @@ impl RpcDB {
         // TODO: remove unwraps
 
         let initial_account_proofs = initial_accounts
-            .iter()
-            .map(|(_, account)| account.get_account_proof());
+            .values()
+            .map(|account| account.get_account_proof());
         let final_account_proofs = final_accounts
             .iter()
             .map(|(address, account)| (address, account.get_account_proof()));
@@ -305,7 +304,7 @@ impl RpcDB {
             .map(|(address, proofs)| {
                 let nodes: Vec<_> = proofs
                     .iter()
-                    .filter_map(|(key, proof)| get_potential_child_nodes(proof, &hash_key(&key)))
+                    .filter_map(|(key, proof)| get_potential_child_nodes(proof, &hash_key(key)))
                     .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
                     .collect();
                 (address, nodes)
@@ -317,7 +316,6 @@ impl RpcDB {
             pub account_state: &'a AccountState,
             pub storage: &'a HashMap<H256, U256>,
             pub code: &'a Option<Bytes>,
-            pub storage_proofs: &'a HashMap<H256, Vec<NodeRLP>>,
         }
 
         let existing_accs = initial_accounts.iter().filter_map(|(address, account)| {
@@ -325,7 +323,6 @@ impl RpcDB {
                 account_state,
                 storage,
                 code,
-                storage_proofs,
                 ..
             } = account
             {
@@ -335,7 +332,6 @@ impl RpcDB {
                         account_state,
                         storage,
                         code,
-                        storage_proofs,
                     },
                 ))
             } else {
@@ -380,7 +376,6 @@ impl RpcDB {
         let state_root = initial_account_proofs
             .clone()
             .next()
-            .clone()
             .and_then(|proof| proof.first().cloned());
         let other_state_nodes = initial_account_proofs
             .flat_map(|proof| proof.iter().skip(1).cloned())
@@ -499,7 +494,7 @@ impl LevmDatabase for RpcDB {
         let hash = tokio::task::block_in_place(|| {
             handle.block_on(retry(|| get_block(&self.rpc_url, block_number as usize)))
         })
-        .map_err(|e| DatabaseError::Custom(e))
+        .map_err(DatabaseError::Custom)
         .map(|block| block.hash())?;
         self.block_hashes.lock().unwrap().insert(block_number, hash);
         Ok(Some(hash))
