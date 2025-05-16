@@ -138,16 +138,15 @@ impl SyncManager {
                 .parse()
                 .expect("Error converting block number environmental variable to int");
             #[cfg(feature = "sync-test")]
-            let mut get_block_hash = || {
+            let mut get_block_hash = async || {
                 if get_latest {
-                    store.get_latest_canonical_block_hash()
+                    store.get_latest_canonical_block_hash().await
                 } else {
-                    store.get_canonical_block_hash(block_number)
+                    store.get_canonical_block_hash(block_number).await
                 }
             };
             #[cfg(feature = "sync-test")]
-            let Ok(Some(current_head)) = get_block_hash().await
-            else {
+            let Ok(Some(current_head)) = get_block_hash() else {
                 tracing::error!("Failed to fetch latest canonical block, unable to sync");
                 return;
             };
