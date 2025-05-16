@@ -104,8 +104,8 @@ impl L1Watcher {
         };
 
         debug!(
-            "Latest possible block number with {} blocks of delay: {} ({:#x})",
-            self.l1_block_delay, latest_block_to_check, latest_block_to_check
+            "Latest possible block number with {} blocks of delay: {latest_block_to_check} ({latest_block_to_check:#x})",
+            self.l1_block_delay,
         );
 
         // last_block_fetched could be greater than latest_block_to_check:
