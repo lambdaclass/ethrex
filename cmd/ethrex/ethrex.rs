@@ -6,7 +6,6 @@ use ethrex::{
         init_store, init_tracing,
     },
     utils::{set_datadir, store_known_peers},
-    DEFAULT_JWT_PATH,
 };
 use ethrex_p2p::network::peer_table;
 use std::{path::PathBuf, time::Duration};
@@ -47,15 +46,9 @@ async fn main() -> eyre::Result<()> {
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
-    let authrpc_jwtsecret_path = if opts.authrpc_jwtsecret == DEFAULT_JWT_PATH[1..] {
-        data_dir.to_owned() + DEFAULT_JWT_PATH
-    } else {
-        opts.authrpc_jwtsecret.clone()
-    };
-
     init_rpc_api(
         &opts,
-        authrpc_jwtsecret_path.as_str(),
+        &data_dir,
         #[cfg(any(feature = "l2", feature = "based"))]
         &L2Options::default(),
         &signer,
