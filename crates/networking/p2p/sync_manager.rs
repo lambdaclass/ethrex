@@ -123,13 +123,13 @@ impl SyncManager {
                 tracing::error!("Failed to fetch latest canonical block, unable to sync");
                 return;
             };
-
             #[cfg(feature = "sync-test")]
             let get_latest = match env::var("SYNC-LATEST")
+                .as_str()
                 .expect("Failed to get sync configuration from environment")
             {
-                String::from("true") => true,
-                String::from("false") => false,
+                "true" => true,
+                "false" => false,
                 _ => true,
             };
             #[cfg(feature = "sync-test")]
@@ -146,7 +146,8 @@ impl SyncManager {
                 }
             };
             #[cfg(feature = "sync-test")]
-            let Ok(Some(current_head)) = get_block_hash() else {
+            let Ok(Some(current_head)) = get_block_hash().await
+            else {
                 tracing::error!("Failed to fetch latest canonical block, unable to sync");
                 return;
             };
