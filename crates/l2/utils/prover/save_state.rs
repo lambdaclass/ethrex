@@ -77,8 +77,8 @@ impl From<&StateType> for StateFileType {
 #[inline(always)]
 fn get_proof_file_name_from_prover_type(prover_type: &ProverType, batch_number: u64) -> String {
     match prover_type {
-        ProverType::Exec => format!("proof_tdx_{batch_number}.json"),
-        ProverType::TDX => format!("proof_exec_{batch_number}.json"),
+        ProverType::Exec => format!("proof_exec_{batch_number}.json"),
+        ProverType::TDX => format!("proof_tdx_{batch_number}.json"),
         ProverType::RISC0 => format!("proof_risc0_{batch_number}.json"),
         ProverType::SP1 => format!("proof_sp1_{batch_number}.json").to_owned(),
         ProverType::Pico => format!("proof_pico_{batch_number}.json").to_owned(),
