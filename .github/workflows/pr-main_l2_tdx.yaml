@@ -91,7 +91,7 @@ jobs:
           ETHREX_PROPOSER_BLOCK_TIME_MS=12000 \
           ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
           make init-l2 &
-          sleep 3000
+          sleep 5
 
       - name: Run test
         run: |
