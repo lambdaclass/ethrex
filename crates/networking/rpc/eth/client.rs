@@ -30,7 +30,6 @@ impl RpcHandler for Syncing {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let is_synced = context.storage.is_synced().await?;
-        Ok(Value::Bool(!is_synced))
+        Ok(Value::Bool(!context.blockchain.is_synced()))
     }
 }

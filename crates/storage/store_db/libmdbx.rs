@@ -761,18 +761,6 @@ impl StoreEngine for Store {
         Ok(res)
     }
 
-    async fn is_synced(&self) -> Result<bool, StoreError> {
-        match self.read::<ChainData>(ChainDataIndex::IsSynced).await? {
-            None => Err(StoreError::Custom("Sync status not found".to_string())),
-            Some(ref rlp) => RLPDecode::decode(rlp).map_err(|_| StoreError::DecodeError),
-        }
-    }
-
-    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
-        self.write::<ChainData>(ChainDataIndex::IsSynced, is_synced.encode_to_vec())
-            .await
-    }
-
     async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
         self.write::<SnapState>(SnapStateIndex::StateHealPaths, paths.encode_to_vec())
             .await

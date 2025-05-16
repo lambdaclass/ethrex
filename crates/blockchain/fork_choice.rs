@@ -124,7 +124,6 @@ pub async fn apply_fork_choice(
         store.update_safe_block_number(safe.number).await?;
     }
     store.update_latest_block_number(head.number).await?;
-    store.update_sync_status(true).await?;
 
     Ok(head)
 }

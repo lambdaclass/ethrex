@@ -717,11 +717,6 @@ async fn try_execute_payload(
     match context.blockchain.add_block(block).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
-            context
-                .storage
-                .update_sync_status(false)
-                .await
-                .map_err(|e| RpcErr::Internal(e.to_string()))?;
             context.syncer.sync_to_head(block_hash);
             Ok(PayloadStatus::syncing())
         }

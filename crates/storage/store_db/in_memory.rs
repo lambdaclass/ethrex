@@ -57,7 +57,6 @@ struct ChainData {
     safe_block_number: Option<BlockNumber>,
     latest_block_number: Option<BlockNumber>,
     pending_block_number: Option<BlockNumber>,
-    is_synced: bool,
 }
 
 // Keeps track of the state left by the latest snap attempt
@@ -550,15 +549,6 @@ impl StoreEngine for Store {
 
     async fn clear_snap_state(&self) -> Result<(), StoreError> {
         self.inner().snap_state = Default::default();
-        Ok(())
-    }
-
-    async fn is_synced(&self) -> Result<bool, StoreError> {
-        Ok(self.inner().chain_data.is_synced)
-    }
-
-    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
-        self.inner().chain_data.is_synced = is_synced;
         Ok(())
     }
 

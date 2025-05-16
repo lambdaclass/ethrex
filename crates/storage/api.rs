@@ -316,10 +316,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Clears all checkpoint data created during the last snap sync
     async fn clear_snap_state(&self) -> Result<(), StoreError>;
 
-    async fn is_synced(&self) -> Result<bool, StoreError>;
-
-    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError>;
-
     /// Write an account batch into the current state snapshot
     async fn write_snapshot_account_batch(
         &self,
