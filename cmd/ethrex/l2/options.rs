@@ -1,12 +1,15 @@
 use crate::{cli::Options as NodeOptions, utils};
 use clap::Parser;
-use ethrex_common::Address;
+use ethrex_common::{
+    types::signer::{LocalSigner, RemoteSigner},
+    Address,
+};
 use ethrex_l2::{
     BlockProducerConfig, CommitterConfig, EthConfig, L1WatcherConfig, ProofCoordinatorConfig,
     SequencerConfig,
 };
-use ethrex_rpc::clients::eth::get_address_from_secret_key;
-use secp256k1::SecretKey;
+use reqwest::Url;
+use secp256k1::{PublicKey, SecretKey};
 use std::net::{IpAddr, Ipv4Addr};
 
 #[derive(Parser, Default)]
@@ -43,9 +46,53 @@ pub struct SequencerOptions {
     pub proof_coordinator_opts: ProofCoordinatorOptions,
 }
 
-impl From<SequencerOptions> for SequencerConfig {
-    fn from(opts: SequencerOptions) -> Self {
-        Self {
+#[derive(Debug, thiserror::Error)]
+pub enum SequencerOptionsError {
+    #[error("Remote signer URL was provided without a public key")]
+    RemoteUrlWithoutPubkey,
+    #[error("No signer was set up for {0}")]
+    NoSigner(String),
+}
+
+impl TryFrom<SequencerOptions> for SequencerConfig {
+    type Error = SequencerOptionsError;
+
+    fn try_from(opts: SequencerOptions) -> Result<Self, Self::Error> {
+        let committer_signer = match opts.committer_opts.remote_signer_url {
+            Some(url) => RemoteSigner::new(
+                url,
+                opts.committer_opts
+                    .remote_signer_public_key
+                    .ok_or(SequencerOptionsError::RemoteUrlWithoutPubkey)?,
+            )
+            .into(),
+            None => LocalSigner::new(
+                opts.committer_opts
+                    .committer_l1_private_key
+                    .ok_or(SequencerOptionsError::NoSigner("Committer".to_string()))?,
+            )
+            .into(),
+        };
+
+        let proof_coordinator_signer = match opts.proof_coordinator_opts.remote_signer_url {
+            Some(url) => RemoteSigner::new(
+                url,
+                opts.proof_coordinator_opts
+                    .remote_signer_public_key
+                    .ok_or(SequencerOptionsError::RemoteUrlWithoutPubkey)?,
+            )
+            .into(),
+            None => LocalSigner::new(
+                opts.proof_coordinator_opts
+                    .proof_coordinator_l1_private_key
+                    .ok_or(SequencerOptionsError::NoSigner(
+                        "ProofCoordinator".to_string(),
+                    ))?,
+            )
+            .into(),
+        };
+
+        Ok(Self {
             block_producer: BlockProducerConfig {
                 block_time_ms: opts.proposer_opts.block_time_ms,
                 coinbase_address: opts.proposer_opts.coinbase_address,
@@ -53,14 +100,10 @@ impl From<SequencerOptions> for SequencerConfig {
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts.committer_opts.on_chain_proposer_address,
-                l1_address: get_address_from_secret_key(
-                    &opts.committer_opts.committer_l1_private_key,
-                )
-                .unwrap(),
-                l1_private_key: opts.committer_opts.committer_l1_private_key,
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
                 validium: opts.committer_opts.validium,
+                signer: committer_signer,
             },
             eth: EthConfig {
                 rpc_url: opts.eth_opts.rpc_url,
@@ -80,17 +123,13 @@ impl From<SequencerOptions> for SequencerConfig {
                 l2_proposer_private_key: opts.watcher_opts.l2_proposer_private_key,
             },
             proof_coordinator: ProofCoordinatorConfig {
-                l1_address: get_address_from_secret_key(
-                    &opts.proof_coordinator_opts.proof_coordinator_l1_private_key,
-                )
-                .unwrap(),
-                l1_private_key: opts.proof_coordinator_opts.proof_coordinator_l1_private_key,
                 listen_ip: opts.proof_coordinator_opts.listen_ip,
                 listen_port: opts.proof_coordinator_opts.listen_port,
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
                 dev_mode: opts.proof_coordinator_opts.dev_mode,
+                signer: proof_coordinator_signer,
             },
-        }
+        })
     }
 }
 
@@ -244,8 +283,30 @@ pub struct CommitterOptions {
         env = "ETHREX_COMMITTER_L1_PRIVATE_KEY",
         help_heading = "L1 Committer options",
         help = "Private key of a funded account that the sequencer will use to send commit txs to the L1.",
+        conflicts_with_all = &["remote_signer_url", "remote_signer_public_key"],
+        required_unless_present = "remote_signer_url",
     )]
-    pub committer_l1_private_key: SecretKey,
+    pub committer_l1_private_key: Option<SecretKey>,
+    #[arg(
+        long = "committer.remote-signer-url",
+        value_name = "URL",
+        env = "ETHREX_COMMITTER_REMOTE_SIGNER_URL",
+        help_heading = "L1 Committer options",
+        help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
+        requires = "remote_signer_public_key",
+        required_unless_present = "committer_l1_private_key"
+    )]
+    pub remote_signer_url: Option<Url>,
+    #[arg(
+        long = "committer.remote-signer-public-key",
+        value_name = "PUBLIC_KEY",
+        value_parser = utils::parse_public_key,
+        env = "ETHREX_COMMITTER_REMOTE_SIGNER_PUBLIC_KEY",
+        help_heading = "L1 Committer options",
+        help = "Public key to request the remote signature from.",
+        requires = "remote_signer_url",
+    )]
+    pub remote_signer_public_key: Option<PublicKey>,
     #[arg(
         long,
         value_name = "ADDRESS",
@@ -287,13 +348,15 @@ impl Default for CommitterOptions {
             committer_l1_private_key: utils::parse_private_key(
                 "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
             )
-            .unwrap(),
+            .ok(),
             on_chain_proposer_address: "0xea6d04861106c1fb69176d49eeb8de6dd14a9cfe"
                 .parse()
                 .unwrap(),
             commit_time_ms: 1000,
             arbitrary_base_blob_gas_price: 1_000_000_000,
             validium: false,
+            remote_signer_url: None,
+            remote_signer_public_key: None,
         }
     }
 }
@@ -308,8 +371,30 @@ pub struct ProofCoordinatorOptions {
         env = "ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY",
         help_heading = "L1 Prover Server options",
         long_help = "Private key of of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.",
+        conflicts_with_all = &["remote_signer_url", "remote_signer_public_key"],
+        required_unless_present = "remote_signer_url",
     )]
-    pub proof_coordinator_l1_private_key: SecretKey,
+    pub proof_coordinator_l1_private_key: Option<SecretKey>,
+    #[arg(
+        long = "proof-coordinator.remote-signer-url",
+        value_name = "URL",
+        env = "ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_URL",
+        help_heading = "L1 Prover Server options",
+        help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
+        requires = "remote_signer_public_key",
+        required_unless_present = "proof_coordinator_l1_private_key"
+    )]
+    pub remote_signer_url: Option<Url>,
+    #[arg(
+        long = "proof-coordinator.remote-signer-public-key",
+        value_name = "PUBLIC_KEY",
+        value_parser = utils::parse_public_key,
+        env = "ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_PUBLIC_KEY",
+        help_heading = "L1 Prover Server options",
+        help = "Public key to request the remote signature from.",
+        requires = "remote_signer_url",
+    )]
+    pub remote_signer_public_key: Option<PublicKey>,
     #[arg(
         long = "proof-coordinator-listen-ip",
         default_value = "127.0.0.1",
@@ -351,7 +436,9 @@ impl Default for ProofCoordinatorOptions {
             proof_coordinator_l1_private_key:
                 "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
                     .parse()
-                    .unwrap(),
+                    .ok(),
+            remote_signer_url: None,
+            remote_signer_public_key: None,
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             listen_port: 3900,
             proof_send_interval_ms: 5000,

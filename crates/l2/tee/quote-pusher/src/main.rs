@@ -5,8 +5,8 @@ use std::env;
 use std::str::FromStr;
 
 use ethereum_types::{Address, H160, H256, U256};
+use ethrex_common::types::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::eth::EthClient;
 use secp256k1::SecretKey;
@@ -109,8 +109,7 @@ async fn send_update_key(
     sig_addr: Address,
     quote: Vec<u8>,
 ) -> Result<H256, PusherError> {
-    let my_address = get_address_from_secret_key(private_key)
-        .map_err(|_| PusherError::ParseError("Invalid private key".to_string()))?;
+    let signer: Signer = LocalSigner::new(*private_key).into();
 
     let calldata = encode_calldata(
         UPDATE_KEY_SIGNATURE,
@@ -121,7 +120,7 @@ async fn send_update_key(
     let tx = eth_client
         .build_eip1559_transaction(
             contract_addr,
-            my_address,
+            signer.address(),
             calldata.into(),
             Default::default(),
         )
@@ -129,11 +128,11 @@ async fn send_update_key(
         .map_err(PusherError::EthClientError)?;
     let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(tx);
     eth_client
-        .set_gas_for_wrapped_tx(&mut wrapped_tx, my_address)
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, signer.address())
         .await
         .map_err(PusherError::EthClientError)?;
     let tx_hash: H256 = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &signer)
         .await
         .map_err(PusherError::EthClientError)?;
     Ok(tx_hash)
@@ -144,7 +143,7 @@ const UPDATE_SIGNATURE: &str = "update(uint256,bytes)";
 async fn do_transition(
     eth_client: &EthClient,
     web_client: &reqwest::Client,
-    private_key: &SecretKey,
+    signer: &Signer,
     prover_url: &str,
     contract_addr: Address,
     state: u64,
@@ -178,22 +177,18 @@ async fn do_transition(
             "signature quote".to_string(),
         ))?;
 
-    let tx_hash =
-        send_transition(eth_client, private_key, contract_addr, new_state, signature).await?;
+    let tx_hash = send_transition(eth_client, signer, contract_addr, new_state, signature).await?;
     println!("Updated state. TX: {tx_hash}");
     Ok(new_state)
 }
 
 async fn send_transition(
     eth_client: &EthClient,
-    private_key: &SecretKey,
+    signer: &Signer,
     contract_addr: Address,
     new_state: u64,
     signature: Vec<u8>,
 ) -> Result<H256, PusherError> {
-    let my_address = get_address_from_secret_key(private_key)
-        .map_err(|_| PusherError::ParseError("Invalid private key".to_string()))?;
-
     let calldata = encode_calldata(
         UPDATE_SIGNATURE,
         &[
@@ -206,7 +201,7 @@ async fn send_transition(
     let tx = eth_client
         .build_eip1559_transaction(
             contract_addr,
-            my_address,
+            signer.address(),
             calldata.into(),
             Default::default(),
         )
@@ -214,11 +209,11 @@ async fn send_transition(
         .map_err(PusherError::EthClientError)?;
     let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(tx);
     eth_client
-        .set_gas_for_wrapped_tx(&mut wrapped_tx, my_address)
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, signer.address())
         .await
         .map_err(PusherError::EthClientError)?;
     let tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, signer)
         .await
         .map_err(PusherError::EthClientError)?;
     Ok(tx_hash)
@@ -246,6 +241,7 @@ async fn main() -> Result<(), PusherError> {
 
     let eth_client = EthClient::new(&rpc_url);
     let web_client = reqwest::Client::new();
+    let signer: Signer = LocalSigner::new(private_key).into();
 
     let mut state = 100;
     setup_key(
@@ -262,7 +258,7 @@ async fn main() -> Result<(), PusherError> {
         state = do_transition(
             &eth_client,
             &web_client,
-            &private_key,
+            &signer,
             &prover_url,
             contract_addr,
             state,

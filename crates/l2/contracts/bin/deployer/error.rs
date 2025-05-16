@@ -27,4 +27,8 @@ pub enum DeployerError {
     InternalError(String),
     #[error("Failed to write contract addresses to .env: {0}")]
     FailedToWriteContractAddressesToEnv(#[from] std::io::Error),
+    #[error("No signer was set up")]
+    NoSigner,
+    #[error("Remote signer URL was provided without a public key")]
+    RemoteUrlWithoutPubkey,
 }
