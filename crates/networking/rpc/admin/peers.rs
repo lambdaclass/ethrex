@@ -41,7 +41,7 @@ struct Protocols {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProtocolData {
-    version: u32,
+    version: u8,
 }
 
 impl From<PeerData> for RpcPeer {
@@ -49,14 +49,24 @@ impl From<PeerData> for RpcPeer {
         let mut protocols = Protocols::default();
         // Fill protocol data
         for cap in &peer.supported_capabilities {
-            match cap {
-                // TODO (https://github.com/lambdaclass/ethrex/issues/1578) Save the versions of each capability
-                // For now we will be hardcoding our supported versions
-                Capability::P2p => protocols.p2p = Some(ProtocolData { version: 5 }),
-                Capability::Eth => protocols.eth = Some(ProtocolData { version: 68 }),
-                Capability::Snap => protocols.snap = Some(ProtocolData { version: 1 }),
+            match cap.protocol {
+                "p2p" => {
+                    protocols.p2p = Some(ProtocolData {
+                        version: cap.version,
+                    })
+                }
+                "eth" => {
+                    protocols.eth = Some(ProtocolData {
+                        version: cap.version,
+                    })
+                }
+                "snap" => {
+                    protocols.snap = Some(ProtocolData {
+                        version: cap.version,
+                    })
+                }
                 // Ignore capabilities we don't know of
-                Capability::UnsupportedCapability(_) => {}
+                _ => {}
             }
         }
         RpcPeer {
@@ -101,14 +111,12 @@ mod tests {
         // Set node capabilities and other relevant data
         peer.is_connected = true;
         peer.is_connection_inbound = false;
-        peer.supported_capabilities = vec![Capability::Eth, Capability::Snap];
+        peer.supported_capabilities = vec![Capability {protocol: "eth", version: 68}, Capability {protocol: "snap", version: 1}];
         peer.node.version = Some("ethrex/test".to_string());
         // The first serialized peer shown in geth's documentation example: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-admin#admin-peers
         // The fields "localAddress", "static", "trusted" and "name" were removed as we do not have the necessary information to show them
-        // Also the capability versions were removed as we don't currenlty store them in the Capability enum
-        // We should add them along with https://github.com/lambdaclass/ethrex/issues/1578
         // Misc: Added 0x prefix to node id, there is no set spec for this method so the prefix shouldn't be a problem, also changed version name
-        let expected_serialized_peer = r#"{"caps":["eth","snap"],"enode":"enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303","id":"0x6b36f791352f15eb3ec4f67787074ab8ad9d487e37c4401d383f0561a0a20507","name":"ethrex/test","network":{"inbound":false,"remoteAddress":"157.90.35.166:30303"},"protocols":{"eth":{"version":68},"snap":{"version":1}}}"#.to_string();
+        let expected_serialized_peer = r#"{"caps":["eth/68","snap/1"],"enode":"enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303","id":"0x6b36f791352f15eb3ec4f67787074ab8ad9d487e37c4401d383f0561a0a20507","name":"ethrex/test","network":{"inbound":false,"remoteAddress":"157.90.35.166:30303"},"protocols":{"eth":{"version":68},"snap":{"version":1}}}"#.to_string();
         let serialized_peer =
             serde_json::to_string(&RpcPeer::from(peer)).expect("Failed to serialize peer");
         assert_eq!(serialized_peer, expected_serialized_peer);
