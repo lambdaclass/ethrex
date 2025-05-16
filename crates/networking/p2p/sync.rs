@@ -194,7 +194,7 @@ impl Syncer {
 
             let Some((mut block_headers, mut block_hashes)) = self
                 .peers
-                .request_and_validate_block_headers(search_head, BlockRequestOrder::OldToNew)
+                .request_block_headers(search_head, BlockRequestOrder::OldToNew)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -389,7 +389,7 @@ impl Syncer {
                 .await;
             match block_request_result {
                 Ok(blcks) => {
-                    blocks = blcks;
+                    blocks.extend(blcks);
                 }
                 Err(BodyRequestError::BodiesNotFound) => {
                     return Err(SyncError::BodiesNotFound);
