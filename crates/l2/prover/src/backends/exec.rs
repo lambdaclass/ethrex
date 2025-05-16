@@ -47,6 +47,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         parent_block_header,
         mut db,
         elasticity_multiplier,
+        state_diff
     } = input;
 
     // Tries used for validating initial and final state root
@@ -120,6 +121,14 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         parent_header = block.header;
     }
 
+    // Calculate account updates based on state diff
+    #[cfg(feature = "l2")]
+    let Ok(state_diff_updates) = state_diff.to_account_updates(&state_trie) else {
+        return Err("Failed to calculate account updates from state diffs"
+            .to_string()
+            .into());
+    };
+    
     // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
     let Ok(withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
@@ -142,6 +151,12 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     let final_state_hash = state_trie.hash_no_commit();
     if final_state_hash != last_block_state_root {
         return Err("invalid final state trie".to_string().into());
+    }
+
+    // Check state diffs are valid
+    #[cfg(feature = "l2")]
+    if state_diff_updates != acc_account_updates {
+        panic!("invalid state diffs")
     }
 
     Ok(ProgramOutput {

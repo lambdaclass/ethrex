@@ -4,6 +4,7 @@ use crate::utils::prover::proving_systems::ProverType;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
+use ethrex_l2_common::StateDiffError;
 use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
@@ -74,6 +75,10 @@ pub enum ProverServerError {
     InternalError(String),
     #[error("ProverServer failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
+    #[error("ProverServer encountered a StateDiffError")]
+    StateDiffError(#[from] StateDiffError),
+    #[error("ProverServer encountered a ExecutionCacheError")]
+    ExecutionCacheError(#[from] ExecutionCacheError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -176,30 +181,6 @@ pub enum BlobEstimationError {
     NonFiniteResult,
     #[error("{0}")]
     FakeExponentialError(#[from] FakeExponentialError),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum StateDiffError {
-    #[error("StateDiff failed to deserialize: {0}")]
-    FailedToDeserializeStateDiff(String),
-    #[error("StateDiff failed to serialize: {0}")]
-    FailedToSerializeStateDiff(String),
-    #[error("StateDiff invalid account state diff type: {0}")]
-    InvalidAccountStateDiffType(u8),
-    #[error("StateDiff unsupported version: {0}")]
-    UnsupportedVersion(u8),
-    #[error("Both bytecode and bytecode hash are set")]
-    BytecodeAndBytecodeHashSet,
-    #[error("Empty account diff")]
-    EmptyAccountDiff,
-    #[error("The length of the vector is too big to fit in u16: {0}")]
-    LengthTooBig(#[from] core::num::TryFromIntError),
-    #[error("DB Error: {0}")]
-    DbError(#[from] TrieError),
-    #[error("Store Error: {0}")]
-    StoreError(#[from] StoreError),
-    #[error("New nonce is lower than the previous one")]
-    FailedToCalculateNonce,
 }
 
 #[derive(Debug, thiserror::Error)]
