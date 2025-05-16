@@ -60,7 +60,7 @@ impl RpcDB {
             TxKind::Call(to) => Some(to),
             TxKind::Create => None,
         });
-        let accessed_storage: Vec<_> = txs.iter().flat_map(|tx| tx.access_list()).collect();
+        let accessed_storage: Vec<_> = txs.iter().flat_map(|tx| tx.access_list().clone()).collect();
 
         // dedup accounts and concatenate accessed storage keys
         let mut accounts = HashMap::new();
