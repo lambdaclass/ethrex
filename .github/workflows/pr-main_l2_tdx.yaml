@@ -84,23 +84,18 @@ jobs:
         run: |
           cd crates/l2
           touch .env
+          make init-local-l1;
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
-          make init-local-l1; \
           make deploy-l1
 
-      - name: Start Sequencer
+      - name: Start Sequencer and test
         run: |
           cd crates/l2
-          CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_PROPOSER_BLOCK_TIME_MS=12000 \
           ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
           make init-l2 &
           sleep 5
-
-      - name: Run test
-        run: |
-          cd crates/l2
           ETHREX_TDX_DEV_MODE=true tee/quote-gen/target/release/quote-gen &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall quote-gen -s SIGINT
