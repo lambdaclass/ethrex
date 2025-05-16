@@ -76,6 +76,7 @@ pub async fn fill_transactions(
 ) -> Result<(), BlockProducerError> {
     // version (u8) + header fields (struct) + withdrawals_len (u16) + deposits_len (u16) + accounts_diffs_len (u16)
     let mut acc_state_diff_size = 1 + LAST_HEADER_FIELDS_SIZE + 2 + 2 + 2;
+    let mut acc_accounts_state_diff_size = 0;
     let mut diffs = HashMap::new();
 
     let chain_config = store.get_chain_config()?;
@@ -98,7 +99,9 @@ pub async fn fill_transactions(
         };
 
         // Check if we have enough space for the StateDiff to run more transactions
-        if acc_state_diff_size + TX_STATE_DIFF_SIZE > SAFE_BYTES_PER_BLOB {
+        if acc_state_diff_size + acc_accounts_state_diff_size + TX_STATE_DIFF_SIZE
+            > SAFE_BYTES_PER_BLOB
+        {
             error!("PRE CHECK No more StateDiff space to run transactions");
             break;
         };
@@ -213,6 +216,7 @@ pub async fn fill_transactions(
 
         // We only add the withdrawals and deposits length because the accounts diffs may change
         acc_state_diff_size += tx_state_diff_size;
+        acc_accounts_state_diff_size = accounts_state_diff_size;
         // Include the new accounts diffs
         diffs = all_diffs;
         // Add transaction to block
