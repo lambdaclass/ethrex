@@ -2,7 +2,7 @@
 
 ## Perf
 
-### 2025-05-14
+### 2025-05-16
 
 - Add block snapshots with diff layers. [2664](https://github.com/lambdaclass/ethrex/pull/2664)
 
