@@ -14,26 +14,6 @@ lint: ## 🧹 Linter check
 fmt: ## 📄 Runs rustfmt
 	cargo fmt --all
 
-###### EF Tests ######
-EFTEST_DIR := ../../../cmd/ef_tests/state
-VECTORS_DIR := $(EFTEST_DIR)/vectors
-
-download-evm-ef-tests: ## 📥 Download and setup all EF Tests
-	cd ../../../cmd/ef_tests/state && \
-	make download-evm-ef-tests
-
-refresh-evm-ef-tests: ## Cleans and re-downloads tests, useful when they are outdated!
-	cd ../../../cmd/ef_tests/state && \
-	make refresh-evm-ef-tests
-
-run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
-	cd ../../../cmd/ef_tests/state && \
-	make run-evm-ef-tests flags="$(flags)"
-
-generate-evm-ef-tests-report: ## 📊 Generate EF Tests Report
-	cd ../../../ && \
-	cargo test -p ef_tests-state --test all --release -- --summary
-
 ###### Benchmarks ######
 REPETITIONS := 10000
 REPETITIONS_SLOW := 200
@@ -103,6 +83,8 @@ build-revm-comparison:
 		cargo build --release --bin benchmark
 
 ###### Build Client with LEVM ######
+EFTEST_DIR := ../../../cmd/ef_tests/state
+VECTORS_DIR := $(EFTEST_DIR)/vectors
 
 STAMP_FILE := ../../../.docker_build_stamp
 $(STAMP_FILE):
