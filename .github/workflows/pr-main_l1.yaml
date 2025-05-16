@@ -159,11 +159,53 @@ jobs:
             ethrex_flags: ""
           - name: "Paris Engine tests"
             simulation: ethereum/engine
-            test_pattern: "engine-api/RPC|Re-org to Previously Validated Sidechain Payload|Re-Org Back into Canonical Chain, Depth=5|Safe Re-Org|Transaction Re-Org|Inconsistent|Suggested Fee|PrevRandao Opcode Transactions|Fork ID|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique Payload ID|Re-Execute Payload|Multiple New Payloads|NewPayload with|Payload Build|Build Payload|Invalid PayloadAttributes|Unknown HeadBlockHash|Valid NewPayload->ForkchoiceUpdated|Invalid NewPayload, ParentHash|Bad Hash on NewPayload|In-Order Consecutive Payload Execution|Re-Org Back to Canonical Chain" # |Invalid P9 -> flaky
+            test_pattern: "engine-api/RPC|
+              Bad Hash on NewPayload|
+              Build Payload|
+              Fork ID|
+              In-Order Consecutive Payload Execution|
+              Inconsistent|
+              Invalid Missing Ancestor ReOrg|
+              Invalid NewPayload|
+              Invalid PayloadAttributes|
+              Multiple New Payloads|
+              NewPayload with|
+              ParentHash equals BlockHash on NewPayload|
+              Payload Build|
+              PrevRandao Opcode Transactions|
+              Re-Execute Payload|
+              Re-Org Back|
+              Re-org to Previously Validated Sidechain Payload|
+              RPC:|
+              Safe Re-Org|
+              Suggested Fee|
+              Transaction Re-Org|
+              Unique Payload ID|
+              Unknown|
+              Valid NewPayload->ForkchoiceUpdated" # |Invalid P9 -> flaky
             ethrex_flags: ""
           - name: "Engine withdrawal tests"
             simulation: ethereum/engine
-            test_pattern: "engine-withdrawals/engine-withdrawals test loader|GetPayloadV2 Block Value|Sync after 2 blocks - Withdrawals on Genesis|Max Initcode Size|Pre-Merge Fork Number > 0|Empty Withdrawals|Corrupted Block Hash Payload|Withdrawals Fork on Block 2|Withdrawals Fork on Block 3|GetPayloadBodies|Withdrawals Fork on Block 1 - 1 Block Re-Org|Withdrawals Fork on Block 1 - 8 Block Re-Org NewPayload|Withdrawals Fork on Block 8 - 10 Block Re-Org NewPayload|Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org [^S]|Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org [^S]"
+            test_pattern: "engine-withdrawals/
+              Corrupted Block Hash Payload|
+              Empty Withdrawals|
+              engine-withdrawals test loader|
+              GetPayloadBodies|
+              GetPayloadV2 Block Value|
+              Max Initcode Size|
+              Sync after 2 blocks - Withdrawals on Genesis|
+              Withdraw many accounts|
+              Withdraw to a single account|
+              Withdraw to two accounts|
+              Withdraw zero amount|
+              Withdraw many accounts|
+              Withdrawals Fork on Block 1 - 1 Block Re-Org|
+              Withdrawals Fork on Block 1 - 8 Block Re-Org NewPayload|
+              Withdrawals Fork on Block 2|
+              Withdrawals Fork on Block 3|
+              Withdrawals Fork on Block 8 - 10 Block Re-Org NewPayload|
+              Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org [^S]|
+              Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org [^S]"
             ethrex_flags: ""
           - name: "Sync full"
             simulation: ethereum/sync
