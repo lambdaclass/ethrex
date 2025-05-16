@@ -139,17 +139,65 @@ impl Deposit {
         //
         //-> Total len: 576 bytes
 
-        let mut p = 32 * 5 + 32;
+        const OFFSET_LEN: usize = 32;
 
-        let pub_key: Bytes48 = fixed_bytes::<48>(data, p);
-        p += 48 + 16 + 32;
-        let withdrawal_credentials: Bytes32 = fixed_bytes::<32>(data, p);
-        p += 32 + 32;
-        let amount: u64 = u64::from_le_bytes(fixed_bytes::<8>(data, p));
-        p += 8 + 24 + 32;
-        let signature: Bytes96 = fixed_bytes::<96>(data, p);
-        p += 96 + 32;
-        let index: u64 = u64::from_le_bytes(fixed_bytes::<8>(data, p));
+        const PUB_KEY_OFFSET: usize = 160;
+        const WITHDRAWAL_CREDENTIALS_OFFSET: usize = 256;
+        const AMOUNT_OFFSET: usize = 320;
+        const SIGNATURE_OFFSET: usize = 384;
+        const INDEX_OFFSET: usize = 512;
+
+        const OFFSETS: [usize; 5] = [
+            PUB_KEY_OFFSET,
+            WITHDRAWAL_CREDENTIALS_OFFSET,
+            AMOUNT_OFFSET,
+            SIGNATURE_OFFSET,
+            INDEX_OFFSET,
+        ];
+
+        const SIZE_LEN: usize = 32;
+
+        const PUB_KEY_SIZE: usize = 48;
+        const WITHDRAWAL_CREDENTIALS_SIZE: usize = 32;
+        const AMOUNT_SIZE: usize = 8;
+        const SIGNATURE_SIZE: usize = 96;
+        const INDEX_SIZE: usize = 8;
+
+        const SIZES: [usize; 5] = [
+            PUB_KEY_SIZE,
+            WITHDRAWAL_CREDENTIALS_SIZE,
+            AMOUNT_SIZE,
+            SIGNATURE_SIZE,
+            INDEX_SIZE,
+        ];
+
+        // Compare two numbers with different byte count without padding
+        let is_eq = |bytes: [u8; 32], u: usize| -> bool {
+            bytes[..8] == u.to_be_bytes() && bytes[8..] == [0; 16]
+        };
+
+        // Validate Offsets & Sizes
+        for (i, (expected_offset, expected_size)) in
+            OFFSETS.into_iter().zip(SIZES.into_iter()).enumerate()
+        {
+            let offset = fixed_bytes::<OFFSET_LEN>(data, i * OFFSET_LEN);
+            let size = fixed_bytes::<SIZE_LEN>(data, expected_offset);
+            if !is_eq(offset, expected_offset) || !is_eq(size, expected_size) {
+                return None;
+            }
+        }
+
+        // Extract Data
+        let pub_key: Bytes48 = fixed_bytes::<PUB_KEY_SIZE>(data, PUB_KEY_OFFSET + SIZE_LEN);
+        let withdrawal_credentials: Bytes32 = fixed_bytes::<WITHDRAWAL_CREDENTIALS_SIZE>(
+            data,
+            WITHDRAWAL_CREDENTIALS_OFFSET + SIZE_LEN,
+        );
+        let amount: u64 =
+            u64::from_le_bytes(fixed_bytes::<AMOUNT_SIZE>(data, AMOUNT_OFFSET + SIZE_LEN));
+        let signature: Bytes96 = fixed_bytes::<SIGNATURE_SIZE>(data, SIGNATURE_OFFSET + SIZE_LEN);
+        let index: u64 =
+            u64::from_le_bytes(fixed_bytes::<INDEX_SIZE>(data, INDEX_OFFSET + SIZE_LEN));
 
         Some(Deposit {
             pub_key,
