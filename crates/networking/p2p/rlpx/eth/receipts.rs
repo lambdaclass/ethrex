@@ -1,5 +1,8 @@
+use super::eth68::receipt::Receipts68;
 use crate::rlpx::{
+    error::RLPxError,
     message::RLPxMessage,
+    p2p::Capability,
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
@@ -50,16 +53,45 @@ impl RLPxMessage for GetReceipts {
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#receipts-0x10
 #[derive(Debug)]
-pub(crate) struct Receipts {
-    // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
-    // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
-    pub id: u64,
-    pub receipts: Vec<Vec<Receipt>>,
+pub(crate) enum Receipts {
+    Receipts68(Receipts68),
+    // Receipts69(Receipts69),
+    EncodedData(Vec<u8>),
 }
 
 impl Receipts {
-    pub fn new(id: u64, receipts: Vec<Vec<Receipt>>) -> Self {
-        Self { receipts, id }
+    pub fn new(id: u64, receipts: Vec<Vec<Receipt>>, eth: &Capability) -> Result<Self, RLPxError> {
+        match eth.version {
+            68 => Ok(Receipts::Receipts68(Receipts68::new(id, receipts))),
+            //69 => Ok(Receipts::Receipts69(Receipts69::new(id, receipts))),
+            _ => Err(RLPxError::IncompatibleProtocol),
+        }
+    }
+
+    pub fn decode_with_cap(&mut self, eth: &Capability) {
+        match self {
+            Receipts::EncodedData(msg_data) => match eth.version {
+                68 => *self = Receipts::Receipts68(Receipts68::decode(msg_data).unwrap()),
+                _ => return,
+            },
+            _ => {}
+        }
+    }
+
+    pub fn get_receipts(&self) -> Vec<Vec<Receipt>> {
+        match self {
+            Receipts::Receipts68(msg) => msg.receipts.clone(),
+            //Receipts::Receipts69(msg) => msg.encode(buf),
+            _ => vec![],
+        }
+    }
+
+    pub fn get_id(&self) -> u64 {
+        match self {
+            Receipts::Receipts68(msg) => msg.id,
+            //Receipts::Receipts69(msg) => msg.encode(buf),
+            _ => 0,
+        }
     }
 }
 
@@ -67,24 +99,15 @@ impl RLPxMessage for Receipts {
     const CODE: u8 = 0x20;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        let mut encoded_data = vec![];
-        Encoder::new(&mut encoded_data)
-            .encode_field(&self.id)
-            .encode_field(&self.receipts)
-            .finish();
-
-        let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
-        Ok(())
+        match self {
+            Receipts::Receipts68(msg) => msg.encode(buf),
+            //Receipts::Receipts69(msg) => msg.encode(buf),
+            _ => Err(RLPEncodeError::Custom("No ETH version defined".into())),
+        }
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let (receipts, _): (Vec<Vec<Receipt>>, _) = decoder.decode_field("receipts")?;
-
-        Ok(Self::new(id, receipts))
+        Ok(Receipts::EncodedData(msg_data.to_vec()))
     }
 }
 
@@ -95,6 +118,7 @@ mod tests {
     use crate::rlpx::{
         eth::receipts::{GetReceipts, Receipts},
         message::RLPxMessage,
+        p2p::Capability,
     };
 
     #[test]
@@ -130,13 +154,14 @@ mod tests {
     #[test]
     fn receipts_empty_message() {
         let receipts = vec![];
-        let receipts = Receipts::new(1, receipts);
+        let receipts = Receipts::new(1, receipts, &Capability::eth(68)).unwrap();
 
         let mut buf = Vec::new();
         receipts.encode(&mut buf).unwrap();
 
-        let decoded = Receipts::decode(&buf).unwrap();
-        assert_eq!(decoded.id, 1);
-        assert_eq!(decoded.receipts, Vec::<Vec<Receipt>>::new());
+        let mut decoded = Receipts::decode(&buf).unwrap();
+        decoded.decode_with_cap(&Capability::eth(68));
+        assert_eq!(decoded.get_id(), 1);
+        assert_eq!(decoded.get_receipts(), Vec::<Vec<Receipt>>::new());
     }
 }
