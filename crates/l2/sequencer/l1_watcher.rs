@@ -110,7 +110,7 @@ impl L1Watcher {
 
         // latest_block_fetched could be greater than latest_block_to_check if the node is stopped and l1_block_delay is changed
         if self.last_block_fetched > latest_block_to_check {
-            warn!("Last block fetched is greater than latest trusted block");
+            warn!("Last block fetched is greater than latest safe block");
             return Ok(vec![]);
         }
 
