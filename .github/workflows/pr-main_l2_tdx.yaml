@@ -1,4 +1,4 @@
-name: L2 Prover
+name: L2 Prover (TDX)
 on:
   push:
     branches: ["main"]
@@ -57,24 +57,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: "true"
-          
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # This step is needed because of an state bug in the GPU runner.
-      # Issue to fix this: https://github.com/lambdaclass/ethrex/pull/2741.
-      - name: Clean .env
-        run: rm -rf crates/l2/.env
-
-      - name: Bake docker images
-        uses: docker/bake-action@v6
-        with:
-          workdir: "crates/l2"
-          files: "crates/l2/docker-compose-l2.yaml"
-          load: true
-          set: |
-            *.cache-to=type=gha,mode=max
-            *.cache-from=type=gha
 
       - name: Build prover
         run: |
@@ -85,15 +67,35 @@ jobs:
         run: |
           cargo test l2 --no-run --release
 
-      - name: Deploy L1 Contracts
+      - name: Build L2
+        run: |
+          cargo build --release --manifest-path ../../Cargo.toml --bin ethrex --features l2,rollup_storage_libmdbx,metrics
+
+      - name: Install rex
+        run: |
+          cd /tmp
+          git clone https://github.com/lambdaclass/rex
+          cd rex
+          cargo build --release
+          cp target/release/rex /usr/local/bin
+
+      - name: Run L1 and deploy
         run: |
           cd crates/l2
           touch .env
-          CI_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
+          make init-local-l1; \
+          make deploy-l1
+
+      - name: Run L1 and deploy
+        run: |
+          cd crates/l2
+          touch .env
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
           ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
           ETHREX_TDX_DEV_MODE=true \
-          docker compose -f docker-compose-l2.yaml up contract_deployer
+          make init-local-l1
 
       - name: Start Sequencer
         run: |
@@ -101,7 +103,8 @@ jobs:
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_PROPOSER_BLOCK_TIME_MS=12000 \
           ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
-          docker compose -f docker-compose-l2.yaml up ethrex_l2 --detach
+          make init-l2 &
+          sleep 3000
 
       - name: Run test
         run: |
