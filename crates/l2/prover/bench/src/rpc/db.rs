@@ -53,14 +53,14 @@ impl RpcDB {
     }
 
     async fn cache_accounts(&mut self, block: &Block) -> Result<(), String> {
-        let txs = &block.body.transactions
+        let txs = &block.body.transactions;
 
         let callers = txs.iter().map(|tx| tx.sender());
         let to = txs.iter().filter_map(|tx| match tx.to() {
             TxKind::Call(to) => Some(to),
             TxKind::Create => None,
         });
-        let accessed_storage: Vec<_> = txs.iter().flat_map(|tx| tx.access_list().clone()).collect();
+        let accessed_storage: Vec<_> = txs.iter().flat_map(|tx| tx.access_list()).collect();
 
         // dedup accounts and concatenate accessed storage keys
         let mut accounts = HashMap::new();
