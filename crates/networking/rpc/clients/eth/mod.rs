@@ -11,7 +11,8 @@ use bytes::Bytes;
 use errors::{
     EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockByHashError,
     GetBlockByNumberError, GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError,
-    GetNonceError, GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
+    GetMaxPriorityFeeError, GetNonceError, GetTransactionByHashError, GetTransactionReceiptError,
+    SendRawTransactionError,
 };
 use eth_sender::Overrides;
 use ethrex_common::{
@@ -432,6 +433,25 @@ impl EthClient {
         }
     }
 
+    pub async fn get_max_priority_fee(&self) -> Result<u64, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "eth_maxPriorityFeePerGas".to_string(),
+            params: None,
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+                .map_err(GetMaxPriorityFeeError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetMaxPriorityFeeError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub async fn get_gas_price(&self) -> Result<U256, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
@@ -774,7 +794,6 @@ impl EthClient {
         calldata: Bytes,
         overrides: Overrides,
     ) -> Result<EIP1559Transaction, EthClientError> {
-        let mut get_gas_price = 1;
         let mut tx = EIP1559Transaction {
             to: overrides.to.clone().unwrap_or(TxKind::Call(to)),
             chain_id: if let Some(chain_id) = overrides.chain_id {
@@ -787,16 +806,14 @@ impl EthClient {
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
-                gas_price
-            } else {
-                get_gas_price = self.get_gas_price().await?.try_into().map_err(|_| {
-                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
-                })?;
-
-                get_gas_price
-            },
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(get_gas_price),
+            max_fee_per_gas: self
+                .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
+                .await?,
+            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(
+                self.get_max_priority_fee()
+                    .await
+                    .unwrap_or(self.get_fee_from_override_or_get_gas_price(None).await?),
+            ),
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
@@ -830,7 +847,7 @@ impl EthClient {
         blobs_bundle: BlobsBundle,
     ) -> Result<WrappedEIP4844Transaction, EthClientError> {
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
-        let mut get_gas_price = 1;
+
         let tx = EIP4844Transaction {
             to,
             chain_id: if let Some(chain_id) = overrides.chain_id {
@@ -843,16 +860,14 @@ impl EthClient {
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
-                gas_price
-            } else {
-                get_gas_price = self.get_gas_price().await?.try_into().map_err(|_| {
-                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
-                })?;
-
-                get_gas_price
-            },
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(get_gas_price),
+            max_fee_per_gas: self
+                .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
+                .await?,
+            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(
+                self.get_max_priority_fee()
+                    .await
+                    .unwrap_or(self.get_fee_from_override_or_get_gas_price(None).await?),
+            ),
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
@@ -888,7 +903,6 @@ impl EthClient {
         calldata: Bytes,
         overrides: Overrides,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
-        let mut get_gas_price = 1;
         let mut tx = PrivilegedL2Transaction {
             to: TxKind::Call(to),
             recipient,
@@ -902,16 +916,14 @@ impl EthClient {
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
-                gas_price
-            } else {
-                get_gas_price = self.get_gas_price().await?.try_into().map_err(|_| {
-                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
-                })?;
-
-                get_gas_price
-            },
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(get_gas_price),
+            max_fee_per_gas: self
+                .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
+                .await?,
+            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(
+                self.get_max_priority_fee()
+                    .await
+                    .unwrap_or(self.get_fee_from_override_or_get_gas_price(None).await?),
+            ),
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
@@ -1143,6 +1155,19 @@ impl EthClient {
         }
         withdrawal_proof.ok_or(EthClientError::Custom(
             "Withdrawal proof is None".to_owned(),
+        ))
+    }
+
+    async fn get_fee_from_override_or_get_gas_price(
+        &self,
+        maybe_gas_fee: Option<u64>,
+    ) -> Result<u64, EthClientError> {
+        Ok(maybe_gas_fee.unwrap_or(
+            self.get_gas_price()
+                .await
+                .map_err(EthClientError::from)?
+                .try_into()
+                .map_err(|_| EthClientError::Custom("Failed to get gas for fee".to_owned()))?,
         ))
     }
 }
