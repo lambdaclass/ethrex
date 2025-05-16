@@ -14,7 +14,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{error::StoreError, EngineType, Store, STATE_TRIE_SEGMENTS};
-use ethrex_trie::{Nibbles, Node, TrieError, TrieState};
+use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
 use std::{
@@ -671,7 +671,7 @@ impl Syncer {
 fn node_missing_children(
     node: &Node,
     parent_path: &Nibbles,
-    trie_state: &TrieState,
+    trie_state: &dyn TrieDB,
 ) -> Result<Vec<Nibbles>, TrieError> {
     let mut paths = Vec::new();
     match &node {
