@@ -59,7 +59,7 @@ impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             Command::Init { opts } => {
-                let data_dir = set_datadir(&opts.node_opts.datadir);
+                let data_dir = set_datadir(&opts.node_opts.datadir, &opts.node_opts.network);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
                 let network = get_network(&opts.node_opts);
@@ -82,6 +82,7 @@ impl Command {
 
                 init_rpc_api(
                     &opts.node_opts,
+                    &data_dir,
                     &opts,
                     &signer,
                     peer_table.clone(),

@@ -27,7 +27,7 @@ async fn main() -> eyre::Result<()> {
         return subcommand.run(&opts).await;
     }
 
-    let data_dir = set_datadir(&opts.datadir);
+    let data_dir = set_datadir(&opts.datadir, &opts.network);
 
     let network = get_network(&opts);
 
@@ -48,6 +48,7 @@ async fn main() -> eyre::Result<()> {
 
     init_rpc_api(
         &opts,
+        &data_dir,
         #[cfg(any(feature = "l2", feature = "based"))]
         &L2Options::default(),
         &signer,

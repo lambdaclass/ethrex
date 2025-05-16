@@ -1,4 +1,4 @@
-use crate::decode;
+use crate::{decode, DEFAULT_CUSTOM_DIR, DEFAULT_PUBLIC_NETWORKS};
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
@@ -26,7 +26,9 @@ pub fn read_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
 }
 
 pub fn write_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
-    info!("JWT secret not found in the provided path, generating JWT secret");
+    info!(
+        "JWT secret not found in the provided path, generating JWT secret, path {jwt_secret_path}"
+    );
     let secret = generate_jwt_secret();
     std::fs::write(jwt_secret_path, &secret).expect("Unable to write JWT secret file");
     hex::decode(secret)
@@ -84,8 +86,20 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-pub fn set_datadir(datadir: &str) -> String {
-    let project_dir = ProjectDirs::from("", "", datadir).expect("Couldn't find home directory");
+pub fn set_datadir(datadir: &str, network: &Option<String>) -> String {
+    let sub_path = match network {
+        Some(network) => {
+            if DEFAULT_PUBLIC_NETWORKS.contains(&network.as_str()) {
+                &network.clone()
+            } else {
+                &(String::from(DEFAULT_CUSTOM_DIR).to_owned() + &network.clone())
+            }
+        }
+        None => &(String::default()),
+    };
+    let data_dir = (datadir).to_owned() + &String::from("/") + sub_path;
+    let project_dir =
+        ProjectDirs::from("", "", data_dir.as_str()).expect("Couldn't find home directory");
     project_dir
         .data_local_dir()
         .to_str()
