@@ -1,4 +1,3 @@
-use bytes::{BufMut, BytesMut};
 use ethrex_common::Bytes;
 use ethrex_common::{Address, H32, U256};
 use ethrex_rpc::clients::eth::errors::CalldataEncodeError;
@@ -326,6 +325,7 @@ fn address_to_word(address: Address) -> U256 {
 
 #[test]
 fn fixed_array_encoding_test() {
+    use bytes::{BufMut, BytesMut};
     let raw_function_signature = "test(uint256,bytes,bytes32,bytes,bytes32,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
     let bytes_calldata: [u8; 32] = [0; 32];
 
