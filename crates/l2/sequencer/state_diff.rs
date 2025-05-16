@@ -51,11 +51,30 @@ pub struct WithdrawalLog {
     pub tx_hash: H256,
 }
 
+impl WithdrawalLog {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        encoded.extend(self.address.0);
+        encoded.extend_from_slice(&self.amount.to_big_endian());
+        encoded.extend(&self.tx_hash.0);
+        encoded
+    }
+}
+
 #[derive(Clone)]
 pub struct DepositLog {
     pub address: Address,
     pub amount: U256,
     pub nonce: u64,
+}
+
+impl DepositLog {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        encoded.extend(self.address.0);
+        encoded.extend_from_slice(&self.amount.to_big_endian());
+        encoded
+    }
 }
 
 #[derive(Clone)]
@@ -143,16 +162,15 @@ impl StateDiff {
         let withdrawal_len: u16 = self.withdrawal_logs.len().try_into()?;
         encoded.extend(withdrawal_len.to_be_bytes());
         for withdrawal in self.withdrawal_logs.iter() {
-            encoded.extend(withdrawal.address.0);
-            encoded.extend_from_slice(&withdrawal.amount.to_big_endian());
-            encoded.extend(&withdrawal.tx_hash.0);
+            let withdrawal_encoded = withdrawal.encode();
+            encoded.extend(withdrawal_encoded);
         }
 
         let deposits_len: u16 = self.deposit_logs.len().try_into()?;
         encoded.extend(deposits_len.to_be_bytes());
         for deposit in self.deposit_logs.iter() {
-            encoded.extend(deposit.address.0);
-            encoded.extend_from_slice(&deposit.amount.to_big_endian());
+            let deposit_encoded = deposit.encode();
+            encoded.extend(deposit_encoded);
         }
 
         Ok(Bytes::from(encoded))
