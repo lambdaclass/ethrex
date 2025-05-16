@@ -36,6 +36,8 @@ pub enum EthClientError {
     GetTransactionByHashError(#[from] GetTransactionByHashError),
     #[error("ethrex_getWithdrawalProof request error: {0}")]
     GetWithdrawalProofError(#[from] GetWithdrawalProofError),
+    #[error("eth_maxPriorityFeePerGas request error: {0}")]
+    GetMaxPriorityFeeError(#[from] GetMaxPriorityFeeError),
     #[error("Unreachable nonce")]
     UnrecheableNonce,
     #[error("Error: {0}")]
@@ -214,6 +216,18 @@ pub enum CalldataEncodeError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum GetWithdrawalProofError {
+    #[error("{0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetMaxPriorityFeeError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("{0}")]

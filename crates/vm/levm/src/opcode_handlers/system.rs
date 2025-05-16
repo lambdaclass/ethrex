@@ -5,7 +5,6 @@ use crate::{
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
-    precompiles::is_precompile,
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
@@ -71,11 +70,10 @@ impl<'a> VM<'a> {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (account, address_was_cold) =
-            self.db.access_account(&mut self.accrued_substate, callee)?;
+        let (account, address_was_cold) = self.db.access_account(&mut self.substate, callee)?;
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(self.db, &mut self.accrued_substate, callee)?;
+            eip7702_get_code(self.db, &mut self.substate, callee)?;
 
         let gas_left = self
             .current_call_frame()?
@@ -172,12 +170,11 @@ impl<'a> VM<'a> {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (_account_info, address_was_cold) = self
-            .db
-            .access_account(&mut self.accrued_substate, code_address)?;
+        let (_account_info, address_was_cold) =
+            self.db.access_account(&mut self.substate, code_address)?;
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(self.db, &mut self.accrued_substate, code_address)?;
+            eip7702_get_code(self.db, &mut self.substate, code_address)?;
 
         let gas_left = self
             .current_call_frame()?
@@ -292,9 +289,8 @@ impl<'a> VM<'a> {
         };
 
         // GAS
-        let (_account_info, address_was_cold) = self
-            .db
-            .access_account(&mut self.accrued_substate, code_address)?;
+        let (_account_info, address_was_cold) =
+            self.db.access_account(&mut self.substate, code_address)?;
 
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
         let new_memory_size_for_return_data =
@@ -302,7 +298,7 @@ impl<'a> VM<'a> {
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(self.db, &mut self.accrued_substate, code_address)?;
+            eip7702_get_code(self.db, &mut self.substate, code_address)?;
 
         let gas_left = self
             .current_call_frame()?
@@ -389,9 +385,8 @@ impl<'a> VM<'a> {
         };
 
         // GAS
-        let (_account_info, address_was_cold) = self
-            .db
-            .access_account(&mut self.accrued_substate, code_address)?;
+        let (_account_info, address_was_cold) =
+            self.db.access_account(&mut self.substate, code_address)?;
 
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
         let new_memory_size_for_return_data =
@@ -399,7 +394,7 @@ impl<'a> VM<'a> {
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
         let (is_delegation, eip7702_gas_consumed, _, bytecode) =
-            eip7702_get_code(self.db, &mut self.accrued_substate, code_address)?;
+            eip7702_get_code(self.db, &mut self.substate, code_address)?;
 
         let gas_left = self
             .current_call_frame()?
@@ -560,12 +555,11 @@ impl<'a> VM<'a> {
             (target_address, to)
         };
 
-        let (target_account, target_account_is_cold) = self
-            .db
-            .access_account(&mut self.accrued_substate, target_address)?;
+        let (target_account, target_account_is_cold) =
+            self.db.access_account(&mut self.substate, target_address)?;
 
         let (current_account, _current_account_is_cold) =
-            self.db.access_account(&mut self.accrued_substate, to)?;
+            self.db.access_account(&mut self.substate, to)?;
         let balance_to_transfer = current_account.info.balance;
 
         self.current_call_frame_mut()?
@@ -581,17 +575,17 @@ impl<'a> VM<'a> {
             self.decrease_account_balance(to, balance_to_transfer)?;
 
             // Selfdestruct is executed in the same transaction as the contract was created
-            if self.accrued_substate.created_accounts.contains(&to) {
+            if self.substate.created_accounts.contains(&to) {
                 // If target is the same as the contract calling, Ether will be burnt.
                 self.get_account_mut(to)?.info.balance = U256::zero();
 
-                self.accrued_substate.selfdestruct_set.insert(to);
+                self.substate.selfdestruct_set.insert(to);
             }
         } else {
             self.increase_account_balance(target_address, balance_to_transfer)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
 
-            self.accrued_substate.selfdestruct_set.insert(to);
+            self.substate.selfdestruct_set.insert(to);
         }
 
         Ok(OpcodeResult::Halt)
@@ -631,7 +625,7 @@ impl<'a> VM<'a> {
 
         let deployer_account = self
             .db
-            .access_account(&mut self.accrued_substate, deployer_address)?
+            .access_account(&mut self.substate, deployer_address)?
             .0;
 
         let code = Bytes::from(
@@ -649,7 +643,7 @@ impl<'a> VM<'a> {
         };
 
         // touch account
-        self.accrued_substate.touched_accounts.insert(new_address);
+        self.substate.touched_accounts.insert(new_address);
 
         let new_depth = {
             let current_call_frame = self.current_call_frame_mut()?;
@@ -723,11 +717,9 @@ impl<'a> VM<'a> {
         );
         self.call_frames.push(new_call_frame);
 
-        self.accrued_substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
+        self.substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
 
-        // Backup of Substate, a copy of the substate to restore if sub-context is reverted
-        let backup = self.accrued_substate.clone();
-        self.substate_backups.push(backup);
+        self.backup_substate();
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
@@ -752,10 +744,7 @@ impl<'a> VM<'a> {
         bytecode: Bytes,
         is_delegation: bool,
     ) -> Result<OpcodeResult, VMError> {
-        let sender_account = self
-            .db
-            .access_account(&mut self.accrued_substate, msg_sender)?
-            .0;
+        let sender_account = self.db.access_account(&mut self.substate, msg_sender)?.0;
 
         let calldata = {
             let current_call_frame = self.current_call_frame_mut()?;
@@ -828,32 +817,36 @@ impl<'a> VM<'a> {
             ret_size,
         );
         self.call_frames.push(new_call_frame);
-        // Backup of Substate, a copy of the substate to restore if sub-context is reverted
-        let backup = self.accrued_substate.clone();
-        self.substate_backups.push(backup);
 
-        if is_precompile(&code_address, self.env.config.fork) {
-            let _report = self.run_execution()?;
+        if self.is_precompile()? {
+            // Execute precompile immediately and handle result.
+            let report = self.execute_precompile()?;
+            self.handle_return(&report)?;
+        } else {
+            // Backup Substate before executing opcodes of new callframe.
+            self.backup_substate();
         }
+
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
-    pub fn handle_return(
-        &mut self,
-        executed_call_frame: &CallFrame,
-        tx_report: &ExecutionReport,
-    ) -> Result<bool, VMError> {
-        if executed_call_frame.depth == 0 {
-            self.call_frames.push(executed_call_frame.clone());
-            return Ok(false);
-        }
+    /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
+    pub fn handle_return(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
+        let executed_call_frame = self.pop_call_frame()?;
+
+        // Here happens the interaction between child (executed) and parent (caller) callframe.
         if executed_call_frame.create_op_called {
-            self.handle_return_create(executed_call_frame, tx_report)?;
+            self.handle_return_create(&executed_call_frame, tx_report)?;
         } else {
-            self.handle_return_call(executed_call_frame, tx_report)?;
+            self.handle_return_call(&executed_call_frame, tx_report)?;
         }
-        Ok(true)
+
+        // Increment PC of the parent callframe after execution of the child.
+        self.increment_pc_by(1)?;
+
+        Ok(())
     }
+
     pub fn handle_return_call(
         &mut self,
         executed_call_frame: &CallFrame,
@@ -908,6 +901,7 @@ impl<'a> VM<'a> {
         }
         Ok(())
     }
+
     pub fn handle_return_create(
         &mut self,
         executed_call_frame: &CallFrame,
@@ -945,7 +939,7 @@ impl<'a> VM<'a> {
 
                 // Deployment failed so account shouldn't exist
                 cache::remove_account(&mut self.db.cache, &executed_call_frame.to);
-                self.accrued_substate
+                self.substate
                     .created_accounts
                     .remove(&executed_call_frame.to);
 
