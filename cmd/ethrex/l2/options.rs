@@ -64,6 +64,7 @@ impl From<SequencerOptions> for SequencerConfig {
             },
             eth: EthConfig {
                 rpc_url: opts.eth_opts.rpc_url,
+                fallback_rpc_url: opts.eth_opts.fallback_rpc_url,
                 max_number_of_retries: opts.eth_opts.max_number_of_retries,
                 backoff_factor: opts.eth_opts.backoff_factor,
                 min_retry_delay: opts.eth_opts.min_retry_delay,
@@ -104,6 +105,14 @@ pub struct EthOptions {
         help_heading = "Eth options"
     )]
     pub rpc_url: String,
+    #[arg(
+        long = "fallback-eth-rpc-url",
+        required = false,
+        value_name = "RPC_URL",
+        env = "ETHREX_FALLBACK_ETH_RPC_URL",
+        help_heading = "Eth options"
+    )]
+    pub fallback_rpc_url: Option<String>,
     #[arg(
         long = "eth-maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",

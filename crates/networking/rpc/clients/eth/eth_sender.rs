@@ -73,7 +73,7 @@ impl EthClient {
             ]),
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(CallError::SerdeJSONError)
                 .map_err(EthClientError::from),

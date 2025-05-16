@@ -806,11 +806,11 @@ async fn get_fees_details_l2(tx_receipt: RpcReceipt, proposer_client: &EthClient
 }
 
 fn eth_client() -> EthClient {
-    EthClient::new(DEFAULT_ETH_URL)
+    EthClient::new(DEFAULT_ETH_URL, None)
 }
 
 fn proposer_client() -> EthClient {
-    EthClient::new(DEFAULT_PROPOSER_URL)
+    EthClient::new(DEFAULT_PROPOSER_URL, None)
 }
 
 fn common_bridge_address() -> Address {

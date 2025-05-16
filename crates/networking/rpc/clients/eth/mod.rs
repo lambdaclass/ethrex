@@ -141,9 +141,27 @@ impl EthClient {
         }
     }
 
-    async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EthClientError> {
+    async fn send_request_with_fallback(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, EthClientError> {
+        let response = self.send_request(&self.url, &request).await;
+        if response.is_err() {
+            let Some(fallback_url) = self.fallback_url.as_ref() else {
+                return response;
+            };
+            return self.send_request(fallback_url, &request).await;
+        }
+        response
+    }
+
+    async fn send_request(
+        &self,
+        url: &str,
+        request: &RpcRequest,
+    ) -> Result<RpcResponse, EthClientError> {
         self.client
-            .post(&self.url)
+            .post(url)
             .header("content-type", "application/json")
             .body(serde_json::ser::to_string(&request).map_err(|error| {
                 EthClientError::FailedToSerializeRequestBody(format!("{error}: {request:?}"))
@@ -163,7 +181,7 @@ impl EthClient {
             params: Some(vec![json!("0x".to_string() + &hex::encode(data))]),
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(SendRawTransactionError::SerdeJSONError)
                 .map_err(EthClientError::from),
@@ -369,7 +387,7 @@ impl EthClient {
             params: Some(vec![data, json!("latest")]),
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => {
                 let res = serde_json::from_value::<String>(result.result)
                     .map_err(EstimateGasPriceError::SerdeJSONError)?;
@@ -445,7 +463,7 @@ impl EthClient {
             params: None,
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(GetGasPriceError::SerdeJSONError)
                 .map_err(EthClientError::from),
@@ -477,7 +495,7 @@ impl EthClient {
             params: Some(vec![json!(format!("{address:#x}")), block.into()]),
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => u64::from_str_radix(
                 serde_json::from_value::<String>(result.result)
                     .map_err(GetNonceError::SerdeJSONError)?
@@ -504,7 +522,7 @@ impl EthClient {
             params: None,
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(GetBlockNumberError::SerdeJSONError)
                 .map_err(EthClientError::from),
@@ -523,7 +541,7 @@ impl EthClient {
             params: Some(vec![json!(block_hash), json!(true)]),
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(GetBlockByHashError::SerdeJSONError)
                 .map_err(EthClientError::from),
@@ -548,7 +566,7 @@ impl EthClient {
             params: Some(vec![block.into(), json!(false)]),
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(GetBlockByNumberError::SerdeJSONError)
                 .map_err(EthClientError::from),
@@ -580,7 +598,7 @@ impl EthClient {
             )]),
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(GetLogsError::SerdeJSONError)
                 .map_err(EthClientError::from),
@@ -602,7 +620,7 @@ impl EthClient {
             params: Some(vec![json!(format!("{:#x}", tx_hash))]),
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(GetTransactionReceiptError::SerdeJSONError)
                 .map_err(EthClientError::from),
@@ -625,7 +643,7 @@ impl EthClient {
             params: Some(vec![json!(format!("{:#x}", address)), block.into()]),
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(GetBalanceError::SerdeJSONError)
                 .map_err(EthClientError::from),
@@ -644,7 +662,7 @@ impl EthClient {
             params: None,
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(GetBalanceError::SerdeJSONError)
                 .map_err(EthClientError::from),
@@ -667,7 +685,7 @@ impl EthClient {
             params: Some(vec![json!(format!("{:#x}", address)), block.into()]),
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => hex::decode(
                 &serde_json::from_value::<String>(result.result)
                     .map(|hex_str| {
@@ -700,7 +718,7 @@ impl EthClient {
             params: Some(vec![json!(format!("{tx_hash:#x}"))]),
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(GetTransactionByHashError::SerdeJSONError)
                 .map_err(EthClientError::from),
@@ -1112,7 +1130,7 @@ impl EthClient {
             params: Some(vec![json!(format!("{:#x}", transaction_hash))]),
         };
 
-        match self.send_request(request).await {
+        match self.send_request_with_fallback(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(GetWithdrawalProofError::SerdeJSONError)
                 .map_err(EthClientError::from),
