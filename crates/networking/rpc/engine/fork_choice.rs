@@ -264,7 +264,7 @@ async fn handle_forkchoice(
     .await
     {
         Ok(head) => {
-            // Forck Choice was succesful, the node is up to date with the current chain
+            // Fork Choice was succesful, the node is up to date with the current chain
             context.blockchain.set_synced();
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
