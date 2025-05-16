@@ -26,7 +26,7 @@ pub const L2_DEPOSIT_SIZE: usize = 52;
 // Two `AccountUpdates` with new_balance, one of which also has nonce_diff.
 pub const TX_STATE_DIFF_SIZE: usize = 116;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AccountStateDiff {
     pub new_balance: Option<U256>,
     pub nonce_diff: u16,
