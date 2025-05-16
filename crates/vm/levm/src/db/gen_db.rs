@@ -183,7 +183,7 @@ impl<'a> VM<'a> {
     ) -> Result<(U256, bool), VMError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
         let storage_slot_was_cold = self
-            .accrued_substate
+            .substate
             .touched_storage_slots
             .entry(address)
             .or_default()

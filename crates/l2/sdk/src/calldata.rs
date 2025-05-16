@@ -159,7 +159,12 @@ fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
             Value::Tuple(tuple_values) => {
                 if !is_dynamic(value) {
                     let tuple_encoding = encode_tuple(tuple_values)?;
-                    ret.extend_from_slice(&tuple_encoding);
+                    copy_into(
+                        &mut ret,
+                        &tuple_encoding,
+                        current_offset,
+                        tuple_encoding.len(),
+                    )?;
                 } else {
                     write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
 
@@ -171,7 +176,12 @@ fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
             Value::FixedArray(fixed_array_values) => {
                 if !is_dynamic(value) {
                     let fixed_array_encoding = encode_tuple(fixed_array_values)?;
-                    ret.extend_from_slice(&fixed_array_encoding);
+                    copy_into(
+                        &mut ret,
+                        &fixed_array_encoding,
+                        current_offset,
+                        fixed_array_encoding.len(),
+                    )?;
                 } else {
                     write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
 
@@ -311,6 +321,50 @@ fn address_to_word(address: Address) -> U256 {
         *word_byte = *address_byte;
     }
     U256::from_big_endian(&word)
+}
+
+#[test]
+fn fixed_array_encoding_test() {
+    use bytes::{BufMut, BytesMut};
+    let raw_function_signature = "test(uint256,bytes,bytes32,bytes,bytes32,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
+    let bytes_calldata: [u8; 32] = [0; 32];
+
+    let mut buf = BytesMut::new();
+    buf.put_u8(0x12);
+    buf.put_u8(0x34);
+
+    let a = buf.freeze();
+
+    let fixed_array = vec![
+        Value::Uint(U256::from(4)),
+        Value::Uint(U256::from(3)),
+        Value::Uint(U256::from(2)),
+        Value::Uint(U256::from(1)),
+        Value::Uint(U256::from(8)),
+        Value::Uint(U256::from(9)),
+        Value::Uint(U256::from(1)),
+        Value::Uint(U256::from(0)),
+    ];
+
+    let arguments = vec![
+        Value::Uint(U256::from(1)),
+        Value::Bytes(a.clone()),
+        Value::FixedBytes(bytes_calldata.to_vec().into()),
+        Value::Bytes(a.clone()),
+        Value::FixedBytes(bytes_calldata.to_vec().into()),
+        Value::Bytes(Bytes::new()),
+        Value::Bytes(a.clone()),
+        Value::FixedBytes(bytes_calldata.to_vec().into()),
+        Value::Bytes(Bytes::new()),
+        Value::FixedArray(fixed_array),
+        Value::Bytes(Bytes::new()),
+        Value::Bytes(a),
+    ];
+
+    let calldata = encode_calldata(raw_function_signature, &arguments).unwrap();
+    let expected_calldata = hex::decode("ac0f26b000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000260000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002e0000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000340000000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000009000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000360000000000000000000000000000000000000000000000000000000000000038000000000000000000000000000000000000000000000000000000000000000021234000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000212340000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000212340000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000021234000000000000000000000000000000000000000000000000000000000000").unwrap();
+
+    assert_eq!(calldata, expected_calldata);
 }
 
 #[test]

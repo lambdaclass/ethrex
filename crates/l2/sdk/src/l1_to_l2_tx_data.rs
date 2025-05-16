@@ -89,16 +89,10 @@ pub async fn send_l1_to_l2_tx(
 ) -> Result<H256, EthClientError> {
     let l1_calldata = l1_to_l2_tx_data.to_calldata()?;
 
-    let l1_gas_price = eth_client.get_gas_price().await?.try_into().map_err(|_| {
-        EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
-    })?;
-
     let l1_tx_overrides = Overrides {
         value: l1_value.map(Into::into),
         from: Some(l1_from),
-        gas_limit: l1_gas_limit.or(Some(21000 * 5)),
-        max_fee_per_gas: Some(l1_gas_price),
-        max_priority_fee_per_gas: Some(l1_gas_price),
+        gas_limit: l1_gas_limit,
         ..Overrides::default()
     };
 

@@ -5,7 +5,7 @@ use ethrex_common::{
 };
 use ethrex_levm::{
     db::{cache, gen_db::GeneralizedDatabase, CacheDB},
-    errors::{TxResult, VMError},
+    errors::TxResult,
     vm::VM,
     Environment,
 };
@@ -86,15 +86,13 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
 
     // when using stateful execute() we have to use nonce when instantiating the vm. Otherwise use 0.
     for _nonce in 0..runs - 1 {
-        let mut vm = new_vm_with_bytecode(&mut db, 0).unwrap();
-        vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
+        let mut vm = new_vm_with_bytecode(&mut db, 0, calldata.clone());
         vm.env.gas_limit = u64::MAX - 1;
         vm.env.block_gas_limit = u64::MAX;
         let tx_report = black_box(vm.stateless_execute().unwrap());
         assert!(tx_report.result == TxResult::Success);
     }
-    let mut vm = new_vm_with_bytecode(&mut db, 0).unwrap();
-    vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
+    let mut vm = new_vm_with_bytecode(&mut db, 0, calldata.clone());
     vm.env.gas_limit = u64::MAX - 1;
     vm.env.block_gas_limit = u64::MAX;
     let tx_report = black_box(vm.stateless_execute().unwrap());
@@ -171,8 +169,8 @@ fn load_file_bytecode(path: &str) -> String {
     contents
 }
 
-pub fn new_vm_with_bytecode(db: &mut GeneralizedDatabase, nonce: u64) -> Result<VM, VMError> {
-    new_vm_with_ops_addr_bal_db(EthrexAddress::from_low_u64_be(100), nonce, db)
+pub fn new_vm_with_bytecode(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> VM {
+    new_vm_with_ops_addr_bal_db(EthrexAddress::from_low_u64_be(100), nonce, db, calldata)
 }
 
 /// This function is for testing purposes only.
@@ -180,7 +178,8 @@ fn new_vm_with_ops_addr_bal_db(
     sender_address: EthrexAddress,
     nonce: u64,
     db: &mut GeneralizedDatabase,
-) -> Result<VM, VMError> {
+    calldata: Bytes,
+) -> VM {
     let env = Environment {
         origin: sender_address,
         tx_nonce: nonce,
@@ -190,6 +189,7 @@ fn new_vm_with_ops_addr_bal_db(
 
     let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
         to: TxKind::Call(EthrexAddress::from_low_u64_be(42)),
+        data: calldata,
         ..Default::default()
     });
     VM::new(env, db, &tx)

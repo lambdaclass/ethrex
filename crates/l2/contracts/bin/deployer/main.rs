@@ -18,7 +18,7 @@ use ethrex_l2_sdk::{
     initialize_contract,
 };
 use ethrex_rpc::{
-    clients::{eth::BlockByNumber, EthClientError, Overrides},
+    clients::{eth::BlockByNumber, Overrides},
     EthClient,
 };
 use keccak_hash::H256;
@@ -454,15 +454,9 @@ async fn make_deposits(
             .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
             .unwrap_or(U256::zero());
 
-        let gas_price = eth_client.get_gas_price().await?.try_into().map_err(|_| {
-            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
-        })?;
-
         let overrides = Overrides {
             value: Some(value_to_deposit),
             from: Some(address),
-            max_fee_per_gas: Some(gas_price),
-            max_priority_fee_per_gas: Some(gas_price),
             ..Overrides::default()
         };
 

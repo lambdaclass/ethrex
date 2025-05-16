@@ -239,8 +239,6 @@ async fn load_test(
                             chain_id: Some(chain_id),
                             value,
                             nonce: Some(nonce + i),
-                            max_fee_per_gas: Some(u64::MAX),
-                            max_priority_fee_per_gas: Some(10),
                             ..Default::default()
                         },
                     )
