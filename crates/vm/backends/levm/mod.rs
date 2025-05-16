@@ -17,7 +17,6 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
-use ethrex_levm::db::error::DatabaseError;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
 use ethrex_levm::EVMConfig;
@@ -167,12 +166,14 @@ impl LEVM {
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.cache.iter() {
+            // In case the account is not in immutable_cache (rare) we search for it in the actual database.
             let initial_state_account =
-                db.immutable_cache.get(address).cloned().ok_or_else(|| {
-                    DatabaseError::Custom(
-                        "Initial account state not found in immutable_cache".to_string(),
-                    )
-                })?;
+                db.immutable_cache.get(address).cloned().unwrap_or_else(|| {
+                    db.store
+                        .get_account(*address)
+                        .map_err(|e| EvmError::Custom(e.to_string()))
+                        .expect("Failed to get account from database")
+                });
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -244,6 +245,8 @@ impl LEVM {
 
             account_updates.push(account_update);
         }
+        db.cache.clear();
+        db.immutable_cache.clear();
         Ok(account_updates)
     }
 
