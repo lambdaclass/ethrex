@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747426673252,
+  "lastUpdate": 1747429972976,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7615,6 +7615,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210629379672,
             "range": "± 559780210",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4f907545c69702c88bcf442ffcbfb38ad7a59c30",
+          "message": "refactor(l1): capability struct instead of tuple (#2814)\n\n**Motivation**\n\nThe capability information was stored as a tuple\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\nA new struct was created in order to improve the readability and also\nmake place for future developments about the capability\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-05-16T20:18:20Z",
+          "tree_id": "4ed1fdc5baaf87c4d56609242afe7039bfb46666",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4f907545c69702c88bcf442ffcbfb38ad7a59c30"
+        },
+        "date": 1747429969646,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210783276694,
+            "range": "± 515032646",
             "unit": "ns/iter"
           }
         ]
