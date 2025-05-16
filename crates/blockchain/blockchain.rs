@@ -486,7 +486,7 @@ impl Blockchain {
         self.is_synced.store(true, Ordering::Relaxed);
     }
 
-    /// Returns whether the node's chain is up to date with the actual chain
+    /// Returns whether the node's chain is up to date with the current chain
     /// This will be true if the initial sync has already taken place and does not reflect whether there is an ongoing sync process
     /// The node should accept incoming p2p transactions if this method returns true
     pub fn is_synced(&self) -> bool {
