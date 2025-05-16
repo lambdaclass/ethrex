@@ -6,6 +6,7 @@ on:
   pull_request:
     branches: ["**"]
     paths:
+      - "cmd/ef_tests/state"
       - "crates/vm/levm/**"
       - ".github/workflows/pr-main_levm.yaml"
   workflow_dispatch:
@@ -39,7 +40,7 @@ jobs:
 
       - name: Run tests
         run: |
-          cd crates/vm/levm
+          cd cmd/ef_tests/state
           set -o pipefail
           make run-evm-ef-tests-ci | tee test_result_pr.txt
 
