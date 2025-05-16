@@ -8,7 +8,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  build-ethrex-trie:
+  build-block-benchmark:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
