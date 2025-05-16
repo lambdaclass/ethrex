@@ -134,7 +134,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Shanghai
                 let result_shanghai = create_fork_result(&json_data, "Shanghai", "tests/shanghai");
                 // Prague
-                let result_prague = create_fork_result(&json_data, "Create", "tests/prague");
+                let result_prague = create_fork_result(&json_data, "Prague", "tests/prague");
 
                 results.push(result_cancun);
                 results.push(result_shanghai);
