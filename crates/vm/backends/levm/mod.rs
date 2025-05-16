@@ -17,7 +17,7 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
-use ethrex_levm::call_frame::CallFrameBackup;
+use ethrex_levm::call_frame::{CallFrame, CallFrameBackup};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
 use ethrex_levm::EVMConfig;
@@ -138,7 +138,7 @@ impl LEVM {
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
         };
 
-        let mut vm = VM::new(env, db, tx)?;
+        let mut vm = VM::new(env, db, tx);
 
         vm.execute().map_err(VMError::into)
     }
@@ -184,7 +184,7 @@ impl LEVM {
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
         };
 
-        let mut vm = VM::new(env, db, tx)?;
+        let mut vm = VM::new(env, db, tx);
 
         let report_result = vm.execute().map_err(EvmError::from)?;
 
@@ -207,9 +207,13 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         let env = Environment::default();
 
-        let mut vm = VM::new(env, db, tx)?;
-        vm.restore_cache_state(call_frame_backup)
-            .map_err(VMError::from)?;
+        let mut vm = VM::new(env, db, tx);
+        let call_frame = CallFrame {
+            call_frame_backup,
+            ..Default::default()
+        };
+        vm.call_frames.push(call_frame);
+        vm.restore_cache_state().map_err(VMError::from)?;
         Ok(())
     }
 
@@ -438,7 +442,7 @@ impl LEVM {
         let mut vm = vm_from_generic(&tx, env.clone(), db)?;
 
         vm.stateless_execute()?;
-        let access_list = build_access_list(&vm.accrued_substate);
+        let access_list = build_access_list(&vm.substate);
 
         // Execute the tx again, now with the created access list.
         tx.access_list = access_list.iter().map(|item| item.into()).collect();
@@ -674,7 +678,7 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
-    let mut vm = VM::new(env, db, tx).map_err(EvmError::from)?;
+    let mut vm = VM::new(env, db, tx);
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -836,5 +840,5 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    VM::new(env, db, &tx)
+    Ok(VM::new(env, db, &tx))
 }
