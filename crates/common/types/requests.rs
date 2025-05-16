@@ -84,22 +84,21 @@ impl Requests {
         EncodedRequests(Bytes::from(bytes))
     }
 
+    /// Returns None if any of the deposit requests couldn't be parsed
     pub fn from_deposit_receipts(
         deposit_contract_address: Address,
         receipts: &[Receipt],
-    ) -> Requests {
+    ) -> Option<Requests> {
         let mut deposits = vec![];
 
         for r in receipts {
             for log in &r.logs {
                 if log.address == deposit_contract_address {
-                    if let Some(d) = Deposit::from_abi_byte_array(&log.data) {
-                        deposits.push(d);
-                    }
+                    deposits.push(Deposit::from_abi_byte_array(&log.data)?);
                 }
             }
         }
-        Self::Deposit(deposits)
+        Some(Self::Deposit(deposits))
     }
 
     pub fn from_withdrawals_data(data: Vec<u8>) -> Requests {
