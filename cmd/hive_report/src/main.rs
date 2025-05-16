@@ -128,24 +128,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     cancun_total_tests,
                 );
 
-                // Shangai
-                let shangai_total_tests = json_data
+                // Shanghai
+                let shanghai_total_tests = json_data
                     .test_cases
                     .iter()
-                    .filter(|(_, test_case)| test_case.name.starts_with("tests/shangai"))
+                    .filter(|(_, test_case)| test_case.name.starts_with("tests/shanghai"))
                     .count();
-                let shangai_passed_tests = json_data
+                let shanghai_passed_tests = json_data
                     .test_cases
                     .iter()
                     .filter(|(_, test_case)| {
-                        test_case.name.starts_with("tests/shangai") && test_case.summary_result.pass
+                        test_case.name.starts_with("tests/shanghai")
+                            && test_case.summary_result.pass
                     })
                     .count();
-                let result_shangai = HiveResult::new(
+                let result_shanghai = HiveResult::new(
                     json_data.name.clone(),
-                    "Shangai".to_string(),
-                    shangai_passed_tests,
-                    shangai_total_tests,
+                    "Shanghai".to_string(),
+                    shanghai_passed_tests,
+                    shanghai_total_tests,
                 );
 
                 // Prague
@@ -169,7 +170,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
 
                 results.push(result_cancun);
-                results.push(result_shangai);
+                results.push(result_shanghai);
                 results.push(result_prague);
             } else {
                 let total_tests = json_data.test_cases.len();
