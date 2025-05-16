@@ -80,6 +80,7 @@ impl Committer {
         Self {
             eth_client: EthClient::new_with_config(
                 &eth_config.rpc_url,
+                eth_config.fallback_rpc_url.as_deref(),
                 eth_config.max_number_of_retries,
                 eth_config.backoff_factor,
                 eth_config.min_retry_delay,

@@ -183,7 +183,7 @@ fn get_gateway_http_client(opts: &BasedOptions) -> EthClient {
     let gateway_http_socket_addr = parse_socket_addr(&opts.gateway_addr, &opts.gateway_eth_port)
         .expect("Failed to parse gateway http address and port");
 
-    EthClient::new(&gateway_http_socket_addr.to_string())
+    EthClient::new(&gateway_http_socket_addr.to_string(), None)
 }
 
 #[cfg(feature = "based")]
