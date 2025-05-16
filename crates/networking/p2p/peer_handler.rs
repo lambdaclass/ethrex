@@ -89,7 +89,7 @@ impl PeerHandler {
     /// Returns the block headers or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_block_headers(
+    pub async fn request_and_validate_block_headers(
         &self,
         start: H256,
         order: BlockRequestOrder,
@@ -125,7 +125,7 @@ impl PeerHandler {
                             if any_invalid {
                                 warn!("Received invalid headers from peer, discarding peer {peer_id} and retrying...");
                                 self.remove_peer(peer_id).await;
-                                continue;
+                                return None; // Retry request
                             }
 
                             // If the headers are valid, we can return them
@@ -133,7 +133,7 @@ impl PeerHandler {
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,
-                        None => return None,
+                        None => return None, // Retry request
                     }
                 }
             })
@@ -179,7 +179,7 @@ impl PeerHandler {
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,
-                        None => return None,
+                        None => return None, // Retry request
                     }
                 }
             })
@@ -196,11 +196,12 @@ impl PeerHandler {
         None
     }
 
-    /// Requests block bodies from any suitable peer given their block hashes
-    /// Returns the block bodies or None if:
+    /// Requests block bodies from any suitable peer given their block hashes and validates them
+    /// Returns the block bodies or an error if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_and_validate_blocks<'a>(
+    /// - The block bodies are invalid given the block headers
+    pub async fn request_and_validate_block_bodies<'a>(
         &self,
         block_hashes: &mut Vec<H256>,
         headers_iter: &mut impl Iterator<Item = &BlockHeader>,
