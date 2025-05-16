@@ -84,11 +84,11 @@ impl From<u64> for BlockByNumber {
         BlockByNumber::Number(value)
     }
 }
-const MAX_NUMBER_OF_RETRIES: u64 = 10;
-const BACKOFF_FACTOR: u64 = 2;
+pub const MAX_NUMBER_OF_RETRIES: u64 = 10;
+pub const BACKOFF_FACTOR: u64 = 2;
 // Give at least 8 blocks before trying to bump gas.
-const MIN_RETRY_DELAY: u64 = 96;
-const MAX_RETRY_DELAY: u64 = 1800;
+pub const MIN_RETRY_DELAY: u64 = 96;
+pub const MAX_RETRY_DELAY: u64 = 1800;
 
 const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 
