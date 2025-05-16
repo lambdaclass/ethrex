@@ -249,6 +249,13 @@ impl Evm {
         }
     }
 
+    pub fn get_state_transitions_no_drain(&mut self) -> Result<Vec<AccountUpdate>, EvmError> {
+        match self {
+            Evm::REVM { .. } => todo!(),
+            Evm::LEVM { db } => LEVM::get_state_transitions_no_drain(db),
+        }
+    }
+
     /// Wraps the [REVM::process_withdrawals] and [LEVM::process_withdrawals].
     /// Applies the withdrawals to the state or the block_chache if using [LEVM].
     pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), StoreError> {

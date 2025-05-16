@@ -75,9 +75,9 @@ pub async fn fill_transactions(
     store: &Store,
 ) -> Result<(), BlockProducerError> {
     // version (u8) + header fields (struct) + withdrawals_len (u16) + deposits_len (u16) + accounts_diffs_len (u16)
-    let mut acc_state_diff_size = 1 + LAST_HEADER_FIELDS_SIZE + 2 + 2 + 2;
-    let mut acc_accounts_state_diff_size = 0;
-    let mut diffs = HashMap::new();
+    let mut size_without_accounts = 1 + LAST_HEADER_FIELDS_SIZE + 2 + 2 + 2;
+    let mut size_accounts_diffs = 0;
+    let mut actual_account_diffs = HashMap::new();
 
     let chain_config = store.get_chain_config()?;
     let max_blob_number_per_block: usize = chain_config
@@ -99,10 +99,8 @@ pub async fn fill_transactions(
         };
 
         // Check if we have enough space for the StateDiff to run more transactions
-        if acc_state_diff_size + acc_accounts_state_diff_size + TX_STATE_DIFF_SIZE
-            > SAFE_BYTES_PER_BLOB
-        {
-            error!("PRE CHECK No more StateDiff space to run transactions");
+        if size_without_accounts + size_accounts_diffs + TX_STATE_DIFF_SIZE > SAFE_BYTES_PER_BLOB {
+            error!("No more StateDiff space to run transactions");
             break;
         };
         if !blob_txs.is_empty() && context.blobs_bundle.blobs.len() >= max_blob_number_per_block {
@@ -175,19 +173,19 @@ pub async fn fill_transactions(
             }
         };
 
-        let tx_diffs = get_diffs(&call_frame_backup, context)?;
-        let all_diffs = merge_diffs(&diffs, tx_diffs);
+        let account_diffs_actual_tx = get_tx_diffs(&call_frame_backup, context)?;
+        let merged_diffs = merge_diffs(&actual_account_diffs, account_diffs_actual_tx);
 
         let mut tx_state_diff_size = 0;
-        let mut accounts_state_diff_size = 0;
+        let mut new_accounts_diff_size = 0;
 
-        for (address, diff) in all_diffs.iter() {
+        for (address, diff) in merged_diffs.iter() {
             let (r, encoded) = diff
                 .encode()
                 .map_err(|_| BlockProducerError::Custom("CHANGE ERROR diff encode".to_owned()))?;
-            accounts_state_diff_size += encoded.len();
-            accounts_state_diff_size += r.to_be_bytes().len();
-            accounts_state_diff_size += address.as_bytes().len();
+            new_accounts_diff_size += encoded.len();
+            new_accounts_diff_size += r.to_be_bytes().len();
+            new_accounts_diff_size += address.as_bytes().len();
         }
 
         if is_deposit_l2(&head_tx) {
@@ -197,9 +195,12 @@ pub async fn fill_transactions(
             tx_state_diff_size += L2_WITHDRAWAL_SIZE;
         }
 
-        if acc_state_diff_size + tx_state_diff_size + accounts_state_diff_size > SAFE_BYTES_PER_BLOB
+        if size_without_accounts + tx_state_diff_size + new_accounts_diff_size > SAFE_BYTES_PER_BLOB
         {
-            error!("No more StateDiff space to run transactions");
+            error!(
+                "No more StateDiff space to run transactions. Skipping transaction: {:?}",
+                tx_hash
+            );
             txs.pop();
 
             // REVERT DIFF IN VM
@@ -215,10 +216,10 @@ pub async fn fill_transactions(
         blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
 
         // We only add the withdrawals and deposits length because the accounts diffs may change
-        acc_state_diff_size += tx_state_diff_size;
-        acc_accounts_state_diff_size = accounts_state_diff_size;
+        size_without_accounts += tx_state_diff_size;
+        size_accounts_diffs = new_accounts_diff_size;
         // Include the new accounts diffs
-        diffs = all_diffs;
+        actual_account_diffs = merged_diffs;
         // Add transaction to block
         debug!("Adding transaction: {} to payload", tx_hash);
         context.payload.body.transactions.push(head_tx.into());
@@ -228,7 +229,7 @@ pub async fn fill_transactions(
     Ok(())
 }
 
-fn get_diffs(
+fn get_tx_diffs(
     call_frame_backup: &CallFrameBackup,
     context: &PayloadBuildContext,
 ) -> Result<HashMap<Address, AccountStateDiff>, BlockProducerError> {
