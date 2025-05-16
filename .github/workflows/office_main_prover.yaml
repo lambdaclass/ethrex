@@ -1,7 +1,8 @@
 name: L2 (SP1 Backend) (Office GPU)
 on:
   push:
-    branches: ["main"]
+    branches: ["**"]
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
