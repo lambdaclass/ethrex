@@ -23,19 +23,12 @@ interface IOnChainProposer {
     /// @dev Event emitted when a batch is verified.
     event BatchVerified(uint256 indexed lastVerifiedBatch);
 
-    /// @notice Initializes the contract.
-    /// @dev This method is called only once after the contract is deployed.
-    /// @dev It sets the bridge address.
+    /// @notice Set the bridge address for the first time.
+    /// @dev This method is separated from initialize because both the CommonBridge
+    /// and the OnChainProposer need to know the address of the other. This solves
+    /// the circular dependency while allowing to initialize the proxy with the deploy.
     /// @param bridge the address of the bridge contract.
-    /// @param r0verifier the address of the risc0 groth16 verifier.
-    /// @param sp1verifier the address of the sp1 groth16 verifier.
-    function initialize(
-        address bridge,
-        address r0verifier,
-        address sp1verifier,
-        address picoverifier,
-        address[] calldata sequencerAddress
-    ) external;
+    function initializeBridgeAddress(address bridge) external;
 
     /// @notice Commits to a batch of L2 blocks.
     /// @dev Committing to an L2 batch means to store the batch's commitment
@@ -62,7 +55,7 @@ interface IOnChainProposer {
     /// ----------------------------------------------------------------------
     /// @param risc0BlockProof is the proof of the batch to be verified.
     /// @param risc0ImageId Digest of the zkVM imageid.
-    /// @param risc0JournalDigest Digest of the public_inputs aka journal
+    /// @param risc0Journal public_inputs aka journal
     /// ----------------------------------------------------------------------
     /// @param sp1ProgramVKey Public verifying key
     /// @param sp1PublicValues Values used to perform the execution
@@ -76,7 +69,7 @@ interface IOnChainProposer {
         //risc0
         bytes calldata risc0BlockProof,
         bytes32 risc0ImageId,
-        bytes32 risc0JournalDigest,
+        bytes calldata risc0Journal,
         //sp1
         bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,

@@ -2,33 +2,41 @@
   "config": {
     "chainId": 1729,
     "homesteadBlock": 0,
+    "daoForkSupport": false,
     "eip150Block": 0,
-    "eip150Hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
     "eip155Block": 0,
     "eip158Block": 0,
-    "daoForkBlock": 0,
-    "frontierBlock": 0,
     "byzantiumBlock": 0,
     "constantinopleBlock": 0,
     "petersburgBlock": 0,
-    "muirGlacierBlock": 0,
     "istanbulBlock": 0,
     "berlinBlock": 0,
     "londonBlock": 0,
     "terminalTotalDifficulty": 0,
     "terminalTotalDifficultyPassed": true,
-    "mergeNetsplitBlock": 0,
     "shanghaiTime": 0,
     "cancunTime": 0,
-    "clique": {
-      "period": 0,
-      "epoch": 30000
-    }
+    "pragueTime": 0,
+    "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa",
+    "blobSchedule": {
+      "cancun": {
+        "target": 3,
+        "max": 6,
+        "baseFeeUpdateFraction": 3338477
+      },
+      "prague": {
+        "target": 6,
+        "max": 9,
+        "baseFeeUpdateFraction": 5007716
+      }
+    },
+    "mergeNetsplitBlock": 0
   },
-  "nonce": "0x0",
-  "timestamp": "0x5ca9158b",
+  "nonce": "0x1234",
+  "timestamp": "1718040081",
+  "extraData": "0x",
   "gasLimit": "0x8f0d180",
-  "difficulty": "0x0",
+  "difficulty": "0x1",
   "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
   "coinbase": "0x0000000000000000000000000000000000000000",
   "alloc": {

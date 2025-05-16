@@ -4,7 +4,8 @@ use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::constants::EMPTY_CODE_HASH;
 use ethrex_levm::db::Database as LevmDatabase;
 
-use crate::db::{ExecutionDB, StoreWrapper};
+use crate::db::StoreWrapper;
+use crate::ProverDB;
 use ethrex_levm::db::error::DatabaseError;
 use std::collections::HashMap;
 use std::result::Result;
@@ -103,7 +104,7 @@ impl LevmDatabase for StoreWrapper {
         let acc_info = self
             .store
             .get_account_info_by_hash(self.block_hash, address)
-            .unwrap_or(None)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default();
 
         let acc_code = self
@@ -160,7 +161,7 @@ impl LevmDatabase for StoreWrapper {
     }
 }
 
-impl LevmDatabase for ExecutionDB {
+impl LevmDatabase for ProverDB {
     fn get_account(&self, address: CoreAddress) -> Result<Account, DatabaseError> {
         let Some(acc_info) = self.accounts.get(&address) else {
             return Ok(Account::default());
