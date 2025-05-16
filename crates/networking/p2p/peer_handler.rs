@@ -20,7 +20,7 @@ use crate::{
             receipts::{GetReceipts, Receipts},
         },
         message::Message as RLPxMessage,
-        p2p::Capability,
+        p2p::{Capability, CAP_ETH_68, CAP_SNAP_1},
         snap::{
             AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
             StorageRanges, TrieNodes,
@@ -103,7 +103,7 @@ impl PeerHandler {
                 skip: 0,
                 reverse: matches!(order, BlockRequestOrder::NewToOld),
             });
-            let (peer_id, peer_channel) = self.get_peer_channel_with_retry(Capability::Eth).await?;
+            let (peer_id, peer_channel) = self.get_peer_channel_with_retry(CAP_ETH_68).await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -163,7 +163,7 @@ impl PeerHandler {
                 id: request_id,
                 block_hashes: block_hashes.clone(),
             });
-            let (peer_id, peer_channel) = self.get_peer_channel_with_retry(Capability::Eth).await?;
+            let (peer_id, peer_channel) = self.get_peer_channel_with_retry(CAP_ETH_68).await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -243,7 +243,7 @@ impl PeerHandler {
                 id: request_id,
                 block_hashes: block_hashes.clone(),
             });
-            let (_, peer_channel) = self.get_peer_channel_with_retry(Capability::Eth).await?;
+            let (_, peer_channel) = self.get_peer_channel_with_retry(CAP_ETH_68).await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -297,7 +297,7 @@ impl PeerHandler {
                 limit_hash: limit,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self.get_peer_channel_with_retry(Capability::Snap).await?;
+            let (_, peer_channel) = self.get_peer_channel_with_retry(CAP_SNAP_1).await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -358,7 +358,7 @@ impl PeerHandler {
                 hashes: hashes.clone(),
                 bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self.get_peer_channel_with_retry(Capability::Snap).await?;
+            let (_, peer_channel) = self.get_peer_channel_with_retry(CAP_SNAP_1).await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -413,7 +413,7 @@ impl PeerHandler {
                 limit_hash: HASH_MAX,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self.get_peer_channel_with_retry(Capability::Snap).await?;
+            let (_, peer_channel) = self.get_peer_channel_with_retry(CAP_SNAP_1).await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -512,7 +512,7 @@ impl PeerHandler {
                     .collect(),
                 bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self.get_peer_channel_with_retry(Capability::Snap).await?;
+            let (_, peer_channel) = self.get_peer_channel_with_retry(CAP_SNAP_1).await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -584,7 +584,7 @@ impl PeerHandler {
                     .collect(),
                 bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self.get_peer_channel_with_retry(Capability::Snap).await?;
+            let (_, peer_channel) = self.get_peer_channel_with_retry(CAP_SNAP_1).await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -649,7 +649,7 @@ impl PeerHandler {
                 limit_hash: HASH_MAX,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self.get_peer_channel_with_retry(Capability::Snap).await?;
+            let (_, peer_channel) = self.get_peer_channel_with_retry(CAP_SNAP_1).await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
