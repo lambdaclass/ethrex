@@ -6,6 +6,7 @@ on:
   pull_request:
     branches: ["**"]
     paths:
+      - "cmd/ef_tests/state/**"
       - "crates/vm/levm/**"
       - ".github/workflows/pr-main_levm.yaml"
   workflow_dispatch:
