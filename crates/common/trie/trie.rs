@@ -77,7 +77,7 @@ impl Trie {
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         Ok(match self.root {
-            NodeRef::Node(ref node) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
+            NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
             NodeRef::Hash(hash) if hash.is_valid() => {
                 Node::decode(&self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?)
                     .map_err(TrieError::RLPDecode)?
@@ -159,10 +159,7 @@ impl Trie {
     /// The proof will still be constructed even if the path is not stored in the trie, proving its absence.
     pub fn get_proof(&self, path: &PathRLP) -> Result<Vec<NodeRLP>, TrieError> {
         if self.root.is_valid() {
-            let hash = match self.root {
-                NodeRef::Node(ref node) => node.compute_hash(),
-                NodeRef::Hash(hash) => hash,
-            };
+            let hash = self.root.compute_hash();
 
             let mut node_path = Vec::new();
             if let NodeHash::Inline((data, len)) = hash {

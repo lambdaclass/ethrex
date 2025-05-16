@@ -2,7 +2,10 @@ mod branch;
 mod extension;
 mod leaf;
 
-use std::array;
+use std::{
+    array,
+    sync::{Arc, OnceLock},
+};
 
 pub use branch::BranchNode;
 use ethrex_rlp::{
@@ -22,7 +25,7 @@ use super::{node_hash::NodeHash, ValueRLP};
 #[derive(Clone, Debug)]
 pub enum NodeRef {
     /// The node is embedded within the reference.
-    Node(Box<Node>),
+    Node(Arc<Node>, OnceLock<NodeHash>),
     /// The node is in the database, referenced by its hash.
     Hash(NodeHash),
 }
@@ -34,7 +37,7 @@ impl NodeRef {
 
     pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
         match *self {
-            NodeRef::Node(ref node) => Ok(Some(node.as_ref().clone())),
+            NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
             NodeRef::Hash(NodeHash::Inline((data, len))) => {
                 Ok(Some(Node::decode_raw(&data[..len as usize])?))
             }
@@ -47,15 +50,15 @@ impl NodeRef {
 
     pub fn is_valid(&self) -> bool {
         match self {
-            NodeRef::Node(_) => true,
+            NodeRef::Node(_, _) => true,
             NodeRef::Hash(hash) => hash.is_valid(),
         }
     }
 
     pub fn commit(&mut self, acc: &mut Vec<(NodeHash, Vec<u8>)>) -> NodeHash {
         match *self {
-            NodeRef::Node(ref mut node) => {
-                match node.as_mut() {
+            NodeRef::Node(ref mut node, ref mut hash) => {
+                match Arc::make_mut(node) {
                     Node::Branch(node) => {
                         for node in &mut node.choices {
                             node.commit(acc);
@@ -67,8 +70,10 @@ impl NodeRef {
                     Node::Leaf(_) => {}
                 }
 
-                let hash = node.compute_hash();
-                acc.push((hash, node.encode_to_vec()));
+                let hash = hash.get_or_init(|| node.compute_hash());
+                acc.push((*hash, node.encode_to_vec()));
+
+                let hash = *hash;
                 *self = hash.into();
 
                 hash
@@ -79,7 +84,7 @@ impl NodeRef {
 
     pub fn compute_hash(&self) -> NodeHash {
         match self {
-            NodeRef::Node(node) => node.compute_hash(),
+            NodeRef::Node(node, hash) => *hash.get_or_init(|| node.compute_hash()),
             NodeRef::Hash(hash) => *hash,
         }
     }
@@ -93,7 +98,7 @@ impl Default for NodeRef {
 
 impl From<Node> for NodeRef {
     fn from(value: Node) -> Self {
-        Self::Node(Box::new(value))
+        Self::Node(Arc::new(value), OnceLock::new())
     }
 }
 
@@ -105,18 +110,7 @@ impl From<NodeHash> for NodeRef {
 
 impl PartialEq for NodeRef {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (NodeRef::Node(lhs), NodeRef::Node(rhs)) => PartialEq::eq(lhs, rhs),
-            (NodeRef::Node(lhs), NodeRef::Hash(rhs)) => {
-                let lhs = lhs.compute_hash();
-                PartialEq::eq(&lhs, rhs)
-            }
-            (NodeRef::Hash(lhs), NodeRef::Node(rhs)) => {
-                let rhs = rhs.compute_hash();
-                PartialEq::eq(lhs, &rhs)
-            }
-            (NodeRef::Hash(lhs), NodeRef::Hash(rhs)) => PartialEq::eq(lhs, rhs),
-        }
+        self.compute_hash() == other.compute_hash()
     }
 }
 
