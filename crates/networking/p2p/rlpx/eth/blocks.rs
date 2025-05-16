@@ -112,15 +112,19 @@ impl GetBlockHeaders {
         } else {
             (self.skip + 1) as i64
         };
-        let limit = if !cfg!(sync_test) {
-            if self.limit > BLOCK_HEADER_LIMIT {
-                BLOCK_HEADER_LIMIT
-            } else {
-                self.limit
-            }
+
+        #[cfg(not(feature = "sync-test"))]
+        let limit = if self.limit > BLOCK_HEADER_LIMIT {
+            BLOCK_HEADER_LIMIT
         } else {
-            env::var("SYNC-BATCH-SIZE").as_deref().unwrap_or("1024").parse().expect("Error parsing environmental variable")
+            self.limit
         };
+
+        #[cfg(feature = "sync-test")]
+        let limit = env::var("SYNC-BATCH-SIZE")
+            .parse()
+            .expect("Error parsing environmental variable");
+
         for _ in 0..limit {
             match storage.get_block_header(current_block as u64) {
                 Ok(Some(block_header)) => {

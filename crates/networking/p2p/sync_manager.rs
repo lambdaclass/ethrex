@@ -117,20 +117,39 @@ impl SyncManager {
         let sync_head = self.last_fcu_head.clone();
 
         tokio::spawn(async move {
-            let mut current_head = H256::default();
-            if !cfg!(sync_test) && env::var("SYNC-LATEST").is_ok() {
-                let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
-                    tracing::error!("Failed to fetch latest canonical block, unable to sync");
-                    return;
-                };
-            } else {
-                let block_number = env::var("SYNC-BLOCK-NUM").as_deref().unwrap_or("0").parse().expect("Error parsing environmental variable");
-                let Ok(Some(current_head)) = store.get_canonical_block_hash(block_number).await
-                else {
-                    tracing::error!("Failed to fetch latest canonical block, unable to sync");
-                    return;
-                };
-            }
+            #[cfg(not(feature = "sync-test"))]
+            let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await
+            else {
+                tracing::error!("Failed to fetch latest canonical block, unable to sync");
+                return;
+            };
+
+            #[cfg(feature = "sync-test")]
+            let get_latest = match env::var("SYNC-LATEST")
+                .expect("Failed to get sync configuration from environment")
+            {
+                String::from("true") => true,
+                String::from("false") => false,
+                _ => true,
+            };
+            #[cfg(feature = "sync-test")]
+            let block_number = env::var("SYNC-BLOCK-NUM")
+                .parse()
+                .expect("Failed to retrieve sync block number from environment");
+            #[cfg(feature = "sync-test")]
+            let mut get_block_hash = || {
+                if get_latest {
+                    store.get_latest_canonical_block_hash()
+                } else {
+                    store.get_canonical_block_hash(block_number)
+                }
+            };
+            #[cfg(feature = "sync-test")]
+            let Ok(Some(current_head)) = get_block_hash().await
+            else {
+                tracing::error!("Failed to fetch latest canonical block, unable to sync");
+                return;
+            };
 
             // If we can't get hold of the syncer, then it means that there is an active sync in process
             let Ok(mut syncer) = syncer.try_lock() else {

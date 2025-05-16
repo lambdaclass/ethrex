@@ -45,4 +45,4 @@ path = "./p2p.rs"
 [features]
 default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
-sync_test = []
+sync-test = []
