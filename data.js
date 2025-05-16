@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747414329554,
+  "lastUpdate": 1747423043741,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7555,6 +7555,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 208134830896,
             "range": "± 317899704",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "391568ca6be059f8d3e61ce4282b0879718c3004",
+          "message": "refactor(l1): don't persist `is_synced` + add doc (#2822)\n\n**Motivation**\nThe method `Store::is_synced` is quite confusing. This method aims to\nclarify what \"being synced\" means for its specific use case via\ndocumentation. It also removes it from the DB as we don't need to\npersist it (persisting it means that we need to purposefully set it to\nfalse upon startup each time). It also removes cases where it was being\nset to false after the initial sync had taken place.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Move `is_synced` method from `Store` (persisted) to `Blockchain` (not\npersisted)\n* Change `update_sync_status` to `set_synced` so we don't go back to\nunsynced state after the initial sync had taken place (This is the same\nbehaviour geth follows)\n* Remove instances where the sync status was updated outside of applying\nfork choices\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-05-16T18:23:43Z",
+          "tree_id": "9e486db221d844386179a5a140ca4a3284b2cc3e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/391568ca6be059f8d3e61ce4282b0879718c3004"
+        },
+        "date": 1747423041373,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212032059435,
+            "range": "± 1028418602",
             "unit": "ns/iter"
           }
         ]
