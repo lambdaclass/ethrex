@@ -212,7 +212,7 @@ impl Default for WatcherOptions {
                 "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
             )
             .unwrap(),
-            watcher_block_delay: 0,
+            watcher_block_delay: 128,
         }
     }
 }
