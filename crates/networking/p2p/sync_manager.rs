@@ -3,6 +3,9 @@ use std::sync::{
     Arc,
 };
 
+#[cfg(feature = "sync-test")]
+use std::env;
+
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
@@ -114,7 +117,37 @@ impl SyncManager {
         let sync_head = self.last_fcu_head.clone();
 
         tokio::spawn(async move {
-            let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
+            #[cfg(not(feature = "sync-test"))]
+            let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await
+            else {
+                tracing::error!("Failed to fetch latest canonical block, unable to sync");
+                return;
+            };
+            #[cfg(feature = "sync-test")]
+            let get_latest = match env::var("SYNC-LATEST")
+                .as_str()
+                .expect("Failed to get sync configuration from environment")
+            {
+                "true" => true,
+                "false" => false,
+                _ => true,
+            };
+            #[cfg(feature = "sync-test")]
+            let block_number = env::var("SYNC-BLOCK-NUM")
+                .expect("Failed to retrieve sync block number from environment")
+                .parse()
+                .expect("Error converting block number environmental variable to int");
+            #[cfg(feature = "sync-test")]
+            let mut get_block_hash = || async {
+                if get_latest {
+                    store.get_latest_canonical_block_hash().await
+                } else {
+                    store.get_canonical_block_hash(block_number).await
+                }
+            };
+            #[cfg(feature = "sync-test")]
+            let Ok(Some(current_head)) = get_block_hash().await
+            else {
                 tracing::error!("Failed to fetch latest canonical block, unable to sync");
                 return;
             };
