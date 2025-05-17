@@ -20,6 +20,7 @@ init-testnet: deploy-l1-testnet update-system-contracts  init-l2
 down: down-local-l1 down-l2 down-metrics## 🛑 Shuts down the localnet
 
 clean: clean-contract-deps ## 🧹 Cleans the localnet
+	rm -rf out/
 
 restart: restart-local-l1 deploy-l1 purge_prover_state restart-l2 ## 🔄 Restarts the localnet
 
@@ -108,6 +109,7 @@ rm-db-l1: ## 🛑 Removes the DB used by the L1
 clean-contract-deps: ## 🧹 Cleans the dependencies for the L1 contracts.
 	rm -rf contracts/solc_out
 	rm -rf contracts/lib
+	cd tee/contracts; make clean
 
 restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for the L1 contracts.
 
@@ -120,6 +122,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--pico.verifier-address 0x00000000000000000000000000000000000000aa \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
+	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
 	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--deposit-rich
@@ -148,6 +151,7 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 		FEATURES="metrics,based"; \
 		echo "Running ethrex L2 with based"; \
 	fi; \
+	export $(shell cat .env | xargs); \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features $$FEATURES -- \
 	l2 init \
 	--watcher.block-delay 0 \
