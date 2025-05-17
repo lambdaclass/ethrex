@@ -289,7 +289,6 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
-
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
@@ -418,7 +417,6 @@ impl Blockchain {
             .get_block_header(header_no)?
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config()?;
-
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
         // Check init code size
@@ -453,7 +451,6 @@ impl Blockchain {
         };
 
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
-
         if let Some(sender_acc_info) = maybe_sender_acc_info {
             if tx.nonce() < sender_acc_info.nonce {
                 return Err(MempoolError::InvalidNonce);
@@ -462,7 +459,6 @@ impl Blockchain {
             let tx_cost = tx
                 .cost_without_base_fee()
                 .ok_or(MempoolError::InvalidTxGasvalues)?;
-
             if tx_cost > sender_acc_info.balance {
                 return Err(MempoolError::NotEnoughBalance);
             }
@@ -618,8 +614,6 @@ pub fn validate_gas_used(
 ) -> Result<(), ChainError> {
     if let Some(last) = receipts.last() {
         // Note: This is commented because it is still being used in development.
-        // dbg!(last.cumulative_gas_used);
-        // dbg!(block_header.gas_used);
         if last.cumulative_gas_used != block_header.gas_used {
             return Err(ChainError::InvalidBlock(InvalidBlockError::GasUsedMismatch));
         }
