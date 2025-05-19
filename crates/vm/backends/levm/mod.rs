@@ -99,15 +99,12 @@ impl LEVM {
         Ok(BlockExecutionResult { receipts, requests })
     }
 
-    pub fn execute_tx(
-        // The transaction to execute.
+    fn setup_env(
         tx: &Transaction,
-        // The transactions recovered address
         tx_sender: Address,
-        // The block header for the current block.
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
-    ) -> Result<ExecutionReport, EvmError> {
+    ) -> Result<Environment, EvmError> {
         let chain_config = db.store.get_chain_config();
         let gas_price: U256 = tx
             .effective_gas_price(block_header.base_fee_per_gas)
@@ -140,6 +137,19 @@ impl LEVM {
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
         };
 
+        Ok(env)
+    }
+
+    pub fn execute_tx(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transactions recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+    ) -> Result<ExecutionReport, EvmError> {
+        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
         let mut vm = VM::new(env, db, tx);
 
         vm.execute().map_err(VMError::into)
@@ -154,37 +164,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
     ) -> Result<(ExecutionReport, CallFrameBackup), EvmError> {
-        let chain_config = db.store.get_chain_config();
-        let gas_price: U256 = tx
-            .effective_gas_price(block_header.base_fee_per_gas)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientMaxFeePerGas,
-            ))?
-            .into();
-
-        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
-        let env = Environment {
-            origin: tx_sender,
-            gas_limit: tx.gas_limit(),
-            config,
-            block_number: block_header.number.into(),
-            coinbase: block_header.coinbase,
-            timestamp: block_header.timestamp.into(),
-            prev_randao: Some(block_header.prev_randao),
-            chain_id: chain_config.chain_id.into(),
-            base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
-            gas_price,
-            block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-            block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-            tx_blob_hashes: tx.blob_versioned_hashes(),
-            tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
-            tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
-            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
-            tx_nonce: tx.nonce(),
-            block_gas_limit: block_header.gas_limit,
-            difficulty: block_header.difficulty,
-            is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
-        };
+        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
 
         let mut vm = VM::new(env, db, tx);
 
