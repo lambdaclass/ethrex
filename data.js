@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747687792543,
+  "lastUpdate": 1747691905015,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8753,6 +8753,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007269259633911368,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c716b18ae0ee577eb9cc3889f70d152eb48e535c",
+          "message": "fix(l1): add deposit request layout validations + return invalid deposit request error (#2832)\n\n**Motivation**\nCurrently, when we fail to parse a deposit request we simply ignore it\nand keep the rest of the deposits, relying on the request hash check\nafterwards to notice the missing deposit request. This PR handles the\nerror earlier and returns the appropriate `InvalidDepositRequest Error`.\nThis will provide better debugging information and also more accurate\ntesting via tools such as `execution-spec-tests` which rely on specific\nerror returns.\nWe also were not correctly validating the layout according to the\n[EIP](https://eips.ethereum.org/EIPS/eip-6110), as we were only checking\nthe total size and not the size and offset of each request field\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Check that the full layout of deposit requests is valid (aka the\ninternal sizes and offsets of the encoded data)\n* Handle errors when parsing deposit requests\n* Check log topic matches deposit topic before parsing a request as a\ndeposit request\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nAllows us to address review comment made on execution-specs-test PR\nhttps://github.com/ethereum/execution-spec-tests/pull/1607 + also closes\n#2132",
+          "timestamp": "2025-05-19T21:11:46Z",
+          "tree_id": "2de9920ba534f744b1f08be38261693601826892",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c716b18ae0ee577eb9cc3889f70d152eb48e535c"
+        },
+        "date": 1747691902183,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007290329951690821,
             "unit": "Mgas/s"
           }
         ]
