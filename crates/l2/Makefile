@@ -5,7 +5,7 @@
 
 .DEFAULT_GOAL := help
 
-L2_GENESIS_FILE_PATH=../../test_data/genesis-l2.json
+L2_GENESIS_FILE_PATH=../../test_data/genesis-load-test.json
 L1_GENESIS_FILE_PATH=../../test_data/genesis-l1-dev.json
 
 # Basic
