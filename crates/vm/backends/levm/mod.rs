@@ -167,13 +167,12 @@ impl LEVM {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.cache.iter() {
             // In case the account is not in immutable_cache (rare) we search for it in the actual database.
-            let initial_state_account = if let Some(account) = db.immutable_cache.get(address) {
-                account
-            } else {
-                &db.store.get_account(*address).map_err(|e| {
-                    EvmError::Custom(format!("Failed to get account from database: {}", e))
-                })?
-            };
+            let initial_state_account =
+                db.immutable_cache
+                    .get(address)
+                    .ok_or(EvmError::Custom(format!(
+                        "Failed to get account {address} from immutable cache",
+                    )))?;
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -253,12 +252,9 @@ impl LEVM {
             .filter(|withdrawal| withdrawal.amount > 0)
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
-            // We check if it was in block_cache, if not, we get it from DB.
-            let mut account = db.cache.get(&address).cloned().unwrap_or({
-                db.store
-                    .get_account(address)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
-            });
+            let mut account = db.get_account(address).map_err(|_| {
+                StoreError::Custom(format!("Withdrawal account {address} not found"))
+            })?;
 
             account.info.balance += increment.into();
             db.cache.insert(address, account);
