@@ -40,25 +40,19 @@ pub async fn apply_fork_choice(
         None
     };
 
-    let head_res = store.get_block_header_by_hash(head_hash)?;
+    let head_block_res = store.get_block_by_hash(head_hash).await?;
+
+    let Some(head_block) = head_block_res else {
+        return Err(InvalidForkChoice::Syncing);
+    };
 
     if !safe_hash.is_zero() {
-        check_order(&safe_res, &head_res)?;
+        check_order(&safe_res, &Some(head_block.header))?;
     }
 
     if !finalized_hash.is_zero() && !safe_hash.is_zero() {
         check_order(&finalized_res, &safe_res)?;
     }
-
-    let Some(head) = head_res else {
-        return Err(InvalidForkChoice::Syncing);
-    };
-
-    let body_res = store.get_block_body_by_hash(head_hash).await?;
-
-    let Some(_) = body_res else {
-        return Err(InvalidForkChoice::Syncing);
-    };
 
     let latest = store.get_latest_block_number().await?;
 
