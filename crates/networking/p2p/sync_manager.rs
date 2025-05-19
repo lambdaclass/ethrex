@@ -108,6 +108,29 @@ impl SyncManager {
         self.syncer.try_lock().is_err()
     }
 
+    #[cfg(feature = "sync-test")]
+    async fn get_blocks_for_sync_test() {
+        let get_latest = match env::var("SYNC-LATEST")
+            .expect("Failed to get sync configuration from environment")
+            .as_str()
+        {
+            "true" => true,
+            "false" => false,
+            _ => true,
+        };
+
+        let block_number = env::var("SYNC-BLOCK-NUM")
+            .expect("Failed to retrieve sync block number from environment")
+            .parse()
+            .expect("Error converting block number environmental variable to int");
+
+        if get_latest {
+            store.get_latest_canonical_block_hash()
+        } else {
+            store.get_canonical_block_hash(block_number)
+        }
+    }
+
     /// Attempts to sync to the last received fcu head
     /// Will do nothing if the syncer is already involved in a sync process
     /// If the sync process would require multiple sync cycles (such as snap sync), starts all required sync cycles until the sync is complete
@@ -123,30 +146,9 @@ impl SyncManager {
                 tracing::error!("Failed to fetch latest canonical block, unable to sync");
                 return;
             };
+
             #[cfg(feature = "sync-test")]
-            let get_latest = match env::var("SYNC-LATEST")
-                .expect("Failed to get sync configuration from environment")
-                .as_str()
-            {
-                "true" => true,
-                "false" => false,
-                _ => true,
-            };
-            #[cfg(feature = "sync-test")]
-            let block_number = env::var("SYNC-BLOCK-NUM")
-                .expect("Failed to retrieve sync block number from environment")
-                .parse()
-                .expect("Error converting block number environmental variable to int");
-            #[cfg(feature = "sync-test")]
-            let get_block_hash = || async {
-                if get_latest {
-                    store.get_latest_canonical_block_hash().await
-                } else {
-                    store.get_canonical_block_hash(block_number).await
-                }
-            };
-            #[cfg(feature = "sync-test")]
-            let Ok(Some(current_head)) = get_block_hash().await
+            let Ok(Some(current_head)) = get_blocks_for_sync_test().await
             else {
                 tracing::error!("Failed to fetch latest canonical block, unable to sync");
                 return;
