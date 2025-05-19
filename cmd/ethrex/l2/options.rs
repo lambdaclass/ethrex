@@ -190,7 +190,7 @@ impl Default for EthOptions {
 #[derive(Parser)]
 pub struct WatcherOptions {
     #[arg(
-        long,
+        long = "l1.bridge-address",
         value_name = "ADDRESS",
         env = "ETHREX_WATCHER_BRIDGE_ADDRESS",
         help_heading = "L1 Watcher options"
@@ -277,7 +277,7 @@ pub struct CommitterOptions {
     )]
     pub committer_l1_private_key: SecretKey,
     #[arg(
-        long,
+        long = "l1.on-chain-proposer-address",
         value_name = "ADDRESS",
         env = "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS",
         help_heading = "L1 Committer options"
