@@ -210,7 +210,7 @@ impl L1ProofSender {
         let merkle_path = match get_merkle_path_for_proof(
             Network::Devnet,
             self.eth_client.url.clone(),
-            "http://127.0.0.1:58517".to_string(), // beacon_client
+            "http://127.0.0.1:58801".to_string(), // beacon_client
             None,
             &verification_data,
         )
