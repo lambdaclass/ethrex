@@ -320,7 +320,7 @@ impl LEVM {
         match report.result {
             TxResult::Success => Ok(report),
             // EIP-7002 specifies that a failed system call invalidates the entire block.
-            TxResult::Revert(vm_error) => Err(EvmError::Custom(format!(
+            TxResult::Revert(vm_error) => Err(EvmError::SystemContractCallFailed(format!(
                 "REVERT when reading withdrawal requests with error: {:?}. According to EIP-7002, the revert of this system call invalidates the block.",
                 vm_error
             ))),
@@ -351,7 +351,7 @@ impl LEVM {
         match report.result {
             TxResult::Success => Ok(report),
             // EIP-7251 specifies that a failed system call invalidates the entire block.
-            TxResult::Revert(vm_error) => Err(EvmError::Custom(format!(
+            TxResult::Revert(vm_error) => Err(EvmError::SystemContractCallFailed(format!(
                 "REVERT when dequeuing consolidation requests with error: {:?}. According to EIP-7251, the revert of this system call invalidates the block.",
                 vm_error
             ))),

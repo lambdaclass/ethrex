@@ -233,11 +233,11 @@ impl REVM {
             // EIP-7002 specifies that a failed system call invalidates the entire block.
             ExecutionResult::Halt { reason, gas_used } => {
                 let err_str = format!("Transaction HALT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
-                Err(EvmError::Custom(err_str))
+                Err(EvmError::SystemContractCallFailed(err_str))
             }
             ExecutionResult::Revert { gas_used, output } => {
                 let err_str = format!("Transaction REVERT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
-                Err(EvmError::Custom(err_str))
+                Err(EvmError::SystemContractCallFailed(err_str))
             }
         }
     }
@@ -274,11 +274,11 @@ impl REVM {
             // EIP-7251 specifies that a failed system call invalidates the entire block.
             ExecutionResult::Halt { reason, gas_used } => {
                 let err_str = format!("Transaction HALT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
-                Err(EvmError::Custom(err_str))
+                Err(EvmError::SystemContractCallFailed(err_str))
             }
             ExecutionResult::Revert { gas_used, output } => {
                 let err_str = format!("Transaction REVERT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
-                Err(EvmError::Custom(err_str))
+                Err(EvmError::SystemContractCallFailed(err_str))
             }
         }
     }
