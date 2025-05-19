@@ -1,6 +1,7 @@
 use std::{
     fs::{read_to_string, File, OpenOptions},
     io::{BufWriter, Write},
+    ops::Add,
     path::PathBuf,
     process::{Command, ExitStatus, Stdio},
     str::FromStr,
@@ -285,7 +286,8 @@ async fn deploy_contracts(
 
     let tdx_verifier_address = if opts.tdx_deploy_verifier {
         info!("Deploying TDXVerifier (if tdx_deploy_verifier is true)");
-        let tdx_verifier_address = deploy_tdx_contracts(opts)?;
+        let tdx_verifier_address =
+            deploy_tdx_contracts(opts, on_chain_proposer_deployment.proxy_address)?;
 
         info!(address = %format!("{tdx_verifier_address:#x}"), "TDXVerifier deployed");
         tdx_verifier_address
@@ -317,11 +319,15 @@ async fn deploy_contracts(
     ))
 }
 
-fn deploy_tdx_contracts(opts: &DeployerOptions) -> Result<Address, DeployerError> {
+fn deploy_tdx_contracts(
+    opts: &DeployerOptions,
+    on_chain_proposer: Address,
+) -> Result<Address, DeployerError> {
     Command::new("make")
         .arg("deploy-all")
         .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
         .env("RPC_URL", &opts.rpc_url)
+        .env("ON_CHAIN_PROPOSER", on_chain_proposer.to_string())
         .current_dir("tee/contracts")
         .stdout(Stdio::null())
         .stderr(Stdio::null())

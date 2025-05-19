@@ -11,8 +11,14 @@ interface IAttestation {
         returns (bool success, bytes memory output);
 }
 
+interface IOnChainProposer {
+    mapping(address _authorizedAddress => bool) public authorizedSequencerAddresses;
+}
+
 contract TDXVerifier {
     IAttestation public quoteVerifier = IAttestation(address(0));
+    IOnChainProposer public onChainProposer = IOnChainProposer(address(0));
+
     address public authorizedSignature = address(0);
     bool public isDevMode = false;
 
@@ -23,9 +29,14 @@ contract TDXVerifier {
 
     /// @notice Initializes the contract
     /// @param _dcap DCAP contract.
+    /// @param _ocp OnChainProposer contract, used for permission checks
     /// @param _isDevMode Disables quote verification
-    constructor(address _dcap, bool _isDevMode) {
+    constructor(address _dcap, address _ocp, bool _isDevMode) {
+        require(_dcap != 0x0, "TDXVerifier: DCAP address can't be null");
+        require(_ocp != 0x0, "TDXVerifier: OnChainPropser address can't be null");
+
         quoteVerifier = IAttestation(_dcap);
+        onChainProposer = IOnChainProposer(_ocp);
         isDevMode = _isDevMode;
     }
 
@@ -37,9 +48,9 @@ contract TDXVerifier {
         bytes calldata payload,
         bytes memory signature
     ) external view {
-        require(authorizedSignature != address(0), "TDX authorized signer not registered");
+        require(authorizedSignature != address(0), "TDXVerifier: authorized signer not registered");
         bytes32 signedHash = MessageHashUtils.toEthSignedMessageHash(payload);
-        require(ECDSA.recover(signedHash, signature) == authorizedSignature, "invalid signature");
+        require(ECDSA.recover(signedHash, signature) == authorizedSignature, "TDXVerifier: invalid signature");
     }
 
     /// @notice Registers the quote
@@ -48,26 +59,30 @@ contract TDXVerifier {
     function register(
         bytes calldata quote
     ) external {
+        require(
+            onChainProposer.authorizedSequencerAddresses[msg.sender],
+            "TDXVerifier: only sequencer can update keys"
+        );
         // TODO: only allow the owner to update the key, to avoid DoS
         if (isDevMode) {
             authorizedSignature = _getAddress(quote, 0);
             return;
         }
         (bool success, bytes memory report) = quoteVerifier.verifyAndAttestOnChain(quote);
-        require(success, "quote verification failed");
+        require(success, "TDXVerifier: quote verification failed");
         _validateReport(report);
         authorizedSignature = _getAddress(report, 533);
     }
 
     function _validateReport(bytes memory report) view internal {
-        require(_rangeEquals(report, 0, hex'0004'), "Unsupported quote version");
-        require(report[2] == 0x81, "Quote is not of type TDX");
-        require(report[6] == 0, "TCB_STATUS != OK");
-        require(uint8(report[133]) & 15 == 0, "debug attributes are set");
-        require(_rangeEquals(report, 149, MRTD), "MRTD mismatch");
-        require(_rangeEquals(report, 341, RTMR0), "RTMR0 mismatch");
-        require(_rangeEquals(report, 389, RTMR1), "RTMR1 mismatch");
-        require(_rangeEquals(report, 437, RTMR2), "RTMR2 mismatch");
+        require(_rangeEquals(report, 0, hex'0004'), "TDXVerifier: Unsupported quote version");
+        require(report[2] == 0x81, "TDXVerifier: Quote is not of type TDX");
+        require(report[6] == 0, "TDXVerifier: TCB_STATUS != OK");
+        require(uint8(report[133]) & 15 == 0, "TDXVerifier: debug attributes are set");
+        require(_rangeEquals(report, 149, MRTD), "TDXVerifier: MRTD mismatch");
+        require(_rangeEquals(report, 341, RTMR0), "TDXVerifier: RTMR0 mismatch");
+        require(_rangeEquals(report, 389, RTMR1), "TDXVerifier: RTMR1 mismatch");
+        require(_rangeEquals(report, 437, RTMR2), "TDXVerifier: RTMR2 mismatch");
         // RTMR3 is ignored
     }
 

@@ -2,6 +2,7 @@ DETERMINISTIC_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C
 DEPLOYMENT_PATH := deploydeps/automata-dcap-attestation/evm/deployment
 
 ETHREX_TDX_DEV_MODE ?= false
+ON_CHAIN_PROPOSER ?= 0x0
 
 deploy-p256:
 	rex send $(DETERMINISTIC_DEPLOYER) 0 $(PRIVATE_KEY) --calldata $(shell cat assets/p256.hex)
@@ -47,7 +48,8 @@ deploy: solc_out/TDXVerifier.bin
 	$(eval CONTRACT_BIN := $(shell cat solc_out/TDXVerifier.bin))
 	$(eval DCAP_ADDRESS := $(shell cat ${DEPLOYMENT_PATH}/AutomataDcapAttestationFee))
 	rex deploy --print-address $(CONTRACT_BIN) 0 $(PRIVATE_KEY) -- \
-		"constructor(address,bool)" $(DCAP_ADDRESS) $(ETHREX_TDX_DEV_MODE) > ${DEPLOYMENT_PATH}/TDXVerifier
+		"constructor(address,address,bool)" $(DCAP_ADDRESS) $(ON_CHAIN_PROPOSER) $(ETHREX_TDX_DEV_MODE) \
+		> ${DEPLOYMENT_PATH}/TDXVerifier
 
 deploy-deps: deploy-dcap setup-pccs-ca
 
