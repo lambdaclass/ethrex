@@ -231,7 +231,7 @@ pub struct DeployerOptions {
     pub bridge_owner: Address,
     #[arg(
         long,
-        default_value_t = format!("{}/crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
+        default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
         help_heading = "Deployer options",
@@ -303,7 +303,7 @@ impl Default for DeployerOptions {
                 0x71, 0x92, 0x7c, 0x94, 0x7c, 0x8e,
             ]),
             sp1_vk_path: format!(
-                "{}/crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
+                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
                 env!("CARGO_MANIFEST_DIR")
             ),
         }
