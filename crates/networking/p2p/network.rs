@@ -1,5 +1,5 @@
 use crate::kademlia::{self, KademliaTable};
-use crate::rlpx::p2p::Capability;
+use crate::rlpx::p2p::CAP_SNAP_1;
 use crate::rlpx::{
     connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
 };
@@ -152,16 +152,16 @@ pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
         Ok(result) => result,
         Err(e) => {
             log_peer_error(&node, &format!("Error creating tcp connection {e}"));
-            context.table.lock().await.replace_peer(node.node_id);
+            context.table.lock().await.replace_peer(node.node_id());
             return;
         }
     };
     let table = context.table.clone();
-    match handshake::as_initiator(context, node, stream).await {
+    match handshake::as_initiator(context, node.clone(), stream).await {
         Ok(mut conn) => conn.start(table).await,
         Err(e) => {
             log_peer_error(&node, &format!("Error creating tcp connection {e}"));
-            table.lock().await.replace_peer(node.node_id);
+            table.lock().await.replace_peer(node.node_id());
         }
     };
 }
@@ -193,7 +193,7 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
             .iter()
             .filter(|peer| -> bool {
                 peer.channels.as_ref().is_some()
-                    && peer.supported_capabilities.contains(&Capability::Snap)
+                    && peer.supported_capabilities.contains(&CAP_SNAP_1)
             })
             .count();
         info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");

@@ -53,7 +53,6 @@ ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain
 ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics-l2.overrides.yaml
 CI_ETHREX_WORKDIR := /usr/local/bin
 
-ethrex_L2_CONFIGS_PATH=$(shell pwd)/configs
 ethrex_L2_CONTRACTS_PATH=./contracts
 L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
@@ -63,6 +62,9 @@ ethrex_L1_DEV_LIBMDBX=dev_ethrex_l1
 L1_PORT=8545
 L2_PORT=1729
 L1_AUTH_PORT=8551
+L1_RPC_ADDRESS=0.0.0.0
+L2_RPC_ADDRESS=0.0.0.0
+PROOF_COORINATOR_ADDRESS=127.0.0.1
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
@@ -75,7 +77,7 @@ init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "dev" -- \
 	--network ${L1_GENESIS_FILE_PATH} \
 	--http.port ${L1_PORT} \
-	--http.addr 0.0.0.0 \
+	--http.addr ${L1_RPC_ADDRESS} \
 	--authrpc.port ${L1_AUTH_PORT} \
 	--dev \
 	--datadir ${ethrex_L1_DEV_LIBMDBX}
@@ -87,7 +89,7 @@ init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
     --features "dev" -- \
     --network ${L1_GENESIS_FILE_PATH} \
     --http.port ${L1_PORT} \
-    --http.addr 0.0.0.0 \
+    --http.addr ${L1_RPC_ADDRESS} \
     --authrpc.port ${L1_AUTH_PORT} \
 	--evm levm \
 	--dev \
@@ -148,15 +150,17 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	fi; \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features $$FEATURES -- \
 	l2 init \
+	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
-	--http.addr 0.0.0.0 \
+	--http.addr ${L2_RPC_ADDRESS} \
 	--metrics \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--evm levm \
 	--datadir ${ethrex_L2_DEV_LIBMDBX} \
 	--bridge-address ${BRIDGE_ADDRESS} \
-	--on-chain-proposer-address ${ON_CHAIN_PROPOSER_ADDRESS}
+	--on-chain-proposer-address ${ON_CHAIN_PROPOSER_ADDRESS} \
+	--proof-coordinator-listen-ip ${PROOF_COORINATOR_ADDRESS}
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
@@ -169,13 +173,16 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
+PROVER_SRC_FILES := $(shell find prover/src -type f)
+
 init-prover: ../../target/release/ethrex_prover ## 🚀 Initializes the Prover
-	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
 	../../target/release/ethrex_prover
 
-build-prover: ../../target/release/ethrex_prover
+build-prover:
+	rm -f ../../target/release/ethrex_prover
+	$(MAKE) ../../target/release/ethrex_prover
 
-../../target/release/ethrex_prover:
+../../target/release/ethrex_prover: $(PROVER_SRC_FILES)
 	@if [ -z "$$PROVER" ]; then \
 		echo "Error: ProverType (PROVER) is missing. Running in exec mode."; \
 		echo "Please provide it as an argument:"; \
@@ -189,7 +196,6 @@ build-prover: ../../target/release/ethrex_prover
 		GPU=",gpu"; \
 	fi; \
 
-	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
 	RUSTFLAGS='-C target-cpu=native' \
 	cargo build --release --features "$$PROVER$$GPU,l2" \
 	--manifest-path ./prover/Cargo.toml  \
