@@ -56,23 +56,10 @@ Runs `mkosi.build.chroot` to produce the output
 - Adding `bash` to mkosi scripts to drop an interactive shell that lets you explore the build process
 - Adding a root password in `mkosi.conf` to allow logging in to the container
 
+## Running
 
-## Quote pusher
+You can enable the prover by setting `ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true` and running the sequencer in production mode (`ETHREX_PROOF_COORDINATOR_DEV_MODE=false`).
 
-Set RPC_URL and PRIVATE_KEY to the corresponding values.
+For development purposes, you can use the flag `ETHREX_TDX_DEV_MODE=true` to disable quote verification. This allows you to run the quote generator even without having TDX-capable hardware.
 
-You must have [rex](https://github.com/lambdaclass/rex) installed.
-
-```
-# NOTE: initialize&update submodules on all repos
-(ethrex) make dev # start L1
-(ethrex crates/l2/tee/contracts) make deploy-deps
-(ethrex crates/l2/tee/contracts) make deploy
-(ethrex crates/l2/tee/contracts) make mkenv
-(ethrex crates/l2/tee/contracts) source .env.out
-(ethrex crates/l2/tee/quote-pusher) make run
-```
-
-You can run integration tests by replacing the last step with `make test`.
-
-Alternatively, running `make integration-test` will deploy the contracts for you and then run the tests.
+To run in production mode, ensure the proof coordinator is listening on 0.0.0.0 and run `mkosi vm -f`.
