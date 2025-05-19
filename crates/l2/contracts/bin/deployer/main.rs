@@ -18,7 +18,7 @@ use ethrex_l2_sdk::{
     initialize_contract,
 };
 use ethrex_rpc::{
-    clients::{eth::BlockByNumber, EthClientError, Overrides},
+    clients::{eth::BlockByNumber, Overrides},
     EthClient,
 };
 use keccak_hash::H256;
@@ -28,7 +28,9 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,address[])";
+    "initialize(bool,address,address,address,address,bytes32,address[])";
+const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
+const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 
 #[tokio::main]
@@ -314,12 +316,12 @@ async fn initialize_contracts(
     trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
 
     let genesis = read_genesis_file(&opts.genesis_l2_path);
+    let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
     let initialize_tx_hash = {
         let calldata_values = vec![
             Value::Bool(opts.validium),
-            Value::Address(opts.on_chain_proposer_owner),
-            Value::Address(bridge_address),
+            Value::Address(deployer_address),
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
@@ -343,6 +345,47 @@ async fn initialize_contracts(
     };
 
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
+
+    let initialize_bridge_address_tx_hash = {
+        let calldata_values = vec![Value::Address(bridge_address)];
+        let on_chain_proposer_initialization_calldata =
+            encode_calldata(INITIALIZE_BRIDGE_ADDRESS_SIGNATURE, &calldata_values)?;
+
+        initialize_contract(
+            on_chain_proposer_address,
+            on_chain_proposer_initialization_calldata,
+            &opts.private_key,
+            eth_client,
+        )
+        .await?
+    };
+
+    info!(
+        tx_hash = %format!("{initialize_bridge_address_tx_hash:#x}"),
+        "OnChainProposer bridge address initialized"
+    );
+
+    if opts.on_chain_proposer_owner != deployer_address {
+        let transfer_ownership_tx_hash = {
+            let owener_transfer_calldata = encode_calldata(
+                TRANSFER_OWNERSHIP_SIGNATURE,
+                &[Value::Address(opts.on_chain_proposer_owner)],
+            )?;
+
+            initialize_contract(
+                on_chain_proposer_address,
+                owener_transfer_calldata,
+                &opts.private_key,
+                eth_client,
+            )
+            .await?
+        };
+
+        info!(
+            tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
+            "OnChainProposer ownership transfered"
+        );
+    }
 
     info!("Initializing CommonBridge");
     let initialize_tx_hash = {
@@ -411,15 +454,9 @@ async fn make_deposits(
             .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
             .unwrap_or(U256::zero());
 
-        let gas_price = eth_client.get_gas_price().await?.try_into().map_err(|_| {
-            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
-        })?;
-
         let overrides = Overrides {
             value: Some(value_to_deposit),
             from: Some(address),
-            max_fee_per_gas: Some(gas_price),
-            max_priority_fee_per_gas: Some(gas_price),
             ..Overrides::default()
         };
 

@@ -3097,6 +3097,7 @@ dependencies = [
  "redb",
  "reqwest",
  "secp256k1",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",
@@ -3532,6 +3533,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
+ "tools",
  "tracing",
  "tracing-subscriber 0.3.19",
 ]
@@ -10188,6 +10190,14 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "tools"
+version = "0.0.0"
+dependencies = [
+ "ethrex-common",
+ "serde_json",
 ]
 
 [[package]]
