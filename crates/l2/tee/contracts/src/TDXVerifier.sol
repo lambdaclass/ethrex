@@ -23,8 +23,8 @@ contract TDXVerifier {
     bool public isDevMode = false;
 
     bytes public RTMR0 = hex'4f3d617a1c89bd9a89ea146c15b04383b7db7318f41a851802bba8eace5a6cf71050e65f65fd50176e4f006764a42643';
-    bytes public RTMR1 = hex'd3c5ba3549f93337ba2be6cbcf0c9a375b35182ce98144b0c72d0159ba1ad94b1366da1a27cfccdad1d9f372d86e0144';
-    bytes public RTMR2 = hex'dd6f8f729bce198ff7c058cc476124055a019b06cc65b1eadb17548b723835e8c86e9697e5ad892c9cbd33f71ad36105';
+    bytes public RTMR1 = hex'53827a034d1e4c7f13fd2a12aee4497e7097f15a04794553e12fe73e2ffb8bd57585e771951115a13ec4d7e6bc193038';
+    bytes public RTMR2 = hex'2ca1a728ff13c36195ad95e8f725bf00d7f9c5d6ed730fb8f50cccad692ab81aefc83d594819375649be934022573528';
     bytes public MRTD = hex'91eb2b44d141d4ece09f0c75c2c53d247a3c68edd7fafe8a3520c942a604a407de03ae6dc5f87f27428b2538873118b7';
 
     /// @notice Initializes the contract
