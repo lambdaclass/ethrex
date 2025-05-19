@@ -43,7 +43,7 @@ pub enum RpcResponse {
 #[derive(Debug, Clone)]
 pub struct EthClient {
     client: Client,
-    pub url: String,
+    pub urls: Vec<String>,
     pub max_number_of_retries: u64,
     pub backoff_factor: u64,
     pub min_retry_delay: u64,
@@ -103,9 +103,9 @@ pub struct WithdrawalProof {
 }
 
 impl EthClient {
-    pub fn new(url: &str) -> Self {
+    pub fn new(urls: &str) -> Self {
         Self::new_with_config(
-            url,
+            urls,
             MAX_NUMBER_OF_RETRIES,
             BACKOFF_FACTOR,
             MIN_RETRY_DELAY,
@@ -116,7 +116,7 @@ impl EthClient {
     }
 
     pub fn new_with_config(
-        url: &str,
+        urls: &str,
         max_number_of_retries: u64,
         backoff_factor: u64,
         min_retry_delay: u64,
@@ -124,9 +124,11 @@ impl EthClient {
         maximum_allowed_max_fee_per_gas: Option<u64>,
         maximum_allowed_max_fee_per_blob_gas: Option<u64>,
     ) -> Self {
+        let urls = urls.split(",").map(|url| url.trim().to_string()).collect();
+
         Self {
             client: Client::new(),
-            url: url.to_string(),
+            urls,
             max_number_of_retries,
             backoff_factor,
             min_retry_delay,
@@ -140,10 +142,24 @@ impl EthClient {
         &self,
         request: RpcRequest,
     ) -> Result<RpcResponse, EthClientError> {
-        let response = self.send_request(&self.url, &request).await;
-        if response.is_err() {
-            todo!("Implement fallback");
-            // return self.send_request(fallback_url, &request).await;
+        // Try first rpc url
+        let mut response = {
+            let url = self
+                .urls
+                .first()
+                .ok_or(EthClientError::Custom("Client has no rpc urls".to_string()))?;
+            self.send_request(url, &request).await
+        };
+
+        if response.is_ok() {
+            return response;
+        }
+        // If first rpc url fails try with the rest
+        for url in self.urls.iter().skip(1) {
+            response = self.send_request(url, &request).await;
+            if response.is_ok() {
+                break;
+            }
         }
         response
     }
