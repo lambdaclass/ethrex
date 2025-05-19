@@ -18,11 +18,11 @@ use ethrex_storage::Store;
 use ethrex_vm::{backends::CallFrameBackup, Evm, EvmError};
 use std::ops::Div;
 use tokio::time::Instant;
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::{
     sequencer::{
-        errors::BlockProducerError,
+        errors::{BlockProducerError, StateDiffError},
         state_diff::{AccountStateDiff, DepositLog, WithdrawalLog, SIMPLE_TX_STATE_DIFF_SIZE},
     },
     utils::helpers::{is_deposit_l2, is_withdrawal_l2},
@@ -184,9 +184,17 @@ pub async fn fill_transactions(
         let mut new_accounts_diff_size = 0;
 
         for (address, diff) in merged_diffs.iter() {
-            let encoded = diff
-                .encode(address)
-                .map_err(BlockProducerError::FailedToEncodeAccountStateDiff)?;
+            let encoded = match diff.encode(address) {
+                Ok(encoded) => encoded,
+                Err(StateDiffError::EmptyAccountDiff) => {
+                    debug!("Skipping empty account diff for address: {address}");
+                    continue;
+                }
+                Err(e) => {
+                    error!("Failed to encode account state diff: {e}");
+                    return Err(BlockProducerError::FailedToEncodeAccountStateDiff(e));
+                }
+            };
             new_accounts_diff_size += encoded.len();
         }
 
