@@ -133,8 +133,7 @@ impl PeerHandler {
                     .map(|header| header.compute_block_hash())
                     .collect::<Vec<_>>();
 
-                // Check that the headers are chained between themselves and return them
-                if PeerHandler::valid_headers_chain(&block_headers, &block_hashes) {
+                if are_block_headers_chained(&block_headers, &block_hashes) {
                     return Some((block_headers, block_hashes));
                 } else {
                     warn!("Received invalid headers from peer, discarding peer {peer_id} and retrying...");
@@ -696,19 +695,19 @@ impl PeerHandler {
         None
     }
 
-    /// Validates the block headers received from a peer by checking that the parent hash of each header
-    /// matches the hash of the previous one, i.e. the headers are in a chain
-    fn valid_headers_chain(block_headers: &[BlockHeader], block_hashes: &[H256]) -> bool {
-        block_headers
-            .iter()
-            .skip(1) // Skip the first, since we know the current head is valid
-            .zip(block_hashes.iter())
-            .all(|(current_header, previous_hash)| current_header.parent_hash == *previous_hash)
-    }
-
     pub async fn remove_peer(&self, peer_id: H256) {
         debug!("Removing peer with id {:?}", peer_id);
         let mut table = self.peer_table.lock().await;
         table.replace_peer(peer_id);
     }
+}
+
+/// Validates the block headers received from a peer by checking that the parent hash of each header
+/// matches the hash of the previous one, i.e. the headers are chained
+fn are_block_headers_chained(block_headers: &[BlockHeader], block_hashes: &[H256]) -> bool {
+    block_headers
+        .iter()
+        .skip(1) // Skip the first, since we know the current head is valid
+        .zip(block_hashes.iter())
+        .all(|(current_header, previous_hash)| current_header.parent_hash == *previous_hash)
 }
