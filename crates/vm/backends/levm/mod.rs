@@ -165,7 +165,6 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<(ExecutionReport, CallFrameBackup), EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-
         let mut vm = VM::new(env, db, tx);
 
         let report_result = vm.execute().map_err(EvmError::from)?;
