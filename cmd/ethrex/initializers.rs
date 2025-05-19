@@ -44,6 +44,8 @@ use crate::l2::BasedOptions;
 #[cfg(feature = "based")]
 use ethrex_common::Public;
 #[cfg(feature = "based")]
+use ethrex_rpc::clients::eth::errors::EthClientError;
+#[cfg(feature = "based")]
 use ethrex_rpc::{EngineClient, EthClient};
 #[cfg(feature = "based")]
 use std::str::FromStr;
@@ -161,7 +163,7 @@ pub async fn init_rpc_api(
         syncer,
         get_client_version(),
         #[cfg(feature = "based")]
-        get_gateway_http_client(&l2_opts.based_opts),
+        get_gateway_http_client(&l2_opts.based_opts).expect("Failed to get gateway http client"),
         #[cfg(feature = "based")]
         get_gateway_auth_client(&l2_opts.based_opts),
         #[cfg(feature = "based")]
@@ -179,7 +181,7 @@ pub async fn init_rpc_api(
 }
 
 #[cfg(feature = "based")]
-fn get_gateway_http_client(opts: &BasedOptions) -> EthClient {
+fn get_gateway_http_client(opts: &BasedOptions) -> Result<EthClient, EthClientError> {
     let gateway_http_socket_addr = parse_socket_addr(&opts.gateway_addr, &opts.gateway_eth_port)
         .expect("Failed to parse gateway http address and port");
 
