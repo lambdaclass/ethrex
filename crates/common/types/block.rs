@@ -36,21 +36,15 @@ lazy_static! {
 pub struct Block {
     pub header: BlockHeader,
     pub body: BlockBody,
-    #[serde(skip)]
-    hash: OnceCell<BlockHash>,
 }
 
 impl Block {
     pub fn new(header: BlockHeader, body: BlockBody) -> Block {
-        Block {
-            header,
-            body,
-            hash: OnceCell::new(),
-        }
+        Block { header, body }
     }
 
     pub fn hash(&self) -> BlockHash {
-        *self.hash.get_or_init(|| self.header.compute_block_hash())
+        self.header.hash()
     }
 }
 
@@ -87,6 +81,8 @@ impl RLPDecode for Block {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockHeader {
+    #[serde(skip)]
+    pub hash: OnceCell<BlockHash>,
     pub parent_hash: H256,
     #[serde(rename = "sha3Uncles")]
     pub ommers_hash: H256, // ommer = uncle
@@ -188,6 +184,7 @@ impl RLPDecode for BlockHeader {
 
         Ok((
             BlockHeader {
+                hash: OnceCell::new(),
                 parent_hash,
                 ommers_hash,
                 coinbase,
@@ -303,6 +300,10 @@ impl BlockHeader {
         let mut buf = vec![];
         self.encode(&mut buf);
         keccak(buf)
+    }
+
+    fn hash(&self) -> H256 {
+        *self.hash.get_or_init(|| self.compute_block_hash())
     }
 }
 
@@ -705,6 +706,7 @@ mod test {
     #[test]
     fn test_validate_block_header() {
         let parent_block = BlockHeader {
+            hash: OnceCell::new(),
             parent_hash: H256::from_str(
                 "0x0000000000000000000000000000000000000000000000000000000000000000",
             )
@@ -748,6 +750,7 @@ mod test {
             requests_hash: Some(*EMPTY_KECCACK_HASH),
         };
         let block = BlockHeader {
+            hash: OnceCell::new(),
             parent_hash: H256::from_str(
                 "0x48e29e7357408113a4166e04e9f1aeff0680daa2b97ba93df6512a73ddf7a154",
             )
