@@ -1,9 +1,11 @@
 use crate::{
     constants::STACK_LIMIT,
+    db::cache,
     errors::{InternalError, OutOfGasError, VMError},
     memory::Memory,
     opcodes::Opcode,
     utils::get_valid_jump_destinations,
+    vm::VM,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -108,6 +110,13 @@ pub struct CallFrameBackup {
     pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
 }
 
+impl CallFrameBackup {
+    pub fn clear(&mut self) {
+        self.original_accounts_info.clear();
+        self.original_account_storage_slots.clear();
+    }
+}
+
 impl CallFrame {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -177,5 +186,98 @@ impl CallFrame {
         self.gas_used = potential_consumed_gas;
 
         Ok(())
+    }
+}
+
+impl<'a> VM<'a> {
+    pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, VMError> {
+        self.call_frames.last_mut().ok_or(VMError::Internal(
+            InternalError::CouldNotAccessLastCallframe,
+        ))
+    }
+
+    pub fn current_call_frame(&self) -> Result<&CallFrame, VMError> {
+        self.call_frames.last().ok_or(VMError::Internal(
+            InternalError::CouldNotAccessLastCallframe,
+        ))
+    }
+
+    pub fn pop_call_frame(&mut self) -> Result<CallFrame, VMError> {
+        self.call_frames.pop().ok_or(VMError::Internal(
+            InternalError::CouldNotAccessLastCallframe,
+        ))
+    }
+
+    pub fn is_initial_call_frame(&self) -> bool {
+        self.call_frames.len() == 1
+    }
+
+    /// Restores the cache state to the state before changes made during a callframe.
+    pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
+        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
+        for (address, account) in callframe_backup.original_accounts_info {
+            if let Some(current_account) = cache::get_account_mut(&mut self.db.cache, &address) {
+                current_account.info = account.info;
+                current_account.code = account.code;
+            }
+        }
+
+        for (address, storage) in callframe_backup.original_account_storage_slots {
+            // This call to `get_account_mut` should never return None, because we are looking up accounts
+            // that had their storage modified, which means they should be in the cache. That's why
+            // we return an internal error in case we haven't found it.
+            let account = cache::get_account_mut(&mut self.db.cache, &address).ok_or(
+                VMError::Internal(crate::errors::InternalError::AccountNotFound),
+            )?;
+
+            for (key, value) in storage {
+                account.storage.insert(key, value);
+            }
+        }
+
+        Ok(())
+    }
+
+    // The CallFrameBackup of the current callframe has to be merged with the backup of its parent, in the following way:
+    //   - For every account that's present in the parent backup, do nothing (i.e. keep the one that's already there).
+    //   - For every account that's NOT present in the parent backup but is on the child backup, add the child backup to it.
+    //   - Do the same for every individual storage slot.
+    pub fn merge_call_frame_backup_with_parent(
+        &mut self,
+        child_call_frame_backup: &CallFrameBackup,
+    ) -> Result<(), VMError> {
+        let parent_backup_accounts = &mut self
+            .current_call_frame_mut()?
+            .call_frame_backup
+            .original_accounts_info;
+        for (address, account) in child_call_frame_backup.original_accounts_info.iter() {
+            if parent_backup_accounts.get(address).is_none() {
+                parent_backup_accounts.insert(*address, account.clone());
+            }
+        }
+
+        let parent_backup_storage = &mut self
+            .current_call_frame_mut()?
+            .call_frame_backup
+            .original_account_storage_slots;
+        for (address, storage) in child_call_frame_backup
+            .original_account_storage_slots
+            .iter()
+        {
+            let parent_storage = parent_backup_storage
+                .entry(*address)
+                .or_insert(HashMap::new());
+            for (key, value) in storage {
+                if parent_storage.get(key).is_none() {
+                    parent_storage.insert(*key, *value);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
+        self.current_call_frame_mut()?.increment_pc_by(count)
     }
 }
