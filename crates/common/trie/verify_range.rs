@@ -145,11 +145,12 @@ pub fn verify_range(
 /// Also returns the number of references strictly to the right of the bounds. If the right bound
 /// is unbounded (aka. not provided), all nodes to the right (inclusive) of the left bound will
 /// be counted. Leaf nodes are not counted (the leaf nodes within the proof do not count).
+type ProcessProofNodesResult = (Vec<(Nibbles, NodeHash)>, (Vec<u8>, Vec<u8>), usize);
 fn process_proof_nodes(
     proof: &[Vec<u8>],
     root: NodeHash,
     bounds: (H256, Option<H256>),
-) -> Result<(Vec<(Nibbles, NodeHash)>, (Vec<u8>, Vec<u8>), usize), TrieError> {
+) -> Result<ProcessProofNodesResult, TrieError> {
     // Convert `H256` bounds into `Nibble` bounds for convenience.
     let bounds = (
         Nibbles::from_bytes(&bounds.0 .0),
