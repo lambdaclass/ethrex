@@ -235,12 +235,12 @@ fn get_tx_diffs(
 ) -> Result<HashMap<Address, AccountStateDiff>, BlockProducerError> {
     let mut modified_accounts = HashMap::new();
     match &context.vm {
-        ethrex_vm::Evm::REVM { .. } => {
-            return Err(BlockProducerError::EvmError(
-                ethrex_vm::EvmError::InvalidEVM("REVM not supported for L2".to_string()),
-            ))
+        Evm::REVM { .. } => {
+            return Err(BlockProducerError::EvmError(EvmError::InvalidEVM(
+                "REVM not supported for L2".to_string(),
+            )))
         }
-        ethrex_vm::Evm::LEVM { db } => {
+        Evm::LEVM { db } => {
             // First we add the account info
             for (address, original_account) in call_frame_backup.original_accounts_info.iter() {
                 let new_account_info = db
