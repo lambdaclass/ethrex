@@ -264,6 +264,8 @@ async fn handle_forkchoice(
     .await
     {
         Ok(head) => {
+            // Fork Choice was succesful, the node is up to date with the current chain
+            context.blockchain.set_synced();
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
             match context
@@ -304,11 +306,6 @@ async fn handle_forkchoice(
                 ),
                 InvalidForkChoice::Syncing => {
                     // Start sync
-                    context
-                        .storage
-                        .update_sync_status(false)
-                        .await
-                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
                     context
                         .syncer
                         .sync_to_head(fork_choice_state.head_block_hash);
