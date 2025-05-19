@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747687327674,
+  "lastUpdate": 1747687792543,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7855,6 +7855,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209242250885,
             "range": "± 414689451",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9ba8270b2edadec13496080446025cd3b0eabf80",
+          "message": "fix(levm): fix last blockchain tests for LEVM (#2842)\n\n**Motivation**\n\n- Fix remaining blockchain tests for Prague with LEVM.\n\n**Description**\n\n- Precompiles shouldn't be executed in case they are delegation target\nof the same transaction in which they are being called.\n- It also fixes a problem in the transfer of value in CALL. (It just\nmoves the place where the value transfer is performed)\n\nAfter this there are no more `blockchain` tests we need to fix.\n\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCo-authored-by: @DiegoCivi",
+          "timestamp": "2025-05-19T19:55:34Z",
+          "tree_id": "f402baf6112c7625c0542bd74bb503df650c4d04",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9ba8270b2edadec13496080446025cd3b0eabf80"
+        },
+        "date": 1747687789799,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 214134354799,
+            "range": "± 1067686701",
             "unit": "ns/iter"
           }
         ]
