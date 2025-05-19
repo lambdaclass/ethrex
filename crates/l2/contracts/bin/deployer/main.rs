@@ -315,7 +315,11 @@ async fn initialize_contracts(
 
     trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
 
-    let genesis = read_genesis_file(&opts.genesis_l2_path);
+    let genesis = read_genesis_file(
+        opts.genesis_l2_path
+            .to_str()
+            .ok_or(DeployerError::FailedToGetStringFromPath)?,
+    );
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
     let initialize_tx_hash = {
