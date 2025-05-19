@@ -11,7 +11,7 @@ use super::{
 use crate::{
     kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
     network::{handle_peer_as_initiator, P2PContext},
-    rlpx::connection::MAX_PEERS_TCP_CONNECTIONS,
+    rlpx::{connection::MAX_PEERS_TCP_CONNECTIONS, utils::node_id},
     types::{Endpoint, Node},
 };
 use ethrex_common::H256;
@@ -135,17 +135,17 @@ impl Discv4Server {
                     return Err(DiscoveryError::MessageExpired);
                 };
 
-                let node = Node {
-                    ip: from.ip(),
-                    udp_port: from.port(),
-                    tcp_port: msg.from.tcp_port,
-                    public_key: packet.get_public_key(),
-                };
-                self.pong(packet.get_hash(), node).await?;
+                let node = Node::new(
+                    from.ip(),
+                    from.port(),
+                    msg.from.tcp_port,
+                    packet.get_public_key(),
+                );
+                self.pong(packet.get_hash(), &node).await?;
 
                 let peer = {
                     let table = self.ctx.table.lock().await;
-                    table.get_by_public_key(packet.get_public_key()).cloned()
+                    table.get_by_node_id(node.node_id()).cloned()
                 };
 
                 let Some(peer) = peer else {
@@ -156,12 +156,12 @@ impl Discv4Server {
                 // if peer was in the table and last ping was 12 hs ago
                 //  we need to re ping to re-validate the endpoint proof
                 if elapsed_time_since(peer.last_ping) / 3600 >= PROOF_EXPIRATION_IN_HS {
-                    self.ping(node).await?;
+                    self.ping(&node).await?;
                 }
                 if let Some(enr_seq) = msg.enr_seq {
                     if enr_seq > peer.record.seq && peer.is_proven {
                         debug!("Found outdated enr-seq, sending an enr_request");
-                        self.send_enr_request(peer.node, self.ctx.table.lock().await)
+                        self.send_enr_request(&peer.node, self.ctx.table.lock().await)
                             .await?;
                     }
                 }
@@ -175,7 +175,7 @@ impl Discv4Server {
 
                 let peer = {
                     let table = self.ctx.table.lock().await;
-                    table.get_by_public_key(packet.get_public_key()).cloned()
+                    table.get_by_node_id(packet.get_node_id()).cloned()
                 };
                 let Some(peer) = peer else {
                     return Err(DiscoveryError::InvalidMessage("not known node".into()));
@@ -197,11 +197,11 @@ impl Discv4Server {
                     .table
                     .lock()
                     .await
-                    .pong_answered(peer.node.public_key, current_unix_time());
+                    .pong_answered(peer.node.node_id(), current_unix_time());
                 if let Some(enr_seq) = msg.enr_seq {
                     if enr_seq > peer.record.seq {
                         debug!("Found outdated enr-seq, send an enr_request");
-                        self.send_enr_request(peer.node, self.ctx.table.lock().await)
+                        self.send_enr_request(&peer.node, self.ctx.table.lock().await)
                             .await?;
                         return Ok(());
                     }
@@ -234,7 +234,7 @@ impl Discv4Server {
                 };
                 let node = {
                     let table = self.ctx.table.lock().await;
-                    table.get_by_public_key(packet.get_public_key()).cloned()
+                    table.get_by_node_id(packet.get_node_id()).cloned()
                 };
 
                 let Some(node) = node else {
@@ -253,7 +253,7 @@ impl Discv4Server {
 
                 let nodes = {
                     let table = self.ctx.table.lock().await;
-                    table.get_closest_nodes(msg.target)
+                    table.get_closest_nodes(node_id(&msg.target))
                 };
                 let nodes_chunks = nodes.chunks(4);
                 let expiration = get_msg_expiration_from_seconds(20);
@@ -287,7 +287,7 @@ impl Discv4Server {
 
                 let mut table_lock = self.ctx.table.lock().await;
 
-                let Some(node) = table_lock.get_by_public_key_mut(packet.get_public_key()) else {
+                let Some(node) = table_lock.get_by_node_id_mut(packet.get_node_id()) else {
                     return Err(DiscoveryError::InvalidMessage("not a known node".into()));
                 };
 
@@ -331,7 +331,7 @@ impl Discv4Server {
 
                 debug!("Storing neighbors in our table!");
                 for node in nodes {
-                    let _ = self.try_add_peer_and_ping(*node).await;
+                    let _ = self.try_add_peer_and_ping(node.clone()).await;
                 }
 
                 Ok(())
@@ -545,9 +545,9 @@ impl Discv4Server {
             debug!("Running peer revalidation");
 
             // first check that the peers we ping have responded
-            for public_key in previously_pinged_peers {
+            for node_id in previously_pinged_peers {
                 let mut table_lock = self.ctx.table.lock().await;
-                let Some(peer) = table_lock.get_by_public_key_mut(public_key) else {
+                let Some(peer) = table_lock.get_by_node_id_mut(node_id) else {
                     continue;
                 };
 
@@ -562,10 +562,10 @@ impl Discv4Server {
                 peer.revalidation = None;
 
                 if peer.liveness == 0 {
-                    let new_peer = table_lock.replace_peer(public_key);
+                    let new_peer = table_lock.replace_peer(node_id);
                     if let Some(new_peer) = new_peer {
                         drop(table_lock);
-                        let _ = self.ping(new_peer.node).await;
+                        let _ = self.ping(&new_peer.node).await;
                     }
                 }
             }
@@ -582,10 +582,10 @@ impl Discv4Server {
             previously_pinged_peers = HashSet::default();
             for peer in peers {
                 debug!("Pinging peer {:?} to re-validate!", peer.node.public_key);
-                let _ = self.ping(peer.node).await;
-                previously_pinged_peers.insert(peer.node.public_key);
+                let _ = self.ping(&peer.node).await;
+                previously_pinged_peers.insert(peer.node.node_id());
                 let mut table = self.ctx.table.lock().await;
-                let peer = table.get_by_public_key_mut(peer.node.public_key);
+                let peer = table.get_by_node_id_mut(peer.node.node_id());
                 if let Some(peer) = peer {
                     peer.revalidation = Some(false);
                 }
@@ -603,7 +603,7 @@ impl Discv4Server {
     async fn try_add_peer_and_ping<'a>(&self, node: Node) -> Result<(), DiscoveryError> {
         // sanity check to make sure we are not storing ourselves
         // a case that may happen in a neighbor message for example
-        if node.public_key == self.ctx.local_node.public_key {
+        if node.node_id() == self.ctx.local_node.node_id() {
             return Ok(());
         }
 
@@ -614,12 +614,12 @@ impl Discv4Server {
             table_lock.insert_node(node)
         };
         if let (Some(peer), true) = (peer, found) {
-            self.ping(peer.node).await?;
+            self.ping(&peer.node).await?;
         };
         Ok(())
     }
 
-    async fn ping<'a>(&self, node: Node) -> Result<(), DiscoveryError> {
+    async fn ping<'a>(&self, node: &Node) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
         let expiration: u64 = get_msg_expiration_from_seconds(20);
         let from = Endpoint {
@@ -649,7 +649,7 @@ impl Discv4Server {
 
         let hash = H256::from_slice(&buf[0..32]);
         self.ctx.table.lock().await.update_peer_ping(
-            node.public_key,
+            node.node_id(),
             Some(hash),
             current_unix_time(),
         );
@@ -657,7 +657,7 @@ impl Discv4Server {
         Ok(())
     }
 
-    async fn pong(&self, ping_hash: H256, node: Node) -> Result<(), DiscoveryError> {
+    async fn pong(&self, ping_hash: H256, node: &Node) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
         let expiration: u64 = get_msg_expiration_from_seconds(20);
         let to = Endpoint {
@@ -685,7 +685,7 @@ impl Discv4Server {
 
     async fn send_enr_request<'a>(
         &self,
-        node: Node,
+        node: &Node,
         mut table_lock: MutexGuard<'a, KademliaTable>,
     ) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
@@ -703,7 +703,7 @@ impl Discv4Server {
         }
 
         let hash = H256::from_slice(&buf[0..32]);
-        if let Some(peer) = table_lock.get_by_public_key_mut(node.public_key) {
+        if let Some(peer) = table_lock.get_by_node_id_mut(node.node_id()) {
             peer.enr_request_hash = Some(hash);
         };
 
@@ -736,12 +736,7 @@ pub(super) mod tests {
         bucket_idx: usize,
     ) {
         let public_key = public_key_from_signing_key(&SigningKey::random(&mut OsRng));
-        let node = Node {
-            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-            tcp_port: 0,
-            udp_port: 0,
-            public_key,
-        };
+        let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0, 0, public_key);
         table
             .lock()
             .await
@@ -764,12 +759,7 @@ pub(super) mod tests {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
         let signer = SigningKey::random(&mut OsRng);
         let public_key = public_key_from_signing_key(&signer);
-        let local_node = Node {
-            ip: addr.ip(),
-            public_key,
-            udp_port,
-            tcp_port: udp_port,
-        };
+        let local_node = Node::new(addr.ip(), udp_port, udp_port, public_key);
 
         let storage = match initial_blocks {
             Some(blocks) => setup_storage(blocks).await.expect("Storage setup"),
@@ -777,7 +767,7 @@ pub(super) mod tests {
         };
 
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let table = Arc::new(Mutex::new(KademliaTable::new(public_key)));
+        let table = Arc::new(Mutex::new(KademliaTable::new(local_node.node_id())));
         let (broadcast, _) = tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<RLPxMessage>)>(
             MAX_MESSAGES_TO_BROADCAST,
         );
@@ -821,7 +811,7 @@ pub(super) mod tests {
         server_b: &mut Discv4Server,
     ) -> Result<(), DiscoveryError> {
         server_a
-            .try_add_peer_and_ping(server_b.ctx.local_node)
+            .try_add_peer_and_ping(server_b.ctx.local_node.clone())
             .await?;
 
         // allow some time for the server to respond
@@ -883,7 +873,7 @@ pub(super) mod tests {
             sleep(Duration::from_millis(2500)).await;
             // by now, b should've send a revalidation to a
             let table = server_b.ctx.table.lock().await;
-            let node = table.get_by_public_key(server_a.ctx.local_node.public_key);
+            let node = table.get_by_node_id(server_a.ctx.local_node.node_id());
             assert!(node.is_some_and(|n| n.revalidation.is_some()));
         }
 
@@ -891,7 +881,7 @@ pub(super) mod tests {
         // we can do that by checking the liveness
         {
             let table = server_b.ctx.table.lock().await;
-            let node = table.get_by_public_key(server_a.ctx.local_node.public_key);
+            let node = table.get_by_node_id(server_a.ctx.local_node.node_id());
             assert_eq!(node.map_or(0, |n| n.liveness), 6);
         }
 
@@ -899,7 +889,7 @@ pub(super) mod tests {
         // so we'll instead change its port, so that no one responds
         {
             let mut table = server_b.ctx.table.lock().await;
-            let node = table.get_by_public_key_mut(server_a.ctx.local_node.public_key);
+            let node = table.get_by_node_id_mut(server_a.ctx.local_node.node_id());
             if let Some(node) = node {
                 node.node.udp_port = 0
             };
@@ -910,7 +900,7 @@ pub(super) mod tests {
         for _ in 0..2 {
             sleep(Duration::from_millis(2500)).await;
             let table = server_b.ctx.table.lock().await;
-            let node = table.get_by_public_key(server_a.ctx.local_node.public_key);
+            let node = table.get_by_node_id(server_a.ctx.local_node.node_id());
             assert!(node.is_some_and(|n| n.revalidation.is_some()));
         }
         sleep(Duration::from_millis(2500)).await;
@@ -918,7 +908,7 @@ pub(super) mod tests {
         // finally, `a`` should not exist anymore
         let table = server_b.ctx.table.lock().await;
         assert!(table
-            .get_by_public_key(server_a.ctx.local_node.public_key)
+            .get_by_node_id(server_a.ctx.local_node.node_id())
             .is_none());
         Ok(())
     }
@@ -944,14 +934,16 @@ pub(super) mod tests {
         // wait some time for the enr request-response finishes
         sleep(Duration::from_millis(2500)).await;
 
-        let expected_record = server_b.ctx.local_node_record.lock().await.decode_pairs();
+        let expected_record =
+            NodeRecord::from_node(&server_b.ctx.local_node, 1, &server_b.ctx.signer)
+                .expect("Node record is created from node");
 
         let server_a_peer_b = server_a
             .ctx
             .table
             .lock()
             .await
-            .get_by_public_key(server_b.ctx.local_node.public_key)
+            .get_by_node_id(server_b.ctx.local_node.node_id())
             .cloned()
             .unwrap();
 
@@ -966,7 +958,7 @@ pub(super) mod tests {
             .table
             .lock()
             .await
-            .get_by_public_key_mut(server_b.ctx.local_node.public_key)
+            .get_by_node_id_mut(server_b.ctx.local_node.node_id())
             .unwrap()
             .node
             .tcp_port = 10;
@@ -984,7 +976,7 @@ pub(super) mod tests {
         // Send a ping from server_b to server_a.
         // server_a should notice the enr_seq is outdated
         // and trigger a enr-request to server_b to update the record.
-        server_b.ping(server_a.ctx.local_node).await?;
+        server_b.ping(&server_a.ctx.local_node).await?;
 
         // Wait for the update to propagate.
         sleep(Duration::from_millis(2500)).await;
@@ -992,7 +984,7 @@ pub(super) mod tests {
         // Verify that server_a has updated its record of server_b with the correct TCP port.
         let table_lock = server_a.ctx.table.lock().await;
         let server_a_node_b_record = table_lock
-            .get_by_public_key(server_b.ctx.local_node.public_key)
+            .get_by_node_id(server_b.ctx.local_node.node_id())
             .unwrap();
 
         assert!(server_a_node_b_record.node.tcp_port == server_b.ctx.local_node.tcp_port);

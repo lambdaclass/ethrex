@@ -80,7 +80,7 @@ impl Command {
                     &signer,
                 )));
 
-                let peer_table = peer_table(signer.clone());
+                let peer_table = peer_table(local_p2p_node.node_id());
 
                 // TODO: Check every module starts properly.
                 let tracker = TaskTracker::new();
@@ -91,7 +91,7 @@ impl Command {
                     &opts.node_opts,
                     &opts,
                     peer_table.clone(),
-                    local_p2p_node,
+                    local_p2p_node.clone(),
                     local_node_record.lock().await.clone(),
                     store.clone(),
                     blockchain.clone(),
