@@ -50,7 +50,7 @@ impl L1ProofSender {
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
     ) -> Result<Self, ProofSenderError> {
-        let eth_client = EthClient::new(&eth_cfg.rpc_url);
+        let eth_client = EthClient::new(vec![&eth_cfg.rpc_url])?;
 
         let mut needed_proof_types = vec![];
         if !cfg.dev_mode {

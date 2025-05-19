@@ -104,7 +104,7 @@ pub struct WithdrawalProof {
 }
 
 impl EthClient {
-    pub fn new(urls: Vec<String>) -> Result<EthClient, EthClientError> {
+    pub fn new(urls: Vec<&str>) -> Result<EthClient, EthClientError> {
         Self::new_with_config(
             urls,
             MAX_NUMBER_OF_RETRIES,
@@ -117,7 +117,7 @@ impl EthClient {
     }
 
     pub fn new_with_config(
-        urls: Vec<String>,
+        urls: Vec<&str>,
         max_number_of_retries: u64,
         backoff_factor: u64,
         min_retry_delay: u64,

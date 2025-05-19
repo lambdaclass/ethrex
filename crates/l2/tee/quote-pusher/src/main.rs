@@ -244,7 +244,7 @@ async fn main() -> Result<(), PusherError> {
     let contract_addr: Address = H160::from_str(&contract_addr)
         .map_err(|_| PusherError::ParseError("Invalid CONTRACT_ADDRESS".to_string()))?;
 
-    let eth_client = EthClient::new(&rpc_url);
+    let eth_client = EthClient::new(vec![&rpc_url])?;
     let web_client = reqwest::Client::new();
 
     let mut state = 100;
