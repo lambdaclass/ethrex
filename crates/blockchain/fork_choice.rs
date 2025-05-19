@@ -47,12 +47,14 @@ pub async fn apply_fork_choice(
     };
 
     if !safe_hash.is_zero() {
-        check_order(&safe_res, &Some(head_block.header))?;
+        check_order(&safe_res, &Some(head_block.header.clone()))?;
     }
 
     if !finalized_hash.is_zero() && !safe_hash.is_zero() {
         check_order(&finalized_res, &safe_res)?;
     }
+
+    let head = head_block.header;
 
     let latest = store.get_latest_block_number().await?;
 
