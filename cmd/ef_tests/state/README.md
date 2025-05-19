@@ -55,5 +55,5 @@ make test-levm
 ```
 or
 ```bash
-cargo test-revm
+make test-revm
 ```
