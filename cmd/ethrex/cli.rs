@@ -1,7 +1,7 @@
 use std::{
     fs::{metadata, read_dir},
     io::{self, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
@@ -246,7 +246,7 @@ pub enum Subcommand {
             value_name = "GENESIS_FILE_PATH",
             help = "Path to the genesis json file"
         )]
-        genesis_path: String,
+        genesis_path: PathBuf,
     },
     #[cfg(any(feature = "l2", feature = "based"))]
     #[command(subcommand)]
@@ -280,7 +280,7 @@ impl Subcommand {
                 import_blocks(&path, &opts.datadir, network, opts.evm).await;
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
-                compute_state_root(genesis_path.as_str());
+                compute_state_root(genesis_path.to_str().expect("Invalid genesis path"));
             }
             #[cfg(any(feature = "l2", feature = "based"))]
             Subcommand::L2(command) => command.run().await?,
