@@ -58,6 +58,7 @@ fn build_sp1_program() {
             output_directory: Some("./sp1/out".to_string()),
             elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
             features,
+            docker: true,
             ..Default::default()
         },
     );
