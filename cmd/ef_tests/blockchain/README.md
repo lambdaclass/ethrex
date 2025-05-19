@@ -5,7 +5,7 @@ Some [docs](https://ethereum.github.io/execution-spec-tests/main/consuming_tests
 ## Setting up the tests
 
 ```bash
-make download-test-vectors:
+make download-test-vectors
 ```
 
 ## Running the tests
@@ -21,5 +21,5 @@ make test-levm
 ```
 or
 ```bash
-cargo test-revm
+make test-revm
 ```
