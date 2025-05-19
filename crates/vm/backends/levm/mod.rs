@@ -198,14 +198,7 @@ impl LEVM {
             let mut added_storage = HashMap::new();
 
             for (key, new_value) in &new_state_account.storage {
-                let old_value = initial_state_account
-                    .storage
-                    .get(key)
-                    .ok_or_else(|| {
-                        return EvmError::Custom(format!(
-                            "Failed to get old value from account's initial storage for address: {address}"
-                        ));
-                    })?;
+                let old_value = initial_state_account.storage.get(key).ok_or_else(|| { EvmError::Custom(format!("Failed to get old value from account's initial storage for address: {address}"))})?;
 
                 if new_value != old_value {
                     added_storage.insert(*key, *new_value);
