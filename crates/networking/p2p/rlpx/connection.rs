@@ -452,11 +452,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 // We ignore received Pong messages
             }
             Message::Status(msg_data) => {
-                match &self.negotiated_eth_capability {
-                    Some(eth) => {
-                        backend::validate_status(msg_data, &self.storage, eth.version).await?
-                    }
-                    None => {}
+                if let Some(eth) = &self.negotiated_eth_capability {
+                    backend::validate_status(msg_data, &self.storage, eth.version).await?
                 };
             }
             Message::GetAccountRange(req) => {

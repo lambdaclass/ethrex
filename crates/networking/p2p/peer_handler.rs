@@ -63,7 +63,7 @@ impl PeerHandler {
     /// If no peer is found, this method will try again after 10 seconds
     async fn get_peer_channel_with_retry(
         &self,
-        capabilities: &Vec<Capability>,
+        capabilities: &[Capability],
     ) -> Option<PeerChannels> {
         for _ in 0..PEER_SELECT_RETRY_ATTEMPTS {
             let table = self.peer_table.lock().await;
@@ -98,7 +98,7 @@ impl PeerHandler {
                 reverse: matches!(order, BlockRequestOrder::NewToOld),
             });
             let peer = self
-                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES.to_vec())
+                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
                 .await?;
             let mut receiver = peer.receiver.lock().await;
             if let Err(err) = peer.sender.send(request).await {
@@ -143,7 +143,7 @@ impl PeerHandler {
                 block_hashes: block_hashes.clone(),
             });
             let peer = self
-                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES.to_vec())
+                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
                 .await?;
             let mut receiver = peer.receiver.lock().await;
             if let Err(err) = peer.sender.send(request).await {
@@ -190,7 +190,7 @@ impl PeerHandler {
                 block_hashes: block_hashes.clone(),
             });
             let peer = self
-                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES.to_vec())
+                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
                 .await?;
             let mut receiver = peer.receiver.lock().await;
             if let Err(err) = peer.sender.send(request).await {
@@ -246,7 +246,7 @@ impl PeerHandler {
                 response_bytes: MAX_RESPONSE_BYTES,
             });
             let peer = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES.to_vec())
+                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
                 .await?;
             let mut receiver = peer.receiver.lock().await;
             if let Err(err) = peer.sender.send(request).await {
@@ -309,7 +309,7 @@ impl PeerHandler {
                 bytes: MAX_RESPONSE_BYTES,
             });
             let peer = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES.to_vec())
+                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
                 .await?;
             let mut receiver = peer.receiver.lock().await;
             if let Err(err) = peer.sender.send(request).await {
@@ -366,7 +366,7 @@ impl PeerHandler {
                 response_bytes: MAX_RESPONSE_BYTES,
             });
             let peer = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES.to_vec())
+                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
                 .await?;
             let mut receiver = peer.receiver.lock().await;
             if let Err(err) = peer.sender.send(request).await {
@@ -467,7 +467,7 @@ impl PeerHandler {
                 bytes: MAX_RESPONSE_BYTES,
             });
             let peer = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES.to_vec())
+                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
                 .await?;
             let mut receiver = peer.receiver.lock().await;
             if let Err(err) = peer.sender.send(request).await {
@@ -541,7 +541,7 @@ impl PeerHandler {
                 bytes: MAX_RESPONSE_BYTES,
             });
             let peer = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES.to_vec())
+                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
                 .await?;
             let mut receiver = peer.receiver.lock().await;
             if let Err(err) = peer.sender.send(request).await {
@@ -608,7 +608,7 @@ impl PeerHandler {
                 response_bytes: MAX_RESPONSE_BYTES,
             });
             let peer = self
-                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES.to_vec())
+                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
                 .await?;
             let mut receiver = peer.receiver.lock().await;
             if let Err(err) = peer.sender.send(request).await {

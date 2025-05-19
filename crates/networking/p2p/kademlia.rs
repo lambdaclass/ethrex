@@ -318,7 +318,7 @@ impl KademliaTable {
 
     /// Returns the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
-    pub fn get_peer_channels(&self, capabilities: &Vec<Capability>) -> Option<PeerChannels> {
+    pub fn get_peer_channels(&self, capabilities: &[Capability]) -> Option<PeerChannels> {
         let filter = |peer: &PeerData| -> bool {
             // Search for peers with an active connection that support the required capabilities
             peer.channels.is_some()
