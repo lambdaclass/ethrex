@@ -365,7 +365,7 @@ impl Discv4Server {
             Message::ENRResponse(msg) => {
                 {
                     let mut table_lock = self.ctx.table.lock().await;
-                    let peer = table_lock.get_by_public_key_mut(packet.get_public_key());
+                    let peer = table_lock.get_by_node_id_mut(packet.get_node_id());
                     let Some(peer) = peer else {
                         return Err(DiscoveryError::InvalidMessage("Peer not known".into()));
                     };
@@ -464,7 +464,7 @@ impl Discv4Server {
                                 chain_config,
                                 genesis_header,
                             ) {
-                                table_lock.replace_peer(packet.get_public_key());
+                                table_lock.replace_peer(packet.get_node_id());
                                 return Err(DiscoveryError::InvalidMessage(
                                     "Could not validate fork id from new node".into(),
                                 ));
@@ -490,7 +490,7 @@ impl Discv4Server {
                 }
                 let peer = {
                     let table = self.ctx.table.lock().await;
-                    table.get_by_public_key(packet.get_public_key()).cloned()
+                    table.get_by_node_id(packet.get_node_id()).cloned()
                 };
                 let Some(peer) = peer else {
                     return Err(DiscoveryError::InvalidMessage("not known node".into()));
@@ -934,9 +934,7 @@ pub(super) mod tests {
         // wait some time for the enr request-response finishes
         sleep(Duration::from_millis(2500)).await;
 
-        let expected_record =
-            NodeRecord::from_node(&server_b.ctx.local_node, 1, &server_b.ctx.signer)
-                .expect("Node record is created from node");
+        let expected_record = server_b.ctx.local_node_record.lock().await.clone();
 
         let server_a_peer_b = server_a
             .ctx
@@ -949,7 +947,7 @@ pub(super) mod tests {
 
         // we only match the pairs, as the signature and seq will change
         // because they are calculated with the current time
-        assert!(server_a_peer_b.record.decode_pairs() == expected_record);
+        assert!(server_a_peer_b.record.decode_pairs() == expected_record.decode_pairs());
 
         // Modify server_a's record of server_b with an incorrect TCP port.
         // This simulates an outdated or incorrect entry in the node table.
@@ -1065,7 +1063,7 @@ pub(super) mod tests {
             .table
             .lock()
             .await
-            .get_by_public_key(server_b.ctx.local_node.public_key)
+            .get_by_node_id(server_b.ctx.local_node.node_id())
             .is_some());
 
         assert!(server_a
@@ -1073,7 +1071,7 @@ pub(super) mod tests {
             .table
             .lock()
             .await
-            .get_by_public_key(server_c.ctx.local_node.public_key)
+            .get_by_node_id(server_c.ctx.local_node.node_id())
             .is_none());
 
         Ok(())
