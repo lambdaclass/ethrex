@@ -12,7 +12,7 @@ interface IAttestation {
 }
 
 interface IOnChainProposer {
-    mapping(address _authorizedAddress => bool) public authorizedSequencerAddresses;
+    function authorizedSequencerAddresses(address addr) external returns (bool isAuthorized);
 }
 
 contract TDXVerifier {
@@ -23,8 +23,8 @@ contract TDXVerifier {
     bool public isDevMode = false;
 
     bytes public RTMR0 = hex'4f3d617a1c89bd9a89ea146c15b04383b7db7318f41a851802bba8eace5a6cf71050e65f65fd50176e4f006764a42643';
-    bytes public RTMR1 = hex'2ee8fb43579a04abed437dcd9adc5d2bc11313c3e89f5f7cb41bdc48f41561cd072bf62130996889c247ac9af90e0493';
-    bytes public RTMR2 = hex'4bb5eeabeb11c6c659a67f584e47cf8cd886d8f8cb1d402473f24e60c1a82afed9bf5360aca2565868756fa30b228d2b';
+    bytes public RTMR1 = hex'd3c5ba3549f93337ba2be6cbcf0c9a375b35182ce98144b0c72d0159ba1ad94b1366da1a27cfccdad1d9f372d86e0144';
+    bytes public RTMR2 = hex'dd6f8f729bce198ff7c058cc476124055a019b06cc65b1eadb17548b723835e8c86e9697e5ad892c9cbd33f71ad36105';
     bytes public MRTD = hex'91eb2b44d141d4ece09f0c75c2c53d247a3c68edd7fafe8a3520c942a604a407de03ae6dc5f87f27428b2538873118b7';
 
     /// @notice Initializes the contract
@@ -32,8 +32,8 @@ contract TDXVerifier {
     /// @param _ocp OnChainProposer contract, used for permission checks
     /// @param _isDevMode Disables quote verification
     constructor(address _dcap, address _ocp, bool _isDevMode) {
-        require(_dcap != 0x0, "TDXVerifier: DCAP address can't be null");
-        require(_ocp != 0x0, "TDXVerifier: OnChainPropser address can't be null");
+        require(_dcap != address(0), "TDXVerifier: DCAP address can't be null");
+        require(_ocp != address(0), "TDXVerifier: OnChainPropser address can't be null");
 
         quoteVerifier = IAttestation(_dcap);
         onChainProposer = IOnChainProposer(_ocp);
@@ -60,7 +60,7 @@ contract TDXVerifier {
         bytes calldata quote
     ) external {
         require(
-            onChainProposer.authorizedSequencerAddresses[msg.sender],
+            onChainProposer.authorizedSequencerAddresses(msg.sender),
             "TDXVerifier: only sequencer can update keys"
         );
         // TODO: only allow the owner to update the key, to avoid DoS
