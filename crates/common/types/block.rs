@@ -304,20 +304,6 @@ impl BlockHeader {
         self.encode(&mut buf);
         keccak(buf)
     }
-
-    pub fn encode_for_state_diff(&self) -> Vec<u8> {
-        let mut encoded = Vec::new();
-        encoded.extend(self.transactions_root.0);
-        encoded.extend(self.receipts_root.0);
-        encoded.extend(self.parent_hash.0);
-        encoded.extend(self.gas_limit.to_be_bytes());
-        encoded.extend(self.gas_used.to_be_bytes());
-        encoded.extend(self.timestamp.to_be_bytes());
-        encoded.extend(self.number.to_be_bytes());
-        encoded.extend(self.base_fee_per_gas.unwrap_or(0).to_be_bytes());
-
-        encoded
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]

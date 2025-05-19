@@ -24,7 +24,10 @@ use tracing::{debug, error};
 use crate::{
     sequencer::{
         errors::{BlockProducerError, StateDiffError},
-        state_diff::{AccountStateDiff, DepositLog, WithdrawalLog, SIMPLE_TX_STATE_DIFF_SIZE},
+        state_diff::{
+            encode_block_header, AccountStateDiff, DepositLog, WithdrawalLog,
+            SIMPLE_TX_STATE_DIFF_SIZE,
+        },
     },
     utils::helpers::{is_deposit_l2, is_withdrawal_l2},
 };
@@ -73,7 +76,7 @@ pub async fn fill_transactions(
     store: &Store,
 ) -> Result<(), BlockProducerError> {
     // Maybe we can cache this to not calculate it every time
-    let header_encoded_len = context.payload.header.encode_for_state_diff().len();
+    let header_encoded_len = encode_block_header(&context.payload.header).len();
     let withdrawals_log_len = WithdrawalLog::default().encode().len();
     let deposits_log_len = DepositLog::default().encode().len();
 

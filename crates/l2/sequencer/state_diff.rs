@@ -119,6 +119,20 @@ impl Default for StateDiff {
     }
 }
 
+pub fn encode_block_header(block_header: &BlockHeader) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    encoded.extend(block_header.transactions_root.0);
+    encoded.extend(block_header.receipts_root.0);
+    encoded.extend(block_header.parent_hash.0);
+    encoded.extend(block_header.gas_limit.to_be_bytes());
+    encoded.extend(block_header.gas_used.to_be_bytes());
+    encoded.extend(block_header.timestamp.to_be_bytes());
+    encoded.extend(block_header.number.to_be_bytes());
+    encoded.extend(block_header.base_fee_per_gas.unwrap_or(0).to_be_bytes());
+
+    encoded
+}
+
 impl StateDiff {
     pub fn encode(&self) -> Result<Bytes, StateDiffError> {
         if self.version != 1 {
@@ -128,7 +142,7 @@ impl StateDiff {
         let mut encoded: Vec<u8> = Vec::new();
         encoded.push(self.version);
 
-        let header_encoded = self.last_header.encode_for_state_diff();
+        let header_encoded = encode_block_header(&self.last_header);
         encoded.extend(header_encoded);
 
         let modified_accounts_len: u16 = self
