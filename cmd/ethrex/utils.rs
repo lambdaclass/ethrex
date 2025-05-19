@@ -35,7 +35,7 @@ impl NodeConfigFile {
 
         for peer in table.lock().await.iter_peers() {
             if peer.is_connected {
-                connected_peers.push(peer.node);
+                connected_peers.push(peer.node.clone());
             }
         }
         NodeConfigFile {
@@ -137,7 +137,9 @@ pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) 
 #[allow(dead_code)]
 pub fn read_node_config_file(file_path: PathBuf) -> Result<NodeConfigFile, String> {
     match std::fs::File::open(file_path) {
-        Ok(file) => serde_json::from_reader(file).map_err(|e| format!("Invlid config file {}", e)),
+        Ok(file) => {
+            serde_json::from_reader(file).map_err(|e| format!("Invalid node config file {}", e))
+        }
         Err(e) => Err(format!("No config file found: {}", e)),
     }
 }
