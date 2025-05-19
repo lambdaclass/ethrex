@@ -193,6 +193,7 @@ Usage: ethrex [OPTIONS] [COMMAND]
 
 Commands:
   removedb  Remove the database
+  compute-state-root  Compute the state root from a genesis file
   import    Import blocks to the database
   help      Print this message or the help of the given subcommand(s)
 
