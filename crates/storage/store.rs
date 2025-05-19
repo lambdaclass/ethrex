@@ -486,16 +486,6 @@ impl Store {
         self.set_canonical_block(genesis_block_number, genesis_hash)
             .await?;
 
-        #[cfg(feature = "snapshots")]
-        {
-            if let Err(e) = self.snapshots.rebuild(genesis_hash, genesis_state_root) {
-                error!(
-                    "Failed to rebuild snapshots when adding initial state: {}",
-                    e
-                );
-            }
-        }
-
         // Set chain config
         self.set_chain_config(&genesis.config).await
     }

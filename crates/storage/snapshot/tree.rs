@@ -74,8 +74,8 @@ impl SnapshotTree {
         Ok(())
     }
 
-    fn snapshot(&self, block_root: H256) -> Option<Layer> {
-        self.layers.read().unwrap().get(&block_root).cloned()
+    fn snapshot(&self, block_hash: H256) -> Option<Layer> {
+        self.layers.read().unwrap().get(&block_hash).cloned()
     }
 
     /// Adds a new snapshot into the tree.
@@ -438,6 +438,7 @@ impl SnapshotTree {
             block_hash, address, storage_key
         );
         if let Some(snapshot) = self.snapshot(block_hash) {
+            dbg!("found snapshot");
             let layers = self
                 .layers
                 .read()
@@ -459,6 +460,8 @@ impl SnapshotTree {
                     )
                 }
             };
+
+            dbg!(value);
 
             if value.is_none() && block_hash != origin_block_hash {
                 return Ok(None);
