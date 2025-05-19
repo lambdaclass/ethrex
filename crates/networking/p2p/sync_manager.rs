@@ -109,7 +109,7 @@ impl SyncManager {
     }
 
     #[cfg(feature = "sync-test")]
-    async fn get_blocks_for_sync_test(store: &Store) {
+    async fn get_blocks_for_sync_test(store: &Store) -> Result<Option<BlockHash>, StoreError> {
         let get_latest = match env::var("SYNC-LATEST")
             .expect("Failed to get sync configuration from environment")
             .as_str()
