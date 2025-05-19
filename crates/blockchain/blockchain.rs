@@ -74,19 +74,18 @@ impl Blockchain {
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
-        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-            // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone()).await?;
-            return Err(ChainError::ParentNotFound);
+        let parent = self
+            .storage
+            .get_block_by_hash(block.header.parent_hash)
+            .await?;
+        let parent_header = match parent {
+            Some(parent_block) => parent_block.header,
+            None => {
+                self.storage.add_pending_block(block.clone()).await?;
+                return Err(ChainError::ParentNotFound);
+            }
         };
-        if find_parent_body(&block.header, &self.storage)
-            .await
-            .is_err()
-        {
-            // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone()).await?;
-            return Err(ChainError::ParentNotFound);
-        };
+
         let chain_config = self.storage.get_chain_config()?;
 
         // Validate the block pre-execution
@@ -243,16 +242,32 @@ impl Blockchain {
             }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
-                let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-                    return Err((
-                        ChainError::ParentNotFound,
-                        Some(BatchBlockProcessingFailure {
-                            failed_block_hash: block.hash(),
-                            last_valid_hash,
-                        }),
-                    ));
-                };
-                parent_header
+                match self
+                    .storage
+                    .get_block_header_by_hash(block.header.parent_hash)
+                {
+                    Ok(parent_option) => match parent_option {
+                        Some(parent_header) => parent_header,
+                        None => {
+                            return Err((
+                                ChainError::ParentNotFound,
+                                Some(BatchBlockProcessingFailure {
+                                    failed_block_hash: block.hash(),
+                                    last_valid_hash,
+                                }),
+                            ))
+                        }
+                    },
+                    Err(e) => {
+                        return Err((
+                            error::ChainError::StoreError(e),
+                            Some(BatchBlockProcessingFailure {
+                                failed_block_hash: block.hash(),
+                                last_valid_hash,
+                            }),
+                        ))
+                    }
+                }
             } else {
                 // for the subsequent ones, the parent is the previous block
                 blocks[i - 1].header.clone()
@@ -567,31 +582,6 @@ pub async fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainE
     Err(ChainError::StoreError(StoreError::Custom(
         "Could not find latest valid hash".to_string(),
     )))
-}
-
-/// Validates if the provided block could be the new head of the chain, and returns the
-/// parent_header in that case. If not found, the new block is saved as pending.
-pub fn find_parent_header(
-    block_header: &BlockHeader,
-    storage: &Store,
-) -> Result<BlockHeader, ChainError> {
-    match storage.get_block_header_by_hash(block_header.parent_hash)? {
-        Some(parent_header) => Ok(parent_header),
-        None => Err(ChainError::ParentNotFound),
-    }
-}
-
-pub async fn find_parent_body(
-    block_header: &BlockHeader,
-    storage: &Store,
-) -> Result<BlockBody, ChainError> {
-    match storage
-        .get_block_body_by_hash(block_header.parent_hash)
-        .await?
-    {
-        Some(parent_body) => Ok(parent_body),
-        None => Err(ChainError::ParentNotFound),
-    }
 }
 
 /// Performs pre-execution validation of the block's header values in reference to the parent_header

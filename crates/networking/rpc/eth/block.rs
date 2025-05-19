@@ -1,4 +1,4 @@
-use ethrex_blockchain::find_parent_header;
+use ethrex_blockchain::error::ChainError;
 use ethrex_rlp::encode::RLPEncode;
 use serde_json::Value;
 use tracing::info;
@@ -311,8 +311,11 @@ impl RpcHandler for GetBlobBaseFee {
             Some(header) => header,
             _ => return Err(RpcErr::Internal("Could not get block header".to_owned())),
         };
-        let parent_header = match find_parent_header(&header, &context.storage) {
-            Ok(header) => header,
+        let parent_header = match context.storage.get_block_header_by_hash(header.parent_hash) {
+            Ok(option_header) => match option_header {
+                Some(header) => header,
+                None => return Err(RpcErr::Internal(ChainError::ParentNotFound.to_string()))
+            },
             Err(error) => return Err(RpcErr::Internal(error.to_string())),
         };
 
