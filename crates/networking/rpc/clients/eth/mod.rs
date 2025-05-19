@@ -167,7 +167,7 @@ impl EthClient {
 
     async fn send_request(
         &self,
-        url: &str,
+        rpc_url: &str,
         request: &RpcRequest,
     ) -> Result<RpcResponse, EthClientError> {
         self.client
