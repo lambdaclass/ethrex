@@ -4,6 +4,10 @@ use std::sync::{
 };
 
 #[cfg(feature = "sync-test")]
+use ethrex_common::types::BlockHash;
+#[cfg(feature = "sync-test")]
+use ethrex_storage::error::StoreError;
+#[cfg(feature = "sync-test")]
 use std::env;
 
 use ethrex_blockchain::Blockchain;
