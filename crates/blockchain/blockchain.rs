@@ -74,6 +74,8 @@ impl Blockchain {
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
+        // Feda (#2831): We search for the entire block because during sync
+        // we can have the header without the body indicating it's still syncing.
         let parent = self
             .storage
             .get_block_by_hash(block.header.parent_hash)
@@ -81,6 +83,7 @@ impl Blockchain {
         let parent_header = match parent {
             Some(parent_block) => parent_block.header,
             None => {
+                // If the parent is not present, we store it as pending.
                 self.storage.add_pending_block(block.clone()).await?;
                 return Err(ChainError::ParentNotFound);
             }
