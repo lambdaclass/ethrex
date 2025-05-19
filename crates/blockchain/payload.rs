@@ -449,7 +449,7 @@ impl Blockchain {
 
     /// Executes the transaction, updates gas-related context values & return the receipt
     /// The payload build context should have enough remaining gas to cover the transaction's gas_limit
-    pub fn apply_transaction(
+    fn apply_transaction(
         &self,
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
