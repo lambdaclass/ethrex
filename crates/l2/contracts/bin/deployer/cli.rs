@@ -98,7 +98,7 @@ pub struct DeployerOptions {
         help_heading = "Deployer options",
         help = "Path to the file containing the private keys of the rich accounts. The default is ../../test_data/private_keys_l1.txt"
     )]
-    pub private_keys_file_path: PathBuf,
+    pub private_keys_file_path: Option<PathBuf>,
     #[arg(
         long,
         value_name = "PATH",
@@ -107,7 +107,7 @@ pub struct DeployerOptions {
         help_heading = "Deployer options",
         help = "Path to the genesis file. The default is ../../test_data/genesis-l1-dev.json"
     )]
-    pub genesis_l1_path: PathBuf,
+    pub genesis_l1_path: Option<PathBuf>,
     #[arg(
         long,
         value_name = "PATH",
@@ -251,8 +251,8 @@ impl Default for DeployerOptions {
             .unwrap(),
             env_file_path: None,
             deposit_rich: false,
-            private_keys_file_path: "../../test_data/private_keys_l1.txt".into(),
-            genesis_l1_path: "../../test_data/genesis-l1-dev.json".into(),
+            private_keys_file_path: None,
+            genesis_l1_path: None,
             genesis_l2_path: "../../test_data/genesis-l2.json".into(),
             // 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
             committer_l1_address: H160([

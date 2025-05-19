@@ -422,11 +422,17 @@ async fn make_deposits(
     trace!("Making deposits");
     let genesis = read_genesis_file(
         opts.genesis_l1_path
+            .clone()
+            .ok_or(DeployerError::ConfigValueNotSet(
+                "--genesis-l1-path".to_string(),
+            ))?
             .to_str()
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
     );
-    let pks = read_to_string(&opts.private_keys_file_path)
-        .map_err(|_| DeployerError::FailedToGetStringFromPath)?;
+    let pks = read_to_string(opts.private_keys_file_path.clone().ok_or(
+        DeployerError::ConfigValueNotSet("--private-keys-file-path".to_string()),
+    )?)
+    .map_err(|_| DeployerError::FailedToGetStringFromPath)?;
     let private_keys: Vec<String> = pks
         .lines()
         .filter(|line| !line.trim().is_empty())
