@@ -3,13 +3,13 @@ use crate::{
     networks,
     utils::{
         get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
-        read_known_peers,
+        read_node_config_file,
     },
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
     kademlia::KademliaTable,
-    network::public_key_from_signing_key,
+    network::{public_key_from_signing_key, P2PContext},
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
@@ -18,6 +18,7 @@ use ethrex_vm::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
     future::IntoFuture,
@@ -124,22 +125,15 @@ pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
 pub async fn init_rpc_api(
     opts: &Options,
     #[cfg(feature = "l2")] l2_opts: &L2Options,
-    signer: &SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
     local_p2p_node: Node,
+    local_node_record: NodeRecord,
     store: Store,
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     #[cfg(feature = "l2")] rollup_store: StoreRollup,
 ) {
-    let enr_seq = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let local_node_record = NodeRecord::from_node(&local_p2p_node, enr_seq, signer)
-        .expect("Node record could not be created from local node");
-
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_table.clone(),
@@ -209,6 +203,7 @@ pub async fn init_network(
     network: &str,
     data_dir: &str,
     local_p2p_node: Node,
+    local_node_record: Arc<Mutex<NodeRecord>>,
     signer: SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
     store: Store,
@@ -224,18 +219,20 @@ pub async fn init_network(
 
     let bootnodes = get_bootnodes(opts, network, data_dir);
 
-    ethrex_p2p::start_network(
+    let context = P2PContext::new(
         local_p2p_node,
+        local_node_record,
         tracker.clone(),
-        bootnodes,
         signer,
         peer_table.clone(),
         store,
         blockchain,
         get_client_version(),
-    )
-    .await
-    .expect("Network starts");
+    );
+
+    ethrex_p2p::start_network(context, bootnodes)
+        .await
+        .expect("Network starts");
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));
 }
@@ -324,12 +321,12 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
 
-    let peers_file = PathBuf::from(data_dir.to_owned() + "/peers.json");
+    let config_file = PathBuf::from(data_dir.to_owned() + "/config.json");
 
-    info!("Reading known peers from {:?}", peers_file);
+    info!("Reading known peers from config file {:?}", config_file);
 
-    match read_known_peers(peers_file.clone()) {
-        Ok(ref mut known_peers) => bootnodes.append(known_peers),
+    match read_node_config_file(config_file) {
+        Ok(ref mut config) => bootnodes.append(&mut config.known_peers),
         Err(e) => error!("Could not read from peers file: {e}"),
     };
 
@@ -387,6 +384,29 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SigningKey) -> Node {
     info!("Node: {enode}");
 
     node
+}
+
+pub fn get_local_node_record(
+    data_dir: &str,
+    local_p2p_node: &Node,
+    signer: &SigningKey,
+) -> NodeRecord {
+    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
+
+    match read_node_config_file(config_file) {
+        Ok(ref mut config) => {
+            NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer)
+                .expect("Node record could not be created from local node")
+        }
+        Err(_) => {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            NodeRecord::from_node(local_p2p_node, timestamp, signer)
+                .expect("Node record could not be created from local node")
+        }
+    }
 }
 
 pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
