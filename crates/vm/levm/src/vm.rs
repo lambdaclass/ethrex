@@ -1,7 +1,5 @@
 #[cfg(feature = "l2")]
 use crate::call_frame::CallFrameBackup;
-#[cfg(feature = "l2")]
-use crate::utils::merge_callframe_backup;
 use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
@@ -127,7 +125,12 @@ impl<'a> VM<'a> {
         {
             let current_backup: &mut CallFrameBackup =
                 &mut self.current_call_frame_mut()?.call_frame_backup;
-            merge_callframe_backup(current_backup, callframe_backup);
+            current_backup
+                .original_accounts_info
+                .extend(callframe_backup.original_accounts_info);
+            current_backup
+                .original_account_storage_slots
+                .extend(callframe_backup.original_account_storage_slots);
         }
         Ok(report)
     }
