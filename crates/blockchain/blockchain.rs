@@ -21,6 +21,7 @@ use ethrex_common::types::{BlobsBundle, Fork, ELASTICITY_MULTIPLIER};
 use ethrex_common::{Address, H256};
 use mempool::Mempool;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
@@ -36,6 +37,10 @@ pub struct Blockchain {
     pub evm_engine: EvmEngine,
     storage: Store,
     pub mempool: Mempool,
+    /// Whether the node's chain is in or out of sync with the current chain
+    /// This will be set to true once the initial sync has taken place and wont be set to false after
+    /// This does not reflect whether there is an ongoing sync process
+    is_synced: AtomicBool,
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +55,7 @@ impl Blockchain {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
+            is_synced: AtomicBool::new(false),
         }
     }
 
@@ -58,6 +64,7 @@ impl Blockchain {
             evm_engine: EvmEngine::default(),
             storage: store,
             mempool: Mempool::new(),
+            is_synced: AtomicBool::new(false),
         }
     }
 
@@ -477,6 +484,19 @@ impl Blockchain {
         }
 
         Ok(())
+    }
+
+    /// Marks the node's chain as up to date with the current chain
+    /// Once the initial sync has taken place, the node will be consireded as sync
+    pub fn set_synced(&self) {
+        self.is_synced.store(true, Ordering::Relaxed);
+    }
+
+    /// Returns whether the node's chain is up to date with the current chain
+    /// This will be true if the initial sync has already taken place and does not reflect whether there is an ongoing sync process
+    /// The node should accept incoming p2p transactions if this method returns true
+    pub fn is_synced(&self) -> bool {
+        self.is_synced.load(Ordering::Relaxed)
     }
 }
 

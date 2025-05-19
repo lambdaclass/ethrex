@@ -451,9 +451,6 @@ impl Store {
     }
 
     pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
-        info!("Setting initial sync status to false");
-        self.update_sync_status(false).await?;
-
         info!("Storing initial state from genesis");
 
         // Obtain genesis block
@@ -1013,13 +1010,6 @@ impl Store {
     /// Gets the state trie paths in need of healing
     pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
         self.engine.get_state_heal_paths().await
-    }
-
-    pub async fn is_synced(&self) -> Result<bool, StoreError> {
-        self.engine.is_synced().await
-    }
-    pub async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
-        self.engine.update_sync_status(is_synced).await
     }
 
     /// Write an account batch into the current state snapshot
