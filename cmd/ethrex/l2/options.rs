@@ -140,7 +140,7 @@ pub struct EthOptions {
     )]
     pub maximum_allowed_max_fee_per_blob_gas: u64,
     #[arg(
-        long = "eth-max-number-of-retries",
+        long = "eth.max-number-of-retries",
         default_value = "10",
         value_name = "UINT64",
         env = "ETHREX_MAX_NUMBER_OF_RETRIES",
@@ -148,7 +148,7 @@ pub struct EthOptions {
     )]
     pub max_number_of_retries: u64,
     #[arg(
-        long = "eth-backoff-factor",
+        long = "eth.backoff-factor",
         default_value = "2",
         value_name = "UINT64",
         env = "ETHREX_BACKOFF_FACTOR",
@@ -156,7 +156,7 @@ pub struct EthOptions {
     )]
     pub backoff_factor: u64,
     #[arg(
-        long = "eth-min-retry-delay",
+        long = "eth.min-retry-delay",
         default_value = "96",
         value_name = "UINT64",
         env = "ETHREX_MIN_RETRY_DELAY",
@@ -164,7 +164,7 @@ pub struct EthOptions {
     )]
     pub min_retry_delay: u64,
     #[arg(
-        long = "eth-max-retry-delay",
+        long = "eth.max-retry-delay",
         default_value = "1800",
         value_name = "UINT64",
         env = "ETHREX_MAX_RETRY_DELAY",
