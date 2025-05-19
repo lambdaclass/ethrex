@@ -26,6 +26,10 @@ pub enum EvmError {
     Custom(String),
     #[error("Levm Database error: {0}")]
     LevmDatabaseError(#[from] DatabaseError),
+    #[error("Invalid deposit request layout")]
+    InvalidDepositRequest,
+    #[error("System contract: {0} has no code after deployment")]
+    SystemContractEmpty(String),
 }
 
 #[derive(Debug, Error)]

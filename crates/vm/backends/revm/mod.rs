@@ -219,7 +219,9 @@ impl REVM {
         let account_info =
             Self::system_contract_account_info(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, state)?;
         if account_info.is_empty_code_hash() {
-            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
+            return Err(EvmError::SystemContractEmpty(
+                "WITHDRAWAL_REQUEST_PREDEPLOY".to_string(),
+            ));
         }
 
         match tx_result {
@@ -258,7 +260,9 @@ impl REVM {
         let account_info =
             Self::system_contract_account_info(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, state)?;
         if account_info.is_empty_code_hash() {
-            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
+            return Err(EvmError::SystemContractEmpty(
+                "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS".to_string(),
+            ));
         }
 
         match tx_result {
