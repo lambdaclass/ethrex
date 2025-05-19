@@ -18,7 +18,7 @@ use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
 };
 
-use ethrex_vm::{backends::CallFrameBackup, Evm, EvmEngine, EvmError};
+use ethrex_vm::{Evm, EvmEngine, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
@@ -460,34 +460,6 @@ impl Blockchain {
         }
     }
 
-    pub fn apply_transaction_l2(
-        &self,
-        head: &HeadTransaction,
-        context: &mut PayloadBuildContext,
-    ) -> Result<(Receipt, CallFrameBackup), ChainError> {
-        match **head {
-            Transaction::EIP4844Transaction(_) => Err(ChainError::InvalidTransaction(
-                "Blob transactions not supported in the L2".to_string(),
-            )),
-            _ => self.apply_plain_transaction_l2(head, context),
-        }
-    }
-
-    fn apply_plain_transaction_l2(
-        &self,
-        head: &HeadTransaction,
-        context: &mut PayloadBuildContext,
-    ) -> Result<(Receipt, CallFrameBackup), ChainError> {
-        let (report, gas_used, transaction_backup) = context.vm.execute_tx_l2(
-            &head.tx,
-            &context.payload.header,
-            &mut context.remaining_gas,
-            head.tx.sender(),
-        )?;
-        context.block_value += U256::from(gas_used) * head.tip;
-        Ok((report, transaction_backup))
-    }
-
     /// Runs a blob transaction, updates the gas count & blob data and returns the receipt
     fn apply_blob_transaction(
         &self,
@@ -590,7 +562,7 @@ pub struct TransactionQueue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeadTransaction {
     pub tx: MempoolTransaction,
-    tip: u64,
+    pub tip: u64,
 }
 
 impl std::ops::Deref for HeadTransaction {

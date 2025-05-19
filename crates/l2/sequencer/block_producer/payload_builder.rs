@@ -3,12 +3,13 @@ use std::sync::Arc;
 
 use ethrex_blockchain::{
     constants::TX_GAS_COST,
-    payload::{PayloadBuildContext, PayloadBuildResult},
+    error::ChainError,
+    payload::{HeadTransaction, PayloadBuildContext, PayloadBuildResult},
     Blockchain,
 };
 use ethrex_common::{
-    types::{Block, SAFE_BYTES_PER_BLOB},
-    Address,
+    types::{Block, Receipt, Transaction, SAFE_BYTES_PER_BLOB},
+    Address, U256,
 };
 use ethrex_metrics::metrics;
 
@@ -156,8 +157,7 @@ pub async fn fill_transactions(
         metrics!(METRICS_TX.inc_tx());
 
         // Execute tx
-        let (receipt, transaction_backup) = match blockchain.apply_transaction_l2(&head_tx, context)
-        {
+        let (receipt, transaction_backup) = match apply_transaction_l2(&head_tx, context) {
             Ok((receipt, transaction_backup)) => {
                 metrics!(METRICS_TX.inc_tx_with_status_and_type(
                     MetricsTxStatus::Succeeded,
@@ -235,6 +235,32 @@ pub async fn fill_transactions(
         context.receipts.push(receipt);
     }
     Ok(())
+}
+
+fn apply_transaction_l2(
+    head: &HeadTransaction,
+    context: &mut PayloadBuildContext,
+) -> Result<(Receipt, CallFrameBackup), ChainError> {
+    match **head {
+        Transaction::EIP4844Transaction(_) => Err(ChainError::InvalidTransaction(
+            "Blob transactions not supported in the L2".to_string(),
+        )),
+        _ => apply_plain_transaction_l2(head, context),
+    }
+}
+
+fn apply_plain_transaction_l2(
+    head: &HeadTransaction,
+    context: &mut PayloadBuildContext,
+) -> Result<(Receipt, CallFrameBackup), ChainError> {
+    let (report, gas_used, transaction_backup) = context.vm.execute_tx_l2(
+        &head.tx,
+        &context.payload.header,
+        &mut context.remaining_gas,
+        head.tx.sender(),
+    )?;
+    context.block_value += U256::from(gas_used) * head.tip;
+    Ok((report, transaction_backup))
 }
 
 fn get_tx_diffs(
