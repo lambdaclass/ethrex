@@ -17,7 +17,7 @@ use crate::{
             blocks::{
                 BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, BLOCK_HEADER_LIMIT,
             },
-            receipts::GetReceipts,
+            receipts::{GetReceipts, Receipts},
         },
         message::Message as RLPxMessage,
         p2p::{Capability, CAP_ETH_68, CAP_SNAP_1},
@@ -201,11 +201,11 @@ impl PeerHandler {
             if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
-                        Some(RLPxMessage::Receipts(mut receipts)) => {
-                            receipts.decode_with_cap(&CAP_ETH_68);
+                        Some(RLPxMessage::Receipts(receipts)) => {
                             if receipts.get_id() == request_id {
                                 return Some(receipts.get_receipts());
                             }
+                            return None;
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,

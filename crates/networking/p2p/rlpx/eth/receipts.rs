@@ -11,7 +11,7 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
-
+use tracing::warn;
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getreceipts-0x0f
 #[derive(Debug)]
 pub(crate) struct GetReceipts {
@@ -56,7 +56,6 @@ impl RLPxMessage for GetReceipts {
 pub(crate) enum Receipts {
     Receipts68(Receipts68),
     // Receipts69(Receipts69),
-    EncodedData(Vec<u8>),
 }
 
 impl Receipts {
@@ -68,21 +67,10 @@ impl Receipts {
         }
     }
 
-    pub fn decode_with_cap(&mut self, eth: &Capability) {
-        match self {
-            Receipts::EncodedData(msg_data) => match eth.version {
-                68 => *self = Receipts::Receipts68(Receipts68::decode(msg_data).unwrap()),
-                _ => return,
-            },
-            _ => {}
-        }
-    }
-
     pub fn get_receipts(&self) -> Vec<Vec<Receipt>> {
         match self {
             Receipts::Receipts68(msg) => msg.receipts.clone(),
             //Receipts::Receipts69(msg) => msg.encode(buf),
-            _ => vec![],
         }
     }
 
@@ -90,7 +78,6 @@ impl Receipts {
         match self {
             Receipts::Receipts68(msg) => msg.id,
             //Receipts::Receipts69(msg) => msg.encode(buf),
-            _ => 0,
         }
     }
 }
@@ -102,12 +89,15 @@ impl RLPxMessage for Receipts {
         match self {
             Receipts::Receipts68(msg) => msg.encode(buf),
             //Receipts::Receipts69(msg) => msg.encode(buf),
-            _ => Err(RLPEncodeError::Custom("No ETH version defined".into())),
         }
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        Ok(Receipts::EncodedData(msg_data.to_vec()))
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
+
+        Ok(Receipts::Receipts68(Receipts68::decode(msg_data)?))
     }
 }
 
