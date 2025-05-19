@@ -183,30 +183,13 @@ pub async fn fill_transactions(
         let account_diffs_in_tx = get_tx_diffs(&transaction_backup, context)?;
         let merged_diffs = merge_diffs(&account_diffs, account_diffs_in_tx);
 
-        let mut tx_state_diff_size = 0;
-        let mut new_accounts_diff_size = 0;
-
-        for (address, diff) in merged_diffs.iter() {
-            let encoded = match diff.encode(address) {
-                Ok(encoded) => encoded,
-                Err(StateDiffError::EmptyAccountDiff) => {
-                    debug!("Skipping empty account diff for address: {address}");
-                    continue;
-                }
-                Err(e) => {
-                    error!("Failed to encode account state diff: {e}");
-                    return Err(BlockProducerError::FailedToEncodeAccountStateDiff(e));
-                }
-            };
-            new_accounts_diff_size += encoded.len();
-        }
-
-        if is_deposit_l2(&head_tx) {
-            tx_state_diff_size += deposits_log_len;
-        }
-        if is_withdrawal_l2(&head_tx.clone().into(), &receipt)? {
-            tx_state_diff_size += withdrawals_log_len;
-        }
+        let (tx_state_diff_size, new_accounts_diff_size) = calculate_tx_diff_size(
+            &merged_diffs,
+            &head_tx,
+            &receipt,
+            deposits_log_len,
+            withdrawals_log_len,
+        )?;
 
         if size_without_accounts + tx_state_diff_size + new_accounts_diff_size > SAFE_BYTES_PER_BLOB
         {
@@ -369,4 +352,39 @@ fn merge_diffs(
         }
     }
     merged_diffs
+}
+
+fn calculate_tx_diff_size(
+    merged_diffs: &HashMap<Address, AccountStateDiff>,
+    head_tx: &HeadTransaction,
+    receipt: &Receipt,
+    deposits_log_len: usize,
+    withdrawals_log_len: usize,
+) -> Result<(usize, usize), BlockProducerError> {
+    let mut tx_state_diff_size = 0;
+    let mut new_accounts_diff_size = 0;
+
+    for (address, diff) in merged_diffs.iter() {
+        let encoded = match diff.encode(address) {
+            Ok(encoded) => encoded,
+            Err(StateDiffError::EmptyAccountDiff) => {
+                debug!("Skipping empty account diff for address: {address}");
+                continue;
+            }
+            Err(e) => {
+                error!("Failed to encode account state diff: {e}");
+                return Err(BlockProducerError::FailedToEncodeAccountStateDiff(e));
+            }
+        };
+        new_accounts_diff_size += encoded.len();
+    }
+
+    if is_deposit_l2(head_tx) {
+        tx_state_diff_size += deposits_log_len;
+    }
+    if is_withdrawal_l2(&head_tx.clone().into(), receipt)? {
+        tx_state_diff_size += withdrawals_log_len;
+    }
+
+    Ok((tx_state_diff_size, new_accounts_diff_size))
 }
