@@ -125,8 +125,9 @@ impl SyncManager {
             };
             #[cfg(feature = "sync-test")]
             let get_latest = match env::var("SYNC-LATEST")
-                .as_str()
                 .expect("Failed to get sync configuration from environment")
+                .as_str()
+                .expect("Failed to parse sync configuration from environment")
             {
                 "true" => true,
                 "false" => false,
