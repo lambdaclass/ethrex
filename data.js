@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747680419304,
+  "lastUpdate": 1747681744952,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8665,6 +8665,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007269259633911368,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2fcf668a5c84b1dede8e868d1ad63c0d9474deab",
+          "message": "feat(l1): properly calculate `enr` sequence field (#2679)\n\n**Motivation**\n\nThe seq field in the node record was hardcoded with the unix time. \n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\nThe enr_seq field is updated by one when the node_record is changed. The\nping/pong messages are sent with the enr_seq in it, so the peer knows\nwhen an update is made in the node_record. Since we don't modify the\nnode_record yet, the enr_seq is not being updated. There is a new PR\nincoming (#2654) which is using this funtionality to inform the peers\nabout changes in the node_record.\n\nA reference was added to the p2pcontext in order to be able to access\nthe current NodeRecord seq in several parts of the code.\n\nSome functions firms were changed to accept this improvement.\n\nA new config struct has been built to persist the enr seq field and also\nstore the known peers in the same file.\n\nThe test discv4::server::tests::discovery_enr_message checks this\nfeature\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n[enr](https://github.com/ethereum/devp2p/blob/master/enr.md)\n\nCloses #1756",
+          "timestamp": "2025-05-19T17:53:25Z",
+          "tree_id": "7ca4ce20efe9f03f712421e6f8ff15159dfa376d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2fcf668a5c84b1dede8e868d1ad63c0d9474deab"
+        },
+        "date": 1747681743023,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007272762891566265,
             "unit": "Mgas/s"
           }
         ]
