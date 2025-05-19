@@ -30,7 +30,7 @@ pub enum EvmError {
     InvalidDepositRequest,
     #[error("System contract: {0} has no code after deployment")]
     SystemContractEmpty(String),
-    #[error("System call failed: {0}")]
+    #[error("System contract call failed: {0}")]
     SystemContractCallFailed(String),
 }
 
