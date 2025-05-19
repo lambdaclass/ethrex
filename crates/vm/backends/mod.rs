@@ -169,7 +169,7 @@ impl Evm {
                 "L2 transactions are not supported in REVM".to_string(),
             )),
             Evm::LEVM { db } => {
-                let (execution_report, call_frame_backup) =
+                let (execution_report, transaction_backup) =
                     LEVM::execute_tx_l2(tx, sender, block_header, db)?;
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
@@ -181,7 +181,7 @@ impl Evm {
                     execution_report.logs.clone(),
                 );
 
-                Ok((receipt, execution_report.gas_used, call_frame_backup))
+                Ok((receipt, execution_report.gas_used, transaction_backup))
             }
         }
     }

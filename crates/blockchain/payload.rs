@@ -466,8 +466,8 @@ impl Blockchain {
         context: &mut PayloadBuildContext,
     ) -> Result<(Receipt, CallFrameBackup), ChainError> {
         match **head {
-            Transaction::EIP4844Transaction(_) => Err(ChainError::Custom(
-                "L2 blob transactions not supported".to_string(),
+            Transaction::EIP4844Transaction(_) => Err(ChainError::InvalidTransaction(
+                "Blob transactions not supported in the L2".to_string(),
             )),
             _ => self.apply_plain_transaction_l2(head, context),
         }
@@ -478,14 +478,14 @@ impl Blockchain {
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
     ) -> Result<(Receipt, CallFrameBackup), ChainError> {
-        let (report, gas_used, call_frame_backup) = context.vm.execute_tx_l2(
+        let (report, gas_used, transaction_backup) = context.vm.execute_tx_l2(
             &head.tx,
             &context.payload.header,
             &mut context.remaining_gas,
             head.tx.sender(),
         )?;
         context.block_value += U256::from(gas_used) * head.tip;
-        Ok((report, call_frame_backup))
+        Ok((report, transaction_backup))
     }
 
     /// Runs a blob transaction, updates the gas count & blob data and returns the receipt

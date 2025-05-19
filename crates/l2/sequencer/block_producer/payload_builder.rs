@@ -156,14 +156,14 @@ pub async fn fill_transactions(
         metrics!(METRICS_TX.inc_tx());
 
         // Execute tx
-        let (receipt, call_frame_backup) = match blockchain.apply_transaction_l2(&head_tx, context)
+        let (receipt, transaction_backup) = match blockchain.apply_transaction_l2(&head_tx, context)
         {
-            Ok((receipt, call_frame_backup)) => {
+            Ok((receipt, transaction_backup)) => {
                 metrics!(METRICS_TX.inc_tx_with_status_and_type(
                     MetricsTxStatus::Succeeded,
                     MetricsTxType(head_tx.tx_type())
                 ));
-                (receipt, call_frame_backup)
+                (receipt, transaction_backup)
             }
             // Ignore following txs from sender
             Err(e) => {
@@ -177,7 +177,7 @@ pub async fn fill_transactions(
             }
         };
 
-        let account_diffs_in_tx = get_tx_diffs(&call_frame_backup, context)?;
+        let account_diffs_in_tx = get_tx_diffs(&transaction_backup, context)?;
         let merged_diffs = merge_diffs(&account_diffs, account_diffs_in_tx);
 
         let mut tx_state_diff_size = 0;
@@ -206,7 +206,7 @@ pub async fn fill_transactions(
             txs.pop();
 
             // This transaction is too big, we need to restore the state
-            context.vm.restore_cache_state(call_frame_backup)?;
+            context.vm.restore_cache_state(transaction_backup)?;
 
             continue;
         }
