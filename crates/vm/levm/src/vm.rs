@@ -156,21 +156,25 @@ impl<'a> VM<'a> {
         let precompile_address = self.current_call_frame()?.code_address;
 
         // Avoid executing precompile if it is target of a delegation in EIP-7702 transaction.
-        let precompile_result = if self.is_delegation_target(precompile_address) {
-            if self.current_call_frame()?.gas_limit > 0 {
-                Ok(Bytes::new())
-            } else {
-                // pointer_to_precompile.json tests that it should fail in a call with zero gas limit. Which is weird because this doesn't consume gas anyway...
-                Err(VMError::PrecompileError(PrecompileError::NotEnoughGas))
+        let precompile_result = match self.is_delegation_target(precompile_address) {
+            true => {
+                let gas_limit = self.current_call_frame()?.gas_limit;
+                if gas_limit == 0 {
+                    // `pointer_to_precompile.json` tests that it should fail in a call with zero gas limit.
+                    Err(VMError::PrecompileError(PrecompileError::NotEnoughGas))
+                } else {
+                    Ok(Bytes::new())
+                }
             }
-        } else {
-            let callframe = self.current_call_frame_mut()?;
-            execute_precompile(
-                precompile_address,
-                &callframe.calldata,
-                &mut callframe.gas_used,
-                callframe.gas_limit,
-            )
+            false => {
+                let callframe = self.current_call_frame_mut()?;
+                execute_precompile(
+                    precompile_address,
+                    &callframe.calldata,
+                    &mut callframe.gas_used,
+                    callframe.gas_limit,
+                )
+            }
         };
 
         let report = self.handle_precompile_result(precompile_result)?;
