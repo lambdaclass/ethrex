@@ -109,7 +109,7 @@ impl SyncManager {
     }
 
     #[cfg(feature = "sync-test")]
-    async fn get_blocks_for_sync_test() {
+    async fn get_blocks_for_sync_test(store: &Store) {
         let get_latest = match env::var("SYNC-LATEST")
             .expect("Failed to get sync configuration from environment")
             .as_str()
@@ -148,7 +148,7 @@ impl SyncManager {
             };
 
             #[cfg(feature = "sync-test")]
-            let Ok(Some(current_head)) = get_blocks_for_sync_test().await
+            let Ok(Some(current_head)) = Self::get_blocks_for_sync_test(&store).await
             else {
                 tracing::error!("Failed to fetch latest canonical block, unable to sync");
                 return;
