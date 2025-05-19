@@ -102,8 +102,10 @@ impl Requests {
         for r in receipts {
             for log in &r.logs {
                 if log.address == deposit_contract_address
-                    && log.topics.len() > 0
-                    && log.topics[0] == *DEPOSIT_TOPIC
+                    && log
+                        .topics
+                        .first()
+                        .is_some_and(|topic| topic == &*DEPOSIT_TOPIC)
                 {
                     deposits.push(Deposit::from_abi_byte_array(&log.data)?);
                 }
