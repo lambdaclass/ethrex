@@ -1,6 +1,6 @@
 // Blockchain related constants
 
-use std::{str::FromStr, time::Duration};
+use std::str::FromStr;
 
 use ethrex_common::{
     types::{BlobSchedule, ChainConfig},
