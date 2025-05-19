@@ -340,7 +340,7 @@ async fn main() {
     let pkeys_path = Path::new(&cli.pkeys);
     let accounts = parse_pk_file(pkeys_path)
         .unwrap_or_else(|_| panic!("Failed to parse private keys file {}", pkeys_path.display()));
-    let client = EthClient::new(vec![&cli.node]).expect("Failed to create EthClient");
+    let client = EthClient::new(&cli.node).expect("Failed to create EthClient");
 
     // We ask the client for the chain id.
     let chain_id = client

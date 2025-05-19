@@ -139,7 +139,7 @@ impl ProofCoordinator {
         rollup_store: StoreRollup,
     ) -> Result<Self, SequencerError> {
         let eth_client = EthClient::new_with_config(
-            vec![&eth_config.rpc_url],
+            eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
             eth_config.max_number_of_retries,
             eth_config.backoff_factor,
             eth_config.min_retry_delay,

@@ -152,7 +152,7 @@ impl Command {
             } => {
                 create_dir_all(data_dir.clone())?;
 
-                let eth_client = EthClient::new(l1_eth_rpc.as_str());
+                let eth_client = EthClient::new(l1_eth_rpc.as_str())?;
                 let beacon_client = BeaconClient::new(l1_beacon_rpc);
 
                 // Keep delay for finality

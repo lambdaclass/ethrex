@@ -104,9 +104,9 @@ pub struct WithdrawalProof {
 }
 
 impl EthClient {
-    pub fn new(urls: Vec<&str>) -> Result<EthClient, EthClientError> {
+    pub fn new(url: &str) -> Result<EthClient, EthClientError> {
         Self::new_with_config(
-            urls,
+            vec![url],
             MAX_NUMBER_OF_RETRIES,
             BACKOFF_FACTOR,
             MIN_RETRY_DELAY,
@@ -143,6 +143,18 @@ impl EthClient {
             maximum_allowed_max_fee_per_gas,
             maximum_allowed_max_fee_per_blob_gas,
         })
+    }
+
+    pub fn new_with_multiple_urls(urls: Vec<String>) -> Result<EthClient, EthClientError> {
+        Self::new_with_config(
+            urls.iter().map(AsRef::as_ref).collect(),
+            MAX_NUMBER_OF_RETRIES,
+            BACKOFF_FACTOR,
+            MIN_RETRY_DELAY,
+            MAX_RETRY_DELAY,
+            None,
+            None,
+        )
     }
 
     async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EthClientError> {

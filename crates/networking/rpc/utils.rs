@@ -396,7 +396,7 @@ pub mod test_utils {
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
         #[cfg(feature = "based")]
-        let gateway_eth_client = EthClient::new("");
+        let gateway_eth_client = EthClient::new("").expect("Failed to create EthClient");
         #[cfg(feature = "based")]
         let gateway_auth_client = EngineClient::new("", Bytes::default());
         #[cfg(feature = "l2")]
@@ -446,7 +446,7 @@ pub mod test_utils {
                 client_version: "ethrex/test".to_string(),
             },
             #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
+            gateway_eth_client: EthClient::new("").expect("Failed to create EthClient"),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "based")]

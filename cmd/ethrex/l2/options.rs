@@ -102,10 +102,11 @@ pub struct EthOptions {
         default_value = "http://localhost:8545",
         value_name = "RPC_URL",
         env = "ETHREX_ETH_RPC_URL",
-        help = "Comma separated list of rpc urls to use.",
-        help_heading = "Eth options"
+        help = "List of rpc urls to use.",
+        help_heading = "Eth options",
+        num_args = 1..10
     )]
-    pub rpc_url: String,
+    pub rpc_url: Vec<String>,
     #[arg(
         long = "eth-maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",
