@@ -109,27 +109,13 @@ impl PeerHandler {
                 debug!("Failed to send message to peer: {err}");
                 continue;
             }
-            if let Some((block_headers, block_hashes)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+            if let Some(block_headers) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
                         Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
                             if id == request_id =>
                         {
-                            let block_hashes = block_headers
-                                .iter()
-                                .map(|header| header.compute_block_hash())
-                                .collect::<Vec<_>>();
-
-                            let any_invalid = PeerHandler::invalid_block_header_parents(&block_headers, &block_hashes);
-
-                            if any_invalid {
-                                warn!("Received invalid headers from peer, discarding peer {peer_id} and retrying...");
-                                self.remove_peer(peer_id).await;
-                                return None; // Retry request
-                            }
-
-                            // If the headers are valid, we can return them
-                            return Some((block_headers, block_hashes))
+                            return Some(block_headers)
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,
@@ -140,9 +126,20 @@ impl PeerHandler {
             .await
             .ok()
             .flatten()
-            .and_then(|(headers, hashes)| (!headers.is_empty()).then_some((headers, hashes)))
+            .and_then(|headers| (!headers.is_empty()).then_some(headers))
             {
-                return Some((block_headers, block_hashes));
+                let block_hashes = block_headers
+                    .iter()
+                    .map(|header| header.compute_block_hash())
+                    .collect::<Vec<_>>();
+
+                // Check that the headers are chained between themselves and return them
+                if PeerHandler::valid_headers_chain(&block_headers, &block_hashes) {
+                    return Some((block_headers, block_hashes));
+                } else {
+                    warn!("Received invalid headers from peer, discarding peer {peer_id} and retrying...");
+                    self.remove_peer(peer_id).await;
+                }
             }
         }
         None
@@ -700,13 +697,13 @@ impl PeerHandler {
     }
 
     /// Validates the block headers received from a peer by checking that the parent hash of each header
-    /// matches the hash of the previous one.
-    fn invalid_block_header_parents(block_headers: &[BlockHeader], block_hashes: &[H256]) -> bool {
+    /// matches the hash of the previous one, i.e. the headers are in a chain
+    fn valid_headers_chain(block_headers: &[BlockHeader], block_hashes: &[H256]) -> bool {
         block_headers
             .iter()
             .skip(1) // Skip the first, since we know the current head is valid
             .zip(block_hashes.iter())
-            .any(|(current_header, previous_hash)| current_header.parent_hash != *previous_hash)
+            .all(|(current_header, previous_hash)| current_header.parent_hash == *previous_hash)
     }
 
     pub async fn remove_peer(&self, peer_id: H256) {
