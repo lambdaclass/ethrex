@@ -45,6 +45,7 @@ pub struct L1WatcherConfig {
     pub check_interval_ms: u64,
     pub max_block_step: U256,
     pub l2_proposer_private_key: SecretKey,
+    pub watcher_block_delay: u64,
 }
 
 #[derive(Clone, Debug)]
