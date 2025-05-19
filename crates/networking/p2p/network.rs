@@ -1,5 +1,9 @@
 use crate::kademlia::{self, KademliaTable};
+<<<<<<< HEAD
 use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
+=======
+use crate::rlpx::p2p::CAP_SNAP_1;
+>>>>>>> main
 use crate::rlpx::{
     connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
 };
