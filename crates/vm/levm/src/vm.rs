@@ -99,7 +99,7 @@ impl<'a> VM<'a> {
             return Err(e);
         }
 
-        // Here we need to backup the callframe because in the L2 we want to revert a transaction if it exceeds blob size
+        // Here we need to backup the callframe because in the L2 we want to undo a transaction if it exceeds blob size
         // even if the transaction succeeds.
         #[cfg(feature = "l2")]
         let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
