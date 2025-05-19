@@ -316,7 +316,7 @@ impl KademliaTable {
         }
     }
 
-    /// Returns the channel ends to an active peer connection that supports the given capability
+    /// Returns the node id and channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
     pub fn get_peer_channels(&self, capability: Capability) -> Option<(H256, PeerChannels)> {
         let filter = |peer: &PeerData| -> bool {
