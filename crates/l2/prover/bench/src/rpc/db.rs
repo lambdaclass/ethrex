@@ -252,17 +252,8 @@ impl RpcDB {
             .unwrap()
             .iter()
             .map(|(address, account)| match account {
-                Account::Existing {
-                    account_state: _,
-                    storage,
-                    account_proof: _,
-                    storage_proofs: _,
-                    code: _,
-                } => (*address, storage.keys().cloned().collect()),
-                Account::NonExisting {
-                    account_proof: _,
-                    storage_proofs: _,
-                } => {
+                Account::Existing { storage, .. } => (*address, storage.keys().cloned().collect()),
+                Account::NonExisting { .. } => {
                     let address_account_update = execution_updates
                         .iter()
                         .find(|update| update.address == *address);
