@@ -330,7 +330,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         log_peer_debug(&self.node, "Started peer main loop");
 
         // Subscribe this connection to the broadcasting channel.
-        let mut broadcaster_receive = Some(self.connection_broadcast_send.subscribe());
+        let mut broadcaster_receive = if self.negotiated_eth_capability.is_some() {
+            Some(self.connection_broadcast_send.subscribe())
+        } else {
+            None
+        };
 
         // Send transactions transaction hashes from mempool at connection start
         self.send_new_pooled_tx_hashes().await?;
@@ -431,7 +435,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         sender: mpsc::Sender<Message>,
     ) -> Result<(), RLPxError> {
         let peer_supports_eth = self.negotiated_eth_capability.is_some();
-        let is_synced = self.storage.is_synced().await?;
         match message {
             Message::Disconnect(msg_data) => {
                 log_peer_debug(
