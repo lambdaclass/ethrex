@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 #[cfg(feature = "sync-test")]
-use std::future;
+use std::env;
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
@@ -109,9 +109,7 @@ impl SyncManager {
     }
 
     #[cfg(feature = "sync-test")]
-    async fn get_blocks_for_sync_test(store: &Store) -> future {
-        use std::future;
-
+    async fn get_blocks_for_sync_test(store: &Store) {
         let get_latest = match env::var("SYNC-LATEST")
             .expect("Failed to get sync configuration from environment")
             .as_str()
@@ -127,9 +125,9 @@ impl SyncManager {
             .expect("Error converting block number environmental variable to int");
 
         if get_latest {
-            store.get_latest_canonical_block_hash()
+            store.get_latest_canonical_block_hash().await
         } else {
-            store.get_canonical_block_hash(block_number)
+            store.get_canonical_block_hash(block_number).await
         }
     }
 
