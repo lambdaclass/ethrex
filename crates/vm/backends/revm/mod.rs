@@ -754,7 +754,8 @@ pub fn extract_all_requests(
         }
     }
 
-    let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts);
+    let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts)
+        .ok_or(EvmError::InvalidDepositRequest)?;
     let withdrawals_data = REVM::read_withdrawal_requests(header, state)?;
     let consolidation_data = REVM::dequeue_consolidation_requests(header, state)?;
 
