@@ -16,7 +16,7 @@ use ethrex_common::types::{
     BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_common::types::{BlobsBundle, Fork, ELASTICITY_MULTIPLIER};
-use ethrex_common::types::{BlockBody, MempoolTransaction};
+use ethrex_common::types::MempoolTransaction;
 
 use ethrex_common::{Address, H256};
 use mempool::Mempool;
