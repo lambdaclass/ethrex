@@ -63,3 +63,14 @@ You can enable the prover by setting `ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true` 
 For development purposes, you can use the flag `ETHREX_TDX_DEV_MODE=true` to disable quote verification. This allows you to run the quote generator even without having TDX-capable hardware.
 
 To run in production mode, ensure the proof coordinator is listening on 0.0.0.0 and run `mkosi vm -f`.
+
+
+## Troubleshooting
+
+### RTMR/MRTD mismatch
+
+If any code or dependencies changed, the measurements will change.
+
+This usually causes a RTMR1 mismatch. The easiest way to obtain the new RTMR values is by looking at the printed quote for the next 96 bytes after the RTMR0, corresponding to RTMR1||RTMR2 (48 bytes each).
+
+If all of them fail, you can generate a report with DCAP.verifyAndAttestOnChain(quote) and look at bytes 341..485 of the output for RTMRs and bytes 149..197 for the MRTD.
