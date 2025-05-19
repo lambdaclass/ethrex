@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747438069466,
+  "lastUpdate": 1747676928142,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7765,6 +7765,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211152125175,
             "range": "± 672305743",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8c3408d1e1f9ea784cc27e1d7e4186b8068531ea",
+          "message": "fix(l2): update system contracts before deployment (#2839)\n\n**Motivation**\n\nUpdating after deployment meant that we were deploying the\nOnChainProposer with an older initial state root (because the genesis\nwas being updated after and the L2 starts with a different genesis),\nleading to the `verifyBatch` function to always fail.",
+          "timestamp": "2025-05-19T16:54:44Z",
+          "tree_id": "1de7cacd6b47aa3b035aa853c710500511c8c5c4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8c3408d1e1f9ea784cc27e1d7e4186b8068531ea"
+        },
+        "date": 1747676925579,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211114655118,
+            "range": "± 665494416",
             "unit": "ns/iter"
           }
         ]
