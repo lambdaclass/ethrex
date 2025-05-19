@@ -201,6 +201,7 @@ pub struct WatcherOptions {
         default_value = "1000",
         value_name = "UINT64",
         env = "ETHREX_WATCHER_WATCH_INTERVAL",
+        help = "How often the L1 watcher checks for new blocks in milliseconds.",
         help_heading = "L1 Watcher options"
     )]
     pub watch_interval_ms: u64,
@@ -243,7 +244,8 @@ pub struct BlockProducerOptions {
         default_value = "5000",
         value_name = "UINT64",
         env = "ETHREX_BLOCK_PRODUCER_BLOCK_TIME",
-        help_heading = "L1 Watcher options"
+        help = "How often does the sequencer produce new blocks to the L1 in milliseconds.",
+        help_heading = "Block producer options"
     )]
     pub block_time_ms: u64,
     #[arg(
@@ -287,7 +289,7 @@ pub struct CommitterOptions {
         value_name = "UINT64",
         env = "ETHREX_COMMITTER_COMMIT_TIME",
         help_heading = "L1 Committer options",
-        help = "How often does the sequencer commit new blocks to the L1."
+        help = "How often does the sequencer commit new blocks to the L1 in milliseconds."
     )]
     pub commit_time_ms: u64,
     #[arg(
@@ -359,6 +361,7 @@ pub struct ProofCoordinatorOptions {
         default_value = "5000",
         value_name = "UINT64",
         env = "ETHREX_PROOF_COORDINATOR_SEND_INTERVAL",
+        help = "How often does the proof coordinator send proofs to the L1 in milliseconds.",
         help_heading = "Proof coordinator options"
     )]
     pub proof_send_interval_ms: u64,
