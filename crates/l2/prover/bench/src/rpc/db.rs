@@ -241,7 +241,7 @@ impl RpcDB {
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()), CacheDB::new());
 
         // pre-execute and get all state changes
-        let _result = LEVM::execute_block(block, &mut db).map_err(Box::new)?;
+        let _ = LEVM::execute_block(block, &mut db).map_err(Box::new)?;
         let execution_updates = LEVM::get_state_transitions(&mut db).map_err(Box::new)?;
 
         let index: Vec<(Address, Vec<H256>)> = self
@@ -250,17 +250,8 @@ impl RpcDB {
             .unwrap()
             .iter()
             .map(|(address, account)| match account {
-                Account::Existing {
-                    account_state: _,
-                    storage,
-                    account_proof: _,
-                    storage_proofs: _,
-                    code: _,
-                } => (*address, storage.keys().cloned().collect()),
-                Account::NonExisting {
-                    account_proof: _,
-                    storage_proofs: _,
-                } => {
+                Account::Existing { storage, .. } => (*address, storage.keys().cloned().collect()),
+                Account::NonExisting { .. } => {
                     let address_account_update = execution_updates
                         .iter()
                         .find(|update| update.address == *address);
