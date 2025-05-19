@@ -1,7 +1,7 @@
 use std::cmp::min;
 
 use bytes::Bytes;
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{Address, Signature, H256, U256};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
 use secp256k1::{ecdsa::RecoveryId, Message};
@@ -906,9 +906,8 @@ impl Signable for LegacyTransaction {
     async fn sign_inplace(&mut self, signer: &Signer) -> Result<(), SignerError> {
         let signature = signer.sign(self.encode_payload_to_vec().into()).await?;
 
-        self.r = U256::from_big_endian(&signature[..32]);
-        self.s = U256::from_big_endian(&signature[32..64]);
         self.v = U256::from(signature[64]);
+        (self.r, self.s, _) = parse_signature(signature);
 
         Ok(())
     }
@@ -920,10 +919,7 @@ impl Signable for EIP1559Transaction {
         payload.append(self.encode_payload_to_vec().as_mut());
 
         let signature = signer.sign(payload.into()).await?;
-
-        self.signature_r = U256::from_big_endian(&signature[..32]);
-        self.signature_s = U256::from_big_endian(&signature[32..64]);
-        self.signature_y_parity = signature[64] != 0 && signature[64] != 27;
+        (self.signature_r, self.signature_s, self.signature_y_parity) = parse_signature(signature);
 
         Ok(())
     }
@@ -935,10 +931,7 @@ impl Signable for EIP2930Transaction {
         payload.append(self.encode_payload_to_vec().as_mut());
 
         let signature = signer.sign(payload.into()).await?;
-
-        self.signature_r = U256::from_big_endian(&signature[..32]);
-        self.signature_s = U256::from_big_endian(&signature[32..64]);
-        self.signature_y_parity = signature[64] != 0 && signature[64] != 27;
+        (self.signature_r, self.signature_s, self.signature_y_parity) = parse_signature(signature);
 
         Ok(())
     }
@@ -950,10 +943,7 @@ impl Signable for EIP4844Transaction {
         payload.append(self.encode_payload_to_vec().as_mut());
 
         let signature = signer.sign(payload.into()).await?;
-
-        self.signature_r = U256::from_big_endian(&signature[..32]);
-        self.signature_s = U256::from_big_endian(&signature[32..64]);
-        self.signature_y_parity = signature[64] != 0 && signature[64] != 27;
+        (self.signature_r, self.signature_s, self.signature_y_parity) = parse_signature(signature);
 
         Ok(())
     }
@@ -965,13 +955,18 @@ impl Signable for EIP7702Transaction {
         payload.append(self.encode_payload_to_vec().as_mut());
 
         let signature = signer.sign(payload.into()).await?;
-
-        self.signature_r = U256::from_big_endian(&signature[..32]);
-        self.signature_s = U256::from_big_endian(&signature[32..64]);
-        self.signature_y_parity = signature[64] != 0 && signature[64] != 27;
+        (self.signature_r, self.signature_s, self.signature_y_parity) = parse_signature(signature);
 
         Ok(())
     }
+}
+
+fn parse_signature(signature: Signature) -> (U256, U256, bool) {
+    let r = U256::from_big_endian(&signature[..32]);
+    let s = U256::from_big_endian(&signature[32..64]);
+    let y_parity = signature[64] != 0 && signature[64] != 27;
+
+    (r, s, y_parity)
 }
 
 impl Transaction {
