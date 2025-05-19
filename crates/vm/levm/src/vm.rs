@@ -155,8 +155,8 @@ impl<'a> VM<'a> {
     pub fn execute_precompile(&mut self) -> Result<ExecutionReport, VMError> {
         let precompile_address = self.current_call_frame()?.code_address;
 
-        // Avoid executing precompile if it is target of a delegation in EIP-7702 transaction.
         let precompile_result = match self.is_delegation_target(precompile_address) {
+            // Avoid executing precompile if it is target of a delegation in EIP-7702 transaction.
             true => {
                 let gas_limit = self.current_call_frame()?.gas_limit;
                 if gas_limit == 0 {
@@ -166,6 +166,7 @@ impl<'a> VM<'a> {
                     Ok(Bytes::new())
                 }
             }
+            // Otherwise, execute precompile
             false => {
                 let callframe = self.current_call_frame_mut()?;
                 execute_precompile(
