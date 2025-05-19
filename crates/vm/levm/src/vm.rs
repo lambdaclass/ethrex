@@ -2,11 +2,12 @@ use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
-    errors::{ExecutionReport, OpcodeResult, VMError},
+    errors::{ExecutionReport, OpcodeResult, PrecompileError, VMError},
     hooks::hook::Hook,
     precompiles::execute_precompile,
     TransientStorage,
 };
+use bytes::Bytes;
 use ethrex_common::{
     types::{Transaction, TxKind},
     Address, H256, U256,
@@ -144,16 +145,33 @@ impl<'a> VM<'a> {
         }
     }
 
+    /// Checks if an address is delegation target in current transaction.
+    fn is_delegation_target(&self, address: Address) -> bool {
+        self.tx.authorization_list().as_ref().map_or(false, |list| {
+            list.iter().any(|item| item.address == address)
+        })
+    }
+
     pub fn execute_precompile(&mut self) -> Result<ExecutionReport, VMError> {
-        let callframe = self.current_call_frame_mut()?;
+        let precompile_address = self.current_call_frame()?.code_address;
 
-        let precompile_address = callframe.code_address;
-        let calldata = &callframe.calldata;
-        let gas_used = &mut callframe.gas_used;
-        let gas_limit = callframe.gas_limit;
-
-        let precompile_result =
-            execute_precompile(precompile_address, calldata, gas_used, gas_limit);
+        // Avoid executing precompile if it is target of a delegation in EIP-7702 transaction.
+        let precompile_result = if self.is_delegation_target(precompile_address) {
+            if self.current_call_frame()?.gas_limit > 0 {
+                Ok(Bytes::new())
+            } else {
+                // pointer_to_precompile.json tests that it should fail in a call with zero gas limit. Which is weird because this doesn't consume gas anyway...
+                Err(VMError::PrecompileError(PrecompileError::NotEnoughGas))
+            }
+        } else {
+            let callframe = self.current_call_frame_mut()?;
+            execute_precompile(
+                precompile_address,
+                &callframe.calldata,
+                &mut callframe.gas_used,
+                callframe.gas_limit,
+            )
+        };
 
         let report = self.handle_precompile_result(precompile_result)?;
 

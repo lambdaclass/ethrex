@@ -3,49 +3,13 @@ use std::path::Path;
 use ef_tests_blockchain::test_runner::parse_and_execute;
 use ethrex_vm::EvmEngine;
 
-// TODO: enable these tests once the evm is updated.
 #[cfg(not(feature = "levm"))]
 const SKIPPED_TESTS_REVM: [&str; 1] = [
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_non_empty_storage[fork_Prague-blockchain_test-zero_nonce]",
+    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_non_empty_storage[fork_Prague-blockchain_test-zero_nonce]", // Skipped because REVM doesn't support this.
 ];
 
 #[cfg(feature = "levm")]
-const SKIPPED_TESTS_LEVM: [&str; 34] = [
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x0000000000000000000000000000000000000006-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x0000000000000000000000000000000000000011-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x0000000000000000000000000000000000000009-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x000000000000000000000000000000000000000b-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x000000000000000000000000000000000000000e-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x0000000000000000000000000000000000000004-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x0000000000000000000000000000000000000009-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x000000000000000000000000000000000000000c-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x000000000000000000000000000000000000000c-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x000000000000000000000000000000000000000a-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x0000000000000000000000000000000000000008-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x0000000000000000000000000000000000000001-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x0000000000000000000000000000000000000006-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x000000000000000000000000000000000000000f-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x0000000000000000000000000000000000000010-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x000000000000000000000000000000000000000f-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x0000000000000000000000000000000000000011-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x0000000000000000000000000000000000000002-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x000000000000000000000000000000000000000b-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x000000000000000000000000000000000000000e-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x0000000000000000000000000000000000000005-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x000000000000000000000000000000000000000d-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x0000000000000000000000000000000000000001-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x0000000000000000000000000000000000000004-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x0000000000000000000000000000000000000007-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x0000000000000000000000000000000000000003-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x0000000000000000000000000000000000000005-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x0000000000000000000000000000000000000010-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x0000000000000000000000000000000000000007-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x000000000000000000000000000000000000000d-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x0000000000000000000000000000000000000008-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x0000000000000000000000000000000000000002-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x000000000000000000000000000000000000000a-blockchain_test_from_state_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x0000000000000000000000000000000000000003-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
-];
+const SKIPPED_TESTS_LEVM: [&str; 0] = [];
 
 // NOTE: These 3 tests fail on LEVM with a stack overflow if we do not increase the stack size by using RUST_MIN_STACK=11000000
 //"tests/prague/eip6110_deposits/test_deposits.py::test_deposit[fork_Prague-blockchain_test-single_deposit_from_contract_call_high_depth]",
