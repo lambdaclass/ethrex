@@ -27,14 +27,15 @@ struct Prover {
 }
 
 impl Prover {
-    pub fn new(config: ProverConfig) -> Self {
+    pub fn new(cfg: ProverConfig) -> Self {
         Self {
-            prover_server_endpoint: config.prover_server_endpoint,
-            proving_time_ms: config.proving_time_ms,
+            prover_server_endpoint: format!("{}:{}", cfg.http_addr, cfg.http_port),
+            proving_time_ms: cfg.proving_time_ms,
         }
     }
 
     pub async fn start(&self) {
+        info!("Prover started on {}", self.prover_server_endpoint);
         // Build the prover depending on the prover_type passed as argument.
         loop {
             match self.request_new_input().await {

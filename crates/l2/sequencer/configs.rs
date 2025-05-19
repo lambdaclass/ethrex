@@ -1,4 +1,5 @@
 use ethrex_common::{Address, U256};
+use reqwest::Url;
 use secp256k1::SecretKey;
 use std::net::IpAddr;
 
@@ -31,7 +32,7 @@ pub struct CommitterConfig {
 
 #[derive(Clone, Debug)]
 pub struct EthConfig {
-    pub rpc_url: String,
+    pub rpc_url: Url,
     pub maximum_allowed_max_fee_per_gas: u64,
     pub maximum_allowed_max_fee_per_blob_gas: u64,
     pub max_number_of_retries: u64,
@@ -45,7 +46,6 @@ pub struct L1WatcherConfig {
     pub bridge_address: Address,
     pub check_interval_ms: u64,
     pub max_block_step: U256,
-    pub l2_proposer_private_key: SecretKey,
     pub watcher_block_delay: u64,
 }
 
