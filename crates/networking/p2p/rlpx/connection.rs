@@ -400,7 +400,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn send_new_pooled_tx_hashes(&mut self) -> Result<(), RLPxError> {
-        if self.capabilities.contains(&Capability::eth(68)) {
+        if SUPPORTED_ETH_CAPABILITIES
+            .iter()
+            .any(|cap| self.capabilities.contains(cap))
+        {
             let filter =
                 |tx: &Transaction| -> bool { !self.broadcasted_txs.contains(&tx.compute_hash()) };
             let txs: Vec<MempoolTransaction> = self
