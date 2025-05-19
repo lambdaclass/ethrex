@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747676928142,
+  "lastUpdate": 1747679521423,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8576,6 +8576,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007265759749638902,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e39ccb875c18b50fdb5b524c802d7e9cc469d619",
+          "message": "fix(l2): failed compilation in crate prover/bench (#2830)\n\n**Motivation**\n\nThe ci is broken\n\n**Description**\n\n- Clone the access list as tx.access_list() now returns a reference\n- Fix all the warnings the prover crate had\n- Make the l2 lint ci run in every PR",
+          "timestamp": "2025-05-19T17:45:20Z",
+          "tree_id": "562110989686e0e4b0052021a50e9b4a7a1e1902",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e39ccb875c18b50fdb5b524c802d7e9cc469d619"
+        },
+        "date": 1747679518504,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007269259633911368,
             "unit": "Mgas/s"
           }
         ]
