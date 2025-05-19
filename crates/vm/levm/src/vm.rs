@@ -145,13 +145,6 @@ impl<'a> VM<'a> {
         }
     }
 
-    /// Checks if an address is delegation target in current transaction.
-    fn is_delegation_target(&self, address: Address) -> bool {
-        self.tx.authorization_list().as_ref().map_or(false, |list| {
-            list.iter().any(|item| item.address == address)
-        })
-    }
-
     pub fn execute_precompile(&mut self) -> Result<ExecutionReport, VMError> {
         let precompile_address = self.current_call_frame()?.code_address;
 
