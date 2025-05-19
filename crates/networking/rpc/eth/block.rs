@@ -314,7 +314,7 @@ impl RpcHandler for GetBlobBaseFee {
         let parent_header = match context.storage.get_block_header_by_hash(header.parent_hash) {
             Ok(option_header) => match option_header {
                 Some(header) => header,
-                None => return Err(RpcErr::Internal(ChainError::ParentNotFound.to_string()))
+                None => return Err(RpcErr::Internal(ChainError::ParentNotFound.to_string())),
             },
             Err(error) => return Err(RpcErr::Internal(error.to_string())),
         };
