@@ -139,7 +139,7 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
 
 // ================== Backup related functions =======================
 
-/// Merge the a previous callframe backup into the current callframe backup.
+/// Merge a previous callframe backup into the current callframe backup.
 /// This prevails the previous values over the current ones.
 pub fn merge_callframe_backup(current: &mut CallFrameBackup, previous: CallFrameBackup) {
     for (addr, acc) in previous.original_accounts_info {
