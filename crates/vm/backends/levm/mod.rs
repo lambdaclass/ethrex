@@ -201,7 +201,11 @@ impl LEVM {
                 let old_value = initial_state_account
                     .storage
                     .get(key)
-                    .unwrap_or_else(|| panic!("Failed to get old value from account's initial storage for address: {address}"));
+                    .ok_or_else(|| {
+                        return EvmError::Custom(format!(
+                            "Failed to get old value from account's initial storage for address: {address}"
+                        ));
+                    })?;
 
                 if new_value != old_value {
                     added_storage.insert(*key, *new_value);
