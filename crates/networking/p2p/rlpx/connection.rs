@@ -448,13 +448,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::Pong(_) => {
                 // We ignore received Pong messages
             }
-            Message::Status(msg_data) if !peer_supports_eth => {
-                backend::validate_status(
-                    msg_data,
-                    &self.storage,
-                    self.negotiated_eth_capability.unwrap().version as u32,
-                )
-                .await?
+            Message::Status(msg_data) => {
+                match &self.negotiated_eth_capability {
+                    Some(eth) => {
+                        backend::validate_status(msg_data, &self.storage, eth.version).await?
+                    }
+                    None => {}
+                };
             }
             Message::GetAccountRange(req) => {
                 let response = process_account_range_request(req, self.storage.clone())?;
@@ -568,15 +568,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
-        if self
-            .capabilities
-            .contains(&self.negotiated_eth_capability.unwrap())
-        {
-            let status = backend::get_status(
-                &self.storage,
-                self.negotiated_eth_capability.unwrap().version as u32,
-            )
-            .await?;
+        if let Some(eth) = self.negotiated_eth_capability.clone() {
+            let status = backend::get_status(&self.storage, eth.version).await?;
             log_peer_debug(&self.node, "Sending status");
             self.send(Message::Status(status)).await?;
             // The next immediate message in the ETH protocol is the
@@ -589,12 +582,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             match msg {
                 Message::Status(msg_data) => {
                     log_peer_debug(&self.node, "Received Status");
-                    backend::validate_status(
-                        msg_data,
-                        &self.storage,
-                        self.negotiated_eth_capability.unwrap().version as u32,
-                    )
-                    .await?
+                    backend::validate_status(msg_data, &self.storage, eth.version).await?
                 }
                 Message::Disconnect(disconnect) => {
                     return Err(RLPxError::HandshakeError(format!(

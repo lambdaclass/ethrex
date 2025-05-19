@@ -1,5 +1,5 @@
 use crate::kademlia::{self, KademliaTable};
-use crate::rlpx::p2p::CAP_SNAP_1;
+use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
 use crate::rlpx::{
     connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
 };
@@ -193,7 +193,9 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
             .iter()
             .filter(|peer| -> bool {
                 peer.channels.as_ref().is_some()
-                    && peer.supported_capabilities.contains(&CAP_SNAP_1)
+                    && SUPPORTED_SNAP_CAPABILITIES
+                        .iter()
+                        .any(|cap| peer.supported_capabilities.contains(cap))
             })
             .count();
         info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");
