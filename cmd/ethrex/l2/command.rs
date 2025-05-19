@@ -50,8 +50,6 @@ pub enum Command {
         data_dir: PathBuf,
         #[clap(short = 'e', long)]
         l1_eth_rpc: Url,
-        #[clap(short = 'f', long, required = false)]
-        fallback_l1_eth_rpc: Option<Url>,
         #[clap(short = 'b', long)]
         l1_beacon_rpc: Url,
     },
@@ -148,17 +146,13 @@ impl Command {
             }
             Command::BlobsSaver {
                 l1_eth_rpc,
-                fallback_l1_eth_rpc,
                 l1_beacon_rpc,
                 contract_address,
                 data_dir,
             } => {
                 create_dir_all(data_dir.clone())?;
 
-                let eth_client = EthClient::new(
-                    l1_eth_rpc.as_str(),
-                    fallback_l1_eth_rpc.map(|url| url.to_string()).as_deref(),
-                );
+                let eth_client = EthClient::new(l1_eth_rpc.as_str());
                 let beacon_client = BeaconClient::new(l1_beacon_rpc);
 
                 // Keep delay for finality

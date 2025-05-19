@@ -44,7 +44,6 @@ pub enum RpcResponse {
 pub struct EthClient {
     client: Client,
     pub url: String,
-    pub fallback_url: Option<String>,
     pub max_number_of_retries: u64,
     pub backoff_factor: u64,
     pub min_retry_delay: u64,
@@ -104,10 +103,9 @@ pub struct WithdrawalProof {
 }
 
 impl EthClient {
-    pub fn new(url: &str, fallback_url: Option<&str>) -> Self {
+    pub fn new(url: &str) -> Self {
         Self::new_with_config(
             url,
-            fallback_url,
             MAX_NUMBER_OF_RETRIES,
             BACKOFF_FACTOR,
             MIN_RETRY_DELAY,
@@ -117,10 +115,8 @@ impl EthClient {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn new_with_config(
         url: &str,
-        fallback_url: Option<&str>,
         max_number_of_retries: u64,
         backoff_factor: u64,
         min_retry_delay: u64,
@@ -131,7 +127,6 @@ impl EthClient {
         Self {
             client: Client::new(),
             url: url.to_string(),
-            fallback_url: fallback_url.map(ToString::to_string),
             max_number_of_retries,
             backoff_factor,
             min_retry_delay,
@@ -147,10 +142,8 @@ impl EthClient {
     ) -> Result<RpcResponse, EthClientError> {
         let response = self.send_request(&self.url, &request).await;
         if response.is_err() {
-            let Some(fallback_url) = self.fallback_url.as_ref() else {
-                return response;
-            };
-            return self.send_request(fallback_url, &request).await;
+            todo!("Implement fallback");
+            // return self.send_request(fallback_url, &request).await;
         }
         response
     }

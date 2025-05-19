@@ -42,7 +42,6 @@ async fn main() -> Result<(), DeployerError> {
 
     let eth_client = EthClient::new_with_config(
         &opts.rpc_url,
-        None,
         opts.max_number_of_retries,
         opts.backoff_factor,
         opts.min_retry_delay,
