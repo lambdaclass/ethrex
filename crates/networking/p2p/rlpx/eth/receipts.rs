@@ -11,7 +11,6 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
-use tracing::warn;
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getreceipts-0x0f
 #[derive(Debug)]
 pub(crate) struct GetReceipts {
@@ -70,14 +69,14 @@ impl Receipts {
     pub fn get_receipts(&self) -> Vec<Vec<Receipt>> {
         match self {
             Receipts::Receipts68(msg) => msg.receipts.clone(),
-            //Receipts::Receipts69(msg) => msg.encode(buf),
+            //Receipts::Receipts69(msg) => msg.receipts.clone(),
         }
     }
 
     pub fn get_id(&self) -> u64 {
         match self {
             Receipts::Receipts68(msg) => msg.id,
-            //Receipts::Receipts69(msg) => msg.encode(buf),
+            //Receipts::Receipts69(msg) => msg.id,
         }
     }
 }
@@ -149,8 +148,8 @@ mod tests {
         let mut buf = Vec::new();
         receipts.encode(&mut buf).unwrap();
 
-        let mut decoded = Receipts::decode(&buf).unwrap();
-        decoded.decode_with_cap(&Capability::eth(68));
+        let decoded = Receipts::decode(&buf).unwrap();
+
         assert_eq!(decoded.get_id(), 1);
         assert_eq!(decoded.get_receipts(), Vec::<Vec<Receipt>>::new());
     }

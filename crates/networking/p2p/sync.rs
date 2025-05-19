@@ -13,7 +13,6 @@ use ethrex_common::{
     BigEndianHash, H256, U256, U512,
 };
 
-use crate::rlpx::p2p::{CAP_ETH_68, CAP_SNAP_1};
 use crate::{
     kademlia::KademliaTable,
     peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST},
@@ -103,7 +102,7 @@ impl Syncer {
     ) -> Self {
         Self {
             snap_enabled,
-            peers: PeerHandler::new(peer_table, CAP_ETH_68, CAP_SNAP_1),
+            peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
             trie_rebuilder: None,
             cancel_token,
@@ -117,7 +116,7 @@ impl Syncer {
         let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
         Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
-            peers: PeerHandler::new(dummy_peer_table, CAP_ETH_68, CAP_SNAP_1),
+            peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
             trie_rebuilder: None,
             // This won't be used

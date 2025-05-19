@@ -17,7 +17,7 @@ use crate::{
             blocks::{
                 BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, BLOCK_HEADER_LIMIT,
             },
-            receipts::{GetReceipts, Receipts},
+            receipts::GetReceipts,
         },
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
@@ -47,8 +47,6 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     peer_table: Arc<Mutex<KademliaTable>>,
-    eth_capability: Capability,
-    snap_capability: Capability,
 }
 
 pub enum BlockRequestOrder {
@@ -57,16 +55,8 @@ pub enum BlockRequestOrder {
 }
 
 impl PeerHandler {
-    pub fn new(
-        peer_table: Arc<Mutex<KademliaTable>>,
-        eth_capability: Capability,
-        snap_capability: Capability,
-    ) -> PeerHandler {
-        Self {
-            peer_table,
-            eth_capability,
-            snap_capability,
-        }
+    pub fn new(peer_table: Arc<Mutex<KademliaTable>>) -> PeerHandler {
+        Self { peer_table }
     }
     /// Returns the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
