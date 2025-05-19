@@ -4,6 +4,8 @@ use std::sync::{
 };
 
 #[cfg(feature = "sync-test")]
+use ethrex_storage::error::StoreError;
+#[cfg(feature = "sync-test")]
 use std::env;
 
 use ethrex_blockchain::Blockchain;
@@ -109,7 +111,7 @@ impl SyncManager {
     }
 
     #[cfg(feature = "sync-test")]
-    async fn get_blocks_for_sync_test(store: &Store) {
+    async fn get_blocks_for_sync_test(store: &Store) -> Result<Option<H256>, StoreError> {
         let get_latest = match env::var("SYNC-LATEST")
             .expect("Failed to get sync configuration from environment")
             .as_str()
