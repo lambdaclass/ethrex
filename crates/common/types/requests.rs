@@ -1,8 +1,11 @@
+use std::str::FromStr;
+
 use bytes::Bytes;
 use ethereum_types::Address;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use k256::sha2::Sha256;
 use keccak_hash::H256;
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use sha3::Digest;
 use tracing::error;
@@ -16,6 +19,11 @@ pub type Bytes96 = [u8; 96];
 const DEPOSIT_TYPE: u8 = 0x00;
 const WITHDRAWAL_TYPE: u8 = 0x01;
 const CONSOLIDATION_TYPE: u8 = 0x02;
+
+lazy_static! {
+    static ref DEPOSIT_TOPIC: H256 =
+        H256::from_str("649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5").unwrap();
+}
 
 #[derive(Clone, Debug)]
 pub struct EncodedRequests(pub Bytes);
@@ -93,7 +101,10 @@ impl Requests {
 
         for r in receipts {
             for log in &r.logs {
-                if log.address == deposit_contract_address {
+                if log.address == deposit_contract_address
+                    && log.topics.len() > 0
+                    && log.topics[0] == *DEPOSIT_TOPIC
+                {
                     deposits.push(Deposit::from_abi_byte_array(&log.data)?);
                 }
             }
