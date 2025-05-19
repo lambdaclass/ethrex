@@ -341,12 +341,15 @@ fn merge_diffs(
     let mut merged_diffs = previous_diffs.clone();
     for (address, diff) in new_diffs {
         if let Some(existing_diff) = merged_diffs.get_mut(&address) {
-            existing_diff.new_balance = diff.new_balance;
-            existing_diff.nonce_diff = diff.nonce_diff;
+            existing_diff.new_balance = diff.new_balance.or(existing_diff.new_balance);
+            existing_diff.nonce_diff += diff.nonce_diff;
             // we need to overwrite the storage with the new values
             existing_diff.storage.extend(diff.storage);
-            existing_diff.bytecode = diff.bytecode;
-            existing_diff.bytecode_hash = diff.bytecode_hash;
+            // Take the bytecode from the new diff if present, avoiding clone if not needed
+            if diff.bytecode.is_some() {
+                existing_diff.bytecode = diff.bytecode;
+            }
+            existing_diff.bytecode_hash = diff.bytecode_hash.or(existing_diff.bytecode_hash);
         } else {
             merged_diffs.insert(address, diff);
         }
