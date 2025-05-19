@@ -46,13 +46,19 @@ impl SnapshotTree {
     }
 
     /// Rebuilds the tree, marking all current layers stale, creating a new base disk layer from the given root.
-    pub fn rebuild(&self, block_hash: BlockHash, state_root: H256) {
-        let mut layers = self.layers.write().unwrap();
+    pub fn rebuild(&self, block_hash: BlockHash, state_root: H256) -> Result<(), SnapshotError> {
+        let mut layers = self
+            .layers
+            .write()
+            .map_err(|error| SnapshotError::LockError(error.to_string()))?;
 
         for layer in layers.values() {
             match layer {
                 Layer::DiskLayer(disk_layer) => disk_layer.mark_stale(),
-                Layer::DiffLayer(diff_layer) => diff_layer.write().unwrap().mark_stale(),
+                Layer::DiffLayer(diff_layer) => diff_layer
+                    .write()
+                    .map_err(|error| SnapshotError::LockError(error.to_string()))?
+                    .mark_stale(),
             };
         }
 
@@ -65,6 +71,7 @@ impl SnapshotTree {
                 state_root,
             ))),
         );
+        Ok(())
     }
 
     fn snapshot(&self, block_root: H256) -> Option<Layer> {
@@ -90,17 +97,15 @@ impl SnapshotTree {
                 Layer::DiskLayer(parent) => {
                     parent.update(block_hash, block_state_root, accounts, storage)
                 }
-                Layer::DiffLayer(parent) => {
-                    parent
-                        .read()
-                        .unwrap()
-                        .update(block_hash, block_state_root, accounts, storage)
-                }
+                Layer::DiffLayer(parent) => parent
+                    .read()
+                    .map_err(|error| SnapshotError::LockError(error.to_string()))?
+                    .update(block_hash, block_state_root, accounts, storage),
             };
 
             self.layers
                 .write()
-                .unwrap()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?
                 .insert(block_hash, Layer::DiffLayer(Arc::new(RwLock::new(snap))));
 
             Ok(())
@@ -139,7 +144,10 @@ impl SnapshotTree {
         if layers_n == 0 {
             // Full commit
             info!("SnapshotTree: cap full commit triggered, clearing snapshots");
-            let mut layers = self.layers.write().unwrap();
+            let mut layers = self
+                .layers
+                .write()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?;
             let base = self.save_diff(Self::flatten_diff(head_block_hash, &mut layers)?)?;
             layers.clear();
             layers.insert(head_block_hash, Layer::DiskLayer(base));
@@ -147,7 +155,10 @@ impl SnapshotTree {
         }
 
         // Hold write lock the whole time for consistency in data.
-        let mut layers = self.layers.write().unwrap();
+        let mut layers = self
+            .layers
+            .write()
+            .map_err(|error| SnapshotError::LockError(error.to_string()))?;
 
         let new_disk_layer = self.cap_layers(diff, layers_n, &mut layers)?;
 
@@ -164,7 +175,10 @@ impl SnapshotTree {
             match snap {
                 Layer::DiskLayer(_) => {}
                 Layer::DiffLayer(diff_layer) => {
-                    let parent = diff_layer.read().unwrap().parent();
+                    let parent = diff_layer
+                        .read()
+                        .map_err(|error| SnapshotError::LockError(error.to_string()))?
+                        .parent();
                     let entry = children.entry(parent).or_default();
                     entry.push(*hash);
                 }
@@ -192,7 +206,11 @@ impl SnapshotTree {
                     }
                 }
                 Layer::DiffLayer(diff_layer) => {
-                    if diff_layer.read().unwrap().stale() {
+                    if diff_layer
+                        .read()
+                        .map_err(|error| SnapshotError::LockError(error.to_string()))?
+                        .stale()
+                    {
                         remove(*root, &children, &mut to_remove);
                     }
                 }
@@ -211,12 +229,14 @@ impl SnapshotTree {
                 children: &HashMap<H256, Vec<H256>>,
                 base: Arc<DiskLayer>,
                 parent_diffed: Option<Bloom>,
-            ) {
+            ) -> Result<(), SnapshotError> {
                 if let Some(layer) = layers.get(&root) {
                     let diffed = match layer {
                         Layer::DiskLayer(_) => None,
                         Layer::DiffLayer(layer) => {
-                            let mut layer = layer.write().unwrap();
+                            let mut layer = layer
+                                .write()
+                                .map_err(|error| SnapshotError::LockError(error.to_string()))?;
                             layer.rebloom(base.clone(), parent_diffed);
                             Some(layer.diffed)
                         }
@@ -224,16 +244,17 @@ impl SnapshotTree {
 
                     if let Some(childs) = children.get(&root) {
                         for child in childs {
-                            rebloom(*child, layers, children, base.clone(), diffed);
+                            rebloom(*child, layers, children, base.clone(), diffed)?;
                         }
                     }
                 }
+                Ok(())
             }
             info!(
                 "SnapshotTree: changed disk layer block hash: {}",
                 base.state_root
             );
-            rebloom(base.state_root, &layers, &children, base, None);
+            rebloom(base.state_root, &layers, &children, base, None)?;
         }
 
         info!(
@@ -260,7 +281,9 @@ impl SnapshotTree {
                     return Ok(None);
                 }
                 Layer::DiffLayer(diff_layer) => {
-                    let diff_value = diff_layer.read().unwrap();
+                    let diff_value = diff_layer
+                        .read()
+                        .map_err(|error| SnapshotError::LockError(error.to_string()))?;
                     diff_wrapped = layers[&diff_value.parent()].clone();
                 }
             }
@@ -272,7 +295,9 @@ impl SnapshotTree {
         };
 
         let (parent, parent_block_hash) = {
-            let diff_value = diff.read().unwrap();
+            let diff_value = diff
+                .read()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?;
             (layers[&diff_value.parent()].clone(), diff_value.parent())
         };
 
@@ -283,13 +308,18 @@ impl SnapshotTree {
 
         {
             // hold write lock until linked to new parent to avoid incorrect external reads
-            let mut diff_value = diff.write().unwrap();
+            let mut diff_value = diff
+                .write()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?;
 
             // flatten parent into grand parent.
             let flattened = Self::flatten_diff(parent_block_hash, layers)?;
             let flattened_block_hash = match &flattened {
                 Layer::DiskLayer(disk_layer) => disk_layer.block_hash(),
-                Layer::DiffLayer(diff_layer) => diff_layer.read().unwrap().block_hash(),
+                Layer::DiffLayer(diff_layer) => diff_layer
+                    .read()
+                    .map_err(|error| SnapshotError::LockError(error.to_string()))?
+                    .block_hash(),
             };
             layers.insert(flattened_block_hash, flattened.clone());
             diff_value.set_parent(flattened_block_hash);
@@ -298,7 +328,9 @@ impl SnapshotTree {
         // Persist the bottom most layer
         let base = self.save_diff(Layer::DiffLayer(parent))?;
         layers.insert(base.state_root, Layer::DiskLayer(base.clone()));
-        let mut diff_value = diff.write().unwrap();
+        let mut diff_value = diff
+            .write()
+            .map_err(|error| SnapshotError::LockError(error.to_string()))?;
         diff_value.set_parent(base.root());
 
         Ok(Some(base))
@@ -316,7 +348,9 @@ impl SnapshotTree {
             }
             Layer::DiffLayer(diff) => diff,
         };
-        let diff_value = diff.read().unwrap();
+        let diff_value = diff
+            .read()
+            .map_err(|error| SnapshotError::LockError(error.to_string()))?;
         let prev_disk = diff_value.origin();
 
         if prev_disk.mark_stale() {
@@ -371,16 +405,19 @@ impl SnapshotTree {
         );
         if let Some(snapshot) = self.snapshot(block_hash) {
             debug!("snapshot found");
-            let layers = self.layers.read().unwrap();
+            let layers = self
+                .layers
+                .read()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?;
             let address = hash_address_fixed(&address);
-            let result = match snapshot {
-                Layer::DiskLayer(snapshot) => snapshot.get_account(address, &layers),
-                Layer::DiffLayer(snapshot) => {
-                    snapshot.read().unwrap().get_account(address, &layers)
-                }
-            };
 
-            result
+            match snapshot {
+                Layer::DiskLayer(snapshot) => snapshot.get_account(address, &layers),
+                Layer::DiffLayer(snapshot) => snapshot
+                    .read()
+                    .map_err(|error| SnapshotError::LockError(error.to_string()))?
+                    .get_account(address, &layers),
+            }
         } else {
             Err(SnapshotError::SnapshotNotFound(block_hash))
         }
@@ -401,7 +438,10 @@ impl SnapshotTree {
             block_hash, address, storage_key
         );
         if let Some(snapshot) = self.snapshot(block_hash) {
-            let layers = self.layers.read().unwrap();
+            let layers = self
+                .layers
+                .read()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?;
             let address = hash_address_fixed(&address);
 
             let (value, origin_block_hash) = match snapshot {
@@ -410,7 +450,9 @@ impl SnapshotTree {
                     snapshot.block_hash,
                 ),
                 Layer::DiffLayer(snapshot) => {
-                    let snapshot = snapshot.read().unwrap();
+                    let snapshot = snapshot
+                        .read()
+                        .map_err(|error| SnapshotError::LockError(error.to_string()))?;
                     (
                         snapshot.get_storage(address, storage_key, &layers)?,
                         snapshot.origin().block_hash,
@@ -439,7 +481,9 @@ impl SnapshotTree {
 
         // If parent is not a diff layer, layer is first in line, return layer.
         let parent = {
-            let layer_value = layer.read().unwrap();
+            let layer_value = layer
+                .read()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?;
             layers[&layer_value.parent()].clone()
         };
 
@@ -449,19 +493,29 @@ impl SnapshotTree {
         };
 
         // Flatten diff parent first.
-        let parent = match Self::flatten_diff(parent.read().unwrap().block_hash(), layers)? {
+        let parent = match Self::flatten_diff(
+            parent
+                .read()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?
+                .block_hash(),
+            layers,
+        )? {
             Layer::DiskLayer(_) => unreachable!("only diff can be returned at this point"),
             Layer::DiffLayer(diff) => diff,
         };
 
-        let mut parent_value = parent.write().unwrap();
+        let mut parent_value = parent
+            .write()
+            .map_err(|error| SnapshotError::LockError(error.to_string()))?;
 
         if parent_value.mark_stale() {
             // parent was stale, we flattened from different children
             return Err(SnapshotError::StaleSnapshot);
         }
 
-        let layer_value = layer.read().unwrap();
+        let layer_value = layer
+            .read()
+            .map_err(|error| SnapshotError::LockError(error.to_string()))?;
         parent_value.add_accounts(layer_value.accounts());
         parent_value.add_storage(layer_value.storage());
 
@@ -513,7 +567,7 @@ mod tests {
         };
 
         // Add a disklayer to the tree
-        tree.rebuild(H256::zero(), H256::zero());
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
 
         // Add a single account in a single difflayer
         tree.update(
@@ -533,7 +587,7 @@ mod tests {
     #[test]
     fn test_add_two_accounts_in_different_difflayers() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero());
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
 
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
@@ -587,7 +641,7 @@ mod tests {
     #[test]
     fn test_override_account_in_second_difflayer() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero());
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
         let address = Address::from_low_u64_be(1);
@@ -639,7 +693,7 @@ mod tests {
     #[test]
     fn test_override_account_storage_flattening() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero());
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
 
@@ -715,7 +769,7 @@ mod tests {
     #[test]
     fn test_override_account_storage_in_second_difflayer() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero());
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
 

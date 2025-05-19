@@ -17,4 +17,6 @@ pub enum SnapshotError {
     DiskLayerFlatten,
     #[error(transparent)]
     RLPDecodeError(#[from] RLPDecodeError),
+    #[error("Error getting a lock: {0}")]
+    LockError(String),
 }

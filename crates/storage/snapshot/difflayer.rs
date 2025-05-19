@@ -199,7 +199,7 @@ impl DiffLayer {
             Layer::DiskLayer(disk_layer) => disk_layer.get_account(hash, layers),
             Layer::DiffLayer(diff_layer) => diff_layer
                 .read()
-                .unwrap()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?
                 .get_account_traverse(hash, layers),
         }
     }
@@ -228,12 +228,10 @@ impl DiffLayer {
             Layer::DiskLayer(disk_layer) => {
                 disk_layer.get_storage(account_hash, storage_hash, layers)
             }
-            Layer::DiffLayer(diff_layer) => {
-                diff_layer
-                    .read()
-                    .unwrap()
-                    .get_storage_traverse(account_hash, storage_hash, layers)
-            }
+            Layer::DiffLayer(diff_layer) => diff_layer
+                .read()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?
+                .get_storage_traverse(account_hash, storage_hash, layers),
         }
     }
 

@@ -490,7 +490,14 @@ impl Store {
             .await?;
 
         #[cfg(feature = "snapshots")]
-        self.snapshots.rebuild(genesis_hash, genesis_state_root);
+        {
+            if let Err(e) = self.snapshots.rebuild(genesis_hash, genesis_state_root) {
+                error!(
+                    "Failed to rebuild snapshots when adding initial state: {}",
+                    e
+                );
+            }
+        }
 
         // Set chain config
         self.set_chain_config(&genesis.config).await
@@ -1153,7 +1160,7 @@ impl Store {
             if store.snapshots.len() == 0 {
                 // There are no snapshots yet, use this block as root
                 // TODO: find if there is a better place to create the initial "disk layer".
-                store.snapshots.rebuild(hash, state_root);
+                store.snapshots.rebuild(hash, state_root)?;
                 info!(
                     "Snapshot (disk layer) created for {} with parent {}",
                     hash, parent_hash
