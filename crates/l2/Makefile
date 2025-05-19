@@ -254,6 +254,7 @@ state-diff-test:
 	cargo b --manifest-path ../../Cargo.toml --release
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
+	ETHREX_WATCHER_BLOCK_DELAY=0 \
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
 
 	cargo test state_reconstruct --release
