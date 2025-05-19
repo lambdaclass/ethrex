@@ -22,6 +22,9 @@ pub const EMPTY_CODE_HASH: H256 = H256([
 
 pub const MEMORY_EXPANSION_QUOTIENT: usize = 512;
 
+// Dedicated gas limit for system calls according to EIPs 2935, 4788, 7002 and 7251
+pub const SYS_CALL_GAS_LIMIT: u64 = 30000000;
+
 // Transaction costs in gas (in wei)
 pub const TX_BASE_COST: u64 = 21000;
 
