@@ -15,7 +15,7 @@ use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
 use ethrex_storage::Store;
-use ethrex_vm::backends::CallFrameBackup;
+use ethrex_vm::{backends::CallFrameBackup, Evm, EvmError};
 use std::ops::Div;
 use tokio::time::Instant;
 use tracing::debug;
