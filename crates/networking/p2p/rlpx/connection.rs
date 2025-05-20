@@ -145,7 +145,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     /// Handshake already performed, now it starts a peer connection.
     /// It runs in it's own task and blocks until the connection is dropped
-    pub async fn start(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
+    pub async fn start(
+        &mut self,
+        table: Arc<Mutex<crate::kademlia::KademliaTable>>,
+        inbound: bool,
+    ) {
         log_peer_debug(&self.node, "Starting RLPx connection");
 
         if let Err(reason) = self.post_handshake_checks(table.clone()).await {
@@ -176,6 +180,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     self.node.node_id(),
                     peer_channels,
                     self.capabilities.clone(),
+                    inbound,
                 );
             }
             if let Err(e) = self.connection_loop(sender, receiver).await {
@@ -309,6 +314,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     self.negotiated_snap_capability =
                         Some(Capability::snap(negotiated_snap_version));
                 }
+
+                self.node.version = Some(hello_message.client_id);
 
                 Ok(())
             }
