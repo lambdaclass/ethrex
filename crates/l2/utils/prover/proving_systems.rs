@@ -38,11 +38,7 @@ impl ProverType {
                 ]
             }
             ProverType::SP1 => {
-                vec![
-                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                    Value::Bytes(vec![].into()),
-                    Value::Bytes(vec![].into()),
-                ]
+                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
             }
             ProverType::Pico => {
                 vec![

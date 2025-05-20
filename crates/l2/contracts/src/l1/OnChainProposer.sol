@@ -67,6 +67,8 @@ contract OnChainProposer is
     address public SP1VERIFIER;
     address public TDXVERIFIER;
 
+    bytes32 public SP1_VERIFICATION_KEY;
+
     /// @notice Address used to avoid the verification process.
     /// @dev If the `R0VERIFIER` or the `SP1VERIFIER` contract address is set to this address,
     /// the verification process will not happen.
@@ -99,6 +101,7 @@ contract OnChainProposer is
         address sp1verifier,
         address picoverifier,
         address tdxverifier,
+        bytes32 sp1Vk,
         bytes32 genesisStateRoot,
         address[] calldata sequencerAddresses
     ) public initializer {
@@ -163,6 +166,13 @@ contract OnChainProposer is
             "OnChainProposer: tdxverifier is the contract address"
         );
         TDXVERIFIER = tdxverifier;
+        
+        // Set the SP1 program verification key
+        require(
+            SP1_VERIFICATION_KEY == bytes32(0),
+            "OnChainProposer: contract already initialized"
+        );
+        SP1_VERIFICATION_KEY = sp1Vk;
         
         batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
@@ -255,7 +265,6 @@ contract OnChainProposer is
         bytes32 risc0ImageId,
         bytes calldata risc0Journal,
         //sp1
-        bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
         //pico
@@ -302,7 +311,7 @@ contract OnChainProposer is
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, sp1PublicValues[16:]);
             ISP1Verifier(SP1VERIFIER).verifyProof(
-                sp1ProgramVKey,
+                SP1_VERIFICATION_KEY,
                 sp1PublicValues,
                 sp1ProofBytes
             );
