@@ -263,10 +263,12 @@ fn get_tx_diffs(
         Evm::LEVM { db } => {
             // First we add the account info
             for (address, original_account) in call_frame_backup.original_accounts_info.iter() {
-                let new_account_info = db
-                    .cache
-                    .get(address)
-                    .ok_or(BlockProducerError::StorageDataIsNone)?;
+                let new_account_info =
+                    db.cache
+                        .get(address)
+                        .ok_or(BlockProducerError::FailedToGetDataFrom(
+                            "DB Cache".to_owned(),
+                        ))?;
 
                 let nonce_diff: u16 = (new_account_info.info.nonce - original_account.info.nonce)
                     .try_into()
@@ -300,19 +302,22 @@ fn get_tx_diffs(
             for (address, original_storage_slots) in
                 call_frame_backup.original_account_storage_slots.iter()
             {
-                let account_info = db
-                    .cache
-                    .get(address)
-                    .ok_or(BlockProducerError::StorageDataIsNone)?;
+                let account_info =
+                    db.cache
+                        .get(address)
+                        .ok_or(BlockProducerError::FailedToGetDataFrom(
+                            "DB Cache".to_owned(),
+                        ))?;
 
                 let mut added_storage = HashMap::new();
                 for key in original_storage_slots.keys() {
                     added_storage.insert(
                         *key,
-                        *account_info
-                            .storage
-                            .get(key)
-                            .ok_or(BlockProducerError::StorageDataIsNone)?,
+                        *account_info.storage.get(key).ok_or(
+                            BlockProducerError::FailedToGetDataFrom(
+                                "Account info Storage".to_owned(),
+                            ),
+                        )?,
                     );
                 }
                 if let Some(account_state_diff) = modified_accounts.get_mut(address) {
