@@ -249,6 +249,9 @@ fn apply_plain_transaction_l2(
     Ok((report, transaction_backup))
 }
 
+/// Returns the state diffs introduced by the transaction by comparing the call frame backup
+/// (which holds the state before executing the transaction) with the current state of the cache
+/// (which contains all the writes performed by the transaction).
 fn get_tx_diffs(
     call_frame_backup: &CallFrameBackup,
     context: &PayloadBuildContext,
@@ -378,6 +381,11 @@ fn merge_diffs(
     merged_diffs
 }
 
+/// Calculates the size of the state diffs introduced by the transaction, including
+/// the size of withdrawals and deposits logs for this transaction, and the total
+/// size of all account diffs accumulated so far in the block.
+/// This is necessary because each transaction can modify accounts that were already
+/// changed by previous transactions, so we must recalculate the total diff size each time.
 fn calculate_tx_diff_size(
     merged_diffs: &HashMap<Address, AccountStateDiff>,
     head_tx: &HeadTransaction,
