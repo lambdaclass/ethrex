@@ -1,13 +1,12 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::{atomic::AtomicBool, Arc},
+    sync::{atomic::AtomicBool, Arc, RwLock},
 };
 
 use ethrex_common::{
     types::{AccountState, BlockHash},
     Address, Bloom, H256, U256,
 };
-use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 use crate::{api::StoreEngine, hash_address_fixed};
@@ -55,13 +54,15 @@ impl SnapshotTree {
         let disk = {
             let mut layers = self
                 .layers
-                .write().await;
+                .write()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?;
 
             for layer in layers.values() {
                 match layer {
                     Layer::DiskLayer(disk_layer) => disk_layer.mark_stale(),
                     Layer::DiffLayer(diff_layer) => diff_layer
-                        .write().await
+                        .write()
+                        .map_err(|error| SnapshotError::LockError(error.to_string()))?
                         .mark_stale(),
                 };
             }
@@ -75,12 +76,12 @@ impl SnapshotTree {
         Ok(())
     }
 
-    async fn snapshot(&self, block_hash: H256) -> Option<Layer> {
-        self.layers.read().await.get(&block_hash).cloned()
+    fn snapshot(&self, block_hash: H256) -> Option<Layer> {
+        self.layers.read().unwrap().get(&block_hash).cloned()
     }
 
     /// Adds a new snapshot into the tree.
-    pub async fn update(
+    pub fn update(
         &self,
         block_hash: H256,
         block_state_root: H256,
@@ -93,20 +94,20 @@ impl SnapshotTree {
             return Err(SnapshotError::SnapshotCycle);
         }
 
-        if let Some(parent) = self.snapshot(parent_block_hash).await {
+        if let Some(parent) = self.snapshot(parent_block_hash) {
             let snap = match parent {
                 Layer::DiskLayer(parent) => {
                     parent.update(block_hash, block_state_root, accounts, storage)
                 }
                 Layer::DiffLayer(parent) => parent
                     .read()
-                    .await
+                    .map_err(|error| SnapshotError::LockError(error.to_string()))?
                     .update(block_hash, block_state_root, accounts, storage),
             };
 
             self.layers
                 .write()
-                .await
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?
                 .insert(block_hash, Layer::DiffLayer(Arc::new(RwLock::new(snap))));
 
             Ok(())
@@ -122,16 +123,16 @@ impl SnapshotTree {
         }
     }
 
-    pub async fn len(&self) -> usize {
-        self.layers.read().await.len()
+    pub fn len(&self) -> usize {
+        self.layers.read().unwrap().len()
     }
 
     /// "Caps" the amount of layers, traversing downwards the snapshot tree
     /// from the head block until the number of allowed layers is passed.
     ///
     /// It's used to flatten the layers.
-    pub async fn cap(&self, head_block_hash: H256, layers_n: usize) -> Result<(), SnapshotError> {
-        let diff = if let Some(diff) = self.snapshot(head_block_hash).await {
+    pub fn cap(&self, head_block_hash: H256, layers_n: usize) -> Result<(), SnapshotError> {
+        let diff = if let Some(diff) = self.snapshot(head_block_hash) {
             match diff {
                 Layer::DiskLayer(_) => {
                     return Err(SnapshotError::SnapshotIsdiskLayer(head_block_hash))
@@ -148,8 +149,8 @@ impl SnapshotTree {
             let mut layers = self
                 .layers
                 .write()
-                .await;
-            let base = self.save_diff(Self::flatten_diff(head_block_hash, &mut layers)?).await?;
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?;
+            let base = self.save_diff(Self::flatten_diff(head_block_hash, &mut layers)?)?;
             layers.clear();
             layers.insert(head_block_hash, Layer::DiskLayer(base));
             return Ok(());
@@ -159,9 +160,9 @@ impl SnapshotTree {
         let mut layers = self
             .layers
             .write()
-            .await;
+            .map_err(|error| SnapshotError::LockError(error.to_string()))?;
 
-        let new_disk_layer = self.cap_layers(diff, layers_n, &mut layers).await?;
+        let new_disk_layer = self.cap_layers(diff, layers_n, &mut layers)?;
 
         // Remove stale layers or ones that link into one.
 
@@ -178,7 +179,7 @@ impl SnapshotTree {
                 Layer::DiffLayer(diff_layer) => {
                     let parent = diff_layer
                         .read()
-                        .await
+                        .map_err(|error| SnapshotError::LockError(error.to_string()))?
                         .parent();
                     let entry = children.entry(parent).or_default();
                     entry.push(*hash);
@@ -209,7 +210,7 @@ impl SnapshotTree {
                 Layer::DiffLayer(diff_layer) => {
                     if diff_layer
                         .read()
-                        .await
+                        .map_err(|error| SnapshotError::LockError(error.to_string()))?
                         .stale()
                     {
                         remove(*root, &children, &mut to_remove);
@@ -224,7 +225,7 @@ impl SnapshotTree {
         }
 
         if let Some(base) = new_disk_layer {
-            async fn rebloom(
+            fn rebloom(
                 root: H256,
                 layers: &HashMap<H256, Layer>,
                 children: &HashMap<H256, Vec<H256>>,
@@ -237,7 +238,7 @@ impl SnapshotTree {
                         Layer::DiffLayer(layer) => {
                             let mut layer = layer
                                 .write()
-                                .await;
+                                .map_err(|error| SnapshotError::LockError(error.to_string()))?;
                             layer.rebloom(base.clone(), parent_diffed);
                             Some(layer.diffed)
                         }
@@ -245,7 +246,7 @@ impl SnapshotTree {
 
                     if let Some(childs) = children.get(&root) {
                         for child in childs {
-                            Box::pin(rebloom(*child, layers, children, base.clone(), diffed)).await?;
+                            rebloom(*child, layers, children, base.clone(), diffed)?;
                         }
                     }
                 }
@@ -255,7 +256,7 @@ impl SnapshotTree {
                 "SnapshotTree: changed disk layer block hash: {}",
                 base.state_root
             );
-            rebloom(base.state_root, &layers, &children, base, None).await?;
+            rebloom(base.state_root, &layers, &children, base, None)?;
         }
 
         info!(
@@ -267,7 +268,7 @@ impl SnapshotTree {
     }
 
     /// Internal helper method to flatten diff layers.
-    async fn cap_layers(
+    fn cap_layers(
         &self,
         diff: Arc<RwLock<DiffLayer>>,
         layers_n: usize,
@@ -284,7 +285,7 @@ impl SnapshotTree {
                 Layer::DiffLayer(diff_layer) => {
                     let diff_value = diff_layer
                         .read()
-                        .await;
+                        .map_err(|error| SnapshotError::LockError(error.to_string()))?;
                     diff_wrapped = layers[&diff_value.parent()].clone();
                 }
             }
@@ -298,7 +299,7 @@ impl SnapshotTree {
         let (parent, parent_block_hash) = {
             let diff_value = diff
                 .read()
-                .await;
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?;
             (layers[&diff_value.parent()].clone(), diff_value.parent())
         };
 
@@ -311,7 +312,7 @@ impl SnapshotTree {
             // hold write lock until linked to new parent to avoid incorrect external reads
             let mut diff_value = diff
                 .write()
-                .await;
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?;
 
             // flatten parent into grand parent.
             let flattened = Self::flatten_diff(parent_block_hash, layers)?;
@@ -319,7 +320,7 @@ impl SnapshotTree {
                 Layer::DiskLayer(disk_layer) => disk_layer.block_hash(),
                 Layer::DiffLayer(diff_layer) => diff_layer
                     .read()
-                    .await
+                    .map_err(|error| SnapshotError::LockError(error.to_string()))?
                     .block_hash(),
             };
             layers.insert(flattened_block_hash, flattened.clone());
@@ -327,11 +328,11 @@ impl SnapshotTree {
         }
 
         // Persist the bottom most layer
-        let base = self.save_diff(Layer::DiffLayer(parent)).await?;
+        let base = self.save_diff(Layer::DiffLayer(parent))?;
         layers.insert(base.state_root, Layer::DiskLayer(base.clone()));
         let mut diff_value = diff
             .write()
-            .await;
+            .map_err(|error| SnapshotError::LockError(error.to_string()))?;
         diff_value.set_parent(base.root());
 
         Ok(Some(base))
@@ -342,7 +343,7 @@ impl SnapshotTree {
     /// Returning a new disk layer whose root is the diff root.
     ///
     /// Returns Err if the current disk layer is already marked stale.
-    async fn save_diff(&self, diff: Layer) -> Result<Arc<DiskLayer>, SnapshotError> {
+    fn save_diff(&self, diff: Layer) -> Result<Arc<DiskLayer>, SnapshotError> {
         let diff = match diff {
             Layer::DiskLayer(disk_layer) => {
                 return Err(SnapshotError::SnapshotIsdiskLayer(disk_layer.state_root))
@@ -351,7 +352,7 @@ impl SnapshotTree {
         };
         let diff_value = diff
             .read()
-            .await;
+            .map_err(|error| SnapshotError::LockError(error.to_string()))?;
         let prev_disk = diff_value.origin();
 
         if prev_disk.mark_stale() {
@@ -558,7 +559,6 @@ impl SnapshotTree {
             parent_value.storage(),
         );
 
-        // TODO: should we rebloom here?
         layer.diffed = layer_value.diffed();
 
         Ok(Layer::DiffLayer(Arc::new(RwLock::new(layer))))
@@ -772,7 +772,7 @@ mod tests {
         )
         .unwrap();
 
-        tree.cap(root2, 1).await.unwrap();
+        tree.cap(root2, 1).unwrap();
         assert_eq!(tree.layers.read().unwrap().len(), 2);
 
         // Retrieve the account and check it returns the second value
