@@ -3,18 +3,6 @@
 The state tests are individual transactions not related one to each other that test particular behavior of the EVM. Tests are usually run for multiple forks and the result of execution may vary between forks.
 Some [docs](https://ethereum.github.io/execution-spec-tests/main/consuming_tests/state_test/).
 
-## Setting up the tests
-
-```bash
-make download-evm-ef-tests
-```
-
-## Reloading tests when outdated
-
-```bash
-make refresh-evm-ef-tests
-```
-
 ## Running the tests
 
 ```bash
@@ -26,6 +14,18 @@ cargo test --package ef_tests-state --test all --release -- <flags>
 ```
 
 All tests are first run on levm for the most recent forks (Merge,Shangai,Cancun and Prague), and then any failing tests are re-run on revm. If you want to run the tests with a different set up, you can see how on the following sections.
+
+## Setting up the tests if you are running flamegraphs
+
+```bash
+make download-evm-ef-tests
+```
+
+## Reloading tests when outdated
+
+```bash
+make refresh-evm-ef-tests
+```
 
 ### Flags
 - `forks`: Forks for which we want to run the tests for.

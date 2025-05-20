@@ -2,12 +2,6 @@
 The blockchain tests test block validation and the consensus rules of the Ethereum blockchain. Tests are usually run for multiple forks.
 Some [docs](https://ethereum.github.io/execution-spec-tests/main/consuming_tests/blockchain_test/).
 
-## Setting up the tests
-
-```bash
-make download-test-vectors
-```
-
 ## Running the tests
 
 ```bash
