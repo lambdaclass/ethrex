@@ -182,10 +182,9 @@ impl ProofCoordinator {
         let rpc_url = eth_config
             .rpc_url
             .first()
-            .clone()
             .ok_or(SequencerError::ProverServerError(
                 ProverServerError::Custom("no rpc urls present!".to_string()),
-            ));
+            ))?.to_string();
 
         Ok(Self {
             listen_ip: config.listen_ip,
