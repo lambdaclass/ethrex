@@ -7,6 +7,7 @@ on:
     branches: ["**"]
     paths:
       - "cmd/ef_tests/state/**"
+      - "crates/vm/levm/**"
       - ".github/workflows/pr-main_levm.yaml"
   workflow_dispatch:
 
@@ -74,8 +75,6 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-        with:
-          ref: main
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
