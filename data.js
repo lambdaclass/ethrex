@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747761403692,
+  "lastUpdate": 1747762370882,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9132,6 +9132,35 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/lambdaclass/ethrex/commit/a49cb6c6ff7f1e852a73b360553a17ee91d812e6"
         },
         "date": 1747760139296,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007272762891566265,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "415a46dacc1ff5a9609e82df661643f9e1c05ee6",
+          "message": "fix(core): fix load test not running properly (#2851)\n\n**Motivation**\n\nDue to changes to gas estimation the load test had to call estimage gas\na lot which slowed downn the load test \"setup\". Also increased the\nmax_fee_per_gas which was lowered in recent commits by mistake.",
+          "timestamp": "2025-05-20T16:23:12Z",
+          "tree_id": "74b4b1d6f118e8394b6eba3e1477c95a7c035326",
+          "url": "https://github.com/lambdaclass/ethrex/commit/415a46dacc1ff5a9609e82df661643f9e1c05ee6"
+        },
+        "date": 1747762367835,
         "tool": "customBiggerIsBetter",
         "benches": [
           {
