@@ -113,6 +113,12 @@ impl GasTipEstimator {
     }
 }
 
+impl Default for GasTipEstimator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Tests for the estimate_gas_tip function.
 #[cfg(test)]
 mod tests {

@@ -1,8 +1,6 @@
 use crate::{
     clients::eth::get_address_from_secret_key,
-    eth::{
-        gas_price::GasPrice, transaction::EstimateGasRequest,
-    },
+    eth::{gas_price::GasPrice, transaction::EstimateGasRequest},
     rpc::{RpcApiContext, RpcHandler},
     types::transaction::SendRawTransactionRequest,
     utils::RpcErr,
