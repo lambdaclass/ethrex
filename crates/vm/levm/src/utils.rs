@@ -738,4 +738,11 @@ impl<'a> VM<'a> {
 
         Ok((callee, code))
     }
+
+    /// Checks if an address is delegation target in current transaction.
+    pub fn is_delegation_target(&self, address: Address) -> bool {
+        self.tx.authorization_list().as_ref().map_or(false, |list| {
+            list.iter().any(|item| item.address == address)
+        })
+    }
 }

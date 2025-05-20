@@ -342,6 +342,7 @@ pub mod test_utils {
     use ethrex_blockchain::Blockchain;
     use ethrex_common::H512;
     use ethrex_p2p::{
+        peer_handler::PeerHandler,
         sync_manager::SyncManager,
         types::{Node, NodeRecord},
     };
@@ -369,7 +370,7 @@ pub mod test_utils {
         let node = Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1);
         let signer = SigningKey::random(&mut rand::rngs::OsRng);
 
-        NodeRecord::from_node(&node, 0, &signer).unwrap()
+        NodeRecord::from_node(&node, 1, &signer).unwrap()
     }
 
     // Util to start an api for testing on ports 8500 and 8501,
@@ -415,6 +416,7 @@ pub mod test_utils {
             local_p2p_node,
             example_local_node_record(),
             SyncManager::dummy(),
+            PeerHandler::dummy(),
             "ethrex/test".to_string(),
             #[cfg(feature = "based")]
             gateway_eth_client,
@@ -439,6 +441,7 @@ pub mod test_utils {
             blockchain,
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
+            peer_handler: PeerHandler::dummy(),
             node_data: NodeData {
                 jwt_secret: Default::default(),
                 local_p2p_node: example_p2p_node(),
