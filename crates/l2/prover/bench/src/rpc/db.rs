@@ -237,7 +237,9 @@ impl RpcDB {
     pub fn to_exec_db(&self, block: &Block) -> Result<ethrex_vm::ProverDB, ProverDBError> {
         // TODO: Simplify this function and potentially merge with the implementation for
         // StoreWrapper.
+
         let chain_config = *CANCUN_CONFIG;
+
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()), CacheDB::new());
 
         // pre-execute and get all state changes

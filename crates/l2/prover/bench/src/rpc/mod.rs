@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use again::{RetryPolicy, Task};
+
 use bytes::Bytes;
 use ethrex_common::{
     types::{AccountState, Block, EMPTY_KECCACK_HASH},
