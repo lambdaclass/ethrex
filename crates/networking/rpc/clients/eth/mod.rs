@@ -158,23 +158,12 @@ impl EthClient {
     }
 
     async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EthClientError> {
-        // Try first rpc url
-        let mut response = {
-            let url = self
-                .urls
-                .first()
-                .ok_or(EthClientError::Custom("Client has no rpc urls".to_string()))?;
-            self.send_request_to_url(url, &request).await
-        };
+        let mut response = Err(EthClientError::Custom("All rpc calls failed".to_string()));
 
-        if response.is_ok() {
-            return response;
-        }
-        // If first rpc url fails try with the rest
-        for url in self.urls.iter().skip(1) {
+        for url in self.urls.iter() {
             response = self.send_request_to_url(url, &request).await;
             if response.is_ok() {
-                break;
+                return response;
             }
         }
         response
