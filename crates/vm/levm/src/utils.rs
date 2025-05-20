@@ -456,19 +456,20 @@ impl<'a> VM<'a> {
         }
 
         // Update callframe code address and code because these things could've changed after processing the authorization list.
-        let recipient = self.current_call_frame()?.to;
-        let recipient_acc = self.db.access_account(&mut self.substate, recipient)?.0;
+        let callee_addr = self.current_call_frame()?.to;
+        let callee_acc = self.db.access_account(&mut self.substate, callee_addr)?.0;
 
-        let code_address = if has_delegation(&recipient_acc)? {
-            get_authorized_address(&recipient_acc)?
+        let (code_address, code) = if has_delegation(&callee_acc)? {
+            let delegated_address = get_authorized_address(&callee_acc)?;
+            let delegated_code = self
+                .db
+                .access_account(&mut self.substate, delegated_address)?
+                .0
+                .code;
+            (delegated_address, delegated_code)
         } else {
-            recipient
+            (callee_addr, callee_acc.code)
         };
-        let code = self
-            .db
-            .access_account(&mut self.substate, code_address)?
-            .0
-            .code;
 
         self.current_call_frame_mut()?.set_code(code)?;
         self.current_call_frame_mut()?.code_address = code_address;
