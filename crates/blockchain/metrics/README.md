@@ -27,12 +27,3 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l2.overr
       - pwd: `admin` 
     - PORT `9092` &rarr; Prometheus
 
-- For the L1 dev we use the following files in conjunction:
-  - `docker-compose-metrics.yaml`
-  - `docker-compose-metrics-l1-dev.overrides.yaml`
-  - The defaults are:
-    - PORT `3701` &rarr; metrics API (used by prometheus)
-    - PORT `3801` &rarr; Grafana
-      - usr: `admin`
-      - pwd: `admin` 
-    - PORT `9091` &rarr; Prometheus
