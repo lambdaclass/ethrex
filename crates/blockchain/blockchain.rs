@@ -208,9 +208,8 @@ impl Blockchain {
             .map_err(|e| (e.into(), None))?;
         let fork = chain_config.fork(first_block_header.timestamp);
 
-        let store_wrapper =
-            StoreVmDatabase::new(self.storage.clone(), first_block_header.parent_hash);
-        let mut vm = Evm::new(self.evm_engine, store_wrapper);
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), first_block_header.parent_hash);
+        let mut vm = Evm::new(self.evm_engine, vm_db);
 
         let blocks_len = blocks.len();
         let mut all_receipts: HashMap<BlockHash, Vec<Receipt>> = HashMap::new();

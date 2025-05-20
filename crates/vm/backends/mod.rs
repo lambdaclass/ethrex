@@ -71,14 +71,14 @@ impl std::fmt::Debug for Evm {
 impl Evm {
     /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
     pub fn new(engine: EvmEngine, db: impl VmDatabase + 'static) -> Self {
-        let store_wrapper = DynVmDatabase(Box::new(db));
+        let wrapped_db = DynVmDatabase(Box::new(db));
 
         match engine {
             EvmEngine::REVM => Evm::REVM {
-                state: evm_state(store_wrapper),
+                state: evm_state(wrapped_db),
             },
             EvmEngine::LEVM => Evm::LEVM {
-                db: GeneralizedDatabase::new(Arc::new(store_wrapper), CacheDB::new()),
+                db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
             },
         }
     }
