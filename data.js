@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747769681029,
+  "lastUpdate": 1747770376267,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8185,6 +8185,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211690851599,
             "range": "± 733654972",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e9b7de232230f24a6632d495b08dcf50d47f5c69",
+          "message": "fix(l2): correct private key for load test account (#2837)\n\n**Motivation**\n\nAfter the changes introduced in #2781. The rich account needed for the\nload test no longer has funds to make the deploy and the transactions.\n\n**Description**\n\nChange the private key to one of the rich accounts that is used on the\ninitial deposit in the deployment of the L2\n\n**How to test**\n\nRunning: `cargo run --manifest-path ../../cmd/load_test/Cargo.toml -- -k\n../../test_data/private_keys.txt -t erc20 -N 50 -n\nhttp://localhost:1729`\n\nThis won't lead to panic.\n\nBut in main we get:\n```\nERC20 Load test starting\nDeploying ERC20 contract...\nthread 'main' panicked at cmd/load_test/src/main.rs:358:18:\nFailed to deploy ERC20 contract: eth_sendRawTransaction request error: Invalid params: Account does not have enough balance to cover the tx cost\n\nCaused by:\n    Invalid params: Account does not have enough balance to cover the tx cost\n```",
+          "timestamp": "2025-05-20T18:51:24Z",
+          "tree_id": "d4100a43ca2cfb2a1430792e48679a5b19938fcb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e9b7de232230f24a6632d495b08dcf50d47f5c69"
+        },
+        "date": 1747770373896,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212906341589,
+            "range": "± 438632939",
             "unit": "ns/iter"
           }
         ]
