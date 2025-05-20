@@ -175,4 +175,10 @@ pub mod test_utils {
             add_blocks_with_transactions(storage, block_num, txs).await;
         }
     }
+
+    pub async fn add_empty_blocks(storage: &Store, block_count: u64) {
+        for block_num in 1..=block_count {
+            add_blocks_with_transactions(storage, block_num, vec![]).await;
+        }
+    }
 }
