@@ -31,7 +31,7 @@ impl<'a> VM<'a> {
 
         let (account, address_was_cold) = self
             .db
-            .access_account(&mut self.accrued_substate, address)?;
+            .access_account(&mut self.ubstate, address)?;
         let account_info = account.info.clone();
 
         let current_call_frame = self.current_call_frame_mut()?;
@@ -257,9 +257,7 @@ impl<'a> VM<'a> {
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
-        let (account, address_was_cold) = self
-            .db
-            .access_account(&mut self.accrued_substate, address)?;
+        let (account, address_was_cold) = self.db.access_account(&mut self.substate, address)?;
 
         let account_code_length = account.code.len().into();
 
@@ -404,13 +402,14 @@ impl<'a> VM<'a> {
         let (account_is_empty, account_code_hash, address_was_cold) = {
             let (account, address_was_cold) = self
                 .db
-                .access_account(&mut self.accrued_substate, address)?;
+                .access_account(&mut self.substate, address)?;
             (
                 account.is_empty(),
                 account.info.code_hash.0,
                 address_was_cold,
             )
         };
+
         let current_call_frame = self.current_call_frame_mut()?;
 
         current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;

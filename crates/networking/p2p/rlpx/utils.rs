@@ -1,10 +1,11 @@
 use crate::types::Node;
-use ethrex_common::H512;
+use ethrex_common::{H256, H512};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use k256::{
     elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
     EncodedPoint, PublicKey, SecretKey,
 };
+use sha3::{Digest, Keccak256};
 use snap::raw::{max_compress_len, Decoder as SnappyDecoder, Encoder as SnappyEncoder};
 use tracing::{debug, error, warn};
 
@@ -37,18 +38,23 @@ pub fn kdf(secret: &[u8], output: &mut [u8]) {
     concat_kdf::derive_key_into::<k256::sha2::Sha256>(secret, &[], output).unwrap();
 }
 
-/// Computes recipient id from public key.
-pub fn pubkey2id(pk: &PublicKey) -> H512 {
+/// Cpmputes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
+pub fn node_id(public_key: &H512) -> H256 {
+    H256(Keccak256::new_with_prefix(public_key).finalize().into())
+}
+
+/// Decompresses the received public key
+pub fn decompress_pubkey(pk: &PublicKey) -> H512 {
     let encoded = pk.to_encoded_point(false);
     let bytes = encoded.as_bytes();
     debug_assert_eq!(bytes[0], 4);
     H512::from_slice(&bytes[1..])
 }
 
-/// Computes public key from recipient id.
-/// The node ID is the uncompressed public key of a node, with the first byte omitted (0x04).
-pub fn id2pubkey(id: H512) -> Option<PublicKey> {
-    let point = EncodedPoint::from_untagged_bytes(&id.0.into());
+/// Compresses the received public key
+/// The received value is the uncompressed public key of a node, with the first byte omitted (0x04).
+pub fn compress_pubkey(pk: H512) -> Option<PublicKey> {
+    let point = EncodedPoint::from_untagged_bytes(&pk.0.into());
     PublicKey::from_encoded_point(&point).into_option()
 }
 
@@ -98,12 +104,12 @@ mod tests {
     }
 
     #[test]
-    fn id2pubkey_pubkey2id_smoke_test() {
+    fn compress_pubkey_decompress_pubkey_smoke_test() {
         use rand::rngs::OsRng;
 
         let sk = SecretKey::random(&mut OsRng);
         let pk = sk.public_key();
-        let id = pubkey2id(&pk);
-        let _pk2 = id2pubkey(id).unwrap();
+        let id = decompress_pubkey(&pk);
+        let _pk2 = compress_pubkey(id).unwrap();
     }
 }

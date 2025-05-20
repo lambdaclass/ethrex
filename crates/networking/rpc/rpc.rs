@@ -49,6 +49,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 #[cfg(feature = "based")]
 use ethrex_common::Public;
+use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
@@ -91,6 +92,7 @@ pub struct RpcApiContext {
     pub blockchain: Arc<Blockchain>,
     pub active_filters: ActiveFilters,
     pub syncer: Arc<SyncManager>,
+    pub peer_handler: PeerHandler,
     pub node_data: NodeData,
     #[cfg(feature = "based")]
     pub gateway_eth_client: EthClient,
@@ -155,6 +157,7 @@ pub async fn start_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     syncer: SyncManager,
+    peer_handler: PeerHandler,
     client_version: String,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
@@ -171,6 +174,7 @@ pub async fn start_api(
         blockchain,
         active_filters: active_filters.clone(),
         syncer: Arc::new(syncer),
+        peer_handler,
         node_data: NodeData {
             jwt_secret,
             local_p2p_node,
@@ -453,6 +457,7 @@ pub async fn map_engine_requests(
 pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
+        "admin_peers" => admin::peers(&context),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
@@ -545,7 +550,7 @@ mod tests {
             .await
             .unwrap();
         let context = default_context_with_storage(storage).await;
-        let local_p2p_node = context.node_data.local_p2p_node;
+        let local_p2p_node = context.node_data.local_p2p_node.clone();
 
         let enr_url = context.node_data.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
@@ -560,7 +565,7 @@ mod tests {
             "result": {
                 "enode": "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@127.0.0.1:30303",
                 "enr": enr_url,
-                "id": hex::encode(Keccak256::digest(local_p2p_node.node_id)),
+                "id": hex::encode(Keccak256::digest(local_p2p_node.public_key)),
                 "ip": "127.0.0.1",
                 "name": "ethrex/test",
                 "ports": {

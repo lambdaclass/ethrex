@@ -1176,24 +1176,25 @@ impl Transaction {
         }
     }
 
-    pub fn access_list(&self) -> AccessList {
+    pub fn access_list(&self) -> &AccessList {
+        static EMPTY_ACCESS_LIST: AccessList = Vec::new();
         match self {
-            Transaction::LegacyTransaction(_tx) => Vec::new(),
-            Transaction::EIP2930Transaction(tx) => tx.access_list.clone(),
-            Transaction::EIP1559Transaction(tx) => tx.access_list.clone(),
-            Transaction::EIP4844Transaction(tx) => tx.access_list.clone(),
-            Transaction::EIP7702Transaction(tx) => tx.access_list.clone(),
-            Transaction::PrivilegedL2Transaction(tx) => tx.access_list.clone(),
+            Transaction::LegacyTransaction(_tx) => &EMPTY_ACCESS_LIST,
+            Transaction::EIP2930Transaction(tx) => &tx.access_list,
+            Transaction::EIP1559Transaction(tx) => &tx.access_list,
+            Transaction::EIP4844Transaction(tx) => &tx.access_list,
+            Transaction::EIP7702Transaction(tx) => &tx.access_list,
+            Transaction::PrivilegedL2Transaction(tx) => &tx.access_list,
         }
     }
 
-    pub fn authorization_list(&self) -> Option<AuthorizationList> {
+    pub fn authorization_list(&self) -> Option<&AuthorizationList> {
         match self {
             Transaction::LegacyTransaction(_) => None,
             Transaction::EIP2930Transaction(_) => None,
             Transaction::EIP1559Transaction(_) => None,
             Transaction::EIP4844Transaction(_) => None,
-            Transaction::EIP7702Transaction(tx) => Some(tx.authorization_list.clone()),
+            Transaction::EIP7702Transaction(tx) => Some(&tx.authorization_list),
             Transaction::PrivilegedL2Transaction(_) => None,
         }
     }
@@ -2227,7 +2228,7 @@ mod serde_impl {
                 to: value.to,
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data,
+                input: value.data.clone(),
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2254,7 +2255,7 @@ mod serde_impl {
                 to: TxKind::Call(value.to),
                 gas: Some(value.gas),
                 value: value.value,
-                input: value.data,
+                input: value.data.clone(),
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2281,7 +2282,7 @@ mod serde_impl {
                 to: TxKind::Call(value.to),
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data,
+                input: value.data.clone(),
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2314,7 +2315,7 @@ mod serde_impl {
                 to: value.to,
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data,
+                input: value.data.clone(),
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),

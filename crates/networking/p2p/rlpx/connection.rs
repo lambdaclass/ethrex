@@ -10,7 +10,10 @@ use crate::{
         },
         frame::RLPxCodec,
         message::Message,
-        p2p::{self, Capability, DisconnectMessage, PingMessage, PongMessage},
+        p2p::{
+            self, Capability, DisconnectMessage, PingMessage, PongMessage, CAP_ETH_68, CAP_SNAP_1,
+            SUPPORTED_CAPABILITIES,
+        },
         utils::{log_peer_debug, log_peer_error},
     },
     snap::{
@@ -45,13 +48,9 @@ use super::{
     eth::transactions::NewPooledTransactionHashes, p2p::DisconnectReason, utils::log_peer_warn,
 };
 
-const CAP_P2P_5: (Capability, u8) = (Capability::P2p, 5);
-const CAP_ETH_68: (Capability, u8) = (Capability::Eth, 68);
-const CAP_SNAP_1: (Capability, u8) = (Capability::Snap, 1);
-const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P_5, CAP_ETH_68, CAP_SNAP_1];
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
-const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
-const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
@@ -59,7 +58,7 @@ pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
 pub(crate) struct RemoteState {
-    pub(crate) node_id: H512,
+    pub(crate) public_key: H512,
     pub(crate) nonce: H256,
     pub(crate) ephemeral_key: PublicKey,
     pub(crate) init_message: Vec<u8>,
@@ -78,7 +77,7 @@ pub(crate) struct RLPxConnection<S> {
     framed: Framed<S, RLPxCodec>,
     storage: Store,
     blockchain: Arc<Blockchain>,
-    capabilities: Vec<(Capability, u8)>,
+    capabilities: Vec<Capability>,
     negotiated_eth_version: u8,
     negotiated_snap_version: u8,
     next_periodic_ping: Instant,
@@ -144,7 +143,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     /// Handshake already performed, now it starts a peer connection.
     /// It runs in it's own task and blocks until the connection is dropped
-    pub async fn start(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
+    pub async fn start(
+        &mut self,
+        table: Arc<Mutex<crate::kademlia::KademliaTable>>,
+        inbound: bool,
+    ) {
         log_peer_debug(&self.node, "Starting RLPx connection");
 
         if let Err(reason) = self.post_handshake_checks(table.clone()).await {
@@ -164,22 +167,18 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // Handshake OK: handle connection
             // Create channels to communicate directly to the peer
             let (peer_channels, sender, receiver) = PeerChannels::create();
-            let capabilities = self
-                .capabilities
-                .iter()
-                .map(|(cap, _)| cap.clone())
-                .collect();
 
             // NOTE: if the peer came from the discovery server it will already be inserted in the table
             // but that might not always be the case, so we try to add it to the table
             // Note: we don't ping the node we let the validation service do its job
             {
                 let mut table_lock = table.lock().await;
-                table_lock.insert_node_forced(self.node);
+                table_lock.insert_node_forced(self.node.clone());
                 table_lock.init_backend_communication(
-                    self.node.node_id,
+                    self.node.node_id(),
                     peer_channels,
-                    capabilities,
+                    self.capabilities.clone(),
+                    inbound,
                 );
             }
             if let Err(e) = self.connection_loop(sender, receiver).await {
@@ -223,12 +222,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 log_peer_debug(&self.node, "Peer already connected, don't replace it");
             }
             _ => {
-                let remote_node_id = self.node.node_id;
+                let remote_public_key = self.node.public_key;
                 log_peer_error(
                     &self.node,
-                    &format!("{error_text}: ({error}), discarding peer {remote_node_id}"),
+                    &format!("{error_text}: ({error}), discarding peer {remote_public_key}"),
                 );
-                table.lock().await.replace_peer(remote_node_id);
+                table.lock().await.replace_peer(self.node.node_id());
             }
         }
 
@@ -262,8 +261,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
         match msg {
             Message::Hello(hello_message) => {
-                let mut negotiated_eth_cap = (Capability::Eth, 0);
-                let mut negotiated_snap_cap = (Capability::Snap, 0);
+                let mut negotiated_eth_cap = Capability::eth(0);
+                let mut negotiated_snap_cap = Capability::snap(0);
 
                 log_peer_debug(
                     &self.node,
@@ -275,12 +274,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
                 // Check if we have any capability in common and store the highest version
                 for cap in &hello_message.capabilities {
-                    match *cap {
-                        CAP_ETH_68 if CAP_ETH_68.1 > negotiated_eth_cap.1 => {
-                            negotiated_eth_cap = CAP_ETH_68
+                    match cap.protocol {
+                        "eth" => {
+                            if CAP_ETH_68.version > negotiated_eth_cap.version {
+                                negotiated_eth_cap = CAP_ETH_68;
+                            }
                         }
-                        CAP_SNAP_1 if CAP_SNAP_1.1 > negotiated_snap_cap.1 => {
-                            negotiated_snap_cap = CAP_SNAP_1
+                        "snap" => {
+                            if CAP_SNAP_1.version > negotiated_snap_cap.version {
+                                negotiated_snap_cap = CAP_SNAP_1;
+                            }
                         }
                         _ => {}
                     }
@@ -288,14 +291,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
                 self.capabilities = hello_message.capabilities;
 
-                if negotiated_eth_cap.1 == 0 {
+                if negotiated_eth_cap.version == 0 {
                     return Err(RLPxError::NoMatchingCapabilities());
                 }
-                self.negotiated_eth_version = negotiated_eth_cap.1;
+                self.negotiated_eth_version = negotiated_eth_cap.version;
 
-                if negotiated_snap_cap.1 != 0 {
-                    self.negotiated_snap_version = negotiated_snap_cap.1;
+                if negotiated_snap_cap.version != 0 {
+                    self.negotiated_snap_version = negotiated_snap_cap.version;
                 }
+
+                self.node.version = Some(hello_message.client_id);
 
                 Ok(())
             }
@@ -321,7 +326,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let mut broadcaster_receive = {
             if self
                 .capabilities
-                .contains(&(Capability::Eth, self.negotiated_eth_version))
+                .contains(&(Capability::eth(self.negotiated_eth_version)))
             {
                 Some(self.connection_broadcast_send.subscribe())
             } else {
@@ -428,7 +433,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         sender: mpsc::Sender<Message>,
     ) -> Result<(), RLPxError> {
         let peer_supports_eth = self.negotiated_eth_version != 0;
-        let is_synced = self.storage.is_synced().await?;
         match message {
             Message::Disconnect(msg_data) => {
                 log_peer_debug(
@@ -459,7 +463,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             // TODO(#1129) Add the transaction to the mempool once received.
             Message::Transactions(txs) if peer_supports_eth => {
-                if is_synced {
+                if self.blockchain.is_synced() {
                     let mut valid_txs = vec![];
                     for tx in &txs.transactions {
                         if let Err(e) = self.blockchain.add_transaction_to_pool(tx.clone()).await {
@@ -509,7 +513,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::PooledTransactions(response)).await?;
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
-                if is_synced {
+                if self.blockchain.is_synced() {
                     msg.handle(&self.node, &self.blockchain).await?;
                 }
             }
@@ -567,7 +571,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Sending eth Status if peer supports it
         if self
             .capabilities
-            .contains(&(Capability::Eth, self.negotiated_eth_version))
+            .contains(&(Capability::eth(self.negotiated_eth_version)))
         {
             let status =
                 backend::get_status(&self.storage, self.negotiated_eth_version as u32).await?;
