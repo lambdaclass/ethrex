@@ -2,7 +2,6 @@ use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
-use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::collections::{BTreeMap, HashMap};
@@ -322,7 +321,6 @@ impl Genesis {
         }
 
         BlockHeader {
-            hash: OnceCell::new(),
             parent_hash: H256::zero(),
             ommers_hash: *DEFAULT_OMMERS_HASH,
             coinbase: self.coinbase,
@@ -353,6 +351,7 @@ impl Genesis {
                 .config
                 .is_prague_activated(self.timestamp)
                 .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH)),
+            ..Default::default()
         }
     }
 

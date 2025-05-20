@@ -706,7 +706,6 @@ mod test {
     #[test]
     fn test_validate_block_header() {
         let parent_block = BlockHeader {
-            hash: OnceCell::new(),
             parent_hash: H256::from_str(
                 "0x0000000000000000000000000000000000000000000000000000000000000000",
             )
@@ -748,9 +747,9 @@ mod test {
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
+            ..Default::default()
         };
         let block = BlockHeader {
-            hash: OnceCell::new(),
             parent_hash: H256::from_str(
                 "0x48e29e7357408113a4166e04e9f1aeff0680daa2b97ba93df6512a73ddf7a154",
             )
@@ -792,6 +791,7 @@ mod test {
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
+            ..Default::default()
         };
         assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok())
     }
