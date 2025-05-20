@@ -1,6 +1,7 @@
 use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_common::Address;
-use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
+use ethrex_l2::sequencer::proof_coordinator::ProofData;
+use ethrex_l2::utils::prover::proving_systems::{BatchProof, ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
@@ -33,11 +34,22 @@ pub fn verify(_proof: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn to_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::error::Error>> {
+fn to_calldata(proof: ProveOutput) -> ProofCalldata {
     let public_inputs = proof.0.encode();
-    Ok(ProofCalldata {
+    ProofCalldata {
         prover_type: ProverType::Exec,
         calldata: vec![Value::Bytes(public_inputs.into())],
+    }
+}
+
+pub fn to_submit(
+    batch_number: u64,
+    proof: ProveOutput,
+) -> Result<ProofData, Box<dyn std::error::Error>> {
+    let batch_proof = BatchProof::ProofCalldata(to_calldata(proof));
+    Ok(ProofData::ProofSubmit {
+        batch_number,
+        batch_proof,
     })
 }
 

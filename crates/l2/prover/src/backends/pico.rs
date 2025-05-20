@@ -73,7 +73,18 @@ pub fn verify(_output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn to_calldata(output: ProveOutput) -> Result<ProofCalldata, Box<dyn std::error::Error>> {
+pub fn to_submit(
+    batch_number: u64,
+    proof: ProveOutput,
+) -> Result<ProofData, Box<dyn std::error::Error>> {
+    let batch_proof = BatchProof::ProofCalldata(to_calldata(proof));
+    Ok(ProofData::ProofSubmit {
+        batch_number,
+        batch_proof,
+    })
+}
+
+fn to_calldata(output: ProveOutput) -> ProofCalldata {
     let ProveOutput {
         public_values,
         proof,
@@ -89,8 +100,8 @@ pub fn to_calldata(output: ProveOutput) -> Result<ProofCalldata, Box<dyn std::er
     // uint256[8] calldata proof
     let calldata = vec![Value::Bytes(public_values.into()), Value::FixedArray(proof)];
 
-    Ok(ProofCalldata {
+    ProofCalldata {
         prover_type: ProverType::Pico,
         calldata,
-    })
+    }
 }

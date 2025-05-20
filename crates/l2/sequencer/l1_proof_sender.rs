@@ -132,11 +132,11 @@ impl L1ProofSender {
         // this approach is straight-forward for now.
         let mut proofs = HashMap::with_capacity(self.needed_proof_types.len());
         for prover_type in self.needed_proof_types.iter() {
-            let proof = read_proof(batch_number, StateFileType::Proof(*prover_type))?;
-            if proof.prover_type != *prover_type {
+            let proof = read_proof(batch_number, StateFileType::BatchProof(*prover_type))?;
+            if proof.prover_type() != *prover_type {
                 return Err(ProofSenderError::ProofNotPresent(*prover_type));
             }
-            proofs.insert(prover_type, proof.calldata);
+            proofs.insert(prover_type, proof.calldata());
         }
 
         debug!("Sending proof for batch number: {batch_number}");

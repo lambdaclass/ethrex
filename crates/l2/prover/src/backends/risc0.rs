@@ -43,7 +43,18 @@ pub fn verify(receipt: &Receipt) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Box<dyn std::error::Error>> {
+pub fn to_submit(
+    batch_number: u64,
+    proof: ProveOutput,
+) -> Result<ProofData, Box<dyn std::error::Error>> {
+    let batch_proof = BatchProof::ProofCalldata(to_calldata(proof));
+    Ok(ProofData::ProofSubmit {
+        batch_number,
+        batch_proof,
+    })
+}
+
+fn to_calldata(receipt: Receipt) -> ProofCalldata {
     let seal = encode_seal(&receipt)?;
     let image_id = ZKVM_RISC0_PROGRAM_ID;
     let journal = receipt.journal.bytes;
@@ -66,8 +77,8 @@ pub fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Box<dyn std::error
         Value::Bytes(journal.into()),
     ];
 
-    Ok(ProofCalldata {
+    ProofCalldata {
         prover_type: ProverType::RISC0,
         calldata,
-    })
+    }
 }
