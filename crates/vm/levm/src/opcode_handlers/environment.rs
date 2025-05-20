@@ -31,7 +31,7 @@ impl<'a> VM<'a> {
 
         let (account, address_was_cold) = self
             .db
-            .access_account(&mut self.ubstate, address)?;
+            .access_account(&mut self.substate, address)?;
         let account_info = account.info.clone();
 
         let current_call_frame = self.current_call_frame_mut()?;
