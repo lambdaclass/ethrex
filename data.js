@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747762370882,
+  "lastUpdate": 1747762704644,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8095,6 +8095,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210656545842,
             "range": "± 363645195",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "252d67040cc232e6f440f89daf5c4fc9f437ccd6",
+          "message": "feat(l2): hardcode SP1 verification key (#2708)\n\n**Motivation**\n\nInstead of sending it as a parameter, it will be set as a contract\nstatic variable.\n\nAlso makes sp1 build in docker for reproducibility (and so the key\ndoesn't change depending on the platform we're building)\n\n---------\n\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Manuel Iñaki Bilbao <manuel.bilbao@lambdaclass.com>",
+          "timestamp": "2025-05-20T16:43:49Z",
+          "tree_id": "34aca3ca7e81d3b11445d24e932f5b35b63ffeb6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/252d67040cc232e6f440f89daf5c4fc9f437ccd6"
+        },
+        "date": 1747762702051,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 213412236099,
+            "range": "± 816074682",
             "unit": "ns/iter"
           }
         ]
