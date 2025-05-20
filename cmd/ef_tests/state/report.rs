@@ -1,3 +1,4 @@
+use crate::runner::revm_runner::convert_revm_address_to_levm;
 use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
 use ethrex_common::{
@@ -7,6 +8,7 @@ use ethrex_common::{
 use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use itertools::Itertools;
+use keccak_hash::keccak;
 use revm::primitives::{EVMError, ExecutionResult as RevmExecutionResult};
 use serde::{Deserialize, Serialize};
 use spinoff::{spinners::Dots, Color, Spinner};
@@ -423,12 +425,13 @@ impl Display for EFTestsReport {
                                     levm_gas_refunded.abs_diff(*revm_gas_refunded)
                                 )?;
                             }
-                            if let Some((levm_logs, revm_logs)) =
+                            if let Some((logs_diff, levm_logs, revm_logs)) =
                                 &execution_report.logs_mismatch
                             {
                                 writeln!(
                                     f,
-                                    "\t\t\tLogs mismatch: LEVM: {:?}, REVM: {:?})", levm_logs, revm_logs
+                                    "\t\t\tLogs mismatch: LEVM: {:?}, REVM: {:?}) with diff {:?}",
+                                    levm_logs, revm_logs, logs_diff
                                 )?;
                             }
                             if let Some((levm_result, revm_error)) =
@@ -806,7 +809,11 @@ pub struct TestReRunExecutionReport {
     pub execution_result_mismatch: Option<(TxResult, RevmExecutionResult)>,
     pub gas_used_mismatch: Option<(u64, u64)>,
     pub gas_refunded_mismatch: Option<(u64, u64)>,
-    pub logs_mismatch: Option<(Vec<ethrex_common::types::Log>, Vec<revm::primitives::Log>)>,
+    pub logs_mismatch: Option<(
+        Vec<String>,
+        Vec<ethrex_common::types::Log>,
+        Vec<revm::primitives::Log>,
+    )>,
     pub re_runner_error: Option<(TxResult, String)>,
 }
 
@@ -885,7 +892,39 @@ impl TestReRunReport {
         revm_logs: Vec<revm::primitives::Log>,
         fork: Fork,
     ) {
-        let value = Some((levm_logs, revm_logs));
+        let mut logs_diff = vec![];
+        for (i, (levm_log, revm_log)) in levm_logs.iter().zip(revm_logs.iter()).enumerate() {
+            if keccak(encode(levm_log)) != keccak(&revm_log.encode()) {
+                let mut diff = format!("{i} logs don't match");
+                if convert_revm_address_to_levm(levm_log.address) != revm_log.address {
+                    diff += &format!(
+                        "Address missmatch: Levm log address: {} - Revm log address: {}",
+                        convert_revm_address_to_levm(levm_log.address),
+                        revm_log.address
+                    );
+                }
+                if levm_log.data != *revm_log.data.data {
+                    diff += &format!(
+                        "Data missmatch: Levm log data: {:?} - Revm log data: {:?}",
+                        levm_log.data, *revm_log.data.data
+                    );
+                }
+
+                if levm_log.topics != *revm_log.data.topics() {
+                    diff += &format!(
+                        "Topics missmatch: Levm log topic: {:?} - Revm log topic: {:?}",
+                        levm_log.topics,
+                        revm_log.data.topics()
+                    );
+                }
+
+                logs_diff.push(diff);
+            } else {
+                logs_diff.push(format!("{i} logs match"));
+            }
+        }
+
+        let value = Some((logs_diff, levm_logs, revm_logs));
         self.execution_report
             .entry((vector, fork))
             .and_modify(|report| {

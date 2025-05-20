@@ -169,7 +169,7 @@ pub fn prepare_vm_for_tx<'a>(
         Environment {
             origin: test_tx.sender,
             refunded_gas: 0,
-            gas_limit: test_tx.gas_limit,
+            gas_limit: 5,
             config,
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,

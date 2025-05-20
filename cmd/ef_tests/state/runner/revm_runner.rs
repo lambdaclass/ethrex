@@ -10,24 +10,29 @@ use ethrex_common::{
     Address, H256,
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult};
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::structs::Encoder;
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use ethrex_vm::{
     self,
     backends::{self, revm::db::EvmState},
     fork_to_spec_id, StoreWrapper,
 };
+use keccak_hash::keccak;
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
     primitives::{
-        alloy_primitives::U160, AccessListItem, Authorization, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv, EVMError as REVMError, ExecutionResult as RevmExecutionResult, SignedAuthorization, TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256
+        alloy_primitives::U160, AccessListItem, Authorization, BlobExcessGasAndPrice,
+        BlockEnv as RevmBlockEnv, EVMError as REVMError, ExecutionResult as RevmExecutionResult,
+        SignedAuthorization, TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
     },
     Evm as Revm,
 };
 use std::collections::{HashMap, HashSet};
 
-fn convert_revm_address_to_levm(address: ethrex_common::Address) -> revm::primitives::Address{
+pub fn convert_revm_address_to_levm(address: ethrex_common::Address) -> revm::primitives::Address {
     let mut u160_address = 0;
     for i in 19..0 {
         u160_address += (address[i] as u32) * 10_u32.pow(i as u32);
@@ -35,6 +40,8 @@ fn convert_revm_address_to_levm(address: ethrex_common::Address) -> revm::primit
     revm::primitives::Address::from(U160::from(u160_address))
 }
 
+fn enconde_revm_logs(revm_log: &revm::primitives::Log) {}
+/*
 fn levm_and_revm_logs_match(levm_logs: &Vec<ethrex_common::types::Log>, revm_logs: &Vec<revm::primitives::Log>) -> bool {
     if levm_logs.len() == revm_logs.len() {
         for (levm_log, revm_log) in levm_logs.iter().zip(revm_logs.iter()) {
@@ -46,6 +53,25 @@ fn levm_and_revm_logs_match(levm_logs: &Vec<ethrex_common::types::Log>, revm_log
         }
         true
     } else { false }
+}
+*/
+fn levm_and_revm_logs_match(
+    levm_logs: &Vec<ethrex_common::types::Log>,
+    revm_logs: &Vec<revm::primitives::Log>,
+) -> bool {
+    let levm_keccak_logs = {
+        let logs = levm_logs;
+        let mut encoded_logs = Vec::new();
+        logs.encode(&mut encoded_logs);
+        keccak(encoded_logs)
+    };
+
+    let revm_keccak_logs = {
+        let mut encoded_logs = revm_logs.iter().map(|&x| enconde_revm_logs(&x)).collect();
+        keccak(encoded_logs)
+    };
+
+    levm_keccak_logs == revm_keccak_logs
 }
 
 pub async fn re_run_failed_ef_test(
@@ -271,7 +297,7 @@ pub fn compare_levm_revm_execution_results(
                             *fork,
                         );
                     }
-                    
+
                     if !levm_and_revm_logs_match(&levm_tx_report.logs, &revm_logs) {
                         re_run_report.register_logs_mismatch(
                             *vector,
