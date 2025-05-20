@@ -10,6 +10,7 @@ use ethereum_types::Bloom;
 use bytes::BufMut;
 use ethrex_common::types::{BlockHash, Receipt};
 use ethrex_rlp::{
+    decode::static_left_pad,
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
@@ -105,47 +106,66 @@ impl RLPxMessage for Receipts {
     }
 }
 
+// We should receive something like this:
+// [request-id, [[r1, r2, r3,... ]]]
+// in this fn, we're checking if r1 has a bloom field inside
 fn has_bloom(msg_data: &[u8]) -> Result<bool, RLPDecodeError> {
     let decompressed_data = snappy_decompress(msg_data)?;
     let decoder = Decoder::new(&decompressed_data)?;
     let (_, decoder): (u64, _) = decoder.decode_field("request-id")?;
+
+    //a list should be received
+    let (data, _) = decoder.get_encoded_item()?;
+    let decoder = Decoder::new(&data)?;
+    //check if the list is empty
+    if decoder.is_done() {
+        return Ok(false);
+    }
+
+    // inner list
     let (data, _) = decoder.get_encoded_item()?;
     let decoder = Decoder::new(&data)?;
     if decoder.is_done() {
         return Ok(false);
     }
+
+    // we only need one element
+    // all elements should be the same
     let (data, _) = decoder.get_encoded_item()?;
-    let decoder = Decoder::new(&data)?;
-    let (data, _) = decoder.get_encoded_item()?;
-    match data[0] {
+    let data = match data[0] {
         0x80..=0xB7 => {
-            let data = match data[1] {
-                tx_type if tx_type < 0x7f => &data[2..],
-                _ => &data[1..],
-            };
-            let decoder = Decoder::new(data)?;
-            let (_, decoder): (bool, _) = decoder.decode_field("succeeded")?;
-            let (_, decoder): (u64, _) = decoder.decode_field("cumulative_gas_used")?;
-            match decoder.decode_field::<Bloom>("bloom") {
-                Ok(_) => Ok(true),
-                Err(_) => Ok(false),
+            let length = (data[0] - 0x80) as usize;
+            if data.len() < length + 1 {
+                return Err(RLPDecodeError::InvalidLength);
             }
+            &data[1..length + 1]
         }
         0xB8..=0xBF => {
             let length_of_length = (data[0] - 0xB7) as usize;
-            let data = match data[length_of_length + 1] {
-                tx_type if tx_type < 0x7f => &data[length_of_length + 2..],
-                _ => &data[length_of_length + 1..],
-            };
-            let decoder = Decoder::new(data)?;
-            let (_, decoder): (bool, _) = decoder.decode_field("succeeded")?;
-            let (_, decoder): (u64, _) = decoder.decode_field("cumulative_gas_used")?;
-            match decoder.decode_field::<Bloom>("bloom") {
-                Ok(_) => Ok(true),
-                Err(_) => Ok(false),
+            if data.len() < length_of_length + 1 {
+                return Err(RLPDecodeError::InvalidLength);
             }
+            let length_bytes = &data[1..length_of_length + 1];
+            let length = usize::from_be_bytes(static_left_pad(length_bytes)?);
+            if data.len() < length_of_length + length + 1 {
+                return Err(RLPDecodeError::InvalidLength);
+            }
+            &data[length_of_length + 1..length_of_length + length + 1]
         }
-        _ => Err(RLPDecodeError::InvalidLength),
+        _ => return Err(RLPDecodeError::InvalidLength),
+    };
+
+    let data = match data[0] {
+        tx_type if tx_type < 0x7f => &data[1..],
+        _ => &data[0..],
+    };
+    let decoder = Decoder::new(data)?;
+    let (_, decoder): (bool, _) = decoder.decode_field("succeeded")?;
+    let (_, decoder): (u64, _) = decoder.decode_field("cumulative_gas_used")?;
+    // try to decode the bloom field
+    match decoder.decode_field::<Bloom>("bloom") {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
     }
 }
 
@@ -206,7 +226,12 @@ mod tests {
 
     #[test]
     fn receipts_check_bloom() {
-        let receipts = vec![vec![Receipt::new(TxType::EIP7702, true, 210000, vec![])]];
+        let receipts = vec![vec![
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
+        ]];
         let receipts = Receipts::new(255, receipts, &Capability::eth(68)).unwrap();
 
         let mut buf = Vec::new();
