@@ -1,5 +1,5 @@
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::Address;
+use ethrex_common::{Address, H256};
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_storage::AccountUpdate;
@@ -47,8 +47,10 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         parent_block_header,
         mut db,
         elasticity_multiplier,
-        state_diff
+        state_diff,
+        ..
     } = input;
+    // TODO: add blob thingy
 
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db.get_tries()?;
@@ -128,7 +130,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
             .to_string()
             .into());
     };
-    
+
     // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
     let Ok(withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
@@ -166,5 +168,9 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         withdrawals_merkle_root,
         #[cfg(feature = "l2")]
         deposit_logs_hash,
+        #[cfg(feature = "l2")]
+        blob_challenge: H256::zero(),
+        #[cfg(feature = "l2")]
+        blob_evaluation: H256::zero(),
     })
 }

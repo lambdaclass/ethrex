@@ -21,7 +21,8 @@ pub mod methods {
 
 pub mod io {
     use ethrex_common::{
-        types::{Block, BlockHeader},
+        serde_utils,
+        types::{blobs_bundle, Block, BlockHeader},
         H256,
     };
     use ethrex_l2_common::StateDiff;
@@ -45,6 +46,12 @@ pub mod io {
         pub elasticity_multiplier: u64,
         #[cfg(feature = "l2")]
         pub state_diff: StateDiff,
+        #[cfg(feature = "l2")]
+        #[serde_as(as = "[_; 48]")]
+        pub blob_commitment: blobs_bundle::Commitment,
+        #[cfg(feature = "l2")]
+        #[serde_as(as = "[_; 48]")]
+        pub blob_proof: blobs_bundle::Proof,
     }
 
     /// Public output variables exposed by the zkVM execution program. Some of these are part of
@@ -61,6 +68,12 @@ pub mod io {
         #[cfg(feature = "l2")]
         /// hash of all the deposit logs made in a batch
         pub deposit_logs_hash: H256,
+        #[cfg(feature = "l2")]
+        /// challenge for blob KZG commitment
+        pub blob_challenge: H256,
+        #[cfg(feature = "l2")]
+        /// evaluation for blob KZG commitment
+        pub blob_evaluation: H256,
     }
 
     impl ProgramOutput {
@@ -72,6 +85,10 @@ pub mod io {
                 self.withdrawals_merkle_root.to_fixed_bytes(),
                 #[cfg(feature = "l2")]
                 self.deposit_logs_hash.to_fixed_bytes(),
+                #[cfg(feature = "l2")]
+                self.blob_challenge.to_fixed_bytes(),
+                #[cfg(feature = "l2")]
+                self.blob_evaluation.to_fixed_bytes(),
             ]
             .concat()
         }

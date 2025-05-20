@@ -83,7 +83,9 @@ fn kzg_commitment_to_versioned_hash(data: &Commitment) -> H256 {
 }
 
 #[cfg(feature = "c-kzg")]
-fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proof), BlobsBundleError> {
+pub fn blob_to_kzg_commitment_and_proof(
+    blob: &Blob,
+) -> Result<(Commitment, Proof), BlobsBundleError> {
     let blob: c_kzg::Blob = (*blob).into();
 
     let commitment = KzgCommitment::blob_to_kzg_commitment(&blob, &KZG_SETTINGS)

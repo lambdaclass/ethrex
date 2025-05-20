@@ -6,6 +6,7 @@ use crate::utils::prover::save_state::{
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
+use ethrex_common::types::{blob_to_kzg_commitment_and_proof, blobs_bundle};
 use ethrex_common::{
     types::{Block, BlockHeader},
     Address,
@@ -18,6 +19,7 @@ use ethrex_storage::{AccountUpdate, Store};
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmError, ProverDB};
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::{fmt::Debug, net::IpAddr};
@@ -32,7 +34,8 @@ use super::errors::SequencerError;
 use super::execution_cache::{self, ExecutionCache};
 use super::utils::sleep_random;
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde_as]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
     pub parent_block_header: BlockHeader,
@@ -40,6 +43,12 @@ pub struct ProverInputData {
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
     pub state_diff: StateDiff,
+    #[cfg(feature = "l2")]
+    #[serde_as(as = "[_; 48]")]
+    pub blob_commitment: blobs_bundle::Commitment,
+    #[cfg(feature = "l2")]
+    #[serde_as(as = "[_; 48]")]
+    pub blob_proof: blobs_bundle::Proof,
 }
 
 #[derive(Clone)]
@@ -398,6 +407,12 @@ impl ProofCoordinator {
         )
         .await?;
 
+        let blob_data = state_diff.encode()?;
+        let blob = blobs_bundle::blob_from_bytes(blob_data)
+            .map_err(|err| ProverServerError::Custom(err.to_string()))?;
+        let (blob_commitment, blob_proof) = blob_to_kzg_commitment_and_proof(&blob)
+            .map_err(|err| ProverServerError::Custom(err.to_string()))?;
+
         debug!("Created prover input for batch {batch_number}");
 
         Ok(ProverInputData {
@@ -407,6 +422,8 @@ impl ProofCoordinator {
             elasticity_multiplier: self.elasticity_multiplier,
             #[cfg(feature = "l2")]
             state_diff,
+            blob_commitment,
+            blob_proof,
         })
     }
 

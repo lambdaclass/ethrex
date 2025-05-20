@@ -1,9 +1,14 @@
 #![no_main]
 
+use bls12_381::G1Affine;
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::Address;
+use ethrex_common::{Address, H256};
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
+use kzg_rs::{
+    dtypes::Blob, kzg_proof::compute_challenges_and_evaluate_polynomial,
+    trusted_setup::get_kzg_settings,
+};
 use std::collections::HashMap;
 #[cfg(feature = "l2")]
 use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
@@ -22,7 +27,9 @@ pub fn main() {
         parent_block_header,
         mut db,
         elasticity_multiplier,
-        state_diff
+        state_diff,
+        blob_commitment,
+        blob_proof,
     } = sp1_zkvm::io::read::<ProgramInput>();
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
@@ -110,8 +117,10 @@ pub fn main() {
 
     // Check state diffs are valid
     #[cfg(feature = "l2")]
-    let state_diff_updates = state_diff.to_account_updates(&state_trie).expect("failed to calculate account updates from state diffs");
-    
+    let state_diff_updates = state_diff
+        .to_account_updates(&state_trie)
+        .expect("failed to calculate account updates from state diffs");
+
     // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
     let Ok(withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
@@ -140,6 +149,38 @@ pub fn main() {
         panic!("invalid state diffs")
     }
 
+    #[cfg(feature = "l2")]
+    let (blob_challenge, blob_evaluation) = {
+        let blob_data = state_diff
+            .encode()
+            .expect("failed to encode state diff into blob data")
+            .to_vec();
+        let blob = Blob::from_slice(&blob_data).expect("failed to convert blob data into Blob");
+        let commitment = G1Affine::from_compressed(&blob_commitment)
+            .expect("failed to deserialize blob commitment");
+
+        let (challenges, evaluations) = compute_challenges_and_evaluate_polynomial(
+            vec![blob],
+            &[commitment],
+            &get_kzg_settings(),
+        )
+        .expect("failed to compute KZG blob challenge or evaluation");
+
+        // takes little-endian bytes from the bls12_381's Scalar type
+        let mut challenge_bytes = challenges[0].to_bytes();
+        let mut evaluation_bytes = evaluations[0].to_bytes();
+
+        // convert to big-endian
+        challenge_bytes.reverse();
+        evaluation_bytes.reverse();
+
+        // from_slice() interprets bytes in big-endian
+        let challenge = H256::from_slice(&challenge_bytes);
+        let evaluation = H256::from_slice(&evaluation_bytes);
+
+        (challenge, evaluation)
+    };
+
     // Output gas for measurement purposes
     sp1_zkvm::io::commit(&cumulative_gas_used);
 
@@ -151,6 +192,10 @@ pub fn main() {
             withdrawals_merkle_root,
             #[cfg(feature = "l2")]
             deposit_logs_hash,
+            #[cfg(feature = "l2")]
+            blob_challenge,
+            #[cfg(feature = "l2")]
+            blob_evaluation,
         }
         .encode(),
     );
