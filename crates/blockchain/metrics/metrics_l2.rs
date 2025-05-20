@@ -1,12 +1,12 @@
 use prometheus::{Encoder, IntGaugeVec, Opts, Registry, TextEncoder};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::LazyLock;
 
 use crate::MetricsError;
 
 pub static METRICS_L2: LazyLock<MetricsL2> = LazyLock::new(MetricsL2::default);
 
 pub struct MetricsL2 {
-    pub status_tracker: Arc<Mutex<IntGaugeVec>>,
+    pub status_tracker: IntGaugeVec,
 }
 
 impl Default for MetricsL2 {
@@ -18,16 +18,14 @@ impl Default for MetricsL2 {
 impl MetricsL2 {
     pub fn new() -> Self {
         MetricsL2 {
-            status_tracker: Arc::new(Mutex::new(
-                IntGaugeVec::new(
-                    Opts::new(
-                        "l2_blocks_tracker",
-                        "Keeps track of the L2's status based on the L1's contracts",
-                    ),
-                    &["block_type"],
-                )
-                .unwrap(),
-            )),
+            status_tracker: IntGaugeVec::new(
+                Opts::new(
+                    "l2_blocks_tracker",
+                    "Keeps track of the L2's status based on the L1's contracts",
+                ),
+                &["block_type"],
+            )
+            .unwrap(),
         }
     }
 
@@ -36,13 +34,8 @@ impl MetricsL2 {
         block_type: MetricsL2BlockType,
         block_number: u64,
     ) -> Result<(), MetricsError> {
-        let clone = self.status_tracker.clone();
-
-        let lock = clone
-            .lock()
-            .map_err(|e| MetricsError::MutexLockError(e.to_string()))?;
-
-        let builder = lock
+        let builder = self
+            .status_tracker
             .get_metric_with_label_values(&[block_type.to_str()])
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         let block_number_as_i64: i64 = block_number.try_into()?;
@@ -55,13 +48,7 @@ impl MetricsL2 {
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
-        let clone = self.status_tracker.clone();
-
-        let lock = clone
-            .lock()
-            .map_err(|e| MetricsError::MutexLockError(e.to_string()))?;
-
-        r.register(Box::new(lock.clone()))
+        r.register(Box::new(self.status_tracker.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
