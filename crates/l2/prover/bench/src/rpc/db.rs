@@ -28,6 +28,8 @@ type AccountStorage = HashMap<Address, HashMap<H256, U256>>;
 type AccountCode = HashMap<H256, Bytes>;
 type StorageProof = HashMap<Address, (Option<Vec<u8>>, Vec<Vec<u8>>)>;
 type StateProof = (Option<Vec<u8>>, Vec<Vec<u8>>);
+type AccountChildNodes = Vec<Vec<u8>>;
+type StorageChildNodes<'a> = HashMap<&'a Address, Vec<Vec<u8>>>;
 
 #[derive(Clone)]
 pub struct RpcDB {
@@ -517,7 +519,7 @@ fn get_existing_accounts_info(
 
 fn get_potential_account_child_nodes(
     final_accounts: &HashMap<Address, Account>,
-) -> (Vec<Vec<u8>>, HashMap<&Address, Vec<Vec<u8>>>) {
+) -> (AccountChildNodes, StorageChildNodes) {
     let final_account_proofs = final_accounts
         .iter()
         .map(|(address, account)| (address, account.get_account_proof()));
@@ -525,7 +527,7 @@ fn get_potential_account_child_nodes(
         .iter()
         .map(|(address, account)| (address, account.get_storage_proofs()));
 
-    let potential_account_child_nodes: Vec<Vec<u8>> = final_account_proofs
+    let potential_account_child_nodes: AccountChildNodes = final_account_proofs
         .filter_map(|(address, proof)| get_potential_child_nodes(proof, &hash_address(address)))
         .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
         .collect();
@@ -554,7 +556,7 @@ fn get_proofs(
         .values()
         .map(|account| account.get_account_proof());
     let (potential_account_child_nodes, potential_storage_child_nodes) =
-        get_potential_account_child_nodes(&final_accounts);
+        get_potential_account_child_nodes(final_accounts);
 
     let state_root = initial_account_proofs
         .clone()
