@@ -2,7 +2,7 @@ pub mod levm;
 pub mod revm;
 
 use self::revm::db::evm_state;
-use crate::db::{VmDatabase, DynVmDatabase};
+use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
