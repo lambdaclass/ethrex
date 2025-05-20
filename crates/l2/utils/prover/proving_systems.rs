@@ -25,28 +25,25 @@ impl ProverType {
     }
 
     /// Used to get the empty_calldata structure for that specific prover
-    /// It has to match the `OnChainProposer.sol` verify() function
+    /// It has to match the `OnChainProposer.sol` verifyBatch() function
     pub fn empty_calldata(&self) -> Vec<Value> {
         match self {
             ProverType::RISC0 => {
                 vec![
-                    Value::Bytes(vec![].into()),
-                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                    Value::Bytes(vec![].into()), // risc0_seal
+                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()), // image_id
                 ]
             }
             ProverType::SP1 => {
                 vec![
-                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                    Value::Bytes(vec![].into()),
-                    Value::Bytes(vec![].into()),
+                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()), // sp1_vkey
+                    Value::Bytes(vec![].into()),                                      // proof_bytes
                 ]
             }
             ProverType::Pico => {
                 vec![
-                    Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                    Value::Bytes(vec![].into()),
-                    Value::FixedArray(vec![Value::Uint(U256::zero()); 8]),
+                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()), // pico_riscv_vkey
+                    Value::FixedArray(vec![Value::Uint(U256::zero()); 8]),            // proof
                 ]
             }
             ProverType::Exec => unimplemented!("Doesn't need to generate an empty calldata."),

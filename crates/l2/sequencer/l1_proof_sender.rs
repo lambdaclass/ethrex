@@ -26,7 +26,7 @@ const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0xAA,
 ]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatch(uint256,bytes,bytes32,bytes,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
+    "verifyBatch(uint256,bytes,bytes32,bytes32,bytes,bytes32,uint256[8])";
 
 pub async fn start_l1_proof_sender(cfg: SequencerConfig) -> Result<(), SequencerError> {
     let proof_sender =
@@ -141,22 +141,51 @@ impl L1ProofSender {
 
         debug!("Sending proof for batch number: {batch_number}");
 
-        let calldata_values = [
-            &[Value::Uint(U256::from(batch_number))],
-            proofs
-                .get(&ProverType::RISC0)
-                .unwrap_or(&ProverType::RISC0.empty_calldata())
-                .as_slice(),
-            proofs
-                .get(&ProverType::SP1)
-                .unwrap_or(&ProverType::SP1.empty_calldata())
-                .as_slice(),
-            proofs
-                .get(&ProverType::Pico)
-                .unwrap_or(&ProverType::Pico.empty_calldata())
-                .as_slice(),
-        ]
-        .concat();
+        // Extract only the necessary parts from each proof
+        let risc0_default = ProverType::RISC0.empty_calldata();
+        let sp1_default = ProverType::SP1.empty_calldata();
+        let pico_default = ProverType::Pico.empty_calldata();
+
+        let risc0_proof = proofs.get(&ProverType::RISC0).unwrap_or(&risc0_default);
+        let sp1_proof = proofs.get(&ProverType::SP1).unwrap_or(&sp1_default);
+        let pico_proof = proofs.get(&ProverType::Pico).unwrap_or(&pico_default);
+
+        // RISC0: use seal (index 0) and imageId (index 1)
+        let risc0_seal = risc0_proof
+            .first()
+            .cloned()
+            .unwrap_or(Value::Bytes(vec![].into()));
+        let risc0_image_id = risc0_proof.get(1).cloned().unwrap_or(Value::FixedBytes(
+            H256::zero().to_fixed_bytes().to_vec().into(),
+        ));
+
+        // SP1: use vkey (index 0) and proofBytes (index 1)
+        let sp1_vkey = sp1_proof.first().cloned().unwrap_or(Value::FixedBytes(
+            H256::zero().to_fixed_bytes().to_vec().into(),
+        ));
+        let sp1_proof_bytes = sp1_proof
+            .get(1)
+            .cloned()
+            .unwrap_or(Value::Bytes(vec![].into()));
+
+        // Pico: use vkey (index 0) and proof array (index 1)
+        let pico_riscv_vkey = pico_proof.first().cloned().unwrap_or(Value::FixedBytes(
+            H256::zero().to_fixed_bytes().to_vec().into(),
+        ));
+        let pico_proof_array = pico_proof
+            .get(1)
+            .cloned()
+            .unwrap_or(Value::FixedArray(vec![Value::Uint(U256::zero()); 8]));
+
+        let calldata_values = vec![
+            Value::Uint(U256::from(batch_number)),
+            risc0_seal,
+            risc0_image_id,
+            sp1_vkey,
+            sp1_proof_bytes,
+            pico_riscv_vkey,
+            pico_proof_array,
+        ];
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
