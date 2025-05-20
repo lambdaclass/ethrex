@@ -22,7 +22,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
-use ethrex_vm::{Evm, ExecutionResult, StoreWrapperInner};
+use ethrex_vm::{Evm, ExecutionResult, StoreVmDatabase};
 use serde::Serialize;
 
 use serde_json::Value;
@@ -341,8 +341,8 @@ impl RpcHandler for CreateAccessListRequest {
             _ => return Ok(Value::Null),
         };
 
-        let db = StoreWrapperInner::new(context.storage.clone(), header.compute_block_hash());
-        let mut vm = Evm::new(context.blockchain.evm_engine, db);
+        let vm_db = StoreVmDatabase::new(context.storage.clone(), header.compute_block_hash());
+        let mut vm = Evm::new(context.blockchain.evm_engine, vm_db);
         let chain_config = context.storage.get_chain_config()?;
         let fork = chain_config.get_fork(header.timestamp);
 
@@ -568,7 +568,7 @@ fn simulate_tx(
     blockchain: Arc<Blockchain>,
     fork: Fork,
 ) -> Result<ExecutionResult, RpcErr> {
-    let db = StoreWrapperInner::new(storage.clone(), block_header.compute_block_hash());
+    let db = StoreVmDatabase::new(storage.clone(), block_header.compute_block_hash());
     let mut vm = Evm::new(blockchain.evm_engine, db);
 
     match vm.simulate_tx_from_generic(transaction, block_header, fork)? {

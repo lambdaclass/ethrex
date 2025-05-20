@@ -18,7 +18,7 @@ use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
 };
 
-use ethrex_vm::{Evm, EvmEngine, EvmError, StoreWrapperInner};
+use ethrex_vm::{Evm, EvmEngine, EvmError, StoreVmDatabase};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
@@ -187,8 +187,8 @@ impl PayloadBuildContext {
                 .unwrap_or_default(),
         );
 
-        let store_wrapper = StoreWrapperInner::new(storage.clone(), payload.header.parent_hash);
-        let vm = Evm::new(evm_engine, store_wrapper);
+        let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
+        let vm = Evm::new(evm_engine, vm_db);
 
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,

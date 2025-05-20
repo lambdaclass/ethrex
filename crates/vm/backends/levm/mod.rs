@@ -7,8 +7,8 @@ use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::db::VmDbWrapper;
-use crate::{EvmError, ExecutionResult, ProverDB, ProverDBError, StoreWrapperInner};
+use crate::db::DynVmDatabase;
+use crate::{EvmError, ExecutionResult, ProverDB, ProverDBError, StoreVmDatabase};
 use bytes::Bytes;
 use ethrex_common::{
     types::{
@@ -387,14 +387,12 @@ impl LEVM {
             return Err(ProverDBError::Custom("Unable to get last block".into()));
         };
 
-        let store_wrapper = VmDbWrapper(Box::new(StoreWrapperInner::new(
+        let vm_db = DynVmDatabase(Box::new(StoreVmDatabase::new(
             store.clone(),
             first_block_parent_hash,
         )));
 
-        let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(
-            store_wrapper,
-        )))));
+        let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
 
         let mut execution_updates: HashMap<Address, AccountUpdate> = HashMap::new();
         for block in blocks {
@@ -410,10 +408,8 @@ impl LEVM {
             }
 
             // Update de block_hash for the next execution.
-            let new_store = VmDbWrapper(Box::new(StoreWrapperInner::new(
-                store.clone(),
-                block.hash(),
-            )));
+            let new_store =
+                DynVmDatabase(Box::new(StoreVmDatabase::new(store.clone(), block.hash())));
 
             // Replace the store
             *logger.store.lock().unwrap() = Box::new(new_store);

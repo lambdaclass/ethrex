@@ -26,7 +26,7 @@ use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};
-use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine, StoreWrapperInner};
+use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine, StoreVmDatabase};
 use tracing::info;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -84,8 +84,8 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let store_wrapper = StoreWrapperInner::new(self.storage.clone(), block.header.parent_hash);
-        let mut vm = Evm::new(self.evm_engine, store_wrapper);
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let mut vm = Evm::new(self.evm_engine, vm_db);
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
@@ -209,7 +209,7 @@ impl Blockchain {
         let fork = chain_config.fork(first_block_header.timestamp);
 
         let store_wrapper =
-            StoreWrapperInner::new(self.storage.clone(), first_block_header.parent_hash);
+            StoreVmDatabase::new(self.storage.clone(), first_block_header.parent_hash);
         let mut vm = Evm::new(self.evm_engine, store_wrapper);
 
         let blocks_len = blocks.len();

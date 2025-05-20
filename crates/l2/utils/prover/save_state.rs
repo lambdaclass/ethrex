@@ -395,7 +395,7 @@ mod tests {
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::{
         backends::levm::{CacheDB, LEVM},
-        StoreWrapperInner, VmDbWrapper,
+        DynVmDatabase, StoreVmDatabase,
     };
 
     use super::*;
@@ -457,7 +457,7 @@ mod tests {
         // Write all the account_updates and proofs for each block
         // TODO: Update. We are executing only the last block and using the block_number as batch_number
         for block in &blocks {
-            let store = VmDbWrapper(Box::new(StoreWrapperInner::new(
+            let store = DynVmDatabase(Box::new(StoreVmDatabase::new(
                 in_memory_db.clone(),
                 block.hash(),
             )));

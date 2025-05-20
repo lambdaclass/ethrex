@@ -9,7 +9,7 @@ use revm::{
 };
 
 use crate::errors::{EvmError, ProverDBError};
-use crate::{db::VmDbWrapper, prover_db::ProverDB};
+use crate::{db::DynVmDatabase, prover_db::ProverDB};
 
 /// State used when running the EVM. The state can be represented with a [VmDbWrapper] database, or
 /// with a [ProverDB] in case we only want to store the necessary data for some particular
@@ -17,7 +17,7 @@ use crate::{db::VmDbWrapper, prover_db::ProverDB};
 ///
 /// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
 pub enum EvmState {
-    Store(revm::db::State<VmDbWrapper>),
+    Store(revm::db::State<DynVmDatabase>),
     Execution(Box<revm::db::CacheDB<ProverDB>>),
 }
 
@@ -26,7 +26,7 @@ pub enum EvmState {
 impl Clone for EvmState {
     fn clone(&self) -> Self {
         match self {
-            EvmState::Store(state) => EvmState::Store(revm::db::State::<VmDbWrapper> {
+            EvmState::Store(state) => EvmState::Store(revm::db::State::<DynVmDatabase> {
                 cache: state.cache.clone(),
                 database: state.database.clone(),
                 transition_state: state.transition_state.clone(),
@@ -54,7 +54,7 @@ impl EvmState {
 }
 
 /// Builds EvmState from a Store
-pub fn evm_state(db: VmDbWrapper) -> EvmState {
+pub fn evm_state(db: DynVmDatabase) -> EvmState {
     EvmState::Store(
         revm::db::State::builder()
             .with_database(db)
@@ -115,7 +115,7 @@ impl DatabaseRef for ProverDB {
     }
 }
 
-impl revm::Database for VmDbWrapper {
+impl revm::Database for DynVmDatabase {
     type Error = EvmError;
 
     fn basic(&mut self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
@@ -165,7 +165,7 @@ impl revm::Database for VmDbWrapper {
     }
 }
 
-impl revm::DatabaseRef for VmDbWrapper {
+impl revm::DatabaseRef for DynVmDatabase {
     type Error = EvmError;
 
     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
