@@ -40,7 +40,7 @@ pub async fn apply_fork_choice(
         None
     };
 
-    // Feda (#2831): We search for the entire block because during sync
+    // Feda (#2831): We search for the entire block because during full/batch sync
     // we can have the header without the body indicating it's still syncing.
     let head_block_res = store.get_block_by_hash(head_hash).await?;
 
