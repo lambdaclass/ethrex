@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747767211243,
+  "lastUpdate": 1747767271658,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9285,6 +9285,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007361455121951219,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c47725143e35457f53d360c0fa5b28524a954b45",
+          "message": "feat(l2): add cli option to compute genesis state root (#2843)\n\n**Motivation**\n\nAdd a subcommand to compute a state root given a genesis file path\n\n**Description**\n\n* Add new variant to `Subcommand` struct called `ComputeStateRoot`\n* It has a required argument for the file path\n* Calls the existing function `pub fn compute_state_root(&self) -> H256`\n\n**How to use**\n\nrun:\n`cargo run --bin ethrex --release -- compute-state-root --path\ntest_data/genesis-l2.json`",
+          "timestamp": "2025-05-20T17:22:33Z",
+          "tree_id": "f848b297ae239f9faf7cd29924fb693b26ad7486",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c47725143e35457f53d360c0fa5b28524a954b45"
+        },
+        "date": 1747767269703,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.000739754068627451,
             "unit": "Mgas/s"
           }
         ]
