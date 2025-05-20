@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747757917999,
+  "lastUpdate": 1747760139937,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9048,6 +9048,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007276269527483124,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a49cb6c6ff7f1e852a73b360553a17ee91d812e6",
+          "message": "feat(core): add fallback url for EthClient (#2826)\n\n**Motivation**\n\nIn case the first rpc endpoint fails we want to have a second option. \n\n**Description**\n\n- Parse `eth-rpc-url` as a list of comma separated urls\n- Add logic to EthClient to retry with all rpc-urls if a request fails\n\n**How to test**\n\n```\ncargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features \"l2,rollup_storage_libmdbx,metrics\" -- \\\n\tl2 init \\\n\t--eth-rpc-url \"http://aaaaaa\" \"http://localhost:8545\"  \\\n\t--watcher.block-delay 0 \\\n\t--network ../../test_data/genesis-l2.json \\\n\t--http.port 1729 \\\n\t--http.addr 0.0.0.0 \\\n\t--evm levm \\\n\t--datadir dev_ethrex_l2 \\\n\t--bridge-address 0x13a07379d93a0cf8c0c84e8e9cc31deab0da3ef0 \\\n\t--on-chain-proposer-address 0x628bb559d2bc6fdb402f7f1293f5aba689586189 \\\n\t--proof-coordinator-listen-ip 127.0.0.1\n```\n\n---------\n\nCo-authored-by: Manuel Iñaki Bilbao <manuel.bilbao@lambdaclass.com>",
+          "timestamp": "2025-05-20T16:06:23Z",
+          "tree_id": "3732e74370007342aebc2f6f520997d2c25d6e0c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a49cb6c6ff7f1e852a73b360553a17ee91d812e6"
+        },
+        "date": 1747760139296,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007272762891566265,
             "unit": "Mgas/s"
           }
         ]
