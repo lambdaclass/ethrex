@@ -24,7 +24,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::encode::{PayloadRLPEncode, RLPEncode};
 use keccak_hash::keccak;
-use reqwest::Client;
+use reqwest::{Client, Url};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -44,7 +44,7 @@ pub enum RpcResponse {
 #[derive(Debug, Clone)]
 pub struct EthClient {
     client: Client,
-    pub url: String,
+    pub urls: Vec<Url>,
     pub max_number_of_retries: u64,
     pub backoff_factor: u64,
     pub min_retry_delay: u64,
@@ -142,9 +142,9 @@ pub struct WithdrawalProof {
 }
 
 impl EthClient {
-    pub fn new(url: &str) -> Self {
+    pub fn new(url: &str) -> Result<EthClient, EthClientError> {
         Self::new_with_config(
-            url,
+            vec![url],
             MAX_NUMBER_OF_RETRIES,
             BACKOFF_FACTOR,
             MIN_RETRY_DELAY,
@@ -155,29 +155,65 @@ impl EthClient {
     }
 
     pub fn new_with_config(
-        url: &str,
+        urls: Vec<&str>,
         max_number_of_retries: u64,
         backoff_factor: u64,
         min_retry_delay: u64,
         max_retry_delay: u64,
         maximum_allowed_max_fee_per_gas: Option<u64>,
         maximum_allowed_max_fee_per_blob_gas: Option<u64>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, EthClientError> {
+        let urls = urls
+            .iter()
+            .map(|url| {
+                Url::parse(url)
+                    .map_err(|_| EthClientError::ParseUrlError("Failed to parse urls".to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self {
             client: Client::new(),
-            url: url.to_string(),
+            urls,
             max_number_of_retries,
             backoff_factor,
             min_retry_delay,
             max_retry_delay,
             maximum_allowed_max_fee_per_gas,
             maximum_allowed_max_fee_per_blob_gas,
-        }
+        })
+    }
+
+    pub fn new_with_multiple_urls(urls: Vec<String>) -> Result<EthClient, EthClientError> {
+        Self::new_with_config(
+            urls.iter().map(AsRef::as_ref).collect(),
+            MAX_NUMBER_OF_RETRIES,
+            BACKOFF_FACTOR,
+            MIN_RETRY_DELAY,
+            MAX_RETRY_DELAY,
+            None,
+            None,
+        )
     }
 
     async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EthClientError> {
+        let mut response = Err(EthClientError::Custom("All rpc calls failed".to_string()));
+
+        for url in self.urls.iter() {
+            response = self.send_request_to_url(url, &request).await;
+            if response.is_ok() {
+                return response;
+            }
+        }
+        response
+    }
+
+    async fn send_request_to_url(
+        &self,
+        rpc_url: &Url,
+        request: &RpcRequest,
+    ) -> Result<RpcResponse, EthClientError> {
         self.client
-            .post(&self.url)
+            .post(rpc_url.as_str())
             .header("content-type", "application/json")
             .body(serde_json::ser::to_string(&request).map_err(|error| {
                 EthClientError::FailedToSerializeRequestBody(format!("{error}: {request:?}"))

@@ -27,6 +27,8 @@ pub enum SequencerError {
     ProofSenderError(#[from] ProofSenderError),
     #[error("Failed to start MetricsGatherer: {0}")]
     MetricsGathererError(#[from] MetricsGathererError),
+    #[error("Sequencer error: {0}")]
+    EthClientError(#[from] EthClientError),
 }
 
 #[derive(Debug, thiserror::Error)]

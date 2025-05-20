@@ -62,7 +62,7 @@ pub async fn start_l1_committer(
         store,
         rollup_store,
         execution_cache,
-    );
+    )?;
     committer.run().await;
     Ok(())
 }
@@ -74,17 +74,17 @@ impl Committer {
         store: Store,
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, CommitterError> {
+        Ok(Self {
             eth_client: EthClient::new_with_config(
-                &eth_config.rpc_url,
+                eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
                 eth_config.max_number_of_retries,
                 eth_config.backoff_factor,
                 eth_config.min_retry_delay,
                 eth_config.max_retry_delay,
                 Some(eth_config.maximum_allowed_max_fee_per_gas),
                 Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
-            ),
+            )?,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             store,
             rollup_store,
@@ -93,7 +93,7 @@ impl Committer {
             execution_cache,
             validium: committer_config.validium,
             signer: committer_config.signer.clone(),
-        }
+        })
     }
 
     pub async fn run(&mut self) {

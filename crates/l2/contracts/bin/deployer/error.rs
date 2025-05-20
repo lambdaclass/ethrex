@@ -31,4 +31,6 @@ pub enum DeployerError {
     NoSigner,
     #[error("Remote signer URL was provided without a public key")]
     RemoteUrlWithoutPubkey,
+    #[error("IO error: {0}")]
+    IO(#[from] std::io::Error),
 }

@@ -52,6 +52,8 @@ pub enum EthClientError {
     InternalError(String),
     #[error("Failed to sign transaction: {0}")]
     SignerError(#[from] SignerError),
+    #[error("Parse Url Error. {0}")]
+    ParseUrlError(String),
 }
 
 #[derive(Debug, thiserror::Error)]

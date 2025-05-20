@@ -1,5 +1,6 @@
 use clap::{Parser, ValueEnum};
 use ethereum_types::{Address, H160, H256, U256};
+use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_common::types::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::BlockByNumber;
@@ -226,8 +227,9 @@ async fn load_test(
                             chain_id: Some(chain_id),
                             value,
                             nonce: Some(nonce + i),
-                            max_fee_per_gas: Some(10_u64.pow(6)),
+                            max_fee_per_gas: Some(u64::MAX),
                             max_priority_fee_per_gas: Some(10_u64),
+                            gas_limit: Some(TX_GAS_COST * 100),
                             ..Default::default()
                         },
                     )
@@ -326,7 +328,7 @@ async fn main() {
     let pkeys_path = Path::new(&cli.pkeys);
     let accounts = parse_pk_file(pkeys_path)
         .unwrap_or_else(|_| panic!("Failed to parse private keys file {}", pkeys_path.display()));
-    let client = EthClient::new(&cli.node);
+    let client = EthClient::new(&cli.node).expect("Failed to create EthClient");
 
     // We ask the client for the chain id.
     let chain_id = client

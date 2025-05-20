@@ -11510,6 +11510,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "sp1-build",
+ "sp1-sdk",
  "thiserror 2.0.12",
 ]
 
