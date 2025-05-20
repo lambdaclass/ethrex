@@ -30,7 +30,7 @@ impl<'a> VM<'a> {
         let key = self.current_call_frame_mut()?.stack.pop()?;
         let to = self.current_call_frame()?.to;
         let value = self
-            .accrued_substate
+            .substate
             .transient_storage
             .get(&(to, key))
             .cloned()
@@ -63,9 +63,7 @@ impl<'a> VM<'a> {
             let value = current_call_frame.stack.pop()?;
             (key, value, current_call_frame.to)
         };
-        self.accrued_substate
-            .transient_storage
-            .insert((to, key), value);
+        self.substate.transient_storage.insert((to, key), value);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -188,7 +186,7 @@ impl<'a> VM<'a> {
 
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
-        let mut gas_refunds = self.accrued_substate.refunded_gas;
+        let mut gas_refunds = self.substate.refunded_gas;
 
         // https://eips.ethereum.org/EIPS/eip-2929
         let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost) = (4800, 19900, 2800);
@@ -226,7 +224,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        self.accrued_substate.refunded_gas = gas_refunds;
+        self.substate.refunded_gas = gas_refunds;
 
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::sstore(
