@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used)]
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{Block, ELASTICITY_MULTIPLIER};
+use ethrex_l2::utils::prover::db::to_prover_db;
 use ethrex_prover_lib::execute;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::Evm;
@@ -64,7 +65,7 @@ async fn setup() -> (ProgramInput, Block) {
         .unwrap()
         .unwrap();
 
-    let db = Evm::to_prover_db(&store.clone(), &vec![block_to_prove.clone()])
+    let db = to_prover_db(&store.clone(), &vec![block_to_prove.clone()])
         .await
         .unwrap();
 

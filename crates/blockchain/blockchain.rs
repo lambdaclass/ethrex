@@ -4,6 +4,7 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 mod smoke_test;
+pub mod vm;
 
 use constants::MAX_INITCODE_SIZE;
 use error::MempoolError;
@@ -23,10 +24,11 @@ use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
+use vm::StoreVmDatabase;
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};
-use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine, StoreVmDatabase};
+use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use tracing::info;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate

@@ -6,16 +6,15 @@ use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
-use crate::{ProverDB, ProverDBError};
+use crate::ProverDB;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
 };
 use ethrex_common::Address;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-use ethrex_levm::db::CacheDB;
+use ethrex_levm::db::{CacheDB, Database};
 use ethrex_storage::AccountUpdate;
-use ethrex_storage::Store;
 use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;
@@ -83,14 +82,16 @@ impl Evm {
         }
     }
 
+    pub fn new_from_db(store: Arc<impl Database + 'static>) -> Self {
+        Evm::LEVM {
+            db: GeneralizedDatabase::new(store, CacheDB::new()),
+        }
+    }
+
     pub fn from_prover_db(db: ProverDB) -> Self {
         Evm::LEVM {
             db: GeneralizedDatabase::new(Arc::new(db), CacheDB::new()),
         }
-    }
-
-    pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, ProverDBError> {
-        LEVM::to_prover_db(blocks, store).await
     }
 
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
