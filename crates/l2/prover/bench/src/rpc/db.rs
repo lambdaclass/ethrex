@@ -247,11 +247,7 @@ impl RpcDB {
         let index: Vec<(Address, Vec<H256>)> = self
             .cache
             .lock()
-            .map_err(|e| {
-                ProverDBError::Database(DatabaseError::Custom(format!(
-                    "Failed to lock RpcDB 'cache' with error: {e}"
-                )))
-            })?
+            .unwrap()
             .iter()
             .map(|(address, account)| match account {
                 Account::Existing { storage, .. } => (*address, storage.keys().cloned().collect()),
@@ -270,16 +266,9 @@ impl RpcDB {
             .collect();
 
         // fetch all of them, both before and after block execution
-        let initial_accounts = self.fetch_accounts_blocking(&index, false).map_err(|e| {
-            ProverDBError::Database(DatabaseError::Custom(format!(
-                "Failed to fetch RpcDB accounts with error: {e}"
-            )))
-        })?;
-        let final_accounts = self.fetch_accounts_blocking(&index, true).map_err(|e| {
-            ProverDBError::Database(DatabaseError::Custom(format!(
-                "Failed to fetch RpcDB accounts from child with error: {e}"
-            )))
-        })?;
+        let initial_accounts = self.fetch_accounts_blocking(&index, false).unwrap();
+        let final_accounts = self.fetch_accounts_blocking(&index, true).unwrap();
+        // TODO: remove unwraps
 
         let initial_account_proofs = initial_accounts
             .values()
@@ -368,11 +357,7 @@ impl RpcDB {
         let block_hashes = self
             .block_hashes
             .lock()
-            .map_err(|e| {
-                ProverDBError::Database(DatabaseError::Custom(format!(
-                    "Failed to lock RpcDB 'block_hashes' with error: {e}"
-                )))
-            })?
+            .unwrap()
             .iter()
             .map(|(num, hash)| (*num, *hash))
             .collect();
