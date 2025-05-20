@@ -10,6 +10,7 @@ use crate::engine::{
     ExchangeCapabilitiesRequest,
 };
 use crate::eth;
+use crate::eth::fee_calculator::GasTipEstimator;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -62,7 +63,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
@@ -92,6 +93,7 @@ pub struct RpcApiContext {
     pub active_filters: ActiveFilters,
     pub syncer: Arc<SyncManager>,
     pub node_data: NodeData,
+    pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     #[cfg(feature = "based")]
     pub gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
@@ -177,6 +179,7 @@ pub async fn start_api(
             local_node_record,
             client_version,
         },
+        gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         #[cfg(feature = "based")]
         gateway_eth_client,
         #[cfg(feature = "based")]

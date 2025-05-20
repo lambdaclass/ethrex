@@ -347,8 +347,12 @@ pub mod test_utils {
     };
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
+    use tokio::sync::Mutex as TokioMutex;
 
-    use crate::rpc::{start_api, NodeData, RpcApiContext};
+    use crate::{
+        eth::fee_calculator::GasTipEstimator,
+        rpc::{start_api, NodeData, RpcApiContext},
+    };
     #[cfg(feature = "based")]
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]
@@ -445,6 +449,7 @@ pub mod test_utils {
                 local_node_record: example_local_node_record(),
                 client_version: "ethrex/test".to_string(),
             },
+            gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]

@@ -1,5 +1,3 @@
-use crate::eth::fee_calculator::estimate_gas_tip;
-
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::utils::RpcErr;
 use serde_json::Value;
@@ -18,12 +16,12 @@ impl RpcHandler for MaxPriorityFee {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let estimated_gas_tip = estimate_gas_tip(&context.storage).await?;
-
-        let gas_tip = match estimated_gas_tip {
-            Some(gas_tip) => gas_tip,
-            None => return Ok(serde_json::Value::Null),
-        };
+        let gas_tip = context
+            .gas_tip_estimator
+            .lock()
+            .await
+            .estimate_gas_tip(&context.storage)
+            .await?;
 
         let gas_as_hex = format!("0x{:x}", gas_tip);
         Ok(serde_json::Value::String(gas_as_hex))

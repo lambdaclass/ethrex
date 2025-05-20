@@ -24,7 +24,7 @@ pub struct GasTipEstimator {
 
 impl GasTipEstimator {
     // Creates a new GasEstimator with default tip
-    fn new() -> GasTipEstimator {
+    pub fn new() -> GasTipEstimator {
         Self {
             last_hash: H256::default(),
             last_tip: MIN_TIP,
@@ -129,7 +129,10 @@ mod tests {
     async fn test_for_legacy_txs() {
         let storage = setup_store().await;
         add_legacy_tx_blocks(&storage, 20, 10).await;
-        let gas_tip = estimate_gas_tip(&storage).await.unwrap().unwrap();
+        let gas_tip = GasTipEstimator::new()
+            .estimate_gas_tip(&storage)
+            .await
+            .unwrap();
         assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
     }
 
@@ -137,7 +140,10 @@ mod tests {
     async fn test_for_eip1559_txs() {
         let storage = setup_store().await;
         add_eip1559_tx_blocks(&storage, 20, 10).await;
-        let gas_tip = estimate_gas_tip(&storage).await.unwrap().unwrap();
+        let gas_tip = GasTipEstimator::new()
+            .estimate_gas_tip(&storage)
+            .await
+            .unwrap();
         assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
     }
 
@@ -145,22 +151,31 @@ mod tests {
     async fn test_for_mixed_txs() {
         let storage = setup_store().await;
         add_mixed_tx_blocks(&storage, 20, 10).await;
-        let gas_tip = estimate_gas_tip(&storage).await.unwrap().unwrap();
+        let gas_tip = GasTipEstimator::new()
+            .estimate_gas_tip(&storage)
+            .await
+            .unwrap();
         assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
     }
 
     #[tokio::test]
     async fn test_for_no_blocks() {
         let storage = setup_store().await;
-        let gas_tip = estimate_gas_tip(&storage).await.unwrap();
-        assert_eq!(gas_tip, None);
+        let gas_tip = GasTipEstimator::new()
+            .estimate_gas_tip(&storage)
+            .await
+            .unwrap();
+        assert_eq!(gas_tip, MIN_TIP);
     }
 
     #[tokio::test]
     async fn test_for_empty_blocks() {
         let storage = setup_store().await;
         add_empty_blocks(&storage, 20).await;
-        let gas_tip = estimate_gas_tip(&storage).await.unwrap().unwrap();
-        assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
+        let gas_tip = GasTipEstimator::new()
+            .estimate_gas_tip(&storage)
+            .await
+            .unwrap();
+        assert_eq!(gas_tip, MIN_TIP);
     }
 }
