@@ -27,7 +27,7 @@ use sender::{get_batch, submit_proof, submit_quote};
 
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 
-const POLL_INTERVAL_MS: u64 = 1000;
+const POLL_INTERVAL_MS: u64 = 5000;
 
 fn sign_eip191(msg: &[u8], private_key: &SecretKey) -> Vec<u8> {
     let payload = [
