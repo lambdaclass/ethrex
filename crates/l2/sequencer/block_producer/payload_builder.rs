@@ -334,21 +334,32 @@ fn get_tx_diffs(
     Ok(modified_accounts)
 }
 
+/// Combines the diffs from the current transaction with the existing block diffs.
+/// Transaction diffs represent state changes from the latest transaction execution,
+/// while previous diffs accumulate all changes included in the block so far.
 fn merge_diffs(
     previous_diffs: &HashMap<Address, AccountStateDiff>,
-    new_diffs: HashMap<Address, AccountStateDiff>,
+    tx_diffs: HashMap<Address, AccountStateDiff>,
 ) -> HashMap<Address, AccountStateDiff> {
     let mut merged_diffs = previous_diffs.clone();
-    for (address, diff) in new_diffs {
+    for (address, diff) in tx_diffs {
         if let Some(existing_diff) = merged_diffs.get_mut(&address) {
+            // New balance could be None if a transaction didn't change the balance
+            // but we want to keep the previous changes made in a transaction included in the block
             existing_diff.new_balance = diff.new_balance.or(existing_diff.new_balance);
+
+            // We add the nonce diff to the existing one to keep track of the total nonce diff
             existing_diff.nonce_diff += diff.nonce_diff;
-            // we need to overwrite the storage with the new values
+
+            // we need to overwrite only the new storage storage slot with the new values
             existing_diff.storage.extend(diff.storage);
-            // Take the bytecode from the new diff if present, avoiding clone if not needed
+
+            // Take the bytecode from the tx diff if present, avoiding clone if not needed
             if diff.bytecode.is_some() {
                 existing_diff.bytecode = diff.bytecode;
             }
+
+            // Take the new bytecode hash if it is present
             existing_diff.bytecode_hash = diff.bytecode_hash.or(existing_diff.bytecode_hash);
         } else {
             merged_diffs.insert(address, diff);
