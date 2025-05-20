@@ -350,7 +350,7 @@ pub mod test_utils {
     use tokio::sync::Mutex as TokioMutex;
 
     use crate::{
-        eth::fee_calculator::GasTipEstimator,
+        eth::gas_tip_estimator::GasTipEstimator,
         rpc::{start_api, NodeData, RpcApiContext},
     };
     #[cfg(feature = "based")]

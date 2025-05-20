@@ -13,14 +13,14 @@ const BLOCK_RANGE_LOWER_BOUND_DEC: u64 = 20;
 #[derive(Debug, Clone)]
 /// Struct in charge of performing gas tip estimations & saving latest results for following estimations
 pub struct GasTipEstimator {
-    // The latest block hash for which the gas estimation was performed
+    // The latest block hash for which the gas tip estimation was performed
     pub last_hash: H256,
-    //The latest estimated tip
+    // The latest estimated gas tip
     pub last_tip: u64,
 }
 
 impl GasTipEstimator {
-    // Creates a new GasEstimator with default tip
+    // Creates a new GasTipEstimator with default tip
     pub fn new() -> GasTipEstimator {
         Self {
             last_hash: H256::default(),

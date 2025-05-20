@@ -6,7 +6,7 @@ pub(crate) mod filter;
 pub(crate) mod logs;
 pub(crate) mod transaction;
 
-pub(crate) mod fee_calculator;
+pub(crate) mod gas_tip_estimator;
 pub(crate) mod gas_price;
 pub(crate) mod max_priority_fee;
 

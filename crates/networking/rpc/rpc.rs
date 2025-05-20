@@ -10,7 +10,7 @@ use crate::engine::{
     ExchangeCapabilitiesRequest,
 };
 use crate::eth;
-use crate::eth::fee_calculator::GasTipEstimator;
+use crate::eth::gas_tip_estimator::GasTipEstimator;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
