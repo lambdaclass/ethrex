@@ -101,7 +101,7 @@ impl RLPxMessage for Receipts {
         } else {
             // this should be eth/69 when implemented
             //Ok(Receipts::Receipts69(Receipts69::decode(msg_data)?))
-            Ok(Receipts::Receipts68(Receipts68::decode(msg_data)?))
+            Err(RLPDecodeError::IncompatibleProtocol)
         }
     }
 }
