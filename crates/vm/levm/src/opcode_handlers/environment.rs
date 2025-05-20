@@ -285,7 +285,7 @@ impl<'a> VM<'a> {
 
         let (_, address_was_cold) = self
             .db
-            .access_account(&mut self.accrued_substate, address)?;
+            .access_account(&mut self.substate, address)?;
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
