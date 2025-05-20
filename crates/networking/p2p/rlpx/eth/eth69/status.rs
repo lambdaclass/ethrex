@@ -3,10 +3,7 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
-use ethrex_common::{
-    types::{BlockHash, ForkId},
-    U256,
-};
+use ethrex_common::types::{BlockHash, ForkId};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -16,10 +13,11 @@ use ethrex_rlp::{
 pub(crate) struct StatusMessage69 {
     pub(crate) eth_version: u8,
     pub(crate) network_id: u64,
-    pub(crate) total_difficulty: U256,
-    pub(crate) block_hash: BlockHash,
     pub(crate) genesis: BlockHash,
     pub(crate) fork_id: ForkId,
+    pub(crate) earliest_block: u64,
+    pub(crate) lastest_block: u64,
+    pub(crate) lastest_block_hash: BlockHash,
 }
 
 impl RLPxMessage for StatusMessage69 {
@@ -29,10 +27,11 @@ impl RLPxMessage for StatusMessage69 {
         Encoder::new(&mut encoded_data)
             .encode_field(&self.eth_version)
             .encode_field(&self.network_id)
-            .encode_field(&self.total_difficulty)
-            .encode_field(&self.block_hash)
             .encode_field(&self.genesis)
             .encode_field(&self.fork_id)
+            .encode_field(&self.earliest_block)
+            .encode_field(&self.lastest_block)
+            .encode_field(&self.lastest_block_hash)
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
@@ -48,20 +47,22 @@ impl RLPxMessage for StatusMessage69 {
         assert_eq!(eth_version, 69, "only eth version 69 is supported");
 
         let (network_id, decoder): (u64, _) = decoder.decode_field("networkId")?;
-        let (total_difficulty, decoder): (U256, _) = decoder.decode_field("totalDifficulty")?;
-        let (block_hash, decoder): (BlockHash, _) = decoder.decode_field("blockHash")?;
         let (genesis, decoder): (BlockHash, _) = decoder.decode_field("genesis")?;
         let (fork_id, decoder): (ForkId, _) = decoder.decode_field("forkId")?;
+        let (earliest_block, decoder): (u64, _) = decoder.decode_field("earliestBlock")?;
+        let (lastest_block, decoder): (u64, _) = decoder.decode_field("lastestBlock")?;
+        let (lastest_block_hash, decoder): (BlockHash, _) = decoder.decode_field("latestHash")?;
         // Implementations must ignore any additional list elements
         let _padding = decoder.finish_unchecked();
 
         Ok(Self {
             eth_version: eth_version as u8,
             network_id,
-            total_difficulty,
-            block_hash,
             genesis,
             fork_id,
+            earliest_block,
+            lastest_block,
+            lastest_block_hash,
         })
     }
 }

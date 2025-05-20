@@ -1,5 +1,5 @@
 use super::eth68::status::StatusMessage68;
-// use super::eth69::status::StatusMessage69;
+use super::eth69::status::StatusMessage69;
 use crate::rlpx::message::RLPxMessage;
 use crate::rlpx::utils::snappy_decompress;
 use crate::rlpx::{error::RLPxError, p2p::Capability};
@@ -13,7 +13,7 @@ use ethrex_storage::Store;
 #[derive(Debug)]
 pub enum StatusMessage {
     StatusMessage68(StatusMessage68),
-    // StatusMessage69(StatusMessage69),
+    StatusMessage69(StatusMessage69),
 }
 
 impl RLPxMessage for StatusMessage {
@@ -21,7 +21,7 @@ impl RLPxMessage for StatusMessage {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         match self {
             StatusMessage::StatusMessage68(msg) => msg.encode(buf),
-            // StatusMessage::StatusMessage69(msg) => msg.encode(buf),
+            StatusMessage::StatusMessage69(msg) => msg.encode(buf),
         }
     }
 
@@ -34,7 +34,9 @@ impl RLPxMessage for StatusMessage {
             68 => Ok(StatusMessage::StatusMessage68(StatusMessage68::decode(
                 msg_data,
             )?)),
-            69 => Err(RLPDecodeError::IncompatibleProtocol),
+            69 => Ok(StatusMessage::StatusMessage69(StatusMessage69::decode(
+                msg_data,
+            )?)),
             _ => Err(RLPDecodeError::IncompatibleProtocol),
         }
     }
@@ -51,18 +53,18 @@ impl StatusMessage {
         let genesis_header = storage
             .get_block_header(0)?
             .ok_or(RLPxError::NotFound("Genesis Block".to_string()))?;
-        let block_number = storage.get_latest_block_number().await?;
+        let lastest_block = storage.get_latest_block_number().await?;
         let block_header = storage
-            .get_block_header(block_number)?
-            .ok_or(RLPxError::NotFound(format!("Block {block_number}")))?;
+            .get_block_header(lastest_block)?
+            .ok_or(RLPxError::NotFound(format!("Block {lastest_block}")))?;
 
         let genesis = genesis_header.compute_block_hash();
-        let block_hash = block_header.compute_block_hash();
+        let lastest_block_hash = block_header.compute_block_hash();
         let fork_id = ForkId::new(
             chain_config,
             genesis_header,
             block_header.timestamp,
-            block_number,
+            lastest_block,
         );
 
         match eth.version {
@@ -70,11 +72,19 @@ impl StatusMessage {
                 eth_version: eth.version,
                 network_id,
                 total_difficulty,
-                block_hash,
+                block_hash: lastest_block_hash,
                 genesis,
                 fork_id,
             })),
-            69 => Err(RLPxError::IncompatibleProtocol),
+            69 => Ok(StatusMessage::StatusMessage69(StatusMessage69 {
+                eth_version: eth.version,
+                network_id,
+                genesis,
+                fork_id,
+                earliest_block: 0,
+                lastest_block,
+                lastest_block_hash,
+            })),
             _ => Err(RLPxError::IncompatibleProtocol),
         }
     }
@@ -82,28 +92,28 @@ impl StatusMessage {
     pub fn get_network_id(&self) -> u64 {
         match self {
             StatusMessage::StatusMessage68(msg) => msg.network_id,
-            // StatusMessage::StatusMessage69(msg) => msg.network_id,
+            StatusMessage::StatusMessage69(msg) => msg.network_id,
         }
     }
 
     pub fn get_eth_version(&self) -> u8 {
         match self {
             StatusMessage::StatusMessage68(msg) => msg.eth_version,
-            // StatusMessage::StatusMessage69(msg) => msg.eth_version,
+            StatusMessage::StatusMessage69(msg) => msg.eth_version,
         }
     }
 
     pub fn get_fork_id(&self) -> ForkId {
         match self {
             StatusMessage::StatusMessage68(msg) => msg.fork_id.clone(),
-            // StatusMessage::StatusMessage69(msg) => msg.fork_id.clone(),
+            StatusMessage::StatusMessage69(msg) => msg.fork_id.clone(),
         }
     }
 
     pub fn get_genesis(&self) -> BlockHash {
         match self {
             StatusMessage::StatusMessage68(msg) => msg.genesis,
-            // StatusMessage::StatusMessage69(msg) => msg.genesis,
+            StatusMessage::StatusMessage69(msg) => msg.genesis,
         }
     }
 }
