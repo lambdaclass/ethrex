@@ -55,6 +55,7 @@ mod tests {
         rpc::{map_http_requests, RpcHandler},
         utils::{parse_json_hex, RpcRequest},
     };
+    use ethrex_common::types::MIN_GAS_TIP;
     use serde_json::json;
 
     #[tokio::test]
@@ -104,7 +105,7 @@ mod tests {
         let gas_price = GasPrice {};
         let response = gas_price.handle(context).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
-        assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
+        assert_eq!(parsed_result, BASE_PRICE_IN_WEI + MIN_GAS_TIP);
     }
     #[tokio::test]
     async fn test_with_no_blocks_but_genesis() {
@@ -112,7 +113,7 @@ mod tests {
         let context = default_context_with_storage(storage).await;
         let gas_price = GasPrice {};
         // genesis base fee is = BASE_PRICE_IN_WEI
-        let expected_gas_price = BASE_PRICE_IN_WEI;
+        let expected_gas_price = BASE_PRICE_IN_WEI + MIN_GAS_TIP;
         let response = gas_price.handle(context).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, expected_gas_price);

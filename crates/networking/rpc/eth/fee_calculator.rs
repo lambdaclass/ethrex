@@ -1,4 +1,4 @@
-use ethrex_common::H256;
+use ethrex_common::{types::MIN_GAS_TIP, H256};
 use ethrex_storage::Store;
 use tracing::error;
 
@@ -9,9 +9,6 @@ use crate::utils::RpcErr;
 const TXS_SAMPLE_SIZE: usize = 3;
 /// How many blocks we'll go back to calculate the estimate.
 const BLOCK_RANGE_LOWER_BOUND_DEC: u64 = 20;
-/// Minimum tip, obtained from geth's default miner config (https://github.com/ethereum/go-ethereum/blob/f750117ad19d623622cc4a46ea361a716ba7407e/miner/miner.go#L56)
-/// TODO: This should be configurable along with the tip filter on https://github.com/lambdaclass/ethrex/issues/680
-const MIN_TIP: u64 = 1000000;
 
 #[derive(Debug, Clone)]
 /// Struct in charge of performing gas tip estimations & saving latest results for following estimations
@@ -27,7 +24,7 @@ impl GasTipEstimator {
     pub fn new() -> GasTipEstimator {
         Self {
             last_hash: H256::default(),
-            last_tip: MIN_TIP,
+            last_tip: MIN_GAS_TIP,
         }
     }
 
@@ -165,7 +162,7 @@ mod tests {
             .estimate_gas_tip(&storage)
             .await
             .unwrap();
-        assert_eq!(gas_tip, MIN_TIP);
+        assert_eq!(gas_tip, MIN_GAS_TIP);
     }
 
     #[tokio::test]
@@ -176,6 +173,6 @@ mod tests {
             .estimate_gas_tip(&storage)
             .await
             .unwrap();
-        assert_eq!(gas_tip, MIN_TIP);
+        assert_eq!(gas_tip, MIN_GAS_TIP);
     }
 }
