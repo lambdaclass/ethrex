@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747767271658,
+  "lastUpdate": 1747769681029,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9314,6 +9314,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.000739754068627451,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7c00fdc269a97c28fcdf849a01e73d424dce188f",
+          "message": "feat(l1): capability negotation (#2840)\n\n**Motivation**\n\nMultiple version of the same protocol can be used when a connection is\nestablished(eth/68 and eth/69 for example). At the moment, we can only\nuse one protocol version.\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\nA vec of capability is used to pass multiple versions of the protocol to\nsome functions.\n\nThe struct RLPxConnection now stores capabilities struct instead of\nnumbers.\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-05-20T17:59:33Z",
+          "tree_id": "2b5317048d54657af96870ce3ef27eafcf16643c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7c00fdc269a97c28fcdf849a01e73d424dce188f"
+        },
+        "date": 1747769680656,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007361455121951219,
             "unit": "Mgas/s"
           }
         ]
