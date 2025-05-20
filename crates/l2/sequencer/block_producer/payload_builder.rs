@@ -81,7 +81,7 @@ pub async fn fill_transactions(
     let deposits_log_len = DepositLog::default().encode().len();
 
     // version (u8) + header fields (struct) + withdrawals_len (u16) + deposits_len (u16) + accounts_diffs_len (u16)
-    let mut size_without_accounts = 1 + header_encoded_len + 2 + 2 + 2;
+    let mut acc_size_without_accounts = 1 + header_encoded_len + 2 + 2 + 2;
     let mut size_accounts_diffs = 0;
     let mut account_diffs = HashMap::new();
 
@@ -105,7 +105,7 @@ pub async fn fill_transactions(
         };
 
         // Check if we have enough space for the StateDiff to run more transactions
-        if size_without_accounts + size_accounts_diffs + SIMPLE_TX_STATE_DIFF_SIZE
+        if acc_size_without_accounts + size_accounts_diffs + SIMPLE_TX_STATE_DIFF_SIZE
             > SAFE_BYTES_PER_BLOB
         {
             debug!("No more StateDiff space to run transactions");
@@ -180,10 +180,10 @@ pub async fn fill_transactions(
             }
         };
 
-        let account_diffs_in_tx = get_tx_diffs(&transaction_backup, context)?;
+        let account_diffs_in_tx = get_account_diffs_in_tx(&transaction_backup, context)?;
         let merged_diffs = merge_diffs(&account_diffs, account_diffs_in_tx);
 
-        let (tx_state_diff_size, new_accounts_diff_size) = calculate_tx_diff_size(
+        let (tx_size_without_accounts, new_accounts_diff_size) = calculate_tx_diff_size(
             &merged_diffs,
             &head_tx,
             &receipt,
@@ -191,7 +191,8 @@ pub async fn fill_transactions(
             withdrawals_log_len,
         )?;
 
-        if size_without_accounts + tx_state_diff_size + new_accounts_diff_size > SAFE_BYTES_PER_BLOB
+        if acc_size_without_accounts + tx_size_without_accounts + new_accounts_diff_size
+            > SAFE_BYTES_PER_BLOB
         {
             debug!(
                 "No more StateDiff space to run this transactions. Skipping transaction: {:?}",
@@ -210,7 +211,7 @@ pub async fn fill_transactions(
         blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
 
         // We only add the withdrawals and deposits length because the accounts diffs may change
-        size_without_accounts += tx_state_diff_size;
+        acc_size_without_accounts += tx_size_without_accounts;
         size_accounts_diffs = new_accounts_diff_size;
         // Include the new accounts diffs
         account_diffs = merged_diffs;
@@ -252,7 +253,7 @@ fn apply_plain_transaction_l2(
 /// Returns the state diffs introduced by the transaction by comparing the call frame backup
 /// (which holds the state before executing the transaction) with the current state of the cache
 /// (which contains all the writes performed by the transaction).
-fn get_tx_diffs(
+fn get_account_diffs_in_tx(
     call_frame_backup: &CallFrameBackup,
     context: &PayloadBuildContext,
 ) -> Result<HashMap<Address, AccountStateDiff>, BlockProducerError> {
