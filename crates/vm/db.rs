@@ -7,14 +7,12 @@ use ethrex_storage::Store;
 
 use crate::EvmError;
 
-#[derive(Clone)]
-pub struct VmDbWrapper<T: VmDatabase>(pub T);
+pub struct VmDbWrapper(pub Box<dyn VmDatabase + Send + Sync + 'static>);
 
-pub type StoreWrapper = VmDbWrapper<StoreWrapperInner>;
-
-impl StoreWrapper {
-    pub fn new(store: Store, block_hash: BlockHash) -> Self {
-        VmDbWrapper(StoreWrapperInner { store, block_hash })
+impl Clone for VmDbWrapper {
+    fn clone(&self) -> Self {
+        // Methods can be called directly on the Box<dyn Trait>
+        VmDbWrapper(self.0.clone_box())
     }
 }
 
@@ -24,12 +22,20 @@ pub trait VmDatabase: Send + Sync {
     fn get_block_hash(&self, block_number: u64) -> Result<Option<H256>, EvmError>;
     fn get_chain_config(&self) -> ChainConfig;
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, EvmError>;
+
+    fn clone_box(&self) -> Box<dyn VmDatabase + Send + Sync + 'static>;
 }
 
 #[derive(Clone)]
 pub struct StoreWrapperInner {
     pub store: Store,
     pub block_hash: BlockHash,
+}
+
+impl StoreWrapperInner {
+    pub fn new(store: Store, block_hash: BlockHash) -> Self {
+        StoreWrapperInner { store, block_hash }
+    }
 }
 
 impl VmDatabase for StoreWrapperInner {
@@ -61,5 +67,9 @@ impl VmDatabase for StoreWrapperInner {
         self.store
             .get_account_code(code_hash)
             .map_err(|e| EvmError::DB(e.to_string()))
+    }
+
+    fn clone_box(&self) -> Box<dyn VmDatabase + Send + Sync + 'static> {
+        Box::new(self.clone())
     }
 }

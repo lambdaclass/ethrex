@@ -9,7 +9,7 @@ use ethrex_levm::db::{gen_db::GeneralizedDatabase, CacheDB};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{
     backends::revm::db::{evm_state, EvmState},
-    StoreWrapper,
+    StoreWrapperInner, VmDbWrapper,
 };
 
 /// Loads initial state, used for REVM as it contains EvmState.
@@ -19,10 +19,10 @@ pub async fn load_initial_state(test: &EFTest) -> (EvmState, H256, Store) {
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
-    let store_wrapper = StoreWrapper::new(
+    let store_wrapper = VmDbWrapper(Box::new(StoreWrapperInner::new(
         storage.clone(),
         genesis.get_block().header.compute_block_hash(),
-    );
+    )));
 
     (
         evm_state(store_wrapper),
@@ -40,7 +40,7 @@ pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
 
     let block_hash = genesis.get_block().header.compute_block_hash();
 
-    let store = StoreWrapper::new(storage, block_hash);
+    let store = VmDbWrapper(Box::new(StoreWrapperInner::new(storage, block_hash)));
 
     GeneralizedDatabase::new(Arc::new(store), CacheDB::new())
 }

@@ -8,22 +8,16 @@ use revm::{
     DatabaseRef,
 };
 
-use crate::{
-    db::{VmDatabase, VmDbWrapper},
-    prover_db::ProverDB,
-};
-use crate::{
-    errors::{EvmError, ProverDBError},
-    StoreWrapper,
-};
+use crate::errors::{EvmError, ProverDBError};
+use crate::{db::VmDbWrapper, prover_db::ProverDB};
 
-/// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
+/// State used when running the EVM. The state can be represented with a [VmDbWrapper] database, or
 /// with a [ProverDB] in case we only want to store the necessary data for some particular
 /// execution, for example when proving in L2 mode.
 ///
 /// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
 pub enum EvmState {
-    Store(revm::db::State<StoreWrapper>),
+    Store(revm::db::State<VmDbWrapper>),
     Execution(Box<revm::db::CacheDB<ProverDB>>),
 }
 
@@ -32,7 +26,7 @@ pub enum EvmState {
 impl Clone for EvmState {
     fn clone(&self) -> Self {
         match self {
-            EvmState::Store(state) => EvmState::Store(revm::db::State::<StoreWrapper> {
+            EvmState::Store(state) => EvmState::Store(revm::db::State::<VmDbWrapper> {
                 cache: state.cache.clone(),
                 database: state.database.clone(),
                 transition_state: state.transition_state.clone(),
@@ -60,7 +54,7 @@ impl EvmState {
 }
 
 /// Builds EvmState from a Store
-pub fn evm_state(db: StoreWrapper) -> EvmState {
+pub fn evm_state(db: VmDbWrapper) -> EvmState {
     EvmState::Store(
         revm::db::State::builder()
             .with_database(db)
@@ -121,7 +115,7 @@ impl DatabaseRef for ProverDB {
     }
 }
 
-impl<T: VmDatabase> revm::Database for VmDbWrapper<T> {
+impl revm::Database for VmDbWrapper {
     type Error = EvmError;
 
     fn basic(&mut self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
@@ -171,7 +165,7 @@ impl<T: VmDatabase> revm::Database for VmDbWrapper<T> {
     }
 }
 
-impl<T: VmDatabase> revm::DatabaseRef for VmDbWrapper<T> {
+impl revm::DatabaseRef for VmDbWrapper {
     type Error = EvmError;
 
     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {

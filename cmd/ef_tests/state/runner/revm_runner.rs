@@ -14,7 +14,7 @@ use ethrex_storage::AccountUpdate;
 use ethrex_vm::{
     self,
     backends::{self, revm::db::EvmState},
-    fork_to_spec_id, EvmError, StoreWrapper,
+    fork_to_spec_id, EvmError, VmDbWrapper,
 };
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 use revm::{
@@ -104,7 +104,7 @@ pub fn prepare_revm_for_tx<'state>(
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
-) -> Result<Revm<'state, RevmTracerEip3155, &'state mut State<StoreWrapper>>, EFTestRunnerError> {
+) -> Result<Revm<'state, RevmTracerEip3155, &'state mut State<VmDbWrapper>>, EFTestRunnerError> {
     let chain_spec = initial_state
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;
