@@ -962,6 +962,31 @@ impl StoreEngine for Store {
         self.write::<InvalidAncestors>(bad_block.into(), latest_valid.into())
             .await
     }
+
+    async fn get_account_snapshot(
+        &self,
+        account_hash: H256,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        txn.get::<StateSnapShot>(account_hash.into())
+            .map_err(StoreError::LibmdbxError)
+            .map(|x| x.map(|y| y.to()))
+    }
+
+    async fn get_storage_snapshot(
+        &self,
+        account_hash: H256,
+        storage_hash: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let mut cursor = txn
+            .cursor::<StorageSnapShot>()
+            .map_err(StoreError::LibmdbxError)?;
+        Ok(cursor
+            .seek_value(account_hash.into(), storage_hash.into())
+            .map_err(StoreError::LibmdbxError)?
+            .map(|x| U256::from_big_endian(&x.1 .0)))
+    }
 }
 
 impl Debug for Store {
@@ -1154,12 +1179,12 @@ table!(
 );
 
 table!(
-    /// State Snapshot used by an ongoing sync process
+    /// State Snapshot used by sync and disk layer snapshots
     ( StateSnapShot ) AccountHashRLP => AccountStateRLP
 );
 
 dupsort!(
-    /// Storage Snapshot used by an ongoing sync process
+    /// Storage Snapshot used by sync and disk layer snapshots
     ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
 );
 

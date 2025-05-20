@@ -1232,6 +1232,36 @@ impl StoreEngine for RedBStore {
         )
         .await
     }
+
+    async fn get_account_snapshot(
+        &self,
+        account_hash: H256,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let read_tx = self.db.begin_read()?;
+        let table = read_tx.open_table(STATE_SNAPSHOT_TABLE)?;
+        Ok(table
+            .get(&account_hash.into())?
+            .map(|elem| elem.value().to()))
+    }
+
+    async fn get_storage_snapshot(
+        &self,
+        account_hash: H256,
+        storage_hash: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let read_tx = self.db.begin_read()?;
+        let table = read_tx.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
+        Ok(table.get(&account_hash.into())?.find_map(|elem| {
+            elem.ok().and_then(|x| {
+                let val = x.value();
+                if H256(val.0) == storage_hash {
+                    Some(U256::from_big_endian(&val.1))
+                } else {
+                    None
+                }
+            })
+        }))
+    }
 }
 
 impl redb::Value for ChainDataIndex {

@@ -46,7 +46,7 @@ impl DiskLayer {
             block_hash,
             state_root,
             db,
-            cache: DiskCache::new(10000, 10000),
+            cache: DiskCache::new(20000, 40000),
             stale: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -165,5 +165,87 @@ impl DiskLayer {
 
     pub fn mark_stale(&self) -> bool {
         self.stale.swap(true, Ordering::SeqCst)
+    }
+
+    pub async fn start_generating(self: &Arc<Self>) {
+        tokio::spawn(self.clone().generate());
+    }
+
+    async fn generate(self: Arc<Self>) {
+        // todo: we should be able to stop mid generation in case disk layer changes?
+        let state_trie = self.db.open_state_trie(self.state_root);
+
+        let account_iter = state_trie.into_iter().content().map_while(|(path, value)| {
+            Some((H256::from_slice(&path), AccountState::decode(&value).ok()?))
+        });
+
+        let mut account_hashes = Vec::with_capacity(1024);
+        let mut account_states = Vec::with_capacity(1024);
+        let mut storage_keys: Vec<Vec<H256>> = Vec::with_capacity(64);
+        let mut storage_values: Vec<Vec<U256>> = Vec::with_capacity(64);
+
+        // buffers
+        let mut keys = Vec::with_capacity(32);
+        let mut values = Vec::with_capacity(32);
+
+        // TODO: figure out optimal
+        // Write to db every ACCOUNT_BATCH's accounts processed.
+        const ACCOUNT_BATCH: usize = 100;
+
+        for (hash, state) in account_iter {
+            keys.clear();
+            values.clear();
+
+            account_hashes.push(hash);
+            let storage_root = state.storage_root;
+            account_states.push(state);
+
+            let storage_trie = self.db.open_storage_trie(hash, storage_root);
+            let storage_iter = storage_trie.into_iter().content();
+
+            for (storage_hash, value) in storage_iter {
+                keys.push(H256::from_slice(&storage_hash));
+                values.push(U256::from_big_endian(&value));
+            }
+
+            storage_keys.push(keys.clone());
+            storage_values.push(values.clone());
+
+            if account_hashes.len() >= ACCOUNT_BATCH {
+                self.db
+                    .write_snapshot_account_batch(account_hashes.clone(), account_states.clone())
+                    .await
+                    .expect("convert into a error");
+                self.db
+                    .write_snapshot_storage_batches(
+                        account_hashes.clone(),
+                        storage_keys.clone(),
+                        storage_values.clone(),
+                    )
+                    .await
+                    .expect("convert into a error");
+                account_hashes.clear();
+                storage_keys.clear();
+                storage_values.clear();
+            }
+        }
+
+        if !account_hashes.is_empty() {
+            self.db
+                .write_snapshot_account_batch(account_hashes.clone(), account_states.clone())
+                .await
+                .expect("convert into a error");
+            self.db
+                .write_snapshot_storage_batches(
+                    account_hashes.clone(),
+                    storage_keys.clone(),
+                    storage_values.clone(),
+                )
+                .await
+                .expect("convert into a error");
+            account_hashes.clear();
+            storage_keys.clear();
+            storage_values.clear();
+        }
     }
 }

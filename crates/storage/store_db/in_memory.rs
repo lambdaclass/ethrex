@@ -47,6 +47,7 @@ struct StoreInner {
     state_snapshot: BTreeMap<H256, AccountState>,
     // Stores Storage trie leafs from the last downloaded tries
     storage_snapshot: HashMap<H256, BTreeMap<H256, U256>>,
+    // Snapshot (diff layers)
 }
 
 #[derive(Default, Debug)]
@@ -685,6 +686,26 @@ impl StoreEngine for Store {
             .invalid_ancestors
             .insert(bad_block, latest_valid);
         Ok(())
+    }
+
+    async fn get_account_snapshot(
+        &self,
+        account_hash: H256,
+    ) -> Result<Option<AccountState>, StoreError> {
+        Ok(self.inner().state_snapshot.get(&account_hash).cloned())
+    }
+
+    async fn get_storage_snapshot(
+        &self,
+        account_hash: H256,
+        storage_hash: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        Ok(self
+            .inner()
+            .storage_snapshot
+            .get(&account_hash)
+            .and_then(|x| x.get(&storage_hash))
+            .cloned())
     }
 }
 
