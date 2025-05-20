@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747756219610,
+  "lastUpdate": 1747757917999,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9019,6 +9019,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007255280288461539,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8afdb49fb6d357fa14dffd14e094d545e25a633c",
+          "message": "chore(l1,l2): remove double Arc and Mutex from metrics (#2847)\n\n**Motivation**\n\nThe underlying Gauges are already thread safe and behind Arcs\ninternally, so the used Arc and Mutex wrapper were useless overhead.\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nThe types in the library derive from\n\n```\npub struct GenericCounter<P: Atomic> {\n    v: Arc<Value<P>>,\n}\n```\n\nWhich is clone safe, furthermore P is atomic so it doesnt need a lock.\n\n**Description**\n\nRemove unused Mutex and Arc\n\nCloses #issue_number",
+          "timestamp": "2025-05-20T14:56:34Z",
+          "tree_id": "17ed1717dd6dcf7dd880049a12dcbf92ec4add4a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8afdb49fb6d357fa14dffd14e094d545e25a633c"
+        },
+        "date": 1747757914892,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007276269527483124,
             "unit": "Mgas/s"
           }
         ]
