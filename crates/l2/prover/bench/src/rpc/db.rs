@@ -23,14 +23,6 @@ use std::sync::Mutex;
 
 use super::{Account, NodeRLP};
 
-type AccountsMap = HashMap<Address, AccountInfo>;
-type AccountStorage = HashMap<Address, HashMap<H256, U256>>;
-type AccountCode = HashMap<H256, Bytes>;
-type StorageProof = HashMap<Address, (Option<Vec<u8>>, Vec<Vec<u8>>)>;
-type StateProof = (Option<Vec<u8>>, Vec<Vec<u8>>);
-type AccountChildNodes = Vec<Vec<u8>>;
-type StorageChildNodes<'a> = HashMap<&'a Address, Vec<Vec<u8>>>;
-
 #[derive(Clone)]
 pub struct RpcDB {
     pub rpc_url: String,
@@ -243,6 +235,9 @@ impl RpcDB {
     }
 
     pub fn to_exec_db(&self, block: &Block) -> Result<ethrex_vm::ProverDB, ProverDBError> {
+        // TODO: Simplify this function and potentially merge with the implementation for
+        // StoreWrapper.
+        let chain_config = *CANCUN_CONFIG;
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()), CacheDB::new());
 
         // pre-execute and get all state changes
@@ -286,13 +281,90 @@ impl RpcDB {
             )))
         })?;
 
-        // Get the ProverDB fields
-        // Fields regarding the existing accounts
-        let (accounts, code, storage) = get_existing_accounts_info(&initial_accounts);
-        // Fields regarding proofs
-        let (state_proofs, storage_proofs) = get_proofs(&initial_accounts, &final_accounts);
-        // Fields 'block_hashes' and 'chain_config'
-        let chain_config = *CANCUN_CONFIG;
+        let initial_account_proofs = initial_accounts
+            .values()
+            .map(|account| account.get_account_proof());
+        let final_account_proofs = final_accounts
+            .iter()
+            .map(|(address, account)| (address, account.get_account_proof()));
+
+        let initial_storage_proofs = initial_accounts
+            .iter()
+            .map(|(address, account)| (address, account.get_storage_proofs()));
+        let final_storage_proofs = final_accounts
+            .iter()
+            .map(|(address, account)| (address, account.get_storage_proofs()));
+
+        // get potential child nodes of deleted nodes after execution
+        let potential_account_child_nodes = final_account_proofs
+            .filter_map(|(address, proof)| get_potential_child_nodes(proof, &hash_address(address)))
+            .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()));
+
+        let potential_storage_child_nodes: HashMap<_, _> = final_storage_proofs
+            .map(|(address, proofs)| {
+                let nodes: Vec<_> = proofs
+                    .iter()
+                    .filter_map(|(key, proof)| get_potential_child_nodes(proof, &hash_key(key)))
+                    .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
+                    .collect();
+                (address, nodes)
+            })
+            .collect();
+
+        #[derive(Clone)]
+        struct ExistingAccount<'a> {
+            pub account_state: &'a AccountState,
+            pub storage: &'a HashMap<H256, U256>,
+            pub code: &'a Option<Bytes>,
+        }
+
+        let existing_accs = initial_accounts.iter().filter_map(|(address, account)| {
+            if let Account::Existing {
+                account_state,
+                storage,
+                code,
+                ..
+            } = account
+            {
+                Some((
+                    address,
+                    ExistingAccount {
+                        account_state,
+                        storage,
+                        code,
+                    },
+                ))
+            } else {
+                None
+            }
+        });
+
+        let accounts: HashMap<_, _> = existing_accs
+            .clone()
+            .map(|(address, account)| {
+                (
+                    *address,
+                    AccountInfo {
+                        code_hash: account.account_state.code_hash,
+                        balance: account.account_state.balance,
+                        nonce: account.account_state.nonce,
+                    },
+                )
+            })
+            .collect();
+        let code = existing_accs
+            .clone()
+            .map(|(_, account)| {
+                (
+                    account.account_state.code_hash,
+                    account.code.clone().unwrap_or_default(),
+                )
+            })
+            .collect();
+        let storage = existing_accs
+            .clone()
+            .map(|(address, account)| (*address, account.storage.clone()))
+            .collect();
         let block_hashes = self
             .block_hashes
             .lock()
@@ -303,6 +375,37 @@ impl RpcDB {
             })?
             .iter()
             .map(|(num, hash)| (*num, *hash))
+            .collect();
+
+        let state_root = initial_account_proofs
+            .clone()
+            .next()
+            .and_then(|proof| proof.first().cloned());
+        let other_state_nodes = initial_account_proofs
+            .flat_map(|proof| proof.iter().skip(1).cloned())
+            .chain(potential_account_child_nodes)
+            .collect();
+        let state_proofs = (state_root, other_state_nodes);
+
+        let storage_proofs = initial_storage_proofs
+            .map(|(address, proofs)| {
+                let storage_root = proofs
+                    .iter()
+                    .next()
+                    .and_then(|(_, nodes)| nodes.first())
+                    .cloned();
+                let other_storage_nodes: Vec<NodeRLP> = proofs
+                    .iter()
+                    .flat_map(|(_, proof)| proof.iter().skip(1).cloned())
+                    .chain(
+                        potential_storage_child_nodes
+                            .get(address)
+                            .cloned()
+                            .unwrap_or_default(),
+                    )
+                    .collect();
+                (*address, (storage_root, other_storage_nodes))
+            })
             .collect();
 
         Ok(ProverDB {
@@ -449,149 +552,4 @@ fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Nod
     } else {
         None
     }
-}
-
-/// Gets the accounts that have the type Account::Existing after the execution of
-/// a block. It returns their AccountInfo, their code and their storage.
-fn get_existing_accounts_info(
-    accounts: &HashMap<Address, Account>,
-) -> (AccountsMap, AccountCode, AccountStorage) {
-    #[derive(Clone)]
-    struct ExistingAccount<'a> {
-        pub account_state: &'a AccountState,
-        pub storage: &'a HashMap<H256, U256>,
-        pub code: &'a Option<Bytes>,
-    }
-
-    // Get the existing accounts
-    let existing_accs = accounts.iter().filter_map(|(address, account)| {
-        if let Account::Existing {
-            account_state,
-            storage,
-            code,
-            ..
-        } = account
-        {
-            Some((
-                address,
-                ExistingAccount {
-                    account_state,
-                    storage,
-                    code,
-                },
-            ))
-        } else {
-            None
-        }
-    });
-    // Get their AccountInfo
-    let accounts: HashMap<Address, AccountInfo> = existing_accs
-        .clone()
-        .map(|(address, account)| {
-            (
-                *address,
-                AccountInfo {
-                    code_hash: account.account_state.code_hash,
-                    balance: account.account_state.balance,
-                    nonce: account.account_state.nonce,
-                },
-            )
-        })
-        .collect();
-    // Get their code
-    let code: HashMap<H256, Bytes> = existing_accs
-        .clone()
-        .map(|(_, account)| {
-            (
-                account.account_state.code_hash,
-                account.code.clone().unwrap_or_default(),
-            )
-        })
-        .collect();
-    // Get their storage
-    let storage: AccountStorage = existing_accs
-        .clone()
-        .map(|(address, account)| (*address, account.storage.clone()))
-        .collect();
-
-    (accounts, code, storage)
-}
-
-fn get_potential_account_child_nodes(
-    final_accounts: &HashMap<Address, Account>,
-) -> (AccountChildNodes, StorageChildNodes) {
-    let final_account_proofs = final_accounts
-        .iter()
-        .map(|(address, account)| (address, account.get_account_proof()));
-    let final_storage_proofs = final_accounts
-        .iter()
-        .map(|(address, account)| (address, account.get_storage_proofs()));
-
-    let potential_account_child_nodes: AccountChildNodes = final_account_proofs
-        .filter_map(|(address, proof)| get_potential_child_nodes(proof, &hash_address(address)))
-        .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
-        .collect();
-
-    let potential_storage_child_nodes: HashMap<&Address, Vec<Vec<u8>>> = final_storage_proofs
-        .map(|(address, proofs)| {
-            let nodes: Vec<_> = proofs
-                .iter()
-                .filter_map(|(key, proof)| get_potential_child_nodes(proof, &hash_key(key)))
-                .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
-                .collect();
-            (address, nodes)
-        })
-        .collect();
-
-    (potential_account_child_nodes, potential_storage_child_nodes)
-}
-
-/// Gets the state and storage proofs
-fn get_proofs(
-    initial_accounts: &HashMap<Address, Account>,
-    final_accounts: &HashMap<Address, Account>,
-) -> (StateProof, StorageProof) {
-    // State Proofs
-    let initial_account_proofs = initial_accounts
-        .values()
-        .map(|account| account.get_account_proof());
-    let (potential_account_child_nodes, potential_storage_child_nodes) =
-        get_potential_account_child_nodes(final_accounts);
-
-    let state_root = initial_account_proofs
-        .clone()
-        .next()
-        .and_then(|proof| proof.first().cloned());
-    let other_state_nodes: Vec<Vec<u8>> = initial_account_proofs
-        .flat_map(|proof| proof.iter().skip(1).cloned())
-        .chain(potential_account_child_nodes)
-        .collect();
-    let state_proofs = (state_root, other_state_nodes);
-
-    // Storage Proofs
-    let initial_storage_proofs = initial_accounts
-        .iter()
-        .map(|(address, account)| (address, account.get_storage_proofs()));
-    let storage_proofs: StorageProof = initial_storage_proofs
-        .map(|(address, proofs)| {
-            let storage_root = proofs
-                .iter()
-                .next()
-                .and_then(|(_, nodes)| nodes.first())
-                .cloned();
-            let other_storage_nodes: Vec<NodeRLP> = proofs
-                .iter()
-                .flat_map(|(_, proof)| proof.iter().skip(1).cloned())
-                .chain(
-                    potential_storage_child_nodes
-                        .get(address)
-                        .cloned()
-                        .unwrap_or_default(),
-                )
-                .collect();
-            (*address, (storage_root, other_storage_nodes))
-        })
-        .collect();
-
-    (state_proofs, storage_proofs)
 }
