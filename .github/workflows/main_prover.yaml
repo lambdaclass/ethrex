@@ -73,7 +73,7 @@ jobs:
           cd crates/l2
           touch .env
           CI_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_DEPLOYER_DEPOSIT_RICH=true \
           ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
           docker compose -f docker-compose-l2.yaml up contract_deployer
 

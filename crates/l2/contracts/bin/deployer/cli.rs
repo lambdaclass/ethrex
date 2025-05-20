@@ -86,7 +86,7 @@ pub struct DeployerOptions {
         long,
         default_value = "false",
         value_name = "BOOLEAN",
-        env = "ETHREX_DEPLOYER_DEPLOY_RICH",
+        env = "ETHREX_DEPLOYER_DEPOSIT_RICH",
         action = ArgAction::SetTrue,
         help_heading = "Deployer options",
         help = "If set to true, it will deposit ETH from L1 rich wallets to L2 accounts."
