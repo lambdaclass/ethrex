@@ -1,7 +1,7 @@
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, path::Path, str::FromStr, time::{Duration, Instant}};
 
 use bytes::Bytes;
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, measurement::{Measurement, ValueFormatter}, Criterion, Throughput};
 use ethrex::{cli::remove_db, utils::set_datadir, DEFAULT_DATADIR};
 use ethrex_blockchain::{
     payload::{create_payload, BuildPayloadArgs, PayloadBuildResult},
@@ -17,6 +17,80 @@ use ethrex_common::{
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
 use secp256k1::SecretKey;
+
+
+pub struct GasMeasurement;
+impl Measurement for GasMeasurement {
+    type Intermediate = (Instant, u64);
+    type Value = (Duration, u64);
+
+    fn start(&self) -> Self::Intermediate {
+        (Instant::now(), 0)
+    }
+
+    fn end(&self, i: Self::Intermediate) -> Self::Value {
+        let (start_time, gas_used) = i;
+        (start_time.elapsed(), gas_used)
+    }
+
+    fn add(&self, v1: &Self::Value, v2: &Self::Value) -> Self::Value {
+        (v1.0 + v2.0, v1.1 + v2.1)
+    }
+
+    fn zero(&self) -> Self::Value {
+        (Duration::from_secs(0), 0)
+    }
+
+    fn to_f64(&self, val: &Self::Value) -> f64 {
+        let duration = val.0.as_millis() as f64;
+        let gas_used_ggigas = val.1 as f64 / 10_f64.powf(9_f64);
+
+        if duration == 0f64 {
+            return f64::INFINITY;
+        }
+
+        gas_used_ggigas / duration * 1000_f64
+    }
+
+    fn formatter(&self) -> &dyn ValueFormatter {
+        &GasMeasurementFormatter
+    }
+}
+
+struct GasMeasurementFormatter;
+impl ValueFormatter for GasMeasurementFormatter {
+    fn format_value(&self, value: f64) -> String {
+        format!("{:.2} Ggas/s", value)
+    }
+
+    fn format_throughput(&self, throughput: &Throughput, _value: f64) -> String {
+        match throughput {
+            Throughput::Elements(e) => format!("{} elements/s", *e),
+            Throughput::Bytes(b) => format!("{:.2} GiB/s", *b as f64 / 1_073_741_824.0),
+            _ => String::from("unknown"),
+        }
+    }
+
+    fn scale_values(&self, _throughput: f64, values: &mut [f64]) -> &'static str {
+        ""
+    }
+
+    fn scale_for_machines(&self, values: &mut [f64]) -> &'static str {
+        ""
+    }
+
+    fn scale_throughputs(&self, _times: f64, throughput: &Throughput, throughputs: &mut [f64]) -> &'static str {
+        for t in throughputs.iter_mut() {
+            match *throughput {
+                Throughput::Elements(_) => *t /= _times,
+                Throughput::Bytes(_) => *t /= _times,
+                _ => {}
+            }
+        }
+        ""
+    }
+}
+
 
 fn read_private_keys() -> Vec<SecretKey> {
     let file = include_str!("../../../test_data/private_keys_l1.txt");
@@ -45,8 +119,10 @@ fn recover_address_for_sk(sk: &SecretKey) -> Address {
 }
 
 async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
-    let storage_path = set_datadir(DEFAULT_DATADIR);
-    remove_db(&storage_path, true);
+    let storage_path = "/Users/fran/Library/Application Support/ethrex";
+    if std::fs::exists(Path::new(storage_path)).unwrap_or(false) {
+        std::fs::remove_dir_all(storage_path).unwrap();
+    }
     let genesis_file = include_bytes!("../../../test_data/genesis-l1-dev.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
     let store = Store::new(&storage_path, EngineType::Libmdbx).unwrap();
@@ -101,7 +177,8 @@ async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
     }
 }
 
-pub async fn bench_payload(input: &(&mut Blockchain, Block, &Store)) {
+pub async fn bench_payload(input: &(&mut Blockchain, Block, &Store)) -> (Duration, u64) {
+    let since = Instant::now();
     let (b, genesis_block, store) = input;
     // 1. engine_forkChoiceUpdated is called, which ends up calling fork_choice::build_payload,
     // which finally calls payload::create_payload(), this mimics this step without
@@ -138,6 +215,7 @@ pub async fn bench_payload(input: &(&mut Blockchain, Block, &Store)) {
     // 3. engine_newPayload is called, this eventually calls Blockchain::add_block
     // which takes transactions from the mempool and fills the block with them.
     b.add_block(&block).await.unwrap();
+    let executed = Instant::now();
     // EXTRA: Sanity check to not benchmark n empty block.
     let hash = &block.hash();
     assert!(!store
@@ -147,30 +225,47 @@ pub async fn bench_payload(input: &(&mut Blockchain, Block, &Store)) {
         .unwrap()
         .transactions
         .is_empty());
+    let header = store.get_block_header_by_hash(*hash).unwrap().unwrap();
+    let duration = executed.duration_since(since);
+    (duration, header.gas_used)
 }
 
-pub fn build_block_benchmark(c: &mut Criterion) {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let (mut blockchain, genesis_block, store) = rt.block_on(async {
-        let accounts = read_private_keys();
-        let addresses = accounts
-            .clone()
-            .into_iter()
-            .map(|sk| recover_address_for_sk(&sk))
-            .collect();
-
-        let (store_with_genesis, gen) = setup_genesis(&addresses).await;
-        let block_chain = Blockchain::new(EvmEngine::LEVM, store_with_genesis.clone());
-        fill_mempool(&block_chain, accounts).await;
-
-        (block_chain, gen.get_block(), store_with_genesis)
-    });
-    let input = (&mut blockchain, genesis_block, &store);
+pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
     c.bench_function("block payload building bench", |b| {
         b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| bench_payload(&input))
+            .iter_custom(|iters| async move {
+                let mut total_duration = Duration::from_secs(0);
+                let mut total_gas_used = 0;
+                let (mut blockchain, genesis_block, store) = {
+                    let accounts = read_private_keys();
+                    let addresses = accounts
+                        .clone()
+                        .into_iter()
+                        .map(|sk| recover_address_for_sk(&sk))
+                        .collect();
+
+                    let (store_with_genesis, gen) = setup_genesis(&addresses).await;
+                    let block_chain = Blockchain::new(EvmEngine::LEVM, store_with_genesis.clone());
+                    fill_mempool(&block_chain, accounts).await;
+
+                    (block_chain, gen.get_block(), store_with_genesis)
+                };
+                let input = (&mut blockchain, genesis_block, &store);
+                let (duration, gas_used) = bench_payload(&input).await;
+                total_duration += duration;
+                total_gas_used += gas_used;
+                (total_duration, total_gas_used)
+            });
     });
 }
 
-criterion_group!(runner, build_block_benchmark);
-criterion_main!(runner);
+fn gas_throughput_measurement() -> Criterion<GasMeasurement> {
+   Criterion::default().with_measurement(GasMeasurement).sample_size(10)
+}
+
+criterion_group!(
+    name = block_bench;
+    config = gas_throughput_measurement();
+    targets = build_block_benchmark
+);
+criterion_main!(block_bench);
