@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747692384552,
+  "lastUpdate": 1747751255705,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8812,6 +8812,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007290329951690821,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d73297f8624033d59c07ba887a007fe20071702c",
+          "message": "feat(l1): add rpc endpoint admin_peers (#2732)\n\n**Motivation**\nSupport rpc endpoint `admin_peers`\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add rpc endpoint `admin_peers`\n* Track inbound connections \n* Store peer node version when starting a connection\n* Add `peer_handler: PeerHandler` field to `RpcContext` so we can access\npeers from the rpc\n* (Misc) `Syncer` & `SyncManager` now receive a `PeerHandler` upon\ncreation instead of a `KademliaTable`\n* (Misc) Fix common typo across the project\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\nData missing compared to geth implementation:\n* The local address of each connection\n* Whether a connection is trusted, static (we have no notion of this\nyet)\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2671",
+          "timestamp": "2025-05-20T13:40:51Z",
+          "tree_id": "1b839813ccf9db83001f1616c569634442f3aee3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d73297f8624033d59c07ba887a007fe20071702c"
+        },
+        "date": 1747751252598,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007272762891566265,
             "unit": "Mgas/s"
           }
         ]
