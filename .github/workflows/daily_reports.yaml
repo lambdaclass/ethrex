@@ -42,11 +42,6 @@ jobs:
       - name: Rename result (2)
         run: cp results.md results_revm.md
 
-      - name: Create diff message
-        run: |
-          bash .github/scripts/hive_levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
-          cat diff.md >> $GITHUB_STEP_SUMMARY
-
       - name: Post Hive results to Slack
         env:
           SLACK_WEBHOOKS: >
@@ -80,22 +75,6 @@ jobs:
             sh .github/scripts/publish_levm_hive.sh "$webhook"
           done
           echo "Sending Results" >> $GITHUB_STEP_SUMMARY
-
-      - name: Post results diff to Slack
-        env:
-          SLACK_WEBHOOK: >
-            ${{ github.event_name == 'workflow_dispatch'
-              && secrets.TEST_CHANNEL_SLACK
-              || secrets.ETHREX_L1_SLACK_WEBHOOK
-            }}
-        # Only send diff message if the diff has changed
-        run: |
-          if grep -q "No differences found" diff.md; then
-            echo "No differences to post" >> $GITHUB_STEP_SUMMARY
-          else
-            sh .github/scripts/publish_vms_diff.sh $SLACK_WEBHOOK
-            echo "Sending Results" >> $GITHUB_STEP_SUMMARY
-          fi
 
   levm-test:
     name: Generate Report for LEVM EF Tests
