@@ -3195,6 +3195,7 @@ dependencies = [
  "hex",
  "jsonwebtoken",
  "keccak-hash",
+ "lazy_static",
  "rand 0.8.5",
  "reqwest",
  "secp256k1",

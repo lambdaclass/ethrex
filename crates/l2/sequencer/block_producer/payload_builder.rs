@@ -25,8 +25,8 @@ use crate::{
     sequencer::{
         errors::{BlockProducerError, StateDiffError},
         state_diff::{
-            encode_block_header, AccountStateDiff, DepositLog, WithdrawalLog,
-            SIMPLE_TX_STATE_DIFF_SIZE,
+            encode_block_header, AccountStateDiff, DepositLog, WithdrawalLog, BLOCK_HEADER_LEN,
+            DEPOSITS_LOG_LEN, SIMPLE_TX_STATE_DIFF_SIZE, WITHDRAWAL_LOG_LEN,
         },
     },
     utils::helpers::{is_deposit_l2, is_withdrawal_l2},
@@ -76,9 +76,9 @@ pub async fn fill_transactions(
     store: &Store,
 ) -> Result<(), BlockProducerError> {
     // Maybe we can cache this to not calculate it every time
-    let header_encoded_len = encode_block_header(&context.payload.header).len();
-    let withdrawals_log_len = WithdrawalLog::default().encode().len();
-    let deposits_log_len = DepositLog::default().encode().len();
+    let header_encoded_len = *BLOCK_HEADER_LEN;
+    let withdrawals_log_len = *WITHDRAWAL_LOG_LEN;
+    let deposits_log_len = *DEPOSITS_LOG_LEN;
 
     // version (u8) + header fields (struct) + withdrawals_len (u16) + deposits_len (u16) + accounts_diffs_len (u16)
     let mut acc_size_without_accounts = 1 + header_encoded_len + 2 + 2 + 2;

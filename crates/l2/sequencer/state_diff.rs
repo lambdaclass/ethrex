@@ -9,6 +9,19 @@ use ethrex_trie::Trie;
 
 use super::errors::StateDiffError;
 
+use lazy_static::lazy_static;
+
+lazy_static! {
+    /// The serialized length of a default withdrawal log
+    pub static ref WITHDRAWAL_LOG_LEN: usize = WithdrawalLog::default().encode().len();
+
+    /// The serialized length of a default deposit log
+    pub static ref DEPOSITS_LOG_LEN: usize = DepositLog::default().encode().len();
+
+    /// The serialized lenght of a default block header
+    pub static ref BLOCK_HEADER_LEN: usize = encode_block_header(&BlockHeader::default()).len();
+}
+
 // State diff size for a simple transfer.
 // Two `AccountUpdates` with new_balance, one of which also has nonce_diff.
 pub const SIMPLE_TX_STATE_DIFF_SIZE: usize = 116;
