@@ -58,8 +58,6 @@ pub enum MetricsApiError {
 #[derive(Debug, thiserror::Error)]
 pub enum MetricsError {
     #[error("MetricsL2Error: {0}")]
-    MutexLockError(String),
-    #[error("MetricsL2Error: {0}")]
     PrometheusErr(String),
     #[error("MetricsL2Error {0}")]
     TryInto(#[from] std::num::TryFromIntError),
