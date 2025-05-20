@@ -184,7 +184,8 @@ impl ProofCoordinator {
             .first()
             .ok_or(SequencerError::ProverServerError(
                 ProverServerError::Custom("no rpc urls present!".to_string()),
-            ))?.to_string();
+            ))?
+            .to_string();
 
         Ok(Self {
             listen_ip: config.listen_ip,
