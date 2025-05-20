@@ -370,7 +370,6 @@ impl Command {
                             nonce,
                             from: Some(cfg.wallet.address),
                             value: Some(amount),
-                            max_fee_per_gas: Some(800000000),
                             ..Default::default()
                         },
                     )

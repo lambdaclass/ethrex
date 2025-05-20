@@ -1018,25 +1018,6 @@ impl StoreEngine for RedBStore {
         Ok(res)
     }
 
-    async fn is_synced(&self) -> Result<bool, StoreError> {
-        match self
-            .read(CHAIN_DATA_TABLE, ChainDataIndex::IsSynced)
-            .await?
-        {
-            None => Err(StoreError::Custom("Sync status not found".to_string())),
-            Some(ref rlp) => RLPDecode::decode(&rlp.value()).map_err(|_| StoreError::DecodeError),
-        }
-    }
-
-    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
-        self.write(
-            CHAIN_DATA_TABLE,
-            ChainDataIndex::IsSynced,
-            is_synced.encode_to_vec(),
-        )
-        .await
-    }
-
     async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
         self.write(
             SNAP_STATE_TABLE,
