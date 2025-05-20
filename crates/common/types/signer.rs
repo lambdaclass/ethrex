@@ -1,8 +1,13 @@
 use bytes::Bytes;
-use ethereum_types::{Address, Signature};
+use ethereum_types::{Address, Signature, U256};
+use ethrex_rlp::encode::PayloadRLPEncode;
 use keccak_hash::keccak;
 use reqwest::{Client, Url};
 use secp256k1::{Message, PublicKey, SecretKey, SECP256K1};
+
+use crate::types::transaction::{
+    EIP1559Transaction, EIP4844Transaction, EIP7702Transaction, TxType,
+};
 
 #[derive(Clone, Debug)]
 pub enum Signer {
@@ -11,7 +16,46 @@ pub enum Signer {
 }
 
 impl Signer {
-    pub async fn sign(&self, data: Bytes) -> Result<Signature, SignerError> {
+    pub async fn sign_eip1559_transaction(
+        &self,
+        tx: &mut EIP1559Transaction,
+    ) -> Result<(), SignerError> {
+        let mut payload = tx.encode_payload_to_vec();
+        payload.insert(0, TxType::EIP1559.into());
+
+        let signature = self.sign_raw(payload.into()).await?;
+        (tx.signature_r, tx.signature_s, tx.signature_y_parity) = parse_signature(signature);
+
+        Ok(())
+    }
+
+    pub async fn sign_eip4844_transaction(
+        &self,
+        tx: &mut EIP4844Transaction,
+    ) -> Result<(), SignerError> {
+        let mut payload = tx.encode_payload_to_vec();
+        payload.insert(0, TxType::EIP4844.into());
+
+        let signature = self.sign_raw(payload.into()).await?;
+        (tx.signature_r, tx.signature_s, tx.signature_y_parity) = parse_signature(signature);
+
+        Ok(())
+    }
+
+    pub async fn sign_eip7702_transaction(
+        &self,
+        tx: &mut EIP7702Transaction,
+    ) -> Result<(), SignerError> {
+        let mut payload = tx.encode_payload_to_vec();
+        payload.insert(0, TxType::EIP7702.into());
+
+        let signature = self.sign_raw(payload.into()).await?;
+        (tx.signature_r, tx.signature_s, tx.signature_y_parity) = parse_signature(signature);
+
+        Ok(())
+    }
+
+    pub async fn sign_raw(&self, data: Bytes) -> Result<Signature, SignerError> {
         match self {
             Self::Local(signer) => Ok(signer.sign(data)),
             Self::Remote(signer) => signer.sign(data).await,
@@ -104,6 +148,14 @@ impl RemoteSigner {
             .parse::<Signature>()
             .map_err(|e| SignerError::ParseError(e.to_string()))
     }
+}
+
+fn parse_signature(signature: Signature) -> (U256, U256, bool) {
+    let r = U256::from_big_endian(&signature[..32]);
+    let s = U256::from_big_endian(&signature[32..64]);
+    let y_parity = signature[64] != 0 && signature[64] != 27;
+
+    (r, s, y_parity)
 }
 
 #[derive(Debug, thiserror::Error)]
