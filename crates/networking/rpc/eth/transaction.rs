@@ -650,7 +650,7 @@ impl RpcHandler for SendRawTransactionRequest {
             #[cfg(feature = "l2")]
             {
                 debug!(
-                    "EIP-4844 transaction not supported in L2: {:#x}",
+                    "EIP-4844 transaction are not supported in the L2: {:#x}",
                     Transaction::EIP4844Transaction(wrapped_blob_tx.tx.clone()).compute_hash()
                 );
                 return Err(RpcErr::InvalidEthrexL2Message(
