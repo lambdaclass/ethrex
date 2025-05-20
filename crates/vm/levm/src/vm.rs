@@ -63,12 +63,12 @@ impl<'a> VM<'a> {
     pub fn setup_vm(&mut self) -> Result<(), VMError> {
         self.initialize_substate()?;
 
-        let (callee, bytecode) = self.get_callee_and_code()?;
+        let (callee, code_address, bytecode) = self.get_callee_code_address_and_code()?;
 
         let initial_call_frame = CallFrame::new(
             self.env.origin,
             callee,
-            callee,
+            code_address,
             bytecode,
             self.tx.value(),
             self.tx.data().clone(),

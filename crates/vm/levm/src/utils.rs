@@ -455,25 +455,26 @@ impl<'a> VM<'a> {
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
         }
 
-        let code_address = self.current_call_frame()?.code_address;
-        let (code_address_info, _) = self.db.access_account(&mut self.substate, code_address)?;
+        // Update callframe code address and code because these things could've changed after processing the authorization list.
+        let recipient = self.current_call_frame()?.to;
+        let recipient_acc = self.db.access_account(&mut self.substate, recipient)?.0;
 
-        if has_delegation(&code_address_info)? {
-            self.current_call_frame_mut()?.code_address =
-                get_authorized_address(&code_address_info)?;
-            let code_address = self.current_call_frame()?.code_address;
-            let (auth_address_info, _) =
-                self.db.access_account(&mut self.substate, code_address)?;
-
-            self.current_call_frame_mut()?.bytecode = auth_address_info.code.clone();
+        let code_address = if has_delegation(&recipient_acc)? {
+            get_authorized_address(&recipient_acc)?
         } else {
-            self.current_call_frame_mut()?.bytecode = code_address_info.code.clone();
-        }
+            recipient
+        };
+        let code = self
+            .db
+            .access_account(&mut self.substate, code_address)?
+            .0
+            .code;
 
-        self.current_call_frame_mut()?.valid_jump_destinations =
-            get_valid_jump_destinations(&self.current_call_frame()?.bytecode).unwrap_or_default();
+        self.current_call_frame_mut()?.set_code(code)?;
+        self.current_call_frame_mut()?.code_address = code_address;
 
         self.substate.refunded_gas = refunded_gas;
+        dbg!(&self.substate.refunded_gas);
 
         Ok(())
     }
@@ -681,15 +682,17 @@ impl<'a> VM<'a> {
         hooks
     }
 
-    pub fn get_callee_and_code(&mut self) -> Result<(Address, Bytes), VMError> {
-        let (callee, code) = match self.tx.to() {
+    pub fn get_callee_code_address_and_code(
+        &mut self,
+    ) -> Result<(Address, Address, Bytes), VMError> {
+        let (callee, code_address, code) = match self.tx.to() {
             TxKind::Call(address_to) => {
                 self.substate.touched_accounts.insert(address_to);
 
-                let (_is_delegation, _eip7702_gas_consumed, _code_address, bytes) =
+                let (_is_delegation, _eip7702_gas_consumed, code_address, bytes) =
                     eip7702_get_code(self.db, &mut self.substate, address_to)?;
 
-                (address_to, bytes)
+                (address_to, code_address, bytes)
             }
 
             TxKind::Create => {
@@ -701,11 +704,11 @@ impl<'a> VM<'a> {
                 self.substate.touched_accounts.insert(created_address);
                 self.substate.created_accounts.insert(created_address);
 
-                (created_address, Bytes::new()) // Bytecode will be assigned from calldata after validations
+                (created_address, created_address, Bytes::new()) // Bytecode will be assigned from calldata after validations
             }
         };
 
-        Ok((callee, code))
+        Ok((callee, code_address, code))
     }
 
     /// Checks if an address is delegation target in current transaction.
