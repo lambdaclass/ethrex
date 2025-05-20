@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747753544564,
+  "lastUpdate": 1747754411787,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7975,6 +7975,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211581166813,
             "range": "± 470956486",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "75658dc1e810b6f8712d44c4cdee3634367e7e20",
+          "message": "chore(l2): don't init metrics for l1 when using make init (#2849)\n\n**Motivation**\n\nWhen starting l1 with `make init` or `make restart` the l1 node started\n2 more containers for prometheus + graphana. We don't care for the l1\nmetrics neither in development nor in production for l2 so we want to\nremove it\n\n**Description**\n\n- Build \"dev\" docker image without metrics feature\n- Remove include of `../metrics/docker-compose-metrics.yaml` file in\n`docker-compose-dev.yaml`\n- Remove metrics port from `docker-compose-dev.yaml`\n- Delete `docker-compose-metrics-l1-dev.overrides.yaml` file\n- Remove `docker-compose-metrics-l1-dev.overrides.yaml` from makefile\n\n\nCloses #2554",
+          "timestamp": "2025-05-20T14:26:32Z",
+          "tree_id": "a006830bcc4c1ba2927f6e276fd247fc0e5d97da",
+          "url": "https://github.com/lambdaclass/ethrex/commit/75658dc1e810b6f8712d44c4cdee3634367e7e20"
+        },
+        "date": 1747754408660,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209396132972,
+            "range": "± 960550699",
             "unit": "ns/iter"
           }
         ]
