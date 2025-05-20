@@ -10,6 +10,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{public_key_from_signing_key, P2PContext},
+    peer_handler::PeerHandler,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
@@ -134,9 +135,11 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     #[cfg(feature = "l2")] rollup_store: StoreRollup,
 ) {
+    let peer_handler = PeerHandler::new(peer_table);
+
     // Create SyncManager
     let syncer = SyncManager::new(
-        peer_table.clone(),
+        peer_handler.clone(),
         opts.syncmode.clone(),
         cancel_token,
         blockchain.clone(),
@@ -153,6 +156,7 @@ pub async fn init_rpc_api(
         local_p2p_node,
         local_node_record,
         syncer,
+        peer_handler,
         get_client_version(),
         #[cfg(feature = "based")]
         get_gateway_http_client(&l2_opts.based_opts),
