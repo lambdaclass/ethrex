@@ -342,6 +342,7 @@ pub mod test_utils {
     use ethrex_blockchain::Blockchain;
     use ethrex_common::H512;
     use ethrex_p2p::{
+        peer_handler::PeerHandler,
         sync_manager::SyncManager,
         types::{Node, NodeRecord},
     };
@@ -415,6 +416,7 @@ pub mod test_utils {
             local_p2p_node,
             example_local_node_record(),
             SyncManager::dummy(),
+            PeerHandler::dummy(),
             "ethrex/test".to_string(),
             #[cfg(feature = "based")]
             gateway_eth_client,
@@ -439,6 +441,7 @@ pub mod test_utils {
             blockchain,
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
+            peer_handler: PeerHandler::dummy(),
             node_data: NodeData {
                 jwt_secret: Default::default(),
                 local_p2p_node: example_p2p_node(),
