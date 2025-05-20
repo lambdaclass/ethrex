@@ -688,14 +688,11 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn get_account_snapshot(
-        &self,
-        account_hash: H256,
-    ) -> Result<Option<AccountState>, StoreError> {
+    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError> {
         Ok(self.inner().state_snapshot.get(&account_hash).cloned())
     }
 
-    async fn get_storage_snapshot(
+    fn get_storage_snapshot(
         &self,
         account_hash: H256,
         storage_hash: H256,

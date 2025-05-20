@@ -375,13 +375,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<Vec<(H256, U256)>, StoreError>;
 
     /// Gets a single account from the snapshot state.
-    async fn get_account_snapshot(
-        &self,
-        account_hash: H256,
-    ) -> Result<Option<AccountState>, StoreError>;
+    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError>;
 
     /// Gets a single storage value from the snapshot state.
-    async fn get_storage_snapshot(
+    fn get_storage_snapshot(
         &self,
         account_hash: H256,
         storage_hash: H256,

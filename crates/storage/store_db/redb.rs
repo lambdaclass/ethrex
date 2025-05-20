@@ -1233,10 +1233,7 @@ impl StoreEngine for RedBStore {
         .await
     }
 
-    async fn get_account_snapshot(
-        &self,
-        account_hash: H256,
-    ) -> Result<Option<AccountState>, StoreError> {
+    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError> {
         let read_tx = self.db.begin_read()?;
         let table = read_tx.open_table(STATE_SNAPSHOT_TABLE)?;
         Ok(table
@@ -1244,7 +1241,7 @@ impl StoreEngine for RedBStore {
             .map(|elem| elem.value().to()))
     }
 
-    async fn get_storage_snapshot(
+    fn get_storage_snapshot(
         &self,
         account_hash: H256,
         storage_hash: H256,

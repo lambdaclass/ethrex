@@ -97,7 +97,7 @@ impl DiffLayer {
 
         // If bloom misses we can skip diff layers
         if !hit {
-            return self.origin.get_account(hash, layers);
+            return self.origin.get_account(hash);
         }
 
         // Start traversing layers.
@@ -129,7 +129,7 @@ impl DiffLayer {
 
         // If bloom misses we can skip diff layers
         if !hit {
-            return self.origin.get_storage(account_hash, storage_hash, layers);
+            return self.origin.get_storage(account_hash, storage_hash);
         }
 
         // Start traversing layers.
@@ -196,7 +196,7 @@ impl DiffLayer {
 
         // delegate to parent
         match &layers[&self.parent] {
-            Layer::DiskLayer(disk_layer) => disk_layer.get_account(hash, layers),
+            Layer::DiskLayer(disk_layer) => disk_layer.get_account(hash),
             Layer::DiffLayer(diff_layer) => diff_layer
                 .read()
                 .map_err(|error| SnapshotError::LockError(error.to_string()))?
@@ -225,9 +225,7 @@ impl DiffLayer {
 
         // delegate to parent
         match &layers[&self.parent] {
-            Layer::DiskLayer(disk_layer) => {
-                disk_layer.get_storage(account_hash, storage_hash, layers)
-            }
+            Layer::DiskLayer(disk_layer) => disk_layer.get_storage(account_hash, storage_hash),
             Layer::DiffLayer(diff_layer) => diff_layer
                 .read()
                 .map_err(|error| SnapshotError::LockError(error.to_string()))?

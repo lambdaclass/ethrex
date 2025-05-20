@@ -4,7 +4,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    },
+    }, time::Instant,
 };
 
 use crate::api::StoreEngine;
@@ -13,8 +13,9 @@ use ethrex_common::{
     H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
+use tracing::info;
 
-use super::{cache::DiskCache, difflayer::DiffLayer, error::SnapshotError, tree::Layers};
+use super::{cache::DiskCache, difflayer::DiffLayer, error::SnapshotError};
 
 /// A disk layer is the bottom most layer.
 ///
@@ -27,6 +28,7 @@ pub struct DiskLayer {
     pub(super) block_hash: BlockHash,
     pub(super) state_root: H256,
     pub(super) stale: Arc<AtomicBool>,
+    pub(super) generating: Arc<AtomicBool>,
 }
 
 impl fmt::Debug for DiskLayer {
@@ -48,6 +50,7 @@ impl DiskLayer {
             db,
             cache: DiskCache::new(20000, 40000),
             stale: Arc::new(AtomicBool::new(false)),
+            generating: Arc::new(AtomicBool::new(false))
         }
     }
 }
@@ -57,81 +60,38 @@ impl DiskLayer {
         self.state_root
     }
 
-    pub fn get_account(
-        &self,
-        hash: H256,
-        _layers: &Layers,
-    ) -> Result<Option<AccountState>, SnapshotError> {
+    pub fn get_account(&self, hash: H256) -> Result<Option<AccountState>, SnapshotError> {
         // Try to get the account from the cache.
         if let Some(value) = self.cache.accounts.get(&hash) {
             return Ok(value.clone());
         }
 
-        // TODO: Right now we use the state trie, but the disk layer should use
-        // it's own database table of snapshots for faster lookup.
-        let state_trie = self.db.open_state_trie(self.state_root);
+        // TODO: check that snapshot is done to make sure None is None?
+        let account = self.db.get_account_snapshot(hash)?;
 
-        let value = if let Some(value) = state_trie
-            .get(hash)
-            .ok()
-            .flatten()
-            .map(|x| AccountState::decode(&x))
-        {
-            value
-        } else {
-            self.cache.accounts.insert(hash, None);
-            return Ok(None);
-        };
+        self.cache.accounts.insert(hash, account.clone());
 
-        let value: AccountState = value?;
-
-        self.cache.accounts.insert(hash, value.clone().into());
-
-        Ok(Some(value))
+        Ok(account)
     }
 
     pub fn get_storage(
         &self,
         account_hash: H256,
         storage_hash: H256,
-        layers: &Layers,
     ) -> Result<Option<U256>, SnapshotError> {
         // Look into the cache first.
         if let Some(value) = self.cache.storages.get(&(account_hash, storage_hash)) {
             return Ok(value);
         }
 
-        let account = if let Some(account) = self.get_account(account_hash, layers)? {
-            account
-        } else {
-            self.cache
-                .storages
-                .insert((account_hash, storage_hash), None);
-            return Ok(None);
-        };
-
-        // TODO: Right now we use the storage trie, but the disk layer should use
-        // it's own database table of snapshots for faster lookup.
-
-        let storage_trie = self
-            .db
-            .open_storage_trie(account_hash, account.storage_root);
-
-        let value = if let Some(value) = storage_trie.get(storage_hash).ok().flatten() {
-            value
-        } else {
-            self.cache
-                .storages
-                .insert((account_hash, storage_hash), None);
-            return Ok(None);
-        };
-        let value: U256 = U256::decode(&value)?;
+        // TODO: check that snapshot is done to make sure None is None?
+        let value = self.db.get_storage_snapshot(account_hash, storage_hash)?;
 
         self.cache
             .storages
-            .insert((account_hash, storage_hash), Some(value));
+            .insert((account_hash, storage_hash), value);
 
-        Ok(Some(value))
+        Ok(value)
     }
 
     pub fn block_hash(&self) -> H256 {
@@ -173,6 +133,10 @@ impl DiskLayer {
 
     async fn generate(self: Arc<Self>) {
         // todo: we should be able to stop mid generation in case disk layer changes?
+        self.generating.store(true, Ordering::SeqCst);
+        info!("Disk layer generating");
+        let start = Instant::now();
+
         let state_trie = self.db.open_state_trie(self.state_root);
 
         let account_iter = state_trie.into_iter().content().map_while(|(path, value)| {
@@ -247,5 +211,8 @@ impl DiskLayer {
             storage_keys.clear();
             storage_values.clear();
         }
+
+        self.generating.store(false, Ordering::SeqCst);
+        info!("Disk layer generation complete, done in {:?}", start.elapsed());
     }
 }
