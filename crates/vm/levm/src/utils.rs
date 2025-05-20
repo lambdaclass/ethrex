@@ -474,7 +474,6 @@ impl<'a> VM<'a> {
         self.current_call_frame_mut()?.code_address = code_address;
 
         self.substate.refunded_gas = refunded_gas;
-        dbg!(&self.substate.refunded_gas);
 
         Ok(())
     }
