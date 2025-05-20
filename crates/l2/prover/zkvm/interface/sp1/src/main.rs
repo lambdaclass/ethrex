@@ -2,7 +2,7 @@
 
 use bls12_381::G1Affine;
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::{Address, H256};
+use ethrex_common::{types::BYTES_PER_BLOB, Address, H256};
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
 use kzg_rs::{
@@ -151,10 +151,11 @@ pub fn main() {
 
     #[cfg(feature = "l2")]
     let (blob_challenge, blob_evaluation) = {
-        let blob_data = state_diff
+        let mut blob_data = state_diff
             .encode()
             .expect("failed to encode state diff into blob data")
             .to_vec();
+        blob_data.resize(BYTES_PER_BLOB, 0);
         let blob = Blob::from_slice(&blob_data).expect("failed to convert blob data into Blob");
         let commitment = G1Affine::from_compressed(&blob_commitment)
             .expect("failed to deserialize blob commitment");
