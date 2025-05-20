@@ -108,7 +108,7 @@ dependencies = [
 [[package]]
 name = "aligned-sdk"
 version = "0.1.0"
-source = "git+https://github.com/yetanotherco/aligned_layer?rev=fcb581a019b3a9660886b9e01f38bf2d43a9bc52#fcb581a019b3a9660886b9e01f38bf2d43a9bc52"
+source = "git+https://github.com/yetanotherco/aligned_layer?rev=124eba82524bd95d1419ace19f8d959c492ffee0#124eba82524bd95d1419ace19f8d959c492ffee0"
 dependencies = [
  "ciborium",
  "dialoguer",
