@@ -263,32 +263,31 @@ fn get_tx_diffs(
         Evm::LEVM { db } => {
             // First we add the account info
             for (address, original_account) in call_frame_backup.original_accounts_info.iter() {
-                let new_account_info =
+                let new_account =
                     db.cache
                         .get(address)
                         .ok_or(BlockProducerError::FailedToGetDataFrom(
                             "DB Cache".to_owned(),
                         ))?;
 
-                let nonce_diff: u16 = (new_account_info.info.nonce - original_account.info.nonce)
+                let nonce_diff: u16 = (new_account.info.nonce - original_account.info.nonce)
                     .try_into()
                     .map_err(BlockProducerError::TryIntoError)?;
 
-                let new_balance = if new_account_info.info.balance != original_account.info.balance
-                {
-                    Some(new_account_info.info.balance)
+                let new_balance = if new_account.info.balance != original_account.info.balance {
+                    Some(new_account.info.balance)
                 } else {
                     None
                 };
 
-                let bytecode = if new_account_info.code != original_account.code {
-                    Some(new_account_info.code.clone())
+                let bytecode = if new_account.code != original_account.code {
+                    Some(new_account.code.clone())
                 } else {
                     None
                 };
 
                 let bytecode_hash = if bytecode.is_some() {
-                    Some(new_account_info.info.code_hash)
+                    Some(new_account.info.code_hash)
                 } else {
                     None
                 };
