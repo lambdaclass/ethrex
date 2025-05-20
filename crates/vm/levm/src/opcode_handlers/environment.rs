@@ -29,9 +29,7 @@ impl<'a> VM<'a> {
     pub fn op_balance(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
-        let (account, address_was_cold) = self
-            .db
-            .access_account(&mut self.substate, address)?;
+        let (account, address_was_cold) = self.db.access_account(&mut self.substate, address)?;
         let account_info = account.info.clone();
 
         let current_call_frame = self.current_call_frame_mut()?;
@@ -283,9 +281,7 @@ impl<'a> VM<'a> {
             .map_err(|_| VMError::VeryLargeNumber)?;
         let current_memory_size = self.current_call_frame()?.memory.len();
 
-        let (_, address_was_cold) = self
-            .db
-            .access_account(&mut self.substate, address)?;
+        let (_, address_was_cold) = self.db.access_account(&mut self.substate, address)?;
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -400,9 +396,8 @@ impl<'a> VM<'a> {
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
         let (account_is_empty, account_code_hash, address_was_cold) = {
-            let (account, address_was_cold) = self
-                .db
-                .access_account(&mut self.substate, address)?;
+            let (account, address_was_cold) =
+                self.db.access_account(&mut self.substate, address)?;
             (
                 account.is_empty(),
                 account.info.code_hash.0,

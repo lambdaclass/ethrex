@@ -71,8 +71,7 @@ impl<'a> VM<'a> {
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
         let (account_is_empty, address_was_cold) = {
-            let (account, address_was_cold) =
-                self.db.access_account(&mut self.substate, callee)?;
+            let (account, address_was_cold) = self.db.access_account(&mut self.substate, callee)?;
             (account.is_empty(), address_was_cold)
         };
 
@@ -560,9 +559,8 @@ impl<'a> VM<'a> {
         };
 
         let (target_account_is_empty, target_account_is_cold) = {
-            let (target_account, target_account_is_cold) = self
-                .db
-                .access_account(&mut self.substate, target_address)?;
+            let (target_account, target_account_is_cold) =
+                self.db.access_account(&mut self.substate, target_address)?;
             (target_account.is_empty(), target_account_is_cold)
         };
 
@@ -630,7 +628,7 @@ impl<'a> VM<'a> {
             let deployer_address = current_call_frame.to;
             (deployer_address, max_message_call_gas)
         };
-      
+
         let (deployer_balance, deployer_nonce) = {
             let deployer_account = self
                 .db
