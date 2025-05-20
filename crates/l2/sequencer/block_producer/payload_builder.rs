@@ -25,8 +25,8 @@ use crate::{
     sequencer::{
         errors::{BlockProducerError, StateDiffError},
         state_diff::{
-            encode_block_header, AccountStateDiff, DepositLog, WithdrawalLog, BLOCK_HEADER_LEN,
-            DEPOSITS_LOG_LEN, SIMPLE_TX_STATE_DIFF_SIZE, WITHDRAWAL_LOG_LEN,
+            AccountStateDiff, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN, SIMPLE_TX_STATE_DIFF_SIZE,
+            WITHDRAWAL_LOG_LEN,
         },
     },
     utils::helpers::{is_deposit_l2, is_withdrawal_l2},
