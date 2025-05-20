@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use ethrex::{
     cli::{import_blocks, remove_db},
-    utils::set_datadir,
+    utils::{set_data_sub_dir, set_datadir},
     DEFAULT_DATADIR,
 };
 use ethrex_vm::EvmEngine;
@@ -12,8 +12,8 @@ fn block_import() {
 
     let network = "../../test_data/genesis-perf-ci.json";
 
-    set_datadir(data_dir, &Some(network.to_string()));
-    remove_db(data_dir, true, &Some(network.to_string()));
+    set_datadir(&set_data_sub_dir(data_dir, &Some(network.to_string())));
+    remove_db(data_dir, true);
 
     let evm_engine = EvmEngine::default();
 

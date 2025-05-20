@@ -5,7 +5,7 @@ use ethrex::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
         init_metrics, init_rpc_api, init_store, init_tracing,
     },
-    utils::{set_datadir, store_node_config_file, NodeConfigFile},
+    utils::{set_data_sub_dir, set_datadir, store_node_config_file, NodeConfigFile},
 };
 use ethrex_p2p::network::peer_table;
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -28,7 +28,7 @@ async fn main() -> eyre::Result<()> {
         return subcommand.run(&opts).await;
     }
 
-    let data_dir = set_datadir(&opts.datadir, &opts.network);
+    let data_dir = set_datadir(&set_data_sub_dir(&opts.datadir, &opts.network));
 
     let network = get_network(&opts);
 

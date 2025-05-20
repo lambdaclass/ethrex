@@ -12,7 +12,7 @@ use tracing::{info, warn, Level};
 
 use crate::{
     initializers::{init_blockchain, init_store},
-    utils::{self, get_client_version, set_datadir},
+    utils::{self, get_client_version, set_data_sub_dir, set_datadir},
     DEFAULT_DATADIR,
 };
 
@@ -244,7 +244,7 @@ impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         match self {
             Subcommand::RemoveDB { datadir, force } => {
-                remove_db(&datadir, force, &opts.network);
+                remove_db(&datadir, force);
             }
             Subcommand::Import { path, removedb } => {
                 if removedb {
@@ -273,8 +273,8 @@ impl Subcommand {
     }
 }
 
-pub fn remove_db(datadir: &str, force: bool, network: &Option<String>) {
-    let data_dir = set_datadir(datadir, network);
+pub fn remove_db(datadir: &str, force: bool) {
+    let data_dir = set_datadir(datadir);
     let path = Path::new(&data_dir);
 
     if path.exists() {
@@ -301,7 +301,7 @@ pub fn remove_db(datadir: &str, force: bool, network: &Option<String>) {
 }
 
 pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
-    let data_dir = set_datadir(data_dir, &Some(network.to_string()));
+    let data_dir = set_datadir(&set_data_sub_dir(data_dir, &Some(network.to_string())));
 
     let store = init_store(&data_dir, network).await;
 
