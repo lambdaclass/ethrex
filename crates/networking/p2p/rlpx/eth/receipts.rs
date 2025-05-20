@@ -119,14 +119,14 @@ fn has_bloom(msg_data: &[u8]) -> Result<bool, RLPDecodeError> {
     let decoder = Decoder::new(&data)?;
     //check if the list is empty
     if decoder.is_done() {
-        return Ok(false);
+        return Ok(true);
     }
 
     // inner list
     let (data, _) = decoder.get_encoded_item()?;
     let decoder = Decoder::new(&data)?;
     if decoder.is_done() {
-        return Ok(false);
+        return Ok(true);
     }
 
     // we only need one element
