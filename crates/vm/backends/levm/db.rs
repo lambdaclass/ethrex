@@ -139,10 +139,9 @@ impl LevmDatabase for DynVmDatabase {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<Option<CoreH256>, DatabaseError> {
-        Ok(self
-            .0
+        self.0
             .get_block_hash(block_number)
-            .map_err(|e| DatabaseError::Custom(e.to_string()))?)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {

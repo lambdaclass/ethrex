@@ -216,10 +216,9 @@ impl PayloadBuildContext {
     }
 
     fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        Ok(self
-            .store
+        self.store
             .get_chain_config()
-            .map_err(|e| EvmError::DB(e.to_string()))?)
+            .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     fn base_fee_per_gas(&self) -> Option<u64> {
