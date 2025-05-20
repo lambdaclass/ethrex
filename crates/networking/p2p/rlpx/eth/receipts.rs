@@ -5,12 +5,15 @@ use crate::rlpx::{
     p2p::Capability,
     utils::{snappy_compress, snappy_decompress},
 };
+use ethereum_types::Bloom;
+
 use bytes::BufMut;
 use ethrex_common::types::{BlockHash, Receipt};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
+
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getreceipts-0x0f
 #[derive(Debug)]
 pub(crate) struct GetReceipts {
@@ -92,23 +95,70 @@ impl RLPxMessage for Receipts {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
+        if has_bloom(msg_data)? {
+            Ok(Receipts::Receipts68(Receipts68::decode(msg_data)?))
+        } else {
+            // this should be eth/69 when implemented
+            //Ok(Receipts::Receipts69(Receipts69::decode(msg_data)?))
+            Ok(Receipts::Receipts68(Receipts68::decode(msg_data)?))
+        }
+    }
+}
 
-        Ok(Receipts::Receipts68(Receipts68::decode(msg_data)?))
+fn has_bloom(msg_data: &[u8]) -> Result<bool, RLPDecodeError> {
+    let decompressed_data = snappy_decompress(msg_data)?;
+    let decoder = Decoder::new(&decompressed_data)?;
+    let (_, decoder): (u64, _) = decoder.decode_field("request-id")?;
+    let (data, _) = decoder.get_encoded_item()?;
+    let decoder = Decoder::new(&data)?;
+    if decoder.is_done() {
+        return Ok(false);
+    }
+    let (data, _) = decoder.get_encoded_item()?;
+    let decoder = Decoder::new(&data)?;
+    let (data, _) = decoder.get_encoded_item()?;
+    match data[0] {
+        0x80..=0xB7 => {
+            let data = match data[1] {
+                tx_type if tx_type < 0x7f => &data[2..],
+                _ => &data[1..],
+            };
+            let decoder = Decoder::new(data)?;
+            let (_, decoder): (bool, _) = decoder.decode_field("succeeded")?;
+            let (_, decoder): (u64, _) = decoder.decode_field("cumulative_gas_used")?;
+            match decoder.decode_field::<Bloom>("bloom") {
+                Ok(_) => Ok(true),
+                Err(_) => Ok(false),
+            }
+        }
+        0xB8..=0xBF => {
+            let length_of_length = (data[0] - 0xB7) as usize;
+            let data = match data[length_of_length + 1] {
+                tx_type if tx_type < 0x7f => &data[length_of_length + 2..],
+                _ => &data[length_of_length + 1..],
+            };
+            let decoder = Decoder::new(data)?;
+            let (_, decoder): (bool, _) = decoder.decode_field("succeeded")?;
+            let (_, decoder): (u64, _) = decoder.decode_field("cumulative_gas_used")?;
+            match decoder.decode_field::<Bloom>("bloom") {
+                Ok(_) => Ok(true),
+                Err(_) => Ok(false),
+            }
+        }
+        _ => Err(RLPDecodeError::InvalidLength),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use ethrex_common::types::{BlockHash, Receipt};
-
+    use crate::rlpx::eth::receipts::has_bloom;
     use crate::rlpx::{
         eth::receipts::{GetReceipts, Receipts},
         message::RLPxMessage,
         p2p::Capability,
     };
+    use ethrex_common::types::transaction::TxType;
+    use ethrex_common::types::{BlockHash, Receipt};
 
     #[test]
     fn get_receipts_empty_message() {
@@ -152,5 +202,16 @@ mod tests {
 
         assert_eq!(decoded.get_id(), 1);
         assert_eq!(decoded.get_receipts(), Vec::<Vec<Receipt>>::new());
+    }
+
+    #[test]
+    fn receipts_check_bloom() {
+        let receipts = vec![vec![Receipt::new(TxType::EIP7702, true, 210000, vec![])]];
+        let receipts = Receipts::new(255, receipts, &Capability::eth(68)).unwrap();
+
+        let mut buf = Vec::new();
+        receipts.encode(&mut buf).unwrap();
+
+        assert!(has_bloom(&buf).unwrap());
     }
 }

@@ -457,7 +457,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::Status(msg_data) => {
                 if let Some(eth) = &self.negotiated_eth_capability {
-                    backend::validate_status(msg_data, &self.storage, &eth).await?
+                    backend::validate_status(msg_data, &self.storage, eth).await?
                 };
             }
             Message::GetAccountRange(req) => {
@@ -498,7 +498,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     for hash in block_hashes.iter() {
                         receipts.push(self.storage.get_receipts_for_block(hash)?);
                     }
-                    let response = Receipts::new(id, receipts, &eth)?;
+                    let response = Receipts::new(id, receipts, eth)?;
                     self.send(Message::Receipts(response)).await?;
                 }
             }
