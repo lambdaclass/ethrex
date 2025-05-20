@@ -7,12 +7,11 @@ use crate::{
     },
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
-use aligned_sdk::sdk::{
-    aggregation::AggregationModeVerificationData, estimate_fee, get_nonce_from_ethereum, submit,
-};
+
 use aligned_sdk::{
-    core::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
-    sdk::aggregation::get_merkle_path_for_proof,
+    aggregation_layer::{check_proof_verification, AggregationModeVerificationData, ProofStatus},
+    common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
+    verification_layer::{estimate_fee, get_nonce_from_ethereum, submit},
 };
 use ethers::prelude::*;
 use ethers::signers::Wallet;
@@ -136,7 +135,7 @@ impl L1ProofSender {
                     break;
                 }
                 None => {
-                    // not aggregated yet
+                    info!("L1 proof sender proof not aggregated yet, waiting for 20 seconds");
                     sleep(Duration::from_secs(20)).await;
                 }
             }
@@ -207,25 +206,27 @@ impl L1ProofSender {
             public_inputs: public_inputs.clone(),
         };
 
-        let merkle_path = match get_merkle_path_for_proof(
+        let proof_status = check_proof_verification(
+            &verification_data,
             Network::Devnet,
             self.eth_client.url.clone(),
             "http://127.0.0.1:58801".to_string(), // beacon_client
             None,
-            &verification_data,
         )
         .await
-        {
-            Ok(Some(merkle_path)) => merkle_path,
-            Ok(None) => {
-                warn!("L1 proof sender: Proof not aggregated yet.");
-                return Ok(None);
-            }
-            Err(e) => {
-                error!("L1 proof sender: Error getting merkle path: {:?}", e);
+        .map_err(|e| ProofSenderError::InternalError(format!("{:?}", e)))?;
+
+        // We can make this prettier. Aligned updated their API and this was just a quick fix.
+        let merkle_path = match proof_status {
+            ProofStatus::Verified { merkle_path, .. } => merkle_path,
+            ProofStatus::Invalid => {
                 return Err(ProofSenderError::InternalError(
-                    "Error getting merkle path".to_string(),
+                    "Proof was found in the blob but the Merkle Root verification failed."
+                        .to_string(),
                 ));
+            }
+            ProofStatus::NotFound => {
+                return Ok(None);
             }
         };
 
