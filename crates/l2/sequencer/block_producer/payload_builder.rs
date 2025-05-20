@@ -289,18 +289,12 @@ fn get_tx_diffs(
                     None
                 };
 
-                let bytecode_hash = if bytecode.is_some() {
-                    Some(new_account.info.code_hash)
-                } else {
-                    None
-                };
-
                 let account_state_diff = AccountStateDiff {
                     new_balance,
                     nonce_diff,
                     storage: HashMap::new(), // We add the storage later
                     bytecode,
-                    bytecode_hash,
+                    bytecode_hash: None,
                 };
 
                 modified_accounts.insert(*address, account_state_diff);

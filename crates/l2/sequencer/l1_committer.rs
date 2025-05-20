@@ -405,13 +405,7 @@ impl Committer {
                     nonce_diff,
                     storage: account_update.added_storage.clone().into_iter().collect(),
                     bytecode: account_update.code.clone(),
-                    bytecode_hash: account_update.info.and_then(|info| {
-                        if account_update.code.is_none() {
-                            None
-                        } else {
-                            Some(info.code_hash)
-                        }
-                    }),
+                    bytecode_hash: None,
                 },
             );
         }
