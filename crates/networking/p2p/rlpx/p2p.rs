@@ -12,6 +12,7 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
 };
 use k256::PublicKey;
+use serde::Serialize;
 
 pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
@@ -65,6 +66,15 @@ impl RLPDecode for Capability {
             "snap" => Ok((Capability::snap(version), rest)),
             _ => Err(RLPDecodeError::MalformedData),
         }
+    }
+}
+
+impl Serialize for Capability {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&format!("{}/{}", self.protocol, self.version))
     }
 }
 
