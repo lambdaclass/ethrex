@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747753468644,
+  "lastUpdate": 1747753544564,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7945,6 +7945,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 213261044004,
             "range": "± 1017060397",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "90105443+DiegoCivi@users.noreply.github.com",
+            "name": "DiegoC",
+            "username": "DiegoCivi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f691b847aff49587887b0e45c513a659f01875af",
+          "message": "feat(l1): add eest hive tests to daily report (#2792)\n\n**Motivation**\n\nHave a better way to visualize the results from the execution of the EF\nblockchain tests using Hive.\n\n**Description**\n\nHive daily report now also runs the simulators\n`ethereum/eest/consume-engine` and `ethereum/eest/consume-rlp` with the\nblockchain fixtures of the `execution-spec-tests`. The version of the\nfixtures is taken from `cmd/ef_tests/blockchain/.fixtures_url`.\nThis was also talked in #2474. \n\nCloses #2746 and part of #1988",
+          "timestamp": "2025-05-20T14:12:09Z",
+          "tree_id": "5b0908e689956af280c60bb0a78562d489cc5fd0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f691b847aff49587887b0e45c513a659f01875af"
+        },
+        "date": 1747753541522,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211581166813,
+            "range": "± 470956486",
             "unit": "ns/iter"
           }
         ]
