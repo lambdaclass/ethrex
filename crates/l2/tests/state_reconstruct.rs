@@ -79,7 +79,7 @@ async fn test_state_block(addresses: &[Address], block_number: u64, rich_account
 }
 
 async fn connect() -> EthClient {
-    let client = EthClient::new(ETH_RPC_URL);
+    let client = EthClient::new(ETH_RPC_URL).unwrap();
 
     let mut retries = 0;
     while retries < 20 {
