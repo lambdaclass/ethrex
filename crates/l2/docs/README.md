@@ -110,7 +110,7 @@ For more information on what you can do with the CommonBridge see [here](./contr
 
 ## Configuration
 
-Configuration consists of two steps, the parsing of a `.toml` config file and the creation and modification of a `.env` file, then each component reads the `.env` to load the environment variables. A detailed list is available in each part documentation.
+Configuration consists of the creation and modification of a `.env` file done automatically by the contract deployer, then each component reads the `.env` to load the environment variables. A detailed list is available in each part documentation.
 
 ## Testing
 

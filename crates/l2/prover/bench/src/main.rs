@@ -1,4 +1,4 @@
-use std::{fs::File, io::Write};
+use std::fs::File;
 
 use clap::Parser;
 use ethrex_common::types::ELASTICITY_MULTIPLIER;

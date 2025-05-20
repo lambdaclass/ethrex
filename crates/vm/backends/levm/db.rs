@@ -104,7 +104,7 @@ impl<T: VmDatabase> LevmDatabase for VmDbWrapper<T> {
         let acc_info = self
             .0
             .get_account_info(address)
-            .unwrap_or(None)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default();
 
         let acc_code = self

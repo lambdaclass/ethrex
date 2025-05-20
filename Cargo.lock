@@ -3097,6 +3097,7 @@ dependencies = [
  "redb",
  "reqwest",
  "secp256k1",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",
@@ -3203,7 +3204,6 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
- "toml 0.8.20",
  "tracing",
  "zkvm_interface",
 ]
@@ -3288,6 +3288,7 @@ name = "ethrex-prover"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "clap 4.5.36",
  "ethereum-types",
  "ethrex-blockchain",
  "ethrex-common",
@@ -3530,10 +3531,11 @@ dependencies = [
  "lazy_static",
  "secp256k1",
  "serde_json",
- "spinoff",
  "thiserror 2.0.12",
  "tokio",
+ "tools",
  "tracing",
+ "tracing-subscriber 0.3.19",
 ]
 
 [[package]]
@@ -7393,6 +7395,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "quote-pusher"
+version = "0.1.0"
+dependencies = [
+ "ethereum-types",
+ "ethrex-rpc",
+ "ethrex-sdk",
+ "hex",
+ "reqwest",
+ "secp256k1",
+ "serde_json",
+ "serial_test",
+ "thiserror 2.0.12",
+ "tokio",
+]
+
+[[package]]
 name = "r-efi"
 version = "5.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10172,6 +10190,14 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "tools"
+version = "0.0.0"
+dependencies = [
+ "ethrex-common",
+ "serde_json",
 ]
 
 [[package]]
