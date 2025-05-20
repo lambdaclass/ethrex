@@ -5,6 +5,7 @@ use crate::rlpx::{
 use bytes::BufMut;
 use ethrex_common::types::Receipt;
 use ethrex_rlp::{
+    encode::encode_length,
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
@@ -27,11 +28,32 @@ impl RLPxMessage for Receipts68 {
     const CODE: u8 = 0x1F;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut tmp_buf = vec![];
+        if self.receipts.is_empty() {
+            tmp_buf.put_u8(0xc0);
+        } else {
+            let mut inner_buf_1 = vec![];
+            for item in &self.receipts {
+                if item.is_empty() {
+                    inner_buf_1.put_u8(0xc0);
+                } else {
+                    let mut inner_buf_2 = vec![];
+                    for receipt in item {
+                        receipt.encode68(&mut inner_buf_2);
+                    }
+                    encode_length(inner_buf_2.len(), &mut inner_buf_1);
+                    inner_buf_1.put_slice(&inner_buf_2);
+                }
+            }
+            encode_length(inner_buf_1.len(),&mut  tmp_buf);
+            tmp_buf.put_slice(&inner_buf_1);
+        }
+
         let mut encoded_data = vec![];
-        Encoder::new(&mut encoded_data)
-            .encode_field(&self.id)
-            .encode_field(&self.receipts)
-            .finish();
+        Encoder::new(&mut encoded_data).encode_field(&self.id).encode_raw(&tmp_buf[..]).finish();
+
+        // .encode_field(&self.receipts)
+        // .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);

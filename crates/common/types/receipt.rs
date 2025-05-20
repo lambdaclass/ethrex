@@ -105,6 +105,20 @@ impl Receipt {
             logs,
         })
     }
+
+    pub fn encode68(&self, buf: &mut dyn bytes::BufMut) {
+        match self.tx_type {
+            TxType::Legacy => {
+                let legacy_encoded = self.encode_inner();
+                buf.put_slice(&legacy_encoded);
+            }
+            _ => {
+                let typed_recepipt_encoded = self.encode_inner();
+                let bytes = Bytes::from(typed_recepipt_encoded);
+                bytes.encode(buf);
+            }
+        };
+    }
 }
 
 fn bloom_from_logs(logs: &[Log]) -> Bloom {
