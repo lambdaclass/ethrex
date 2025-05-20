@@ -179,6 +179,14 @@ impl ProofCoordinator {
         )?;
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 
+        let rpc_url = eth_config
+            .rpc_url
+            .first()
+            .clone()
+            .ok_or(SequencerError::ProverServerError(
+                ProverServerError::Custom("no rpc urls present!".to_string()),
+            ));
+
         Ok(Self {
             listen_ip: config.listen_ip,
             port: config.listen_port,
@@ -187,7 +195,7 @@ impl ProofCoordinator {
             on_chain_proposer_address,
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             rollup_store,
-            rpc_url: eth_config.rpc_url.clone(),
+            rpc_url,
             l1_private_key: config.l1_private_key,
         })
     }
