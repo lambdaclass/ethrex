@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, BloomInput, H256};
 use ethrex_rlp::{
-    decode::{get_rlp_bytes_item_payload, RLPDecode},
+    decode::RLPDecode,
     encode::RLPEncode,
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
@@ -162,7 +162,9 @@ impl RLPDecode for Receipt {
         let (logs, decoder) = decoder.decode_field("logs")?;
 
         let Some(tx_type) = TxType::from_u8(tx_type) else {
-            return Err(RLPDecodeError::Custom(format!("Invalid transaction type")));
+            return Err(RLPDecodeError::Custom(
+                "Invalid transaction type".to_string(),
+            ));
         };
 
         Ok((
