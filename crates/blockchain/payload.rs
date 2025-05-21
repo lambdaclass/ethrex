@@ -11,8 +11,8 @@ use ethrex_common::{
         calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
         compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
         requests::{compute_requests_hash, EncodedRequests},
-        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-        MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
+        AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
         DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
@@ -23,7 +23,7 @@ use ethrex_vm::{
 };
 
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, AccountUpdate, Store};
+use ethrex_storage::{error::StoreError, Store};
 
 use sha3::{Digest, Keccak256};
 

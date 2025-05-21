@@ -8,13 +8,14 @@ use crate::{db::StoreWrapper, errors::EvmError};
 use crate::{ProverDB, ProverDBError};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
-    AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
+    AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
+    Withdrawal,
 };
 use ethrex_common::{Address, H256};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::db::CacheDB;
+use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
-use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;
