@@ -71,3 +71,96 @@ test-levm: $(VECTORS_DIR)
 
 test-revm: $(VECTORS_DIR)
 	$(MAKE) run-evm-ef-tests flags="--revm"
+
+###### Running Flamegraphs ######
+
+SUBDIRS := $(shell find $(VECTORS_DIR)/GeneralStateTests -maxdepth 1 -type d ! -path "$(VECTORS_DIR)/GeneralStateTests" -exec basename {} \;)
+
+flamegraph-run-ef-tests: ## 🔥 Run EF tests and create a flamegraph per test folder
+	mkdir -p levm_perfgraphs/flamegraph/ef_tests/state ||: && \
+	mkdir -p levm_perfgraphs/flamegraph/ef_tests/revm ||:
+	$(MAKE) flamegraph-run-ef-tests-revm
+	$(MAKE) flamegraph-run-ef-tests-levm
+
+flamegraph-run-ef-tests-revm:
+	@for dir in $(SUBDIRS); do\
+		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
+		--output levm_perfgraphs/flamegraph/ef_tests/revm/$$dir.svg\
+		-p ef_tests-state --test all -- --summary --revm --tests $$dir;\
+	done
+
+flamegraph-run-ef-tests-levm:
+	@for dir in $(SUBDIRS); do\
+		CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
+		--output levm_perfgraphs/flamegraph/ef_tests/state/$$dir.svg\
+		-p ef_tests-state --test all -- --summary --tests $$dir;\
+	done
+
+samply-run-ef-tests: ## ⚡️ Run EF tests and create a samply profiling file per test folder
+	mkdir -p levm_perfgraphs/samply/ef_tests/state ||: && \
+	mkdir -p levm_perfgraphs/samply/ef_tests/revm ||:
+	$(MAKE) samply-run-ef-tests-revm
+	$(MAKE) samply-run-ef-tests-levm
+
+samply-run-ef-tests-revm:
+	@for dir in $(SUBDIRS); do\
+		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+		-o levm_perfgraphs/samply/ef_tests/revm/prof_$$dir.json \
+		cargo test --release -p ef_tests-state --test all -- --summary --revm --tests $$dir;\
+	done
+
+samply-run-ef-tests-levm:
+	@for dir in $(SUBDIRS); do\
+		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+		-o levm_perfgraphs/samply/ef_tests/state/prof_$$dir.json \
+		cargo test --release -p ef_tests-state --test all -- --summary --tests $$dir;\
+	done
+
+################
+# FLAMEGRAPHS
+################
+define run_flamegraph
+	# revm
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output $(FLAMEGRAPH_DIR)/revm_$(1).svg \
+	-p revm_comparison --bin benchmark -- revm $(1) $($(2)) $($(3))
+	# levm
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	--root --output $(FLAMEGRAPH_DIR)/levm_$(1).svg \
+	-p revm_comparison --bin benchmark -- levm $(1) $($(2)) $($(3))
+endef
+
+define run_samply
+	# revm
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o $(SAMPLY_DIR)/prof_revm_$(1).json \
+	cargo run --release -p revm_comparison --bin benchmark -- revm $(1) $($(2)) $($(3))
+	# levm
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	-o $(SAMPLY_DIR)/prof_levm_$(1).json \
+	cargo run --release -p revm_comparison --bin benchmark -- levm $(1) $($(2)) $($(3))
+endef
+
+FLAMEGRAPH_DIR := levm_perfgraphs/flamegraph/bench
+flamegraph-benchmarks: ## 🔥 Run benchmarks and create flamegraph
+	mkdir -p levm_perfgraphs/flamegraph/bench ||:
+	$(call run_flamegraph,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
+	$(call run_flamegraph,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_flamegraph,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_flamegraph,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_flamegraph,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
+	$(call run_flamegraph,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
+	$(call run_flamegraph,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
+	$(call run_flamegraph,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
+
+SAMPLY_DIR := levm_perfgraphs/samply/bench
+samply-benchmarks: ## ⚡️ Run benchmarks and create samply profiling file
+	mkdir -p levm_perfgraphs/samply/bench ||:
+	$(call run_samply,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
+	$(call run_samply,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_samply,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_samply,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_samply,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
+	$(call run_samply,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
+	$(call run_samply,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
+	$(call run_samply,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
