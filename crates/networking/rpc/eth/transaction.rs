@@ -169,7 +169,7 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
         };
         let tx = RpcTransaction::build(
             tx.clone(),
-            block_number,
+            Some(block_number),
             block_header.compute_block_hash(),
             Some(self.transaction_index),
         );
@@ -216,7 +216,7 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
         };
         let tx = RpcTransaction::build(
             tx.clone(),
-            block_number,
+            Some(block_number),
             self.block,
             Some(self.transaction_index),
         );
@@ -261,8 +261,12 @@ impl RpcHandler for GetTransactionByHashRequest {
             _ => return Ok(Value::Null),
         };
 
-        let transaction =
-            RpcTransaction::build(transaction, block_number, block_hash, Some(index as usize));
+        let transaction = RpcTransaction::build(
+            transaction,
+            Some(block_number),
+            block_hash,
+            Some(index as usize),
+        );
         serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 pub struct RpcTransaction {
     #[serde(flatten)]
     pub tx: Transaction,
-    #[serde(with = "serde_utils::u64::hex_str")]
-    block_number: BlockNumber,
+    #[serde(with = "serde_utils::u64::hex_str_opt")]
+    block_number: Option<BlockNumber>,
     block_hash: BlockHash,
     from: Address,
     pub hash: H256,
@@ -27,7 +27,7 @@ pub struct RpcTransaction {
 impl RpcTransaction {
     pub fn build(
         tx: Transaction,
-        block_number: BlockNumber,
+        block_number: Option<BlockNumber>,
         block_hash: BlockHash,
         transaction_index: Option<usize>,
     ) -> Self {

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ethrex_common::Address;
+use ethrex_common::{Address, H256};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -19,12 +19,6 @@ struct MempoolContent {
 
 /// Handling of rpc endpoint `mempool_content`
 pub async fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
-    let latest_block_number = context.storage.get_latest_block_number().await?;
-    let latest_block_hash = context
-        .storage
-        .get_canonical_block_hash(latest_block_number)
-        .await?
-        .ok_or(RpcErr::Internal("Missing latest block hash".to_string()))?;
     let transactions = context.blockchain.mempool.content()?;
     // Group transactions by sender and nonce and map them to rpc transactions
     let mut mempool_content = MempoolContentEntry::new();
@@ -32,7 +26,7 @@ pub async fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
         let sender_entry = mempool_content.entry(tx.sender()).or_default();
         sender_entry.insert(
             tx.nonce(),
-            RpcTransaction::build(tx, latest_block_number, latest_block_hash, None),
+            RpcTransaction::build(tx, None, H256::zero(), None),
         );
     }
     let response = MempoolContent {
