@@ -19,6 +19,9 @@ use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
     merkle_tree::merkelize,
 };
+use ethrex_metrics::metrics;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_l2::{MetricsL2OperationType, METRICS_L2};
 use ethrex_rpc::{
     clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
     utils::get_withdrawal_hash,
@@ -301,6 +304,24 @@ impl Committer {
                 }
             }
         }
+
+        metrics!(
+            let _ = METRICS_L2
+                .inc_operation_by_type(MetricsL2OperationType::Deposits, deposit_logs_hashes.len())
+                .inspect_err(|e| tracing::error!(
+                    "Failed to increment deposits metric: {}",
+                    e.to_string()
+                ));
+        );
+        metrics!(
+            let _ = METRICS_L2
+                .inc_operation_by_type(MetricsL2OperationType::Withdrawals, withdrawal_hashes.len())
+                .inspect_err(|e| tracing::error!(
+                    "Failed to increment withdrawals metric: {}",
+                    e.to_string()
+                ));
+        );
+
         let deposit_logs_hash = self.get_deposit_hash(deposit_logs_hashes)?;
         Ok((
             blobs_bundle,

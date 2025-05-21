@@ -1,4 +1,4 @@
-use prometheus::{Encoder, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
+use prometheus::{Encoder, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -7,6 +7,7 @@ pub static METRICS_L2: LazyLock<MetricsL2> = LazyLock::new(MetricsL2::default);
 
 pub struct MetricsL2 {
     pub status_tracker: IntGaugeVec,
+    pub operations_tracker: IntCounterVec,
     pub gas_price: IntGauge,
 }
 
@@ -25,6 +26,14 @@ impl MetricsL2 {
                     "Keeps track of the L2's status based on the L1's contracts",
                 ),
                 &["block_type"],
+            )
+            .unwrap(),
+            operations_tracker: IntCounterVec::new(
+                Opts::new(
+                    "l2_operations_tracker",
+                    "Keeps track of the L2 deposits & withdrawals",
+                ),
+                &["operations_type"],
             )
             .unwrap(),
             gas_price: IntGauge::new("l2_gas_price", "Keeps track of the l2 gas price").unwrap(),
@@ -51,12 +60,29 @@ impl MetricsL2 {
         Ok(())
     }
 
+    pub fn inc_operation_by_type(
+        &self,
+        operation_type: MetricsL2OperationType,
+        inc_amount: usize,
+    ) -> Result<(), MetricsError> {
+        let builder = self
+            .operations_tracker
+            .get_metric_with_label_values(&[operation_type.to_str()])
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+
+        builder.inc_by(inc_amount.try_into()?);
+
+        Ok(())
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
         r.register(Box::new(self.status_tracker.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.gas_price.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.operations_tracker.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
@@ -81,12 +107,26 @@ pub enum MetricsL2BlockType {
     LastFetchedL1Block,
 }
 
+pub enum MetricsL2OperationType {
+    Deposits,
+    Withdrawals,
+}
+
 impl MetricsL2BlockType {
     pub fn to_str(&self) -> &str {
         match self {
             MetricsL2BlockType::LastCommittedBlock => "lastCommittedBlock",
             MetricsL2BlockType::LastVerifiedBlock => "lastVerifiedBlock",
             MetricsL2BlockType::LastFetchedL1Block => "lastFetchedL1Block",
+        }
+    }
+}
+
+impl MetricsL2OperationType {
+    fn to_str(&self) -> &str {
+        match self {
+            MetricsL2OperationType::Deposits => "processedDeposits",
+            MetricsL2OperationType::Withdrawals => "processedWithdrawals",
         }
     }
 }
