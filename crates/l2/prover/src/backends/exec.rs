@@ -1,6 +1,5 @@
 use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_common::Address;
-use ethrex_l2::sequencer::proof_coordinator::ProofData;
 use ethrex_l2::utils::prover::proving_systems::{BatchProof, ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_storage::AccountUpdate;
