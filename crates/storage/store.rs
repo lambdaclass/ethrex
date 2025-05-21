@@ -100,17 +100,18 @@ impl Store {
 
     pub fn get_account_info_by_hash(
         &self,
-        block_hash: BlockHash,
+        _block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(account_state) = self
+            .snapshot_accounts
+            .read()
+            .unwrap()
+            .get(&hash_address_fixed(&address))
+            .cloned()
+        else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
-            return Ok(None);
-        };
-        let account_state = AccountState::decode(&encoded_state)?;
         Ok(Some(AccountInfo {
             code_hash: account_state.code_hash,
             balance: account_state.balance,
