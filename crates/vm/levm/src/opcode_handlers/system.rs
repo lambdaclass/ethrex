@@ -753,7 +753,12 @@ impl<'a> VM<'a> {
         bytecode: Bytes,
         is_delegation: bool,
     ) -> Result<OpcodeResult, VMError> {
-        let sender_balance = self.db.get_account(msg_sender)?.info.balance;
+        let sender_balance = self
+            .db
+            .access_account(&mut self.substate, msg_sender)?
+            .0
+            .info
+            .balance;
         let calldata = {
             let current_call_frame = self.current_call_frame_mut()?;
             // Clear callframe subreturn data
