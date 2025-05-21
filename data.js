@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747835603572,
+  "lastUpdate": 1747841484118,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9520,6 +9520,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.000734354403892944,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "90105443+DiegoCivi@users.noreply.github.com",
+            "name": "DiegoC",
+            "username": "DiegoCivi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1b9f5ddafebe57842533688a304c9112efd351c0",
+          "message": "fix(l1,l2): fix Succint dependency error on cargo check (#2835)\n\n**Motivation**\n\nWe were excluding `ethrex-prover-bench` when doing `cargo check\n--workspace` because it failed when `succinct` was not instaled.\n\n**Description**\n\n- `sp1` feature was removed from the default features of\n`ethrex-prover-bench`.\n- After doing the step above, `cargo check --workspace` could be ran and\nsome errors and warnings appeared and they were fixed.\n- '--exclude ethrex-prover-bench' was removed from the L1 ci job\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2807",
+          "timestamp": "2025-05-21T14:40:45Z",
+          "tree_id": "59764f890d4872bf4fd2da6be07cd003cea8f0df",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1b9f5ddafebe57842533688a304c9112efd351c0"
+        },
+        "date": 1747841480870,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007307982082324456,
             "unit": "Mgas/s"
           }
         ]
