@@ -24,7 +24,10 @@ impl Hook for L2Hook {
         }
 
         let sender_address = vm.env.origin;
-        let sender_account = vm.db.get_account(sender_address)?;
+        let (sender_balance, sender_nonce) = {
+            let sender_account = vm.db.get_account(sender_address)?;
+            (sender_account.info.balance, sender_account.info.nonce)
+        };
 
         if vm.env.config.fork >= Fork::Prague {
             default_hook::validate_min_gas_limit(vm)?;
@@ -40,7 +43,7 @@ impl Hook for L2Hook {
                     TxValidationError::GasLimitPriceProductOverflow,
                 ))?;
 
-            default_hook::validate_sender_balance(vm, &sender_account)?;
+            default_hook::validate_sender_balance(vm, sender_balance)?;
 
             // (3) INSUFFICIENT_ACCOUNT_FUNDS
             default_hook::deduct_caller(vm, gaslimit_price_product, sender_address)?;
@@ -50,15 +53,15 @@ impl Hook for L2Hook {
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
             // check for nonce mismatch
-            if sender_account.info.nonce != vm.env.tx_nonce {
+            if sender_nonce != vm.env.tx_nonce {
                 return Err(VMError::TxValidation(TxValidationError::NonceMismatch {
-                    expected: sender_account.info.nonce,
+                    expected: sender_nonce,
                     actual: vm.env.tx_nonce,
                 }));
             }
 
             // (9) SENDER_NOT_EOA
-            default_hook::validate_sender(&sender_account)?;
+            default_hook::validate_sender(vm.db.get_account(sender_address)?)?;
         }
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
