@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747772077389,
+  "lastUpdate": 1747831541936,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9402,6 +9402,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007354280214424951,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "tomas.arjovsky@lambdaclass.com",
+            "name": "Tomás Arjovsky",
+            "username": "Arkenan"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ee21522c5b196f07b3703a6d0b857d52cd4c094d",
+          "message": "fix(core): remove eager rpc calls calls from eth client (#2862)\n\nThe eth client was calling gas price and max gas price even if the\noverrides where set. That heavily impacted load test in particular, but\nit also made overrides pointless. With this small change, the RPC calls\nare only called in the case that overrides are not provided.",
+          "timestamp": "2025-05-21T11:56:05Z",
+          "tree_id": "6a1798b38ae4a9f3891000a01ca100b75cc34c28",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ee21522c5b196f07b3703a6d0b857d52cd4c094d"
+        },
+        "date": 1747831539810,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007357865919063872,
             "unit": "Mgas/s"
           }
         ]
