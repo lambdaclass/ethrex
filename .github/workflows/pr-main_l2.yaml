@@ -62,11 +62,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run cargo check
-        run: cargo check --workspace --exclude ethrex-prover-bench
+        run: cargo check --workspace
 
       - name: Run cargo clippy
         run: |
-          cargo clippy --workspace --exclude ethrex-prover-bench -- -D warnings
+          cargo clippy --workspace -- -D warnings
           make lint
 
       - name: Run cargo fmt
