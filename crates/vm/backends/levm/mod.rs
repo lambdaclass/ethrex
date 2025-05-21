@@ -17,6 +17,7 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
+use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
 use ethrex_levm::EVMConfig;
@@ -137,7 +138,7 @@ impl LEVM {
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
         };
 
-        let mut vm = VM::new(env, db, tx)?;
+        let mut vm = VM::new(env, db, tx);
 
         vm.execute().map_err(VMError::into)
     }
@@ -246,14 +247,17 @@ impl LEVM {
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
             // We check if it was in block_cache, if not, we get it from DB.
-            let mut account = db.cache.get(&address).cloned().unwrap_or({
-                db.store
+            if let Some(account) = db.cache.get_mut(&address) {
+                account.info.balance += increment.into();
+            } else {
+                let mut account = db
+                    .store
                     .get_account(address)
                     .map_err(|e| StoreError::Custom(e.to_string()))?
-            });
-
-            account.info.balance += increment.into();
-            db.cache.insert(address, account);
+                    .clone();
+                account.info.balance += increment.into();
+                db.cache.insert(address, account);
+            }
         }
         Ok(())
     }
@@ -366,7 +370,7 @@ impl LEVM {
         let mut vm = vm_from_generic(&tx, env.clone(), db)?;
 
         vm.stateless_execute()?;
-        let access_list = build_access_list(&vm.accrued_substate);
+        let access_list = build_access_list(&vm.substate);
 
         // Execute the tx again, now with the created access list.
         tx.access_list = access_list.iter().map(|item| item.into()).collect();
@@ -582,7 +586,9 @@ pub fn generic_system_contract_levm(
     let coinbase_backup = db.cache.get(&block_header.coinbase).cloned();
     let env = Environment {
         origin: system_address,
-        gas_limit: 30_000_000,
+        // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
+        // So we add the base cost that will be taken in the execution.
+        gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
         block_number: block_header.number.into(),
         coinbase: block_header.coinbase,
         timestamp: block_header.timestamp.into(),
@@ -591,7 +597,7 @@ pub fn generic_system_contract_levm(
         gas_price: U256::zero(),
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit: 30_000_000,
+        block_gas_limit: u64::MAX, // System calls, have no constraint on the block's gas limit.
         config,
         ..Default::default()
     };
@@ -602,7 +608,7 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
-    let mut vm = VM::new(env, db, tx).map_err(EvmError::from)?;
+    let mut vm = VM::new(env, db, tx);
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -648,7 +654,8 @@ pub fn extract_all_requests_levm(
         .output
         .into();
 
-    let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts);
+    let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts)
+        .ok_or(EvmError::InvalidDepositRequest)?;
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
     let consolidation = Requests::from_consolidation_data(consolidation_data);
 
@@ -764,5 +771,5 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    VM::new(env, db, &tx)
+    Ok(VM::new(env, db, &tx))
 }

@@ -18,17 +18,17 @@ use ethrex_l2_sdk::{
     initialize_contract,
 };
 use ethrex_rpc::{
-    clients::{eth::BlockByNumber, EthClientError, Overrides},
+    clients::{eth::BlockByNumber, Overrides},
     EthClient,
 };
 use keccak_hash::H256;
-use tracing::{debug, error, info, trace, Level};
+use tracing::{debug, error, info, trace, warn, Level};
 
 mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,bytes32,address[])";
+    "initialize(bool,address,address,address,address,bytes32,bytes32,address[])";
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
@@ -41,14 +41,14 @@ async fn main() -> Result<(), DeployerError> {
     let opts = DeployerOptions::parse();
 
     let eth_client = EthClient::new_with_config(
-        &opts.rpc_url,
+        vec![&opts.rpc_url],
         opts.max_number_of_retries,
         opts.backoff_factor,
         opts.min_retry_delay,
         opts.max_retry_delay,
         Some(opts.maximum_allowed_max_fee_per_gas),
         Some(opts.maximum_allowed_max_fee_per_blob_gas),
-    );
+    )?;
 
     download_contract_deps(&opts)?;
 
@@ -205,6 +205,7 @@ async fn deploy_contracts(
         &salt,
     )
     .await?;
+
     info!(
         "OnChainProposer deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
         on_chain_proposer_deployment.proxy_address,
@@ -315,6 +316,21 @@ async fn initialize_contracts(
 
     trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
 
+    let sp1_vk_string = read_to_string(&opts.sp1_vk_path).unwrap_or_else(|_| {
+        warn!(
+            path = opts.sp1_vk_path,
+            "Failed to read SP1 verification key file, will use 0x00..00, this is expected in dev mode"
+        );
+        "0x00".to_string()
+    });
+    let sp1_vk = hex::decode(sp1_vk_string.trim_start_matches("0x"))
+        .map_err(|err| {
+            DeployerError::DecodingError(format!(
+                "failed to parse sp1_vk ({sp1_vk_string}) from hex: {err}"
+            ))
+        })?
+        .into();
+
     let genesis = read_genesis_file(&opts.genesis_l2_path);
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
@@ -325,6 +341,7 @@ async fn initialize_contracts(
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
+            Value::FixedBytes(sp1_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Array(vec![
                 Value::Address(opts.committer_l1_address),
@@ -454,15 +471,9 @@ async fn make_deposits(
             .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
             .unwrap_or(U256::zero());
 
-        let gas_price = eth_client.get_gas_price().await?.try_into().map_err(|_| {
-            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
-        })?;
-
         let overrides = Overrides {
             value: Some(value_to_deposit),
             from: Some(address),
-            max_fee_per_gas: Some(gas_price),
-            max_priority_fee_per_gas: Some(gas_price),
             ..Overrides::default()
         };
 

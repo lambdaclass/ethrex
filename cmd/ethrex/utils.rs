@@ -2,12 +2,17 @@ use crate::decode;
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
-use ethrex_p2p::{kademlia::KademliaTable, sync::SyncMode, types::Node};
+use ethrex_p2p::{
+    kademlia::KademliaTable,
+    sync::SyncMode,
+    types::{Node, NodeRecord},
+};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_vm::EvmEngine;
 use hex::FromHexError;
 #[cfg(feature = "l2")]
 use secp256k1::SecretKey;
+use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
     io,
@@ -17,6 +22,28 @@ use std::{
 };
 use tokio::sync::Mutex;
 use tracing::{error, info};
+
+#[derive(Serialize, Deserialize)]
+pub struct NodeConfigFile {
+    pub known_peers: Vec<Node>,
+    pub node_record: NodeRecord,
+}
+
+impl NodeConfigFile {
+    pub async fn new(table: Arc<Mutex<KademliaTable>>, node_record: NodeRecord) -> Self {
+        let mut connected_peers = vec![];
+
+        for peer in table.lock().await.iter_peers() {
+            if peer.is_connected {
+                connected_peers.push(peer.node.clone());
+            }
+        }
+        NodeConfigFile {
+            known_peers: connected_peers,
+            node_record,
+        }
+    }
+}
 
 pub fn read_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
     match File::open(jwt_secret_path) {
@@ -93,35 +120,28 @@ pub fn set_datadir(datadir: &str) -> String {
         .to_owned()
 }
 
-pub async fn store_known_peers(table: Arc<Mutex<KademliaTable>>, file_path: PathBuf) {
-    let mut connected_peers = vec![];
-
-    for peer in table.lock().await.iter_peers() {
-        if peer.is_connected {
-            connected_peers.push(peer.node.enode_url());
-        }
-    }
-
-    let json = match serde_json::to_string(&connected_peers) {
+pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) {
+    let json = match serde_json::to_string(&config) {
         Ok(json) => json,
         Err(e) => {
-            error!("Could not store peers in file: {:?}", e);
+            error!("Could not store config in file: {:?}", e);
             return;
         }
     };
 
     if let Err(e) = std::fs::write(file_path, json) {
-        error!("Could not store peers in file: {:?}", e);
+        error!("Could not store config in file: {:?}", e);
     };
 }
 
 #[allow(dead_code)]
-pub fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Error> {
-    let Ok(file) = std::fs::File::open(file_path) else {
-        return Ok(vec![]);
-    };
-
-    serde_json::from_reader(file)
+pub fn read_node_config_file(file_path: PathBuf) -> Result<NodeConfigFile, String> {
+    match std::fs::File::open(file_path) {
+        Ok(file) => {
+            serde_json::from_reader(file).map_err(|e| format!("Invalid node config file {}", e))
+        }
+        Err(e) => Err(format!("No config file found: {}", e)),
+    }
 }
 
 #[cfg(feature = "l2")]
