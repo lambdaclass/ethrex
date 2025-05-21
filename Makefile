@@ -9,11 +9,11 @@ build: ## 🔨 Build the client
 	cargo build --workspace
 
 lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface --exclude ethrex-prover-bench -- -D warnings
+	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover-bench --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-prover --exclude ethrex-prover-bench --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation
+	cargo test -p '$(CRATE)' --workspace --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation
 	$(MAKE) -C cmd/ef_tests/blockchain test
 
 clean: clean-vectors ## 🧹 Remove build artifacts
