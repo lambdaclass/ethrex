@@ -66,6 +66,8 @@ impl MetricsGatherer {
                 .get_last_verified_batch(self.on_chain_proposer_address)
                 .await?;
 
+            let gas_price = self.eth_client.get_gas_price().await?;
+
             METRICS_L2.set_block_type_and_block_number(
                 MetricsL2BlockType::LastCommittedBlock,
                 last_committed_batch,
@@ -78,6 +80,7 @@ impl MetricsGatherer {
                 MetricsL2BlockType::LastFetchedL1Block,
                 last_fetched_l1_block,
             )?;
+            METRICS_L2.set_gas_price(gas_price.try_into().unwrap());
 
             debug!("L2 Metrics Gathered");
             sleep(self.check_interval).await;

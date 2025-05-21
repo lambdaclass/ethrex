@@ -1,4 +1,4 @@
-use prometheus::{Encoder, IntGaugeVec, Opts, Registry, TextEncoder};
+use prometheus::{Encoder, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -7,6 +7,7 @@ pub static METRICS_L2: LazyLock<MetricsL2> = LazyLock::new(MetricsL2::default);
 
 pub struct MetricsL2 {
     pub status_tracker: IntGaugeVec,
+    pub gas_price: IntGauge,
 }
 
 impl Default for MetricsL2 {
@@ -26,7 +27,12 @@ impl MetricsL2 {
                 &["block_type"],
             )
             .unwrap(),
+            gas_price: IntGauge::new("l2_gas_price", "Keeps track of the l2 gas price").unwrap(),
         }
+    }
+
+    pub fn set_gas_price(&self, gas_price: i64) {
+        self.gas_price.set(gas_price);
     }
 
     pub fn set_block_type_and_block_number(
@@ -49,6 +55,8 @@ impl MetricsL2 {
         let r = Registry::new();
 
         r.register(Box::new(self.status_tracker.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.gas_price.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
