@@ -342,6 +342,7 @@ pub mod test_utils {
     use ethrex_blockchain::Blockchain;
     use ethrex_common::H512;
     use ethrex_p2p::{
+        peer_handler::PeerHandler,
         sync_manager::SyncManager,
         types::{Node, NodeRecord},
     };
@@ -396,7 +397,7 @@ pub mod test_utils {
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
         #[cfg(feature = "based")]
-        let gateway_eth_client = EthClient::new("");
+        let gateway_eth_client = EthClient::new("").expect("Failed to create EthClient");
         #[cfg(feature = "based")]
         let gateway_auth_client = EngineClient::new("", Bytes::default());
         #[cfg(feature = "l2")]
@@ -415,6 +416,7 @@ pub mod test_utils {
             local_p2p_node,
             example_local_node_record(),
             SyncManager::dummy(),
+            PeerHandler::dummy(),
             "ethrex/test".to_string(),
             #[cfg(feature = "based")]
             gateway_eth_client,
@@ -439,6 +441,7 @@ pub mod test_utils {
             blockchain,
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
+            peer_handler: PeerHandler::dummy(),
             node_data: NodeData {
                 jwt_secret: Default::default(),
                 local_p2p_node: example_p2p_node(),
@@ -446,7 +449,7 @@ pub mod test_utils {
                 client_version: "ethrex/test".to_string(),
             },
             #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
+            gateway_eth_client: EthClient::new("").expect("Failed to create EthClient"),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "based")]
