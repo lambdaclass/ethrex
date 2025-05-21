@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747844865577,
+  "lastUpdate": 1747845058745,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8305,6 +8305,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211973101371,
             "range": "± 448608238",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6871f6173327d11f7598a8244ee9c932304f96c9",
+          "message": "fix(l1,l2): add load test erc20 rich account to genesis-load-test.json (#2863)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\nCo-authored-by: Tomás Arjovsky <tomas.arjovsky@lambdaclass.com>",
+          "timestamp": "2025-05-21T15:37:11Z",
+          "tree_id": "3ac85fcf280153478dd48954da72318078de60cb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6871f6173327d11f7598a8244ee9c932304f96c9"
+        },
+        "date": 1747845055954,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211013439012,
+            "range": "± 822502991",
             "unit": "ns/iter"
           }
         ]
