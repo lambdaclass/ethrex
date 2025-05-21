@@ -715,7 +715,7 @@ mod test {
 
         #[test]
         // The previous test needs to sort the input values in order to get rid of duplicate entries, leading to ordered insertions
-        // This check has a fixed way of determining wether a value should be removed but doesn't require ordered insertions
+        // This check has a fixed way of determining whether a value should be removed but doesn't require ordered insertions
         fn proptest_get_insert_with_removals_unsorted(data in btree_set(vec(any::<u8>(), 5..100), 1..100)) {
             let mut trie = Trie::new_temp();
             // Remove all values that have an odd first value
@@ -787,7 +787,7 @@ mod test {
 
         #[test]
         // The previous test needs to sort the input values in order to get rid of duplicate entries, leading to ordered insertions
-        // This check has a fixed way of determining wether a value should be removed but doesn't require ordered insertions
+        // This check has a fixed way of determining whether a value should be removed but doesn't require ordered insertions
         fn proptest_compare_hash_with_removals_unsorted(data in btree_set(vec(any::<u8>(), 5..100), 1..100)) {
             let mut trie = Trie::new_temp();
             let mut cita_trie = cita_trie();
@@ -876,7 +876,7 @@ mod test {
 
         #[test]
         // The previous test needs to sort the input values in order to get rid of duplicate entries, leading to ordered insertions
-        // This check has a fixed way of determining wether a value should be removed but doesn't require ordered insertions
+        // This check has a fixed way of determining whether a value should be removed but doesn't require ordered insertions
         fn proptest_compare_proof_with_removals_unsorted(data in btree_set(vec(any::<u8>(), 5..100), 1..100)) {
             let mut trie = Trie::new_temp();
             let mut cita_trie = cita_trie();

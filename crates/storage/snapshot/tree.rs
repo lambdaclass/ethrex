@@ -464,7 +464,6 @@ impl SnapshotTree {
             block_hash, address, storage_key
         );
         if let Some(snapshot) = self.snapshot(block_hash) {
-            dbg!("found snapshot");
             let layers = self
                 .layers
                 .read()
@@ -486,8 +485,6 @@ impl SnapshotTree {
                     )
                 }
             };
-
-            dbg!(value);
 
             if value.is_none() && block_hash != origin_block_hash {
                 return Ok(None);

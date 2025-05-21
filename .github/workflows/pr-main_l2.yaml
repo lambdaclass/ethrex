@@ -114,10 +114,12 @@ jobs:
             ethrex_l2.cache-from=type=local,src=/tmp/buildx-cache/ethrex_l2
             contract_deployer.cache-from=type=local,src=/tmp/buildx-cache/contract_deployer
 
+      # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
         run: |
           cd crates/l2
           make build-prover
+          mkdir -p prover/zkvm/interface/sp1/out && touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
 
       - name: Build test
         run: |
