@@ -245,25 +245,11 @@ impl Blockchain {
             }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
-                match self
-                    .storage
-                    .get_block_header_by_hash(block.header.parent_hash)
-                {
-                    Ok(parent_option) => match parent_option {
-                        Some(parent_header) => parent_header,
-                        None => {
-                            return Err((
-                                ChainError::ParentNotFound,
-                                Some(BatchBlockProcessingFailure {
-                                    failed_block_hash: block.hash(),
-                                    last_valid_hash,
-                                }),
-                            ))
-                        }
-                    },
-                    Err(e) => {
+                match find_parent_header(&block.header, &self.storage) {
+                    Ok(parent_header) => parent_header,
+                    Err(error) => {
                         return Err((
-                            error::ChainError::StoreError(e),
+                            error,
                             Some(BatchBlockProcessingFailure {
                                 failed_block_hash: block.hash(),
                                 last_valid_hash,
@@ -585,6 +571,18 @@ pub async fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainE
     Err(ChainError::StoreError(StoreError::Custom(
         "Could not find latest valid hash".to_string(),
     )))
+}
+
+/// Searchs the header for the parent block header. If the parent header is missing,
+/// Returns am ChainError::ParentNotFound. If the storage has an error it propagates it
+pub fn find_parent_header(
+    block_header: &BlockHeader,
+    storage: &Store,
+) -> Result<BlockHeader, ChainError> {
+    match storage.get_block_header_by_hash(block_header.parent_hash)? {
+        Some(parent_header) => Ok(parent_header),
+        None => Err(ChainError::ParentNotFound),
+    }
 }
 
 /// Performs pre-execution validation of the block's header values in reference to the parent_header
