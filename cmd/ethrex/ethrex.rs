@@ -1,4 +1,6 @@
 use clap::Parser;
+#[cfg(feature = "sync-test")]
+use ethrex::Store;
 use ethrex::{
     cli::CLI,
     initializers::{
@@ -8,6 +10,8 @@ use ethrex::{
     utils::{set_datadir, store_node_config_file, NodeConfigFile},
 };
 use ethrex_p2p::network::peer_table;
+#[cfg(feature = "sync-test")]
+use std::env;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
@@ -32,8 +36,8 @@ fn set_sync_block(store: &mut Store) {
         .parse()
         .expect("Error converting block number environmental variable to int");
     let block_hash = store.get_canonical_block_hash(block_number);
-    self.update_latest_block_number(block_number).await?;
-    self.set_canonical_block(block_number, block_hash).await?;
+    store.update_latest_block_number(block_number)?;
+    store.set_canonical_block(block_number, block_hash)?;
 }
 
 #[tokio::main]
