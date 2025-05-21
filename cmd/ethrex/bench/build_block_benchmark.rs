@@ -1,7 +1,15 @@
-use std::{collections::HashMap, str::FromStr, time::{Duration, Instant}};
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    time::{Duration, Instant},
+};
 
 use bytes::Bytes;
-use criterion::{criterion_group, criterion_main, measurement::{Measurement, ValueFormatter}, Criterion, Throughput};
+use criterion::{
+    criterion_group, criterion_main,
+    measurement::{Measurement, ValueFormatter},
+    Criterion, Throughput,
+};
 use ethrex_blockchain::{
     payload::{create_payload, BuildPayloadArgs, PayloadBuildResult},
     Blockchain,
@@ -16,7 +24,6 @@ use ethrex_common::{
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
 use secp256k1::SecretKey;
-
 
 pub struct GasMeasurement;
 impl Measurement for GasMeasurement {
@@ -78,7 +85,12 @@ impl ValueFormatter for GasMeasurementFormatter {
         ""
     }
 
-    fn scale_throughputs(&self, _times: f64, throughput: &Throughput, throughputs: &mut [f64]) -> &'static str {
+    fn scale_throughputs(
+        &self,
+        _times: f64,
+        throughput: &Throughput,
+        throughputs: &mut [f64],
+    ) -> &'static str {
         for t in throughputs.iter_mut() {
             match *throughput {
                 Throughput::Elements(_) => *t /= _times,
@@ -89,7 +101,6 @@ impl ValueFormatter for GasMeasurementFormatter {
         ""
     }
 }
-
 
 fn read_private_keys() -> Vec<SecretKey> {
     let file = include_str!("../../../test_data/private_keys_l1.txt");
@@ -124,7 +135,11 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
     }
     let genesis_file = include_bytes!("../../../test_data/genesis-l1-dev.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
-    let store = Store::new(&storage_path.into_path().display().to_string(), EngineType::Libmdbx).unwrap();
+    let store = Store::new(
+        &storage_path.into_path().display().to_string(),
+        EngineType::Libmdbx,
+    )
+    .unwrap();
     for address in accounts {
         let account_info = GenesisAccount {
             code: Bytes::new(),
@@ -260,7 +275,9 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
 }
 
 fn gas_throughput_measurement() -> Criterion<GasMeasurement> {
-   Criterion::default().with_measurement(GasMeasurement).sample_size(10)
+    Criterion::default()
+        .with_measurement(GasMeasurement)
+        .sample_size(10)
 }
 
 criterion_group!(
