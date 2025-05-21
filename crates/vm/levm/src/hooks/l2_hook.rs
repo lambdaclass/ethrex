@@ -1,7 +1,7 @@
 use crate::{
     errors::{ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{default_hook, hook::Hook},
-    utils::get_valid_jump_destinations,
+    utils::{eip7702_get_code, get_valid_jump_destinations},
     vm::VM,
 };
 
@@ -120,6 +120,33 @@ impl Hook for L2Hook {
                 vm.current_call_frame()?.msg_value,
             )?;
         }
+
+        // Transfer value only in Call transactions that are not privileged.
+        if !vm.is_create() && !vm.env.is_privileged {
+            vm.increase_account_balance(
+                vm.current_call_frame()?.to,
+                vm.current_call_frame()?.msg_value,
+            )?;
+        }
+
+        // Get bytecode and code_address for assigning those values to the callframe.
+        let (bytecode, code_address) = if vm.is_create() {
+            // Here bytecode is the calldata and the code_address is just the created contract address.
+            let calldata = std::mem::take(&mut vm.current_call_frame_mut()?.calldata);
+            (calldata, vm.current_call_frame()?.to)
+        } else {
+            // Here bytecode and code_address could be either from the account or from the delegated account.
+            let to = vm.current_call_frame()?.to;
+            let (_is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
+                eip7702_get_code(vm.db, &mut vm.substate, to)?;
+
+            (bytecode, code_address)
+        };
+
+        // Assign code and code_address to callframe
+        vm.current_call_frame_mut()?.code_address = code_address;
+        vm.current_call_frame_mut()?.set_code(bytecode)?;
+
         Ok(())
     }
 
