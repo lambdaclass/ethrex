@@ -3,7 +3,7 @@ pragma solidity =0.8.29;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
@@ -15,7 +15,7 @@ contract CommonBridge is
     ReentrancyGuard,
     Initializable,
     UUPSUpgradeable,
-    OwnableUpgradeable
+    Ownable2StepUpgradeable
 {
     /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
     /// there is a non-zero value in the mapping (a merkle root) for the hash
