@@ -1,4 +1,4 @@
-use prometheus::{Encoder, Gauge, Registry, TextEncoder};
+use prometheus::{Encoder, Gauge, IntGauge, Registry, TextEncoder};
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -7,7 +7,8 @@ pub static METRICS_BLOCKS: LazyLock<MetricsBlocks> = LazyLock::new(MetricsBlocks
 
 #[derive(Debug, Clone)]
 pub struct MetricsBlocks {
-    pub gas_limit: Gauge,
+    gas_limit: Gauge,
+    block_number: IntGauge,
 }
 
 impl Default for MetricsBlocks {
@@ -24,6 +25,11 @@ impl MetricsBlocks {
                 "Keeps track of the percentage of gas limit used by the last block",
             )
             .unwrap(),
+            block_number: IntGauge::new(
+                "block_number",
+                "Keeps track of the block number for the head of the chain",
+            )
+            .unwrap(),
         }
     }
 
@@ -31,10 +37,17 @@ impl MetricsBlocks {
         self.gas_limit.set(gas_limit);
     }
 
+    pub fn set_block_number(&self, block_number: u64) -> Result<(), MetricsError> {
+        self.block_number.set(block_number.try_into()?);
+        Ok(())
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
         r.register(Box::new(self.gas_limit.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.block_number.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();

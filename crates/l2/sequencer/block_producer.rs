@@ -24,6 +24,10 @@ use super::{
     execution_cache::ExecutionCache,
 };
 
+use ethrex_metrics::metrics;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+
 pub struct BlockProducer {
     block_time_ms: u64,
     coinbase_address: Address,
@@ -145,6 +149,14 @@ impl BlockProducer {
 
         // Make the new head be part of the canonical chain
         apply_fork_choice(&store, block.hash(), block.hash(), block.hash()).await?;
+
+        metrics!(
+            let _ = METRICS_BLOCKS
+            .set_block_number(block.header.number)
+            .inspect_err(|e| {
+                tracing::error!("Failed to set metric: block_number {}", e.to_string())
+            });
+        );
 
         Ok(())
     }
