@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747855410935,
+  "lastUpdate": 1747864059858,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8425,6 +8425,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210760041948,
             "range": "± 432894153",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "171076f9a71b02beb9a852bad96fb062aaca9ee6",
+          "message": "fix(levm): fix eip 7702 logic around touched_accounts (#2859)\n\n**Motivation**\n\n- Fix error when executing a transaction of a block when syncing Holesky\nin Prague by chaning behavior of the EVM.\n\n**Description**\n\n- We now set `code_address` and `bytecode` at the end of\n`prepare_execution`. It's necessary because of EIP-7702.\n- We change the place in which we add the delegated account to\n`touched_accounts` → **CORE CHANGE**\n- Change some outdated comments related to EIP7702 functions.\n- Change `get_callee_and_code` to `get_callee` because we don't need the\ncode before `prepare_execution` and this is assigned afterwards.\n- Create `set_code` function to CallFrame so that we calculate jump\ndestinations everytime we want to set the code, because it's always\nnecessary.\n\n\n**In depth explanation: What was wrong with this transaction?**\nThe gas diff was 2000 between LEVM and REVM, but doing some math we\nfound out that the actual gas diff before refunds was 2500. The access\ncost of accessing a COLD Address is 2600 and the cost of accessing a\nWARM address is 100. 2600-100 = 2500. That's the difference between LEVM\nand REVM, but where is it?\nReading EIP-7702 and analyzing our behavior made me realize:\n(Capital Letters here are accounts)\n- Transaction: A → B\n- B had C as delegate account at the beginning of the transaction so we\nadd C to the `touched_accounts`.\n- Transaction authority list sets B to have D as delegate, so that it's\nnot C anymore.\n- During execution we make internal calls to C\n- Our VM thinks C is in `touched_accounts` (that means warm) and\nconsumes 100 gas when accessing it instead of 2600.\n\nSolution? Changing the moment in which we add the delegate account to\n`touched_accounts`, so that we do it after the authorization list was\nprocessed.",
+          "timestamp": "2025-05-21T20:53:49Z",
+          "tree_id": "e7f6d045a970f8dc5679432499730b674980c601",
+          "url": "https://github.com/lambdaclass/ethrex/commit/171076f9a71b02beb9a852bad96fb062aaca9ee6"
+        },
+        "date": 1747864057259,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211086403479,
+            "range": "± 1561907584",
             "unit": "ns/iter"
           }
         ]
