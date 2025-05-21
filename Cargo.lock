@@ -3808,7 +3808,9 @@ dependencies = [
 name = "ethrex-prover"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "bytes",
+ "cfg-if",
  "clap 4.5.36",
  "ethereum-types 0.15.1",
  "ethrex-blockchain",

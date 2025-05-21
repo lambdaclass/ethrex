@@ -1,8 +1,7 @@
 use std::{fmt::Debug, sync::LazyLock};
 
-use ethrex_l2::{
-    sequencer::proof_coordinator::ProofData,
-    utils::prover::proving_systems::{BatchProof, ProofCalldata, ProverType},
+use ethrex_l2::utils::prover::proving_systems::{
+    BatchProof, ProofBytes, ProofCalldata, ProverType,
 };
 use ethrex_l2_sdk::calldata::Value;
 use sp1_sdk::{
@@ -93,13 +92,13 @@ pub fn verify(output: &ProveOutput) -> Result<bool, Box<dyn std::error::Error>> 
 pub fn to_batch_proof(proof: ProveOutput) -> Result<BatchProof, Box<dyn std::error::Error>> {
     cfg_if::cfg_if! {
         if #[cfg(feature = "aligned")] {
-            BatchProof::ProofBytes(ProofBytes {
-                proof: proof.proof.bytes().to_vec(),
+            Ok(BatchProof::ProofBytes(ProofBytes {
+                proof: bincode::serialize(&proof)?,
                 public_values: proof.proof.public_values.to_vec(),
-            })
+            }))
         }
         else {
-            BatchProof::ProofCalldata(to_calldata(proof))
+            Ok(BatchProof::ProofCalldata(to_calldata(proof)))
         }
     }
 }
