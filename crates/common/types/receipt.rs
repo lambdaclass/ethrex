@@ -34,6 +34,7 @@ impl Receipt {
         self.encode_inner68()
     }
 
+    // **This function should be removed when eth/68 is deprecated**
     // By reading the typed transactions EIP, and some geth code:
     // - https://eips.ethereum.org/EIPS/eip-2718
     // - https://github.com/ethereum/go-ethereum/blob/330190e476e2a2de4aac712551629a4134f802d5/core/types/receipt.go#L143
@@ -70,10 +71,11 @@ impl Receipt {
         encode_buff
     }
 
+    // **This function should be removed when eth/68 is deprecated**
     /// Decodes Receipts in the following formats:
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: tx_type | rlp(receipt).
-    pub fn decode_inner(rlp: &[u8]) -> Result<Receipt, RLPDecodeError> {
+    pub fn decode_inner68(rlp: &[u8]) -> Result<Receipt, RLPDecodeError> {
         // Obtain TxType
         let (tx_type, rlp) = match rlp.first() {
             Some(tx_type) if *tx_type < 0x7f => {
@@ -109,14 +111,15 @@ impl Receipt {
         })
     }
 
+    // **This function should be removed when eth/68 is deprecated**
     pub fn encode68(&self, buf: &mut dyn bytes::BufMut) {
         match self.tx_type {
             TxType::Legacy => {
-                let legacy_encoded = self.encode_inner();
+                let legacy_encoded = self.encode_inner68();
                 buf.put_slice(&legacy_encoded);
             }
             _ => {
-                let typed_recepipt_encoded = self.encode_inner();
+                let typed_recepipt_encoded = self.encode_inner68();
                 let bytes = Bytes::from(typed_recepipt_encoded);
                 bytes.encode(buf);
             }
@@ -278,8 +281,8 @@ mod test {
                 data: Bytes::from_static(b"foo"),
             }],
         };
-        let encoded_receipt = receipt.encode_inner();
-        assert_eq!(receipt, Receipt::decode_inner(&encoded_receipt).unwrap())
+        let encoded_receipt = receipt.encode_inner68();
+        assert_eq!(receipt, Receipt::decode_inner68(&encoded_receipt).unwrap())
     }
 
     #[test]
@@ -294,7 +297,7 @@ mod test {
                 data: Bytes::from_static(b"bar"),
             }],
         };
-        let encoded_receipt = receipt.encode_inner();
-        assert_eq!(receipt, Receipt::decode_inner(&encoded_receipt).unwrap())
+        let encoded_receipt = receipt.encode_inner68();
+        assert_eq!(receipt, Receipt::decode_inner68(&encoded_receipt).unwrap())
     }
 }
