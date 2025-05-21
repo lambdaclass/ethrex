@@ -22,7 +22,7 @@ use ethrex::l2::L2Options;
 #[cfg(feature = "l2")]
 use ethrex_storage_rollup::StoreRollup;
 #[cfg(feature = "sync-test")]
-fn set_sync_block(store: &Store) {
+async fn set_sync_block(store: &Store) {
     let get_latest = match env::var("SYNC-LATEST")
         .expect("Failed to get sync configuration from environment")
         .as_str()
@@ -57,7 +57,7 @@ async fn main() -> eyre::Result<()> {
     let store = init_store(&data_dir, &network).await;
 
     #[cfg(feature = "sync-test")]
-    set_sync_block(&store);
+    set_sync_block(&store).await;
 
     let blockchain = init_blockchain(opts.evm, store.clone());
 
