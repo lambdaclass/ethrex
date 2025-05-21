@@ -1,7 +1,6 @@
 use std::fmt;
 
 use crate::{
-    eth::max_priority_fee,
     types::{
         block::RpcBlock,
         receipt::{RpcLog, RpcReceipt},
@@ -1196,13 +1195,12 @@ impl EthClient {
         if let Some(gas_fee) = maybe_gas_fee {
             return Ok(gas_fee);
         }
-        Ok(maybe_gas_fee.unwrap_or(
-            self.get_gas_price()
-                .await
-                .map_err(EthClientError::from)?
-                .try_into()
-                .map_err(|_| EthClientError::Custom("Failed to get gas for fee".to_owned()))?,
-        ))
+        Ok(self
+            .get_gas_price()
+            .await
+            .map_err(EthClientError::from)?
+            .try_into()
+            .map_err(|_| EthClientError::Custom("Failed to get gas for fee".to_owned()))?)
     }
 
     async fn priority_fee_from_override_or_rpc(
@@ -1217,7 +1215,7 @@ impl EthClient {
             return Ok(priority_fee);
         }
 
-        Ok(self.get_fee_from_override_or_get_gas_price(None).await?)
+        self.get_fee_from_override_or_get_gas_price(None).await
     }
 }
 
