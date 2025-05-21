@@ -61,10 +61,7 @@ impl Hook for L2Hook {
             }
 
             // (9) SENDER_NOT_EOA
-            {
-                let sender_account = vm.db.get_account(sender_address)?;
-                default_hook::validate_sender(sender_account)?;
-            }
+            default_hook::validate_sender(vm.db.get_account(sender_address)?)?;
         }
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
