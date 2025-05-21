@@ -7,6 +7,8 @@ use crate::{
     CommitterConfig, EthConfig, SequencerConfig,
 };
 
+#[cfg(feature = "metrics")]
+use ethrex_common::types::BYTES_PER_BLOB;
 use ethrex_common::{
     types::{
         blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block, BlockHeader,
@@ -479,6 +481,11 @@ impl Committer {
     /// Generate the blob bundle necessary for the EIP-4844 transaction.
     fn generate_blobs_bundle(&self, state_diff: &StateDiff) -> Result<BlobsBundle, CommitterError> {
         let blob_data = state_diff.encode().map_err(CommitterError::from)?;
+
+        metrics!(
+            #[allow(clippy::as_conversions)]
+            METRICS_L2.set_blob_usage_percentage((blob_data.len() as f64 / BYTES_PER_BLOB as f64 ) * 100_f64);
+        );
 
         let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
 

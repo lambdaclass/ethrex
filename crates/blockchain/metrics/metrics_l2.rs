@@ -1,4 +1,6 @@
-use prometheus::{Encoder, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
+use prometheus::{
+    Encoder, Gauge, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder,
+};
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -9,6 +11,7 @@ pub struct MetricsL2 {
     status_tracker: IntGaugeVec,
     operations_tracker: IntCounterVec,
     gas_price: IntGauge,
+    blob_usage: Gauge,
 }
 
 impl Default for MetricsL2 {
@@ -37,6 +40,11 @@ impl MetricsL2 {
             )
             .unwrap(),
             gas_price: IntGauge::new("l2_gas_price", "Keeps track of the l2 gas price").unwrap(),
+            blob_usage: Gauge::new(
+                "l2_blob_usage",
+                "Keeps track of the percentage of blob usage for a batch commitment",
+            )
+            .unwrap(),
         }
     }
 
@@ -75,6 +83,10 @@ impl MetricsL2 {
         Ok(())
     }
 
+    pub fn set_blob_usage_percentage(&self, usage: f64) {
+        self.blob_usage.set(usage);
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
@@ -83,6 +95,8 @@ impl MetricsL2 {
         r.register(Box::new(self.gas_price.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.operations_tracker.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.blob_usage.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
