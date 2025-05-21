@@ -138,10 +138,9 @@ init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex
 
 BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
 ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
-FEATURES="l2,rollup_storage_libmdbx,metrics"
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features $$FEATURES -- \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- \
 	l2 init \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
