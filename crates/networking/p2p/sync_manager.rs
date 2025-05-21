@@ -3,11 +3,6 @@ use std::sync::{
     Arc,
 };
 
-#[cfg(feature = "sync-test")]
-use ethrex_storage::error::StoreError;
-#[cfg(feature = "sync-test")]
-use std::env;
-
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
