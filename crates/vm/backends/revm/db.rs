@@ -46,7 +46,7 @@ impl EvmState {
     /// Gets the stored chain config
     pub fn chain_config(&self) -> Result<ChainConfig, EvmError> {
         match self {
-            EvmState::Store(db) => Ok(db.database.0.get_chain_config()),
+            EvmState::Store(db) => Ok(db.database.get_chain_config()),
             EvmState::Execution(db) => Ok(db.db.get_chain_config()),
         }
     }
@@ -118,15 +118,11 @@ impl revm::Database for DynVmDatabase {
     type Error = EvmError;
 
     fn basic(&mut self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        let acc_info = match self
-            .0
-            .get_account_info(CoreAddress::from(address.0.as_ref()))?
-        {
+        let acc_info = match self.get_account_info(CoreAddress::from(address.0.as_ref()))? {
             None => return Ok(None),
             Some(acc_info) => acc_info,
         };
         let code = self
-            .0
             .get_account_code(acc_info.code_hash)?
             .map(|b| RevmBytecode::new_raw(RevmBytes(b)));
 
@@ -139,15 +135,13 @@ impl revm::Database for DynVmDatabase {
     }
 
     fn code_by_hash(&mut self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
-        self.0
-            .get_account_code(CoreH256::from(code_hash.as_ref()))?
+        self.get_account_code(CoreH256::from(code_hash.as_ref()))?
             .map(|b| RevmBytecode::new_raw(RevmBytes(b)))
             .ok_or_else(|| EvmError::DB(format!("No code for hash {code_hash}")))
     }
 
     fn storage(&mut self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
         Ok(self
-            .0
             .get_storage_slot(
                 CoreAddress::from(address.0.as_ref()),
                 CoreH256::from(index.to_be_bytes()),
@@ -157,8 +151,7 @@ impl revm::Database for DynVmDatabase {
     }
 
     fn block_hash(&mut self, number: u64) -> Result<RevmB256, Self::Error> {
-        self.0
-            .get_block_hash(number)?
+        self.get_block_hash(number)?
             .map(|hash| RevmB256::from_slice(&hash.0))
             .ok_or_else(|| EvmError::DB(format!("Block {number} not found")))
     }
@@ -168,15 +161,11 @@ impl revm::DatabaseRef for DynVmDatabase {
     type Error = EvmError;
 
     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        let acc_info = match self
-            .0
-            .get_account_info(CoreAddress::from(address.0.as_ref()))?
-        {
+        let acc_info = match self.get_account_info(CoreAddress::from(address.0.as_ref()))? {
             None => return Ok(None),
             Some(acc_info) => acc_info,
         };
         let code = self
-            .0
             .get_account_code(acc_info.code_hash)?
             .map(|b| RevmBytecode::new_raw(RevmBytes(b)));
 
@@ -189,15 +178,13 @@ impl revm::DatabaseRef for DynVmDatabase {
     }
 
     fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
-        self.0
-            .get_account_code(CoreH256::from(code_hash.as_ref()))?
+        self.get_account_code(CoreH256::from(code_hash.as_ref()))?
             .map(|b| RevmBytecode::new_raw(RevmBytes(b)))
             .ok_or_else(|| EvmError::DB(format!("No code for hash {code_hash}")))
     }
 
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
         Ok(self
-            .0
             .get_storage_slot(
                 CoreAddress::from(address.0.as_ref()),
                 CoreH256::from(index.to_be_bytes()),
@@ -207,8 +194,7 @@ impl revm::DatabaseRef for DynVmDatabase {
     }
 
     fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
-        self.0
-            .get_block_hash(number)?
+        self.get_block_hash(number)?
             .map(|hash| RevmB256::from_slice(&hash.0))
             .ok_or_else(|| EvmError::DB(format!("Block {number} not found")))
     }

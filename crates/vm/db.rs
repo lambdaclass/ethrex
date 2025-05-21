@@ -16,11 +16,4 @@ pub trait VmDatabase: Send + Sync + DynClone {
 
 dyn_clone::clone_trait_object!(VmDatabase);
 
-pub struct DynVmDatabase(pub Box<dyn VmDatabase + Send + Sync + 'static>);
-
-impl Clone for DynVmDatabase {
-    fn clone(&self) -> Self {
-        // Methods can be called directly on the Box<dyn Trait>
-        DynVmDatabase(self.0.clone())
-    }
-}
+pub type DynVmDatabase = Box<dyn VmDatabase + Send + Sync + 'static>;
