@@ -390,10 +390,8 @@ impl LEVM {
             return Err(ProverDBError::Custom("Unable to get last block".into()));
         };
 
-        let vm_db = DynVmDatabase(Box::new(StoreVmDatabase::new(
-            store.clone(),
-            first_block_parent_hash,
-        )));
+        let vm_db: DynVmDatabase =
+            Box::new(StoreVmDatabase::new(store.clone(), first_block_parent_hash));
 
         let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
 
@@ -411,8 +409,8 @@ impl LEVM {
             }
 
             // Update de block_hash for the next execution.
-            let new_store =
-                DynVmDatabase(Box::new(StoreVmDatabase::new(store.clone(), block.hash())));
+            let new_store: DynVmDatabase =
+                Box::new(StoreVmDatabase::new(store.clone(), block.hash()));
 
             // Replace the store
             *logger.store.lock().unwrap() = Box::new(new_store);

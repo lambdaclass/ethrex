@@ -4,8 +4,8 @@ use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::constants::EMPTY_CODE_HASH;
 use ethrex_levm::db::Database as LevmDatabase;
 
-use crate::db::DynVmDatabase;
-use crate::ProverDB;
+use crate::db::{DynVmDatabase, VmDatabase};
+use crate::{ProverDB};
 use ethrex_levm::db::error::DatabaseError;
 use std::collections::HashMap;
 use std::result::Result;
@@ -102,13 +102,11 @@ impl LevmDatabase for DatabaseLogger {
 impl LevmDatabase for DynVmDatabase {
     fn get_account(&self, address: CoreAddress) -> Result<Account, DatabaseError> {
         let acc_info = self
-            .0
             .get_account_info(address)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default();
 
         let acc_code = self
-            .0
             .get_account_code(acc_info.code_hash)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default();
@@ -122,7 +120,7 @@ impl LevmDatabase for DynVmDatabase {
     }
 
     fn account_exists(&self, address: CoreAddress) -> bool {
-        let acc_info = self.0.get_account_info(address).unwrap();
+        let acc_info = self.get_account_info(address).unwrap();
         acc_info.is_some()
     }
 
@@ -132,25 +130,23 @@ impl LevmDatabase for DynVmDatabase {
         key: CoreH256,
     ) -> Result<ethrex_common::U256, DatabaseError> {
         Ok(self
-            .0
             .get_storage_slot(address, key)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default())
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<Option<CoreH256>, DatabaseError> {
-        self.0
-            .get_block_hash(block_number)
-            .map_err(|e| DatabaseError::Custom(e.to_string()))
+        let result = <dyn VmDatabase>::get_block_hash(self.as_ref(), block_number)
+            .map_err(|e| DatabaseError::Custom(e.to_string()));
+        result
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
-        self.0.get_chain_config()
+        <dyn VmDatabase>::get_chain_config(self.as_ref())
     }
 
     fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
-        self.0
-            .get_account_code(code_hash)
+        <dyn VmDatabase>::get_account_code(self.as_ref(), code_hash)
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
 }
