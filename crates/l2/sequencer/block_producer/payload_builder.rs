@@ -13,6 +13,8 @@ use ethrex_common::{
 use ethrex_metrics::metrics;
 
 #[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+#[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
 use ethrex_storage::Store;
 use std::ops::Div;
@@ -62,6 +64,13 @@ pub async fn build_payload(
             );
         }
     }
+
+    metrics!(
+        #[allow(clippy::as_conversions)]
+        METRICS_BLOCKS.set_latest_block_gas_limit(
+            ((gas_limit - context.remaining_gas) as f64 / gas_limit as f64) * 100_f64
+        )
+    );
 
     Ok(context.into())
 }
