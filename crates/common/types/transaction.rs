@@ -2511,7 +2511,7 @@ mod tests {
 
         let result = compute_receipts_root(&[receipt]);
         let expected_root =
-            hex!("056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2");
+            hex!("e104522d65a1cd9aeaea5272339bbbb163fdf713a6399d21379a52b4d0d969dc");
         assert_eq!(result, expected_root.into());
     }
 

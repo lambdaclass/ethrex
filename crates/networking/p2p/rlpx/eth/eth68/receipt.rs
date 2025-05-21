@@ -45,12 +45,15 @@ impl RLPxMessage for Receipts68 {
                     inner_buf_1.put_slice(&inner_buf_2);
                 }
             }
-            encode_length(inner_buf_1.len(), &mut  tmp_buf);
+            encode_length(inner_buf_1.len(), &mut tmp_buf);
             tmp_buf.put_slice(&inner_buf_1);
         }
 
         let mut encoded_data = vec![];
-        Encoder::new(&mut encoded_data).encode_field(&self.id).encode_raw(&tmp_buf[..]).finish();
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.id)
+            .encode_raw(&tmp_buf[..])
+            .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
