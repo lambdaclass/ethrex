@@ -199,8 +199,8 @@ fn decode_hex(s: &str) -> Result<Bytes, FromHexError> {
 
 impl Command {
     pub async fn run(self, cfg: EthrexL2Config) -> eyre::Result<()> {
-        let eth_client = EthClient::new(&cfg.network.l1_rpc_url);
-        let rollup_client = EthClient::new(&cfg.network.l2_rpc_url);
+        let eth_client = EthClient::new(&cfg.network.l1_rpc_url)?;
+        let rollup_client = EthClient::new(&cfg.network.l2_rpc_url)?;
         let from = cfg.wallet.address;
         match self {
             Command::Balance {
@@ -331,7 +331,6 @@ impl Command {
                             },
                             nonce,
                             from: Some(cfg.wallet.address),
-                            gas_limit: Some(21000 * 100),
                             ..Default::default()
                         },
                     )
@@ -371,8 +370,6 @@ impl Command {
                             nonce,
                             from: Some(cfg.wallet.address),
                             value: Some(amount),
-                            gas_limit: Some(21000 * 2),
-                            max_fee_per_gas: Some(800000000),
                             ..Default::default()
                         },
                     )

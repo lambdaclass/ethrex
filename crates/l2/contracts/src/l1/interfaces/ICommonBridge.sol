@@ -62,12 +62,6 @@ interface ICommonBridge {
     /// logs to be processed.
     function getPendingDepositLogs() external view returns (bytes32[] memory);
 
-    /// @notice Initializes the contract.
-    /// @dev This method is called only once after the contract is deployed.
-    /// @dev It sets the OnChainProposer address.
-    /// @param onChainProposer the address of the OnChainProposer contract.
-    function initialize(address onChainProposer) external;
-
     /// @notice Method that starts an L2 ETH deposit process.
     /// @dev The deposit process starts here by emitting a DepositInitiated
     /// event. This event will later be intercepted by the L2 operator to

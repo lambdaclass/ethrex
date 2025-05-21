@@ -47,7 +47,7 @@ pub const STORAGE_TRIE_NODES_TABLE: MultimapTableDefinition<([u8; 32], [u8; 33])
     MultimapTableDefinition::new("StorageTrieNodes");
 const CHAIN_DATA_TABLE: TableDefinition<ChainDataIndex, Vec<u8>> =
     TableDefinition::new("ChainData");
-const INVALID_ANCESOTRS_TABLE: TableDefinition<BlockHashRLP, BlockHashRLP> =
+const INVALID_ANCESTORS_TABLE: TableDefinition<BlockHashRLP, BlockHashRLP> =
     TableDefinition::new("InvalidAncestors");
 const PAYLOADS_TABLE: TableDefinition<BlockNumber, PayloadBundleRLP> =
     TableDefinition::new("Payloads");
@@ -1018,25 +1018,6 @@ impl StoreEngine for RedBStore {
         Ok(res)
     }
 
-    async fn is_synced(&self) -> Result<bool, StoreError> {
-        match self
-            .read(CHAIN_DATA_TABLE, ChainDataIndex::IsSynced)
-            .await?
-        {
-            None => Err(StoreError::Custom("Sync status not found".to_string())),
-            Some(ref rlp) => RLPDecode::decode(&rlp.value()).map_err(|_| StoreError::DecodeError),
-        }
-    }
-
-    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
-        self.write(
-            CHAIN_DATA_TABLE,
-            ChainDataIndex::IsSynced,
-            is_synced.encode_to_vec(),
-        )
-        .await
-    }
-
     async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
         self.write(
             SNAP_STATE_TABLE,
@@ -1232,7 +1213,7 @@ impl StoreEngine for RedBStore {
     ) -> Result<Option<BlockHash>, StoreError> {
         Ok(self
             .read(
-                INVALID_ANCESOTRS_TABLE,
+                INVALID_ANCESTORS_TABLE,
                 <H256 as Into<BlockHashRLP>>::into(block),
             )
             .await?
@@ -1245,7 +1226,7 @@ impl StoreEngine for RedBStore {
         latest_valid: BlockHash,
     ) -> Result<(), StoreError> {
         self.write(
-            INVALID_ANCESOTRS_TABLE,
+            INVALID_ANCESTORS_TABLE,
             <H256 as Into<BlockHashRLP>>::into(bad_block),
             <H256 as Into<BlockHashRLP>>::into(latest_valid),
         )
@@ -1348,6 +1329,7 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_table(BLOCK_BODIES_TABLE)?;
     table_creation_txn.open_table(PAYLOADS_TABLE)?;
     table_creation_txn.open_table(PENDING_BLOCKS_TABLE)?;
+    table_creation_txn.open_table(INVALID_ANCESTORS_TABLE)?;
     table_creation_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
     table_creation_txn.open_table(SNAP_STATE_TABLE)?;
     table_creation_txn.open_table(STATE_SNAPSHOT_TABLE)?;

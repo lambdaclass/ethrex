@@ -1,10 +1,9 @@
 use ethrex_blockchain::{
     error::{ChainError, InvalidForkChoice},
     fork_choice::apply_fork_choice,
-    latest_canonical_block_hash,
     payload::{create_payload, BuildPayloadArgs},
 };
-use ethrex_common::types::BlockHeader;
+use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
 use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{debug, info, warn};
@@ -265,6 +264,8 @@ async fn handle_forkchoice(
     .await
     {
         Ok(head) => {
+            // Fork Choice was succesful, the node is up to date with the current chain
+            context.blockchain.set_synced();
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
             match context
@@ -300,20 +301,11 @@ async fn handle_forkchoice(
         }
         Err(forkchoice_error) => {
             let forkchoice_response = match forkchoice_error {
-                InvalidForkChoice::NewHeadAlreadyCanonical => {
-                    ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
-                        latest_canonical_block_hash(&context.storage)
-                            .await
-                            .map_err(|e| RpcErr::Internal(e.to_string()))?,
-                    ))
-                }
+                InvalidForkChoice::NewHeadAlreadyCanonical => ForkChoiceResponse::from(
+                    PayloadStatus::valid_with_hash(fork_choice_state.head_block_hash),
+                ),
                 InvalidForkChoice::Syncing => {
                     // Start sync
-                    context
-                        .storage
-                        .update_sync_status(false)
-                        .await
-                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
                     context
                         .syncer
                         .sync_to_head(fork_choice_state.head_block_hash);
@@ -423,6 +415,7 @@ async fn build_payload(
         withdrawals: attributes.withdrawals.clone(),
         beacon_root: attributes.parent_beacon_block_root,
         version,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
     };
     let payload_id = args.id();
     let payload = match create_payload(&args, &context.storage) {

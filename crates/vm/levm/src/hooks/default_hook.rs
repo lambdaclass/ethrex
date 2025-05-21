@@ -20,7 +20,7 @@ pub struct DefaultHook;
 
 impl Hook for DefaultHook {
     /// ## Description
-    /// This method performs validations and returns an error if any of the validations fail.
+    /// This method performs validations and returns an error if any of these fail.
     /// It also makes pre-execution changes:
     /// - It increases sender nonce
     /// - It substracts up-front-cost from sender balance.
@@ -102,7 +102,7 @@ impl Hook for DefaultHook {
 
         // [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
         // Transaction is type 4 if authorization_list is Some
-        if vm.authorization_list.is_some() {
+        if vm.tx.authorization_list().is_some() {
             validate_type_4_tx(vm)?;
         }
 
@@ -230,7 +230,7 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
 
 // In Cancun the only addresses destroyed are contracts created in this transaction
 pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
-    let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
+    let selfdestruct_set = vm.substate.selfdestruct_set.clone();
     for address in selfdestruct_set {
         let account_to_remove = vm.get_account_mut(address)?;
         *account_to_remove = Account::default();
@@ -357,7 +357,7 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
 }
 
 pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
-    let Some(auth_list) = &vm.authorization_list else {
+    let Some(auth_list) = vm.tx.authorization_list() else {
         // vm.authorization_list should be Some at this point.
         return Err(VMError::Internal(InternalError::UndefinedState(-1)));
     };

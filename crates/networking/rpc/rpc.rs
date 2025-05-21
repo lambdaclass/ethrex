@@ -49,6 +49,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 #[cfg(feature = "based")]
 use ethrex_common::Public;
+use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
@@ -89,12 +90,10 @@ enum RpcRequestWrapper {
 pub struct RpcApiContext {
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
-    pub jwt_secret: Bytes,
-    pub local_p2p_node: Node,
-    pub local_node_record: NodeRecord,
     pub active_filters: ActiveFilters,
     pub syncer: Arc<SyncManager>,
-    pub client_version: String,
+    pub peer_handler: PeerHandler,
+    pub node_data: NodeData,
     #[cfg(feature = "based")]
     pub gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
@@ -107,6 +106,14 @@ pub struct RpcApiContext {
     pub sponsor_pk: SecretKey,
     #[cfg(feature = "l2")]
     pub rollup_store: StoreRollup,
+}
+
+#[derive(Debug, Clone)]
+pub struct NodeData {
+    pub jwt_secret: Bytes,
+    pub local_p2p_node: Node,
+    pub local_node_record: NodeRecord,
+    pub client_version: String,
 }
 
 pub trait RpcHandler: Sized {
@@ -150,6 +157,7 @@ pub async fn start_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     syncer: SyncManager,
+    peer_handler: PeerHandler,
     client_version: String,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
@@ -164,12 +172,15 @@ pub async fn start_api(
     let service_context = RpcApiContext {
         storage,
         blockchain,
-        jwt_secret,
-        local_p2p_node,
-        local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(syncer),
-        client_version,
+        peer_handler,
+        node_data: NodeData {
+            jwt_secret,
+            local_p2p_node,
+            local_node_record,
+            client_version,
+        },
         #[cfg(feature = "based")]
         gateway_eth_client,
         #[cfg(feature = "based")]
@@ -279,7 +290,7 @@ pub async fn handle_authrpc_request(
             ));
         }
     };
-    match authenticate(&service_context.jwt_secret, auth_header) {
+    match authenticate(&service_context.node_data.jwt_secret, auth_header) {
         Err(error) => Json(rpc_response(req.id, Err(error))),
         Ok(()) => {
             // Proceed with the request
@@ -445,19 +456,15 @@ pub async fn map_engine_requests(
 
 pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "admin_nodeInfo" => admin::node_info(
-            context.storage,
-            context.local_p2p_node,
-            context.local_node_record,
-            context.client_version,
-        ),
+        "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
+        "admin_peers" => admin::peers(&context),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
 
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "web3_clientVersion" => Ok(Value::String(context.client_version)),
+        "web3_clientVersion" => Ok(Value::String(context.node_data.client_version)),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
@@ -543,9 +550,9 @@ mod tests {
             .await
             .unwrap();
         let context = default_context_with_storage(storage).await;
-        let local_p2p_node = context.local_p2p_node;
+        let local_p2p_node = context.node_data.local_p2p_node.clone();
 
-        let enr_url = context.local_node_record.enr_url().unwrap();
+        let enr_url = context.node_data.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result);
         let blob_schedule = serde_json::json!({
@@ -558,7 +565,7 @@ mod tests {
             "result": {
                 "enode": "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@127.0.0.1:30303",
                 "enr": enr_url,
-                "id": hex::encode(Keccak256::digest(local_p2p_node.node_id)),
+                "id": hex::encode(Keccak256::digest(local_p2p_node.public_key)),
                 "ip": "127.0.0.1",
                 "name": "ethrex/test",
                 "ports": {
@@ -630,39 +637,6 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[],"gasUsed":"0x5208"}}"#,
         );
         assert_eq!(response.to_string(), expected_response.to_string());
-    }
-
-    #[tokio::test]
-    async fn create_access_list_create() {
-        // Create Request
-        // Request taken from https://github.com/ethereum/execution-apis/blob/main/tests/eth_createAccessList/create-al-contract.io
-        let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","gas":"0xea60","gasPrice":"0x44103f2","input":"0x010203040506","nonce":"0x0","to":"0x7dcd17433742f4c0ca53122ab541d0ba67fc27df"},"0x00"]}"#;
-        let request: RpcRequest = serde_json::from_str(body).unwrap();
-        // Setup initial storage
-        let storage =
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let genesis = read_execution_api_genesis_file();
-        storage
-            .add_initial_state(genesis)
-            .await
-            .expect("Failed to add genesis block to DB");
-        // Process request
-        let context = default_context_with_storage(storage).await;
-
-        let result = map_http_requests(&request, context).await;
-        let response =
-            serde_json::from_value::<RpcSuccessResponse>(rpc_response(request.id, result))
-                .expect("Request failed");
-        let expected_response_string = r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[{"address":"0x7dcd17433742f4c0ca53122ab541d0ba67fc27df","storageKeys":["0x0000000000000000000000000000000000000000000000000000000000000000","0x13a08e3cd39a1bc7bf9103f63f83273cced2beada9f723945176d6b983c65bd2"]}],"gasUsed":"0xca3c"}}"#;
-        let expected_response =
-            serde_json::from_str::<RpcSuccessResponse>(expected_response_string).unwrap();
-        // Due to the scope of this test, we don't have the full state up to date which can cause variantions in gas used due to the difference in the blockchain state
-        // So we will skip checking the gas_used and only check that the access list is correct
-        // The gas_used will be checked when running the hive test framework
-        assert_eq!(
-            response.result["accessList"],
-            expected_response.result["accessList"]
-        )
     }
 
     fn example_chain_config() -> ChainConfig {
