@@ -127,6 +127,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         requests_hash: chain_config
             .is_prague_activated(args.timestamp)
             .then_some(*DEFAULT_REQUESTS_HASH),
+        ..Default::default()
     };
 
     let body = BlockBody {

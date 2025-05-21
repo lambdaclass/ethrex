@@ -275,6 +275,7 @@ impl From<Header> for BlockHeader {
             excess_blob_gas: val.excess_blob_gas.map(|x| x.as_u64()),
             parent_beacon_block_root: val.parent_beacon_block_root,
             requests_hash: val.requests_hash,
+            ..Default::default()
         }
     }
 }
