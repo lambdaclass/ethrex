@@ -30,7 +30,6 @@ STATETEST_URL := $(shell cat $(FIXTURES_FILE))
 
 setup-test-dirs:
 	mkdir -p $(VECTORS_DIR)
-	mkdir -p $(VECTORS_DIR)/LegacyTests/Constantinople/GeneralStateTests
 	mkdir -p $(VECTORS_DIR)/LegacyTests/Cancun/GeneralStateTests
 	mkdir -p $(VECTORS_DIR)/GeneralStateTests
 	mkdir -p $(VECTORS_DIR)/state_tests
@@ -40,7 +39,6 @@ clone-ef-tests: ## 📥 Download Ethereum Tests repository with submodules
 	git clone --recurse-submodules --depth 1 --branch $(ETH_TEST_TAG) $(ETH_TEST_URL) $(TESTS_REPO)
 	cd $(TESTS_REPO)/LegacyTests && git checkout $(COMMIT_LEGACY_TESTS_FOR_TAG)
 	cp -r $(TESTS_REPO)/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
-	cp -r $(TESTS_REPO)/LegacyTests/Constantinople/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Constantinople/GeneralStateTests/
 	cp -r $(TESTS_REPO)/LegacyTests/Cancun/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Cancun/GeneralStateTests/;
 
 download-state-tests: ## 📥 Download and setup state tests fixtures
