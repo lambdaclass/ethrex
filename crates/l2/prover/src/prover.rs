@@ -1,4 +1,4 @@
-use crate::{config::ProverConfig, prove, to_submit};
+use crate::{config::ProverConfig, prove, to_batch_proof};
 use ethrex_l2::sequencer::proof_coordinator::ProofData;
 use std::time::Duration;
 use tokio::{
@@ -39,11 +39,12 @@ impl Prover {
                 // If we get the input
                 Ok(prover_data) => {
                     // Generate the Proof
-                    match prove(prover_data.input)
-                        .and_then(|output| to_submit(prover_data.batch_number, output))
-                    {
-                        Ok(proof_submit) => {
-                            if let Err(e) = self.submit_proof(proof_submit).await {
+                    match prove(prover_data.input).and_then(to_batch_proof(output)) {
+                        Ok(batch_proof) => {
+                            if let Err(e) = self
+                                .submit_proof(prover_data.batch_number, proof_submit)
+                                .await
+                            {
                                 // TODO: Retry?
                                 warn!("Failed to submit proof: {e}");
                             }
@@ -94,7 +95,9 @@ impl Prover {
         }
     }
 
-    async fn submit_proof(&self, submit: ProofData) -> Result<(), String> {
+    async fn submit_proof(&self, batch_number: u64, submit: ProofData) -> Result<(), String> {
+        let submit = ProofData::proof_submit(batch_number, proving_output);
+
         let submit_ack = connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)
             .await
             .map_err(|e| format!("Failed to get SubmitAck: {e}"))?;

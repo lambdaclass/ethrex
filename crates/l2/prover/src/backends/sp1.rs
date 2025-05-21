@@ -2,7 +2,7 @@ use std::{fmt::Debug, sync::LazyLock};
 
 use ethrex_l2::{
     sequencer::proof_coordinator::ProofData,
-    utils::prover::proving_systems::{ProofCalldata, ProverType},
+    utils::prover::proving_systems::{BatchProof, ProofCalldata, ProverType},
 };
 use ethrex_l2_sdk::calldata::Value;
 use sp1_sdk::{
@@ -90,28 +90,18 @@ pub fn verify(output: &ProveOutput) -> Result<bool, Box<dyn std::error::Error>> 
     Ok(true)
 }
 
-pub fn to_submit(
-    batch_number: u64,
-    proof: ProveOutput,
-) -> Result<ProofData, Box<dyn std::error::Error>> {
-    cfg!(feature = "aligned");
+pub fn to_batch_proof(proof: ProveOutput) -> Result<BatchProof, Box<dyn std::error::Error>> {
     cfg_if::cfg_if! {
         if #[cfg(feature = "aligned")] {
-            //  TODO: REVIEW THIS SINCE IS A SOURCE OF ERRORS
-            let batch_proof = BatchProof::ProofBytes(ProofBytes {
+            BatchProof::ProofBytes(ProofBytes {
                 proof: proof.proof.bytes().to_vec(),
                 public_values: proof.proof.public_values.to_vec(),
-            });
+            })
         }
         else {
-            let batch_proof = BatchProof::ProofCalldata(to_calldata(proof))
+            BatchProof::ProofCalldata(to_calldata(proof))
         }
     }
-
-    Ok(ProofData::ProofSubmit {
-        batch_number,
-        batch_proof,
-    })
 }
 
 fn to_calldata(proof: ProveOutput) -> ProofCalldata {

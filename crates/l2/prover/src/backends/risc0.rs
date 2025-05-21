@@ -43,15 +43,8 @@ pub fn verify(receipt: &Receipt) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn to_submit(
-    batch_number: u64,
-    proof: ProveOutput,
-) -> Result<ProofData, Box<dyn std::error::Error>> {
-    let batch_proof = BatchProof::ProofCalldata(to_calldata(proof));
-    Ok(ProofData::ProofSubmit {
-        batch_number,
-        batch_proof,
-    })
+pub fn to_batch_proof(proof: ProveOutput) -> Result<ProofData, Box<dyn std::error::Error>> {
+    Ok(BatchProof::ProofCalldata(to_calldata(proof)))
 }
 
 fn to_calldata(receipt: Receipt) -> ProofCalldata {

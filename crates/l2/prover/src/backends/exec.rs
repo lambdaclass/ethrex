@@ -42,15 +42,8 @@ fn to_calldata(proof: ProveOutput) -> ProofCalldata {
     }
 }
 
-pub fn to_submit(
-    batch_number: u64,
-    proof: ProveOutput,
-) -> Result<ProofData, Box<dyn std::error::Error>> {
-    let batch_proof = BatchProof::ProofCalldata(to_calldata(proof));
-    Ok(ProofData::ProofSubmit {
-        batch_number,
-        batch_proof,
-    })
+pub fn to_batch_proof(proof: ProveOutput) -> Result<BatchProof, Box<dyn std::error::Error>> {
+    Ok(BatchProof::ProofCalldata(to_calldata(proof)))
 }
 
 fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
