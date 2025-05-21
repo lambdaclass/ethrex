@@ -166,6 +166,7 @@ async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
                 max_fee_per_gas: u64::MAX,
                 max_priority_fee_per_gas: 10_u64,
                 chain_id: 9,
+                to: TxKind::Call(H160::random()),
                 ..Default::default()
             });
             tx.sign_inplace(&sk);
@@ -178,7 +179,6 @@ async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
 }
 
 pub async fn bench_payload(input: &(&mut Blockchain, Block, &Store)) -> (Duration, u64) {
-    let since = Instant::now();
     let (b, genesis_block, store) = input;
     // 1. engine_forkChoiceUpdated is called, which ends up calling fork_choice::build_payload,
     // which finally calls payload::create_payload(), this mimics this step without
@@ -214,6 +214,7 @@ pub async fn bench_payload(input: &(&mut Blockchain, Block, &Store)) -> (Duratio
     store.update_payload(payload_id, new_payload).await.unwrap();
     // 3. engine_newPayload is called, this eventually calls Blockchain::add_block
     // which takes transactions from the mempool and fills the block with them.
+    let since = Instant::now();
     b.add_block(&block).await.unwrap();
     let executed = Instant::now();
     // EXTRA: Sanity check to not benchmark n empty block.
