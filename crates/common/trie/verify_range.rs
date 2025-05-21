@@ -45,12 +45,6 @@ pub fn verify_range(
         )));
     }
 
-    // TODO: Check proof and remove internal references.
-    // TODO: Insert key-value pairs.
-    // TODO: Build trie.
-    // TODO: Insert external references.
-    // TODO: Check hash.
-
     let mut trie = Trie::stateless();
 
     // Special Case: No proofs given, the range is expected to be the full set of leaves

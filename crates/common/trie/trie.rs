@@ -4,7 +4,6 @@ mod nibbles;
 mod node;
 mod node_hash;
 mod rlp;
-// mod state;
 #[cfg(test)]
 mod test_utils;
 mod trie_iter;
@@ -157,6 +156,10 @@ impl Trie {
     /// Obtain a merkle proof for the given path.
     /// The proof will contain all the encoded nodes traversed until reaching the node where the path is stored (including this last node).
     /// The proof will still be constructed even if the path is not stored in the trie, proving its absence.
+    ///
+    /// Note: This method has a different behavior in regard to non-existent trie root nodes. Normal
+    ///   behavior is to return `Err(InconsistentTrie)`, but this method will return
+    ///   `Ok(Vec::new())` instead.
     pub fn get_proof(&self, path: &PathRLP) -> Result<Vec<NodeRLP>, TrieError> {
         if self.root.is_valid() {
             let hash = self.root.compute_hash();
@@ -166,10 +169,10 @@ impl Trie {
                 node_path.push(data[..len as usize].to_vec());
             }
 
-            let root = self
-                .root
-                .get_node(self.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?;
+            let root = match self.root.get_node(self.db.as_ref())? {
+                Some(x) => x,
+                None => return Ok(Vec::new()),
+            };
             root.get_path(self.db.as_ref(), Nibbles::from_bytes(path), &mut node_path)?;
 
             Ok(node_path)
