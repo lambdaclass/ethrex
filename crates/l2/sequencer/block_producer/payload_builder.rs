@@ -77,7 +77,7 @@ pub async fn build_payload(
             .inspect_err(|e| tracing::error!("Failed to get metrics for: mempool size {}", e.to_string()))
             .unwrap_or((0_usize, 0_usize));
         let _ = METRICS_TX
-            .set_mempool_tx_count(tx_pool_size, true)
+            .set_mempool_tx_count(tx_pool_size, false)
             .inspect_err(|e| tracing::error!("Failed to set metrics for: blob tx mempool size {}", e.to_string()));
     );
 
