@@ -1,6 +1,6 @@
 use super::{
-    ChainConfig, Receipt68, BASE_FEE_MAX_CHANGE_DENOMINATOR, GAS_LIMIT_ADJUSTMENT_FACTOR,
-    GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
+    ChainConfig, BASE_FEE_MAX_CHANGE_DENOMINATOR, GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM,
+    INITIAL_BASE_FEE,
 };
 use crate::{
     constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS},
@@ -255,18 +255,10 @@ pub fn compute_transactions_root(transactions: &[Transaction]) -> H256 {
 }
 
 pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
-    let iter = receipts.iter().enumerate().map(|(idx, receipt)| {
-        (
-            idx.encode_to_vec(),
-            Receipt68::new(
-                receipt.tx_type,
-                receipt.succeeded,
-                receipt.cumulative_gas_used,
-                receipt.logs.clone(),
-            )
-            .encode_inner(),
-        )
-    });
+    let iter = receipts
+        .iter()
+        .enumerate()
+        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom()));
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 

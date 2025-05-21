@@ -41,6 +41,25 @@ impl Receipt {
             .finish();
         encoded_data
     }
+
+    pub fn encode_inner_with_bloom(&self) -> Vec<u8> {
+        let mut encode_buff = match self.tx_type {
+            TxType::Legacy => {
+                vec![]
+            }
+            _ => {
+                vec![self.tx_type as u8]
+            }
+        };
+        let bloom = bloom_from_logs(&self.logs);
+        Encoder::new(&mut encode_buff)
+            .encode_field(&self.succeeded)
+            .encode_field(&self.cumulative_gas_used)
+            .encode_field(&bloom)
+            .encode_field(&self.logs)
+            .finish();
+        encode_buff
+    }
 }
 
 fn bloom_from_logs(logs: &[Log]) -> Bloom {
