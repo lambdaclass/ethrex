@@ -113,10 +113,10 @@ impl GetBlockHeaders {
             (self.skip + 1) as i64
         };
 
-        let limit = if let Ok(env_var_block_limit) = env::var("SYNC-BATCH-SIZE") {
+        let limit = if let Ok(env_var_block_limit) = env::var("BLOCK-HEADER-LIMIT") {
             env_var_block_limit
                 .parse()
-                .expect("Batch size environmental variable is not a number")
+                .expect("Block header limit environmental variable is not a number")
         } else if self.limit > BLOCK_HEADER_LIMIT {
             BLOCK_HEADER_LIMIT
         } else {

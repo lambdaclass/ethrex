@@ -143,13 +143,12 @@ impl SyncManager {
 
         tokio::spawn(async move {
             #[cfg(not(feature = "sync-test"))]
-            let sync_head_result = store.get_latest_canonical_block_hash().await
-            
+            let sync_head_result = store.get_latest_canonical_block_hash().await;
+
             #[cfg(feature = "sync-test")]
-            let sync_head_result = Self::get_blocks_for_sync_test(&store).await
-            
-            let Ok(Some(current_head)) = sync_head_result
-            else {
+            let sync_head_result = Self::get_blocks_for_sync_test(&store).await;
+
+            let Ok(Some(current_head)) = sync_head_result else {
                 tracing::error!("Failed to fetch latest canonical block, unable to sync");
                 return;
             };
