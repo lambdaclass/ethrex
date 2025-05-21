@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747845058745,
+  "lastUpdate": 1747846101048,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8335,6 +8335,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211013439012,
             "range": "± 822502991",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6632b444196cef4e4f1e42e5efc271d14c24924a",
+          "message": "refactor(levm): remove clones for account structs (#2684)\n\n**Motivation**\n\nImproving the performance of some cases by avoiding clones where\npossible.\n\n**Description**\n\nMany clones of account structs were removed. This involved changing the\noutput of the get_account and access_account functions of the DB to\nreturn a reference to an account, as well as refactorings of the code\nwhich involved these functions.\n\nResolves [#2611](https://github.com/lambdaclass/ethrex/issues/2611)",
+          "timestamp": "2025-05-21T15:54:24Z",
+          "tree_id": "1a5b4b17da28e1279bf36b26779e3f2519b7d32e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6632b444196cef4e4f1e42e5efc271d14c24924a"
+        },
+        "date": 1747846097441,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209766881646,
+            "range": "± 1045219723",
             "unit": "ns/iter"
           }
         ]
