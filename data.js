@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747851221964,
+  "lastUpdate": 1747854253623,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8395,6 +8395,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210896190171,
             "range": "± 446850687",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "90105443+DiegoCivi@users.noreply.github.com",
+            "name": "DiegoC",
+            "username": "DiegoCivi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c6a54c2fb71fc708a49951772cd2690d60279103",
+          "message": "refactor(l1): move hash from Block to BlockHeader (#2845)\n\n**Motivation**\n\n`Block` had the hash but the `BlockHeader` didn't so they had to be\npassed along together.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\nMove the hash into `BlockHeader`, making it accesible to it and also to\n`Block`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2841",
+          "timestamp": "2025-05-21T18:09:33Z",
+          "tree_id": "c3bc3581590268a1d555692e2548944d0e85e580",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c6a54c2fb71fc708a49951772cd2690d60279103"
+        },
+        "date": 1747854250830,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210760041948,
+            "range": "± 432894153",
             "unit": "ns/iter"
           }
         ]
