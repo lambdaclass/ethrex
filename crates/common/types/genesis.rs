@@ -351,6 +351,7 @@ impl Genesis {
                 .config
                 .is_prague_activated(self.timestamp)
                 .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH)),
+            ..Default::default()
         }
     }
 

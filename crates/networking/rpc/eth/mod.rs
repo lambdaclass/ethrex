@@ -70,6 +70,7 @@ pub mod test_utils {
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*DEFAULT_REQUESTS_HASH),
+            ..Default::default()
         }
     }
 
