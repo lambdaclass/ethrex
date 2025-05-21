@@ -252,6 +252,7 @@ impl<'a> VM<'a> {
 
     // EXTCODESIZE operation
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
+        println!("Extcodesize opcode called!");
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
         let (account, address_was_cold) = self.db.access_account(&mut self.substate, address)?;

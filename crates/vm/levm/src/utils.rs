@@ -324,26 +324,14 @@ pub fn eip7702_recover_address(
     Ok(Some(Address::from_slice(&authority_address_bytes)))
 }
 
-/// Used for the opcodes
-/// The following reading instructions are impacted:
-///      EXTCODESIZE, EXTCODECOPY, EXTCODEHASH
-/// and the following executing instructions are impacted:
-///      CALL, CALLCODE, STATICCALL, DELEGATECALL
-/// In case a delegation designator points to another designator,
-/// creating a potential chain or loop of designators, clients must
-/// retrieve only the first code and then stop following the
-/// designator chain.
+/// Gets code of an account, returning early if it's not a delegated account, otherwise
+/// Returns tuple (is_delegated, eip7702_cost, code_address, code).
 ///
-/// For example,
-/// EXTCODESIZE would return 2 (the size of 0xef01) instead of 23
-/// which would represent the delegation designation, EXTCODEHASH
-/// would return
-/// 0xeadcdba66a79ab5dce91622d1d75c8cff5cff0b96944c3bf1072cd08ce018329
-/// (keccak256(0xef01)), and CALL would load the code from address and
-/// execute it in the context of authority.
-///
-/// The idea of this function comes from ethereum/execution-specs:
-/// https://github.com/ethereum/execution-specs/blob/951fc43a709b493f27418a8e57d2d6f3608cef84/src/ethereum/prague/vm/eoa_delegation.py#L115
+/// Where:
+/// - `is_delegated`: True if account is a delegated account.
+/// - `eip7702_cost`: Cost of accessing the delegated account (if any)
+/// - `code_address`: Code address (if delegated, returns the delegated address)
+/// - `code`: Bytecode of the code_address, what the EVM will execute.
 pub fn eip7702_get_code(
     db: &mut GeneralizedDatabase,
     accrued_substate: &mut Substate,
