@@ -113,12 +113,11 @@ impl Hook for DefaultHook {
             (calldata, vm.current_call_frame()?.to)
         } else {
             // Transfer value to receiver
-            //TODO: Get this out so we do the same for create and call
             vm.increase_account_balance(
                 vm.current_call_frame()?.to,
                 vm.current_call_frame()?.msg_value,
             )?;
-            
+
             // Here bytecode could be from the account itself or from delegated account, the same applies to the code_address
             let to = vm.current_call_frame()?.to;
             let (_is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
