@@ -6,9 +6,9 @@ use crate::MetricsError;
 pub static METRICS_L2: LazyLock<MetricsL2> = LazyLock::new(MetricsL2::default);
 
 pub struct MetricsL2 {
-    pub status_tracker: IntGaugeVec,
-    pub operations_tracker: IntCounterVec,
-    pub gas_price: IntGauge,
+    status_tracker: IntGaugeVec,
+    operations_tracker: IntCounterVec,
+    gas_price: IntGauge,
 }
 
 impl Default for MetricsL2 {
@@ -99,12 +99,14 @@ impl MetricsL2 {
     }
 }
 
-/// [MetricsL2BlockType::LastCommittedBlock] and [MetricsL2BlockType::LastVerifiedBlock] Matche the crates/l2/contracts/src/l1/OnChainProposer.sol variables
-/// [MetricsL2BlockType::LastFetchedL1Block] Matches the variable in crates/l2/contracts/src/l1/CommonBridge.sol
+/// [MetricsL2BlockType::LastCommittedBatch] and [MetricsL2BlockType::LastVerifiedBatch] Matche the crates/l2/contracts/src/l1/OnChainProposer.sol variables
 pub enum MetricsL2BlockType {
     LastCommittedBlock,
+    // TODO: add metrics for LastVerifiedBlock right now there isn't an easy way to check what
+    // the last block of a batch is from the l1_proof_sender
     LastVerifiedBlock,
-    LastFetchedL1Block,
+    LastCommittedBatch,
+    LastVerifiedBatch,
 }
 
 pub enum MetricsL2OperationType {
@@ -117,7 +119,8 @@ impl MetricsL2BlockType {
         match self {
             MetricsL2BlockType::LastCommittedBlock => "lastCommittedBlock",
             MetricsL2BlockType::LastVerifiedBlock => "lastVerifiedBlock",
-            MetricsL2BlockType::LastFetchedL1Block => "lastFetchedL1Block",
+            MetricsL2BlockType::LastCommittedBatch => "lastCommittedBatch",
+            MetricsL2BlockType::LastVerifiedBatch => "lastVerifiedBatch",
         }
     }
 }

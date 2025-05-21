@@ -21,7 +21,7 @@ use ethrex_l2_sdk::{
 };
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_l2::{MetricsL2OperationType, METRICS_L2};
+use ethrex_metrics::metrics_l2::{MetricsL2BlockType, MetricsL2OperationType, METRICS_L2};
 use ethrex_rpc::{
     clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
     utils::get_withdrawal_hash,
@@ -162,6 +162,20 @@ impl Committer {
             .await
         {
             Ok(commit_tx_hash) => {
+                metrics!(
+                let _ = METRICS_L2
+                    .set_block_type_and_block_number(
+                        MetricsL2BlockType::LastCommittedBlock,
+                        last_block_of_batch,
+                    )
+                    .inspect_err(|e| {
+                        tracing::error!(
+                            "Failed to set metric: last committed block {}",
+                            e.to_string()
+                        )
+                    });
+                );
+
                 info!(
                     "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}.",
                 );

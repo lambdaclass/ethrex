@@ -48,20 +48,14 @@ impl MetricsGatherer {
         }
     }
 
-    // TODO: update metrics to work with batches.
     async fn main_logic(&mut self) -> Result<(), MetricsGathererError> {
         loop {
-            let last_fetched_l1_block = self
-                .eth_client
-                .get_last_fetched_l1_block(self.common_bridge_address)
-                .await?;
-
             let last_committed_batch = self
                 .eth_client
                 .get_last_committed_batch(self.on_chain_proposer_address)
                 .await?;
 
-            let last_verified_block = self
+            let last_verified_batch = self
                 .eth_client
                 .get_last_verified_batch(self.on_chain_proposer_address)
                 .await?;
@@ -69,16 +63,12 @@ impl MetricsGatherer {
             let gas_price = self.eth_client.get_gas_price().await?;
 
             METRICS_L2.set_block_type_and_block_number(
-                MetricsL2BlockType::LastCommittedBlock,
+                MetricsL2BlockType::LastCommittedBatch,
                 last_committed_batch,
             )?;
             METRICS_L2.set_block_type_and_block_number(
-                MetricsL2BlockType::LastVerifiedBlock,
-                last_verified_block,
-            )?;
-            METRICS_L2.set_block_type_and_block_number(
-                MetricsL2BlockType::LastFetchedL1Block,
-                last_fetched_l1_block,
+                MetricsL2BlockType::LastVerifiedBatch,
+                last_verified_batch,
             )?;
             METRICS_L2.set_gas_price(gas_price.try_into().unwrap());
 
