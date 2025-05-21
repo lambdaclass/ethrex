@@ -123,7 +123,9 @@ pub fn set_data_sub_dir(datadir: &str, network: &Option<String>) -> String {
         &(String::from(DEFAULT_CUSTOM_DIR).to_owned() + &network.clone())
     };
 
-    (datadir).to_owned() + &String::from("/") + sub_path
+    let mut final_path = PathBuf::from(datadir);
+    final_path.push(sub_path);
+    final_path.to_str().unwrap().to_string()
 }
 
 pub fn set_datadir(datadir: &str) -> String {
