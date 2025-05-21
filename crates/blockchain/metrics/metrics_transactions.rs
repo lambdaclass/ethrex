@@ -1,5 +1,5 @@
 use ethrex_common::types::TxType;
-use prometheus::{Encoder, IntCounter, IntCounterVec, Opts, Registry, TextEncoder};
+use prometheus::{Encoder, IntCounter, IntCounterVec, IntGaugeVec, Opts, Registry, TextEncoder};
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -10,6 +10,7 @@ pub static METRICS_TX: LazyLock<MetricsTx> = LazyLock::new(MetricsTx::default);
 pub struct MetricsTx {
     pub transactions_tracker: IntCounterVec,
     pub transactions_total: IntCounter,
+    pub mempool_tx_count: IntGaugeVec,
 }
 
 impl Default for MetricsTx {
@@ -35,6 +36,14 @@ impl MetricsTx {
                 "Keeps track of all transactions",
             )
             .unwrap(),
+            mempool_tx_count: IntGaugeVec::new(
+                Opts::new(
+                    "mempool_tx_count",
+                    "Keeps track of the amount of txs on the mempool",
+                ),
+                &["type"],
+            )
+            .unwrap(),
         }
     }
 
@@ -57,12 +66,27 @@ impl MetricsTx {
         self.transactions_total.inc();
     }
 
+    pub fn set_mempool_tx_count(&self, count: usize, is_blob: bool) -> Result<(), MetricsError> {
+        let label = if is_blob { "blob" } else { "regular" };
+
+        let builder = self
+            .mempool_tx_count
+            .get_metric_with_label_values(&[label])
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+
+        builder.set(count.try_into()?);
+
+        Ok(())
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
         r.register(Box::new(self.transactions_total.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.transactions_tracker.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.mempool_tx_count.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
