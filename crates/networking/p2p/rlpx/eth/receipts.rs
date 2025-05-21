@@ -1,5 +1,5 @@
-use super::eth68::receipt::Receipts68;
-use super::eth69::receipt::Receipts69;
+use super::eth68::receipts::Receipts68;
+use super::eth69::receipts::Receipts69;
 use crate::rlpx::{
     error::RLPxError,
     message::RLPxMessage,
@@ -15,6 +15,7 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
+use tracing::info;
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getreceipts-0x0f
 #[derive(Debug)]
@@ -64,6 +65,7 @@ pub(crate) enum Receipts {
 
 impl Receipts {
     pub fn new(id: u64, receipts: Vec<Vec<Receipt>>, eth: &Capability) -> Result<Self, RLPxError> {
+        info!(" eth cap eth/{}", eth.version);
         match eth.version {
             68 => Ok(Receipts::Receipts68(Receipts68::new(id, receipts))),
             69 => Ok(Receipts::Receipts69(Receipts69::new(id, receipts))),
@@ -97,6 +99,7 @@ impl RLPxMessage for Receipts {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        info!("Has Bloom");
         if has_bloom(msg_data)? {
             Ok(Receipts::Receipts68(Receipts68::decode(msg_data)?))
         } else {
@@ -118,14 +121,14 @@ fn has_bloom(msg_data: &[u8]) -> Result<bool, RLPDecodeError> {
     let decoder = Decoder::new(&data)?;
     //check if the list is empty
     if decoder.is_done() {
-        return Ok(true);
+        return Ok(false);
     }
 
     // inner list
     let (data, _) = decoder.get_encoded_item()?;
     let decoder = Decoder::new(&data)?;
     if decoder.is_done() {
-        return Ok(true);
+        return Ok(false);
     }
 
     // we only need one element
@@ -151,9 +154,8 @@ fn has_bloom(msg_data: &[u8]) -> Result<bool, RLPDecodeError> {
             }
             &data[length_of_length + 1..length_of_length + length + 1]
         }
-        _ => return Err(RLPDecodeError::InvalidLength),
+        _ => return Ok(false),
     };
-
     let data = match data[0] {
         tx_type if tx_type < 0x7f => &data[1..],
         _ => &data[0..],
@@ -231,11 +233,15 @@ mod tests {
             Receipt::new(TxType::EIP7702, true, 210000, vec![]),
             Receipt::new(TxType::EIP7702, true, 210000, vec![]),
         ]];
-        let receipts = Receipts::new(255, receipts, &Capability::eth(68)).unwrap();
+        let receipts68 = Receipts::new(255, receipts.clone(), &Capability::eth(68)).unwrap();
+        let receipts69 = Receipts::new(255, receipts, &Capability::eth(69)).unwrap();
 
         let mut buf = Vec::new();
-        receipts.encode(&mut buf).unwrap();
-
+        receipts68.encode(&mut buf).unwrap();
         assert!(has_bloom(&buf).unwrap());
+
+        let mut buf = Vec::new();
+        receipts69.encode(&mut buf).unwrap();
+        assert!(!has_bloom(&buf).unwrap());
     }
 }

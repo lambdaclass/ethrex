@@ -1,2 +1,2 @@
-pub mod receipt;
+pub mod receipts;
 pub mod status;
