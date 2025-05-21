@@ -455,25 +455,6 @@ impl<'a> VM<'a> {
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
         }
 
-        // Update callframe code address and code because these things could've changed after processing the authorization list.
-        let callee_addr = self.current_call_frame()?.to;
-        let callee_acc = self.db.get_account(callee_addr)?;
-
-        let (code_address, code) = if has_delegation(&callee_acc)? {
-            let delegated_address = get_authorized_address(&callee_acc)?;
-            let delegated_code = self
-                .db
-                .access_account(&mut self.substate, delegated_address)?
-                .0
-                .code;
-            (delegated_address, delegated_code)
-        } else {
-            (callee_addr, callee_acc.code)
-        };
-
-        self.current_call_frame_mut()?.set_code(code)?;
-        self.current_call_frame_mut()?.code_address = code_address;
-
         self.substate.refunded_gas = refunded_gas;
 
         Ok(())
