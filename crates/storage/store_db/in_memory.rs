@@ -567,6 +567,15 @@ impl StoreEngine for Store {
         account_hashes: Vec<H256>,
         account_states: Vec<ethrex_common::types::AccountState>,
     ) -> Result<(), StoreError> {
+        self.write_snapshot_account_batch_blocking(account_hashes, account_states)
+    }
+
+    #[inline]
+    fn write_snapshot_account_batch_blocking(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<ethrex_common::types::AccountState>,
+    ) -> Result<(), StoreError> {
         self.inner()
             .state_snapshot
             .extend(account_hashes.into_iter().zip(account_states));
@@ -587,6 +596,15 @@ impl StoreEngine for Store {
         Ok(())
     }
     async fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        self.write_snapshot_storage_batches_blocking(account_hashes, storage_keys, storage_values)
+    }
+
+    fn write_snapshot_storage_batches_blocking(
         &self,
         account_hashes: Vec<H256>,
         storage_keys: Vec<Vec<H256>>,

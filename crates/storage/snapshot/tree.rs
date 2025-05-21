@@ -46,11 +46,7 @@ impl SnapshotTree {
     }
 
     /// Rebuilds the tree, marking all current layers stale, creating a new base disk layer from the given root.
-    pub async fn rebuild(
-        &self,
-        block_hash: BlockHash,
-        state_root: H256,
-    ) -> Result<(), SnapshotError> {
+    pub fn rebuild(&self, block_hash: BlockHash, state_root: H256) -> Result<(), SnapshotError> {
         let disk = {
             let mut layers = self
                 .layers
@@ -72,7 +68,7 @@ impl SnapshotTree {
             layers.insert(block_hash, Layer::DiskLayer(disk.clone()));
             disk
         };
-        disk.start_generating().await;
+        disk.start_generating();
         Ok(())
     }
 
@@ -344,6 +340,11 @@ impl SnapshotTree {
     ///
     /// Returns Err if the current disk layer is already marked stale.
     fn save_diff(&self, diff: Layer) -> Result<Arc<DiskLayer>, SnapshotError> {
+        // Note: Interacting with the db should be made through non-async methods, converting this method
+        // into an async one, will give problems, mainly with holding RwLocks across await points.
+        //
+        // This method is called from `cap` and related mainly, which they themselves are called outside the main thread, so blocking is not bad.
+
         let diff = match diff {
             Layer::DiskLayer(disk_layer) => {
                 return Err(SnapshotError::SnapshotIsdiskLayer(disk_layer.state_root))
@@ -375,8 +376,7 @@ impl SnapshotTree {
 
         prev_disk
             .db
-            .write_snapshot_account_batch(account_hashes, account_states)
-            .await?;
+            .write_snapshot_account_batch_blocking(account_hashes, account_states)?;
 
         let storage = diff_value.storage();
 
@@ -400,10 +400,11 @@ impl SnapshotTree {
             storage_keys.push(keys);
         }
 
-        prev_disk
-            .db
-            .write_snapshot_storage_batches(account_hashes, storage_keys, storage_values)
-            .await?;
+        prev_disk.db.write_snapshot_storage_batches_blocking(
+            account_hashes,
+            storage_keys,
+            storage_values,
+        )?;
 
         let disk = DiskLayer {
             db: self.db.clone(),
@@ -592,7 +593,7 @@ mod tests {
         };
 
         // Add a disklayer to the tree
-        tree.rebuild(H256::zero(), H256::zero()).await.unwrap();
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
 
         // Add a single account in a single difflayer
         tree.update(
@@ -612,7 +613,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_two_accounts_in_different_difflayers() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero()).await.unwrap();
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
 
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
@@ -666,7 +667,7 @@ mod tests {
     #[tokio::test]
     async fn test_override_account_in_second_difflayer() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero()).await.unwrap();
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
         let address = Address::from_low_u64_be(1);
@@ -718,7 +719,7 @@ mod tests {
     #[tokio::test]
     async fn test_override_account_storage_flattening() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero()).await.unwrap();
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
 
@@ -794,7 +795,7 @@ mod tests {
     #[tokio::test]
     async fn test_override_account_storage_in_second_difflayer() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero()).await.unwrap();
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
 

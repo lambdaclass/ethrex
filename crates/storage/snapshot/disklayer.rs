@@ -4,7 +4,8 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    }, time::Instant,
+    },
+    time::Instant,
 };
 
 use crate::api::StoreEngine;
@@ -50,7 +51,7 @@ impl DiskLayer {
             db,
             cache: DiskCache::new(20000, 40000),
             stale: Arc::new(AtomicBool::new(false)),
-            generating: Arc::new(AtomicBool::new(false))
+            generating: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -127,11 +128,15 @@ impl DiskLayer {
         self.stale.swap(true, Ordering::SeqCst)
     }
 
-    pub async fn start_generating(self: &Arc<Self>) {
-        tokio::spawn(self.clone().generate());
+    // Starts in a blocking task the disk layer generation.
+    pub fn start_generating(self: &Arc<Self>) {
+        let layer = (*self).clone();
+        tokio::task::spawn_blocking(move || layer.generate());
     }
 
-    async fn generate(self: Arc<Self>) {
+    fn generate(self: Arc<Self>) {
+        // Note: this method can call blocking methods because it's run outside the main thread.
+
         // todo: we should be able to stop mid generation in case disk layer changes?
         self.generating.store(true, Ordering::SeqCst);
         info!("Disk layer generating");
@@ -177,16 +182,17 @@ impl DiskLayer {
 
             if account_hashes.len() >= ACCOUNT_BATCH {
                 self.db
-                    .write_snapshot_account_batch(account_hashes.clone(), account_states.clone())
-                    .await
+                    .write_snapshot_account_batch_blocking(
+                        account_hashes.clone(),
+                        account_states.clone(),
+                    )
                     .expect("convert into a error");
                 self.db
-                    .write_snapshot_storage_batches(
+                    .write_snapshot_storage_batches_blocking(
                         account_hashes.clone(),
                         storage_keys.clone(),
                         storage_values.clone(),
                     )
-                    .await
                     .expect("convert into a error");
                 account_hashes.clear();
                 storage_keys.clear();
@@ -196,16 +202,17 @@ impl DiskLayer {
 
         if !account_hashes.is_empty() {
             self.db
-                .write_snapshot_account_batch(account_hashes.clone(), account_states.clone())
-                .await
+                .write_snapshot_account_batch_blocking(
+                    account_hashes.clone(),
+                    account_states.clone(),
+                )
                 .expect("convert into a error");
             self.db
-                .write_snapshot_storage_batches(
+                .write_snapshot_storage_batches_blocking(
                     account_hashes.clone(),
                     storage_keys.clone(),
                     storage_values.clone(),
                 )
-                .await
                 .expect("convert into a error");
             account_hashes.clear();
             storage_keys.clear();
@@ -213,6 +220,9 @@ impl DiskLayer {
         }
 
         self.generating.store(false, Ordering::SeqCst);
-        info!("Disk layer generation complete, done in {:?}", start.elapsed());
+        info!(
+            "Disk layer generation complete, done in {:?}",
+            start.elapsed()
+        );
     }
 }

@@ -1140,7 +1140,7 @@ impl Store {
             if store.snapshots.len() == 0 {
                 // There are no snapshots yet, use this block as root
                 // TODO: find if there is a better place to create the initial "disk layer".
-                store.snapshots.rebuild(hash, state_root).await?;
+                store.snapshots.rebuild(hash, state_root)?;
                 info!(
                     "Snapshot (disk layer) created for {} with parent {}",
                     hash, parent_hash
