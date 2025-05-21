@@ -236,7 +236,7 @@ pub async fn init_network(
         get_client_version(),
     );
 
-    context.set_fork_id().await;
+    context.set_fork_id().await.expect("Set fork id");
 
     ethrex_p2p::start_network(context, bootnodes)
         .await

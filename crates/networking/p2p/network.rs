@@ -81,14 +81,14 @@ impl P2PContext {
         }
     }
 
-    pub async fn set_fork_id(&self) {
+    pub async fn set_fork_id(&self) -> Result<(), String> {
         if let Ok(fork_id) = self.storage.get_fork_id().await {
             self.local_node_record
                 .lock()
                 .await
-                .set_fork_id(&fork_id, &self.signer)
-                .unwrap();
+                .set_fork_id(&fork_id, &self.signer)?
         }
+        Ok(())
     }
 }
 

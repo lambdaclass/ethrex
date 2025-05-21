@@ -267,7 +267,7 @@ impl NodeRecord {
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
                 }
                 "eth" => {
-                    // the first byte is ignored as an array of array is received
+                    // the first byte is ignored as an array within an array is received
                     decoded_pairs.eth = ForkId::decode(&value[1..]).ok();
                 }
                 _ => {}

@@ -342,7 +342,11 @@ impl Discv4Server {
                 }
 
                 // Update node_record
-                self.ctx.set_fork_id().await;
+                if self.ctx.set_fork_id().await.is_err() {
+                    return Err(DiscoveryError::StorageAccessError(
+                        "Could not set fork id".into(),
+                    ));
+                };
                 let node_record = self.ctx.local_node_record.lock().await.clone();
 
                 let msg =
@@ -429,7 +433,11 @@ impl Discv4Server {
                     //https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
                     if let Some(eth) = record.eth {
                         //update node_record
-                        self.ctx.set_fork_id().await;
+                        if self.ctx.set_fork_id().await.is_err() {
+                            return Err(DiscoveryError::StorageAccessError(
+                                "Could not set fork id".into(),
+                            ));
+                        };
                         let pairs = self.ctx.local_node_record.lock().await.decode_pairs();
 
                         if let Some(fork_id) = pairs.eth {
@@ -753,7 +761,7 @@ pub(super) mod tests {
 
     pub async fn start_discovery_server(
         udp_port: u16,
-        initial_blocks: Option<u64>,
+        initial_blocks: u64,
         should_start_server: bool,
     ) -> Result<Discv4Server, DiscoveryError> {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
@@ -762,8 +770,8 @@ pub(super) mod tests {
         let local_node = Node::new(addr.ip(), udp_port, udp_port, public_key);
 
         let storage = match initial_blocks {
-            Some(blocks) => setup_storage(blocks).await.expect("Storage setup"),
-            None => Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB"),
+            0 => Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB"),
+            blocks => setup_storage(blocks).await.expect("Storage setup"),
         };
 
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
@@ -856,8 +864,8 @@ pub(super) mod tests {
      * To make this run faster, we'll change the revalidation time to be every 2secs
      */
     async fn discovery_server_revalidation() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(7998, Some(1), true).await?;
-        let mut server_b = start_discovery_server(7999, Some(1), true).await?;
+        let mut server_a = start_discovery_server(7998, 1, true).await?;
+        let mut server_b = start_discovery_server(7999, 1, true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
 
@@ -926,8 +934,8 @@ pub(super) mod tests {
      * 5. Verify that the updated node record has been correctly received and stored.
      */
     async fn discovery_enr_message() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(8006, Some(1), true).await?;
-        let mut server_b = start_discovery_server(8007, Some(1), true).await?;
+        let mut server_a = start_discovery_server(8006, 1, true).await?;
+        let mut server_b = start_discovery_server(8007, 1, true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
 
@@ -1004,9 +1012,9 @@ pub(super) mod tests {
      * 7. node a and c shouldn't be connected
      */
     async fn discovery_eth_pair_validation() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(8086, Some(10), true).await?;
-        let mut server_b = start_discovery_server(8087, Some(10), true).await?;
-        let mut server_c = start_discovery_server(8088, None, true).await?;
+        let mut server_a = start_discovery_server(8086, 10, true).await?;
+        let mut server_b = start_discovery_server(8087, 10, true).await?;
+        let mut server_c = start_discovery_server(8088, 0, true).await?;
 
         let config = ChainConfig {
             ..Default::default()
