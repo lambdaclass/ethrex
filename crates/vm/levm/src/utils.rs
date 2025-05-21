@@ -457,7 +457,7 @@ impl<'a> VM<'a> {
 
         // Update callframe code address and code because these things could've changed after processing the authorization list.
         let callee_addr = self.current_call_frame()?.to;
-        let callee_acc = self.db.access_account(&mut self.substate, callee_addr)?.0;
+        let callee_acc = self.db.get_account(callee_addr)?;
 
         let (code_address, code) = if has_delegation(&callee_acc)? {
             let delegated_address = get_authorized_address(&callee_acc)?;
@@ -682,17 +682,13 @@ impl<'a> VM<'a> {
         hooks
     }
 
-    pub fn get_callee_code_address_and_code(
-        &mut self,
-    ) -> Result<(Address, Address, Bytes), VMError> {
-        let (callee, code_address, code) = match self.tx.to() {
+    /// Gets transaction callee, depending on if it's a Call or Create.
+    pub fn get_tx_callee(&mut self) -> Result<Address, VMError> {
+        match self.tx.to() {
             TxKind::Call(address_to) => {
                 self.substate.touched_accounts.insert(address_to);
 
-                let (_is_delegation, _eip7702_gas_consumed, code_address, bytes) =
-                    eip7702_get_code(self.db, &mut self.substate, address_to)?;
-
-                (address_to, code_address, bytes)
+                Ok(address_to)
             }
 
             TxKind::Create => {
@@ -704,11 +700,9 @@ impl<'a> VM<'a> {
                 self.substate.touched_accounts.insert(created_address);
                 self.substate.created_accounts.insert(created_address);
 
-                (created_address, created_address, Bytes::new()) // Bytecode will be assigned from calldata after validations
+                Ok(created_address)
             }
-        };
-
-        Ok((callee, code_address, code))
+        }
     }
 
     /// Checks if an address is delegation target in current transaction.
