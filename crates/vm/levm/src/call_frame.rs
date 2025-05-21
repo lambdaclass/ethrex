@@ -187,6 +187,12 @@ impl CallFrame {
 
         Ok(())
     }
+
+    pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
+        self.valid_jump_destinations = get_valid_jump_destinations(&code)?;
+        self.bytecode = code;
+        Ok(())
+    }
 }
 
 impl<'a> VM<'a> {
