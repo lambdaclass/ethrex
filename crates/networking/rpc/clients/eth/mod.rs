@@ -1195,12 +1195,11 @@ impl EthClient {
         if let Some(gas_fee) = maybe_gas_fee {
             return Ok(gas_fee);
         }
-        Ok(self
-            .get_gas_price()
+        self.get_gas_price()
             .await
             .map_err(EthClientError::from)?
             .try_into()
-            .map_err(|_| EthClientError::Custom("Failed to get gas for fee".to_owned()))?)
+            .map_err(|_| EthClientError::Custom("Failed to get gas for fee".to_owned()))
     }
 
     async fn priority_fee_from_override_or_rpc(
