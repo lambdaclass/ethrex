@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747835288968,
+  "lastUpdate": 1747835603572,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8245,6 +8245,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 212139353641,
             "range": "± 1410246785",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "onoratomatias@gmail.com",
+            "name": "Matías Onorato",
+            "username": "mationorato"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2dc43bdb26b36745beee89bbe2cf650ba3017e88",
+          "message": "fix(l2): change the reentrancyguard for its upgradable version. (#2861)\n\n**Motivation**\nThis pr is needed to pass all the verification that foundry runs for\nupgradable contracts.",
+          "timestamp": "2025-05-21T12:58:26Z",
+          "tree_id": "dbba6063e5fba6a6d8c41afec6ce51666d4706e6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2dc43bdb26b36745beee89bbe2cf650ba3017e88"
+        },
+        "date": 1747835602022,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 214562932298,
+            "range": "± 491263154",
             "unit": "ns/iter"
           }
         ]
