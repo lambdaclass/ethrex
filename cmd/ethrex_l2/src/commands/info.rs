@@ -44,8 +44,8 @@ pub(crate) enum Command {
 
 impl Command {
     pub async fn run(self, cfg: EthrexL2Config) -> eyre::Result<()> {
-        let eth_client = EthClient::new(&cfg.network.l1_rpc_url);
-        let rollup_client = EthClient::new(&cfg.network.l2_rpc_url);
+        let eth_client = EthClient::new(&cfg.network.l1_rpc_url)?;
+        let rollup_client = EthClient::new(&cfg.network.l2_rpc_url)?;
         let on_chain_proposer_address = cfg.contracts.on_chain_proposer;
         match self {
             Command::LatestBatches => {

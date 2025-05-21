@@ -53,7 +53,7 @@ pub struct BlobSchedule {
 }
 
 impl TestUnit {
-    /// Checks wether a test has a block where the inner_block is none.
+    /// Checks whether a test has a block where the inner_block is none.
     /// These tests only check for failures in decoding invalid rlp and expect an exception.
     pub fn is_rlp_only_test(&self) -> bool {
         let mut is_rlp_only = false;
@@ -275,6 +275,7 @@ impl From<Header> for BlockHeader {
             excess_blob_gas: val.excess_blob_gas.map(|x| x.as_u64()),
             parent_beacon_block_root: val.parent_beacon_block_root,
             requests_hash: val.requests_hash,
+            ..Default::default()
         }
     }
 }
