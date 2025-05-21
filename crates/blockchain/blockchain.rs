@@ -573,8 +573,8 @@ pub async fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainE
     )))
 }
 
-/// Searchs the header for the parent block header. If the parent header is missing,
-/// Returns am ChainError::ParentNotFound. If the storage has an error it propagates it
+/// Searchs the header of the parent block header. If the parent header is missing,
+/// Returns a ChainError::ParentNotFound. If the storage has an error it propagates it
 pub fn find_parent_header(
     block_header: &BlockHeader,
     storage: &Store,
