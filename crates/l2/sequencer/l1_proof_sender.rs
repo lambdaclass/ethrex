@@ -1,14 +1,21 @@
-use std::{collections::HashMap, str::FromStr};
-
-use ethrex_common::{Address, H160, H256, U256};
+use aligned_sdk::{
+    common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
+    verification_layer::{estimate_fee, get_nonce_from_ethereum, submit},
+};
+use ethers::signers::{Signer, Wallet};
+use ethrex_common::{Address, H160, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::{
     clients::{eth::WrappedTransaction, Overrides},
     EthClient,
 };
+use ethrex_storage_rollup::StoreRollup;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
+use std::{collections::HashMap, str::FromStr};
 use tracing::{debug, error, info};
+
+static ELF: &[u8] = include_bytes!("../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf");
 
 use crate::{
     sequencer::errors::ProofSenderError,
@@ -28,9 +35,17 @@ const DEV_MODE_ADDRESS: H160 = H160([
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes32,bytes,uint256[8])";
 
-pub async fn start_l1_proof_sender(cfg: SequencerConfig) -> Result<(), SequencerError> {
-    let proof_sender =
-        L1ProofSender::new(&cfg.proof_coordinator, &cfg.l1_committer, &cfg.eth).await?;
+pub async fn start_l1_proof_sender(
+    cfg: SequencerConfig,
+    rollup_store: StoreRollup,
+) -> Result<(), SequencerError> {
+    let proof_sender = L1ProofSender::new(
+        &cfg.proof_coordinator,
+        &cfg.l1_committer,
+        &cfg.eth,
+        rollup_store,
+    )
+    .await?;
     proof_sender.run().await;
     Ok(())
 }
@@ -42,6 +57,7 @@ struct L1ProofSender {
     on_chain_proposer_address: Address,
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
+    rollup_storage: StoreRollup,
 }
 
 impl L1ProofSender {
@@ -49,6 +65,7 @@ impl L1ProofSender {
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
+        rollup_storage: StoreRollup,
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
 
@@ -92,6 +109,7 @@ impl L1ProofSender {
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
+            rollup_storage,
         })
     }
 
@@ -108,23 +126,92 @@ impl L1ProofSender {
     }
 
     async fn main_logic(&self) -> Result<(), ProofSenderError> {
-        let batch_to_verify = 1 + self
-            .eth_client
-            .get_last_verified_batch(self.on_chain_proposer_address)
-            .await?;
+        let batch_to_send = 1 + self.get_latest_sent_batch().await.map_err(|err| {
+            error!("Failed to get next batch to send: {}", err);
+            ProofSenderError::InternalError(err.to_string())
+        })?;
 
-        if batch_number_has_all_needed_proofs(batch_to_verify, &self.needed_proof_types)
+        if batch_number_has_all_needed_proofs(batch_to_send, &self.needed_proof_types)
             .is_ok_and(|has_all_proofs| has_all_proofs)
         {
-            self.send_proof(batch_to_verify).await?;
+            self.send_proof(batch_to_send).await?;
         } else {
-            info!("Missing proofs for batch {batch_to_verify}, skipping sending");
+            info!("Missing proofs for batch {batch_to_send}, skipping sending");
         }
 
         Ok(())
     }
 
-    pub async fn send_proof(&self, batch_number: u64) -> Result<H256, ProofSenderError> {
+    async fn get_latest_sent_batch(&self) -> Result<u64, ProofSenderError> {
+        if self.needed_proof_types.contains(&ProverType::Aligned) {
+            Ok(self.rollup_storage.get_lastest_sent_batch_proof().await?)
+        } else {
+            Ok(self
+                .eth_client
+                .get_last_verified_batch(self.on_chain_proposer_address)
+                .await?)
+        }
+    }
+
+    pub async fn send_proof(&self, batch_number: u64) -> Result<(), ProofSenderError> {
+        if self.needed_proof_types.contains(&ProverType::Aligned) {
+            return self.send_proof_to_aligned(batch_number).await;
+        }
+        self.send_proof_to_contract(batch_number).await
+    }
+
+    async fn send_proof_to_aligned(&self, batch_number: u64) -> Result<(), ProofSenderError> {
+        let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
+
+        let verification_data = VerificationData {
+            proving_system: ProvingSystemId::SP1,
+            proof: proof.proof(),
+            proof_generator_addr: self.l1_address.0.into(),
+            vm_program_code: Some(ELF.to_vec()),
+            verification_key: None,
+            pub_input: None,
+        };
+
+        // TODO: remove unwrap
+        let fee_estimation_default = estimate_fee(
+            self.eth_client.urls.first().unwrap().as_str(),
+            FeeEstimationType::Instant,
+        )
+        .await
+        .unwrap();
+
+        let nonce = get_nonce_from_ethereum(
+            self.eth_client.urls.first().unwrap().as_str(), // TODO: remove unwrap
+            self.l1_address.0.into(),
+            Network::Devnet,
+        )
+        .await
+        .unwrap();
+
+        let wallet = Wallet::from_bytes(self.l1_private_key.as_ref())
+            .map_err(|_| ProofSenderError::InternalError("Failed to create wallet".to_owned()))?;
+
+        // TODO: remove hardcoded chain id
+        let wallet = wallet.with_chain_id(31337u64);
+
+        info!("L1 proof sender: Sending proof to Aligned");
+
+        submit(
+            Network::Devnet, //TODO: remove hardcoded network
+            &verification_data,
+            fee_estimation_default,
+            wallet,
+            nonce,
+        )
+        .await
+        .unwrap();
+
+        info!("L1 proof sender: Proof sent to Aligned");
+
+        Ok(())
+    }
+
+    pub async fn send_proof_to_contract(&self, batch_number: u64) -> Result<(), ProofSenderError> {
         // TODO: change error
         // TODO: If the proof is not needed, a default calldata is used,
         // the structure has to match the one defined in the OnChainProposer.sol contract.
@@ -192,6 +279,6 @@ impl L1ProofSender {
 
         info!("Sent proof for batch {batch_number}, with transaction hash {verify_tx_hash:#x}");
 
-        Ok(verify_tx_hash)
+        Ok(())
     }
 }

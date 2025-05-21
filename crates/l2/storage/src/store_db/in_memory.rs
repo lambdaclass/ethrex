@@ -20,6 +20,8 @@ struct StoreInner {
     withdrawal_hashes_by_batch: HashMap<u64, Vec<H256>>,
     /// Map of batch number to block numbers
     block_numbers_by_batch: HashMap<u64, Vec<BlockNumber>>,
+    /// Lastest sent batch proof
+    lastest_sent_batch_proof: u64,
 }
 
 impl Store {
@@ -105,6 +107,14 @@ impl StoreEngineRollup for Store {
             .inner()?
             .block_numbers_by_batch
             .contains_key(batch_number))
+    }
+
+    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
+        Ok(self.inner()?.lastest_sent_batch_proof)
+    }
+    async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.inner()?.lastest_sent_batch_proof = batch_number;
+        Ok(())
     }
 }
 

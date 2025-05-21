@@ -48,10 +48,13 @@ pub async fn start_l2(
     ));
     task_set.spawn(proof_coordinator::start_proof_coordinator(
         store.clone(),
-        rollup_store,
+        rollup_store.clone(),
         cfg.clone(),
     ));
-    task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
+    task_set.spawn(l1_proof_sender::start_l1_proof_sender(
+        cfg.clone(),
+        rollup_store,
+    ));
     task_set.spawn(start_block_producer(
         store.clone(),
         blockchain,

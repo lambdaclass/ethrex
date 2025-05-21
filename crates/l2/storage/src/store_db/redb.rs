@@ -19,6 +19,8 @@ const WITHDRAWALS_BY_BATCH: TableDefinition<u64, WithdrawalHashesRLP> =
 const BLOCK_NUMBERS_BY_BATCH: TableDefinition<u64, BlockNumbersRLP> =
     TableDefinition::new("BlockNumbersByBatch");
 
+const LAST_SENT_BATCH_PROOF: TableDefinition<u64, u64> = TableDefinition::new("LastSentBatchProof");
+
 #[derive(Debug)]
 pub struct RedBStoreRollup {
     db: Arc<Database>,
@@ -91,6 +93,8 @@ pub fn init_db() -> Result<Database, StoreError> {
 
     table_creation_txn.open_table(BATCHES_BY_BLOCK_NUMBER_TABLE)?;
     table_creation_txn.open_table(WITHDRAWALS_BY_BATCH)?;
+    table_creation_txn.open_table(BLOCK_NUMBERS_BY_BATCH)?;
+    table_creation_txn.open_table(LAST_SENT_BATCH_PROOF)?;
     table_creation_txn.commit()?;
 
     Ok(db)
@@ -169,5 +173,17 @@ impl StoreEngineRollup for RedBStoreRollup {
             .await?
             .is_some();
         Ok(exists)
+    }
+
+    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
+        Ok(self
+            .read(LAST_SENT_BATCH_PROOF, 0)
+            .await?
+            .map(|b| b.value())
+            .unwrap_or(0))
+    }
+
+    async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.write(LAST_SENT_BATCH_PROOF, 0, batch_number).await
     }
 }

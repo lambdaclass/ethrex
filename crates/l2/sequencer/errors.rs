@@ -92,6 +92,8 @@ pub enum ProofSenderError {
     InternalError(String),
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
+    #[error("Proof Sender failed because of a store error: {0}")]
+    StoreError(#[from] StoreError),
 }
 
 #[derive(Debug, thiserror::Error)]

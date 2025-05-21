@@ -136,4 +136,14 @@ impl Store {
     pub async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
         self.engine.contains_batch(batch_number).await
     }
+
+    /// Returns the lastest sent batch proof
+    pub async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
+        self.engine.get_lastest_sent_batch_proof().await
+    }
+
+    /// Sets the lastest sent batch proof
+    pub async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.engine.set_lastest_sent_batch_proof(batch_number).await
+    }
 }
