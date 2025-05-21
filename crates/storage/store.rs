@@ -1340,7 +1340,6 @@ mod tests {
             tx_type: TxType::EIP2930,
             succeeded: true,
             cumulative_gas_used: 1747,
-            bloom: Bloom::random(),
             logs: vec![],
         };
         let block_number = 6;

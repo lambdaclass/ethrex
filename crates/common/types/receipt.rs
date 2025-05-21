@@ -17,7 +17,6 @@ pub struct Receipt {
     pub tx_type: TxType,
     pub succeeded: bool,
     pub cumulative_gas_used: u64,
-    pub bloom: Bloom,
     pub logs: Vec<Log>,
 }
 
@@ -27,10 +26,14 @@ impl Receipt {
             tx_type,
             succeeded,
             cumulative_gas_used,
-            bloom: bloom_from_logs(&logs),
             logs,
         }
     }
+
+    pub fn encode_inner(&self) -> Vec<u8> {
+        self.encode_inner68()
+    }
+
     // By reading the typed transactions EIP, and some geth code:
     // - https://eips.ethereum.org/EIPS/eip-2718
     // - https://github.com/ethereum/go-ethereum/blob/330190e476e2a2de4aac712551629a4134f802d5/core/types/receipt.go#L143
@@ -48,7 +51,7 @@ impl Receipt {
     /// Encodes Receipts in the following formats:
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: tx_type | rlp(receipt).
-    pub fn encode_inner(&self) -> Vec<u8> {
+    pub fn encode_inner68(&self) -> Vec<u8> {
         let mut encode_buff = match self.tx_type {
             TxType::Legacy => {
                 vec![]
@@ -57,10 +60,11 @@ impl Receipt {
                 vec![self.tx_type as u8]
             }
         };
+        let bloom = bloom_from_logs(&self.logs);
         Encoder::new(&mut encode_buff)
             .encode_field(&self.succeeded)
             .encode_field(&self.cumulative_gas_used)
-            .encode_field(&self.bloom)
+            .encode_field(&bloom)
             .encode_field(&self.logs)
             .finish();
         encode_buff
@@ -93,7 +97,7 @@ impl Receipt {
         let decoder = Decoder::new(rlp)?;
         let (succeeded, decoder) = decoder.decode_field("succeeded")?;
         let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
-        let (bloom, decoder) = decoder.decode_field("bloom")?;
+        let (_, decoder): (Bloom, _) = decoder.decode_field("bloom")?;
         let (logs, decoder) = decoder.decode_field("logs")?;
         decoder.finish()?;
 
@@ -101,7 +105,6 @@ impl Receipt {
             tx_type,
             succeeded,
             cumulative_gas_used,
-            bloom,
             logs,
         })
     }
@@ -179,7 +182,7 @@ impl RLPDecode for Receipt {
         let decoder = Decoder::new(rlp)?;
         let (succeeded, decoder) = decoder.decode_field("succeeded")?;
         let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
-        let (bloom, decoder) = decoder.decode_field("bloom")?;
+        let (_, decoder): (Bloom, _) = decoder.decode_field("bloom")?;
         let (logs, decoder) = decoder.decode_field("logs")?;
 
         Ok((
@@ -187,7 +190,6 @@ impl RLPDecode for Receipt {
                 tx_type,
                 succeeded,
                 cumulative_gas_used,
-                bloom,
                 logs,
             },
             decoder.finish()?,
@@ -238,7 +240,6 @@ mod test {
             tx_type: TxType::Legacy,
             succeeded: true,
             cumulative_gas_used: 1200,
-            bloom: Bloom::random(),
             logs: vec![Log {
                 address: Address::random(),
                 topics: vec![],
@@ -255,7 +256,6 @@ mod test {
             tx_type: TxType::EIP4844,
             succeeded: true,
             cumulative_gas_used: 1500,
-            bloom: Bloom::random(),
             logs: vec![Log {
                 address: Address::random(),
                 topics: vec![],
@@ -272,7 +272,6 @@ mod test {
             tx_type: TxType::Legacy,
             succeeded: true,
             cumulative_gas_used: 1200,
-            bloom: Bloom::random(),
             logs: vec![Log {
                 address: Address::random(),
                 topics: vec![],
@@ -289,7 +288,6 @@ mod test {
             tx_type: TxType::EIP4844,
             succeeded: true,
             cumulative_gas_used: 1500,
-            bloom: Bloom::random(),
             logs: vec![Log {
                 address: Address::random(),
                 topics: vec![],
