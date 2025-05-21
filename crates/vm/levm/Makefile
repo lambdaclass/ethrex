@@ -24,10 +24,9 @@ ETH_TEST_URL := https://github.com/ethereum/tests.git
 ETH_TEST_TAG := v17.0
 COMMIT_LEGACY_TESTS_FOR_TAG := b3f67fe
 
-STATETEST_VERSION := pectra-devnet-6%40v1.0.0
-STATETEST_NET := pectra-devnet-6
-STATETEST_ARTIFACT := fixtures_$(STATETEST_NET).tar.gz
-STATETEST_URL := https://github.com/ethereum/execution-spec-tests/releases/download/$(STATETEST_VERSION)/fixtures_$(STATETEST_NET).tar.gz
+STATETEST_ARTIFACT := tests.tar.gz
+FIXTURES_FILE := ../blockchain/.fixtures_url
+STATETEST_URL := $(shell cat $(FIXTURES_FILE))
 
 setup-test-dirs:
 	mkdir -p $(VECTORS_DIR)
