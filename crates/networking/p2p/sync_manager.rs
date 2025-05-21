@@ -110,29 +110,6 @@ impl SyncManager {
         self.syncer.try_lock().is_err()
     }
 
-    #[cfg(feature = "sync-test")]
-    async fn get_blocks_for_sync_test(store: &Store) -> Result<Option<H256>, StoreError> {
-        let get_latest = match env::var("SYNC-LATEST")
-            .expect("Failed to get sync configuration from environment")
-            .as_str()
-        {
-            "true" => true,
-            "false" => false,
-            _ => true,
-        };
-
-        let block_number = env::var("SYNC-BLOCK-NUM")
-            .expect("Failed to retrieve sync block number from environment")
-            .parse()
-            .expect("Error converting block number environmental variable to int");
-
-        if get_latest {
-            store.get_latest_canonical_block_hash().await
-        } else {
-            store.get_canonical_block_hash(block_number).await
-        }
-    }
-
     /// Attempts to sync to the last received fcu head
     /// Will do nothing if the syncer is already involved in a sync process
     /// If the sync process would require multiple sync cycles (such as snap sync), starts all required sync cycles until the sync is complete
@@ -142,13 +119,7 @@ impl SyncManager {
         let sync_head = self.last_fcu_head.clone();
 
         tokio::spawn(async move {
-            #[cfg(not(feature = "sync-test"))]
-            let sync_head_result = store.get_latest_canonical_block_hash().await;
-
-            #[cfg(feature = "sync-test")]
-            let sync_head_result = Self::get_blocks_for_sync_test(&store).await;
-
-            let Ok(Some(current_head)) = sync_head_result else {
+            let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
                 tracing::error!("Failed to fetch latest canonical block, unable to sync");
                 return;
             };

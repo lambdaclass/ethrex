@@ -17,6 +17,24 @@ use tracing::info;
 use ethrex::l2::L2Options;
 #[cfg(feature = "l2")]
 use ethrex_storage_rollup::StoreRollup;
+#[cfg(feature = "sync-test")]
+fn set_sync_block(store: &mut Store) {
+    let get_latest = match env::var("SYNC-LATEST")
+        .expect("Failed to get sync configuration from environment")
+        .as_str()
+    {
+        "true" => true,
+        "false" => false,
+        _ => true,
+    };
+    let block_number = env::var("SYNC-BLOCK-NUM")
+        .expect("Failed to retrieve sync block number from environment")
+        .parse()
+        .expect("Error converting block number environmental variable to int");
+    let block_hash = store.get_canonical_block_hash(block_number);
+    self.update_latest_block_number(block_number).await?;
+    self.set_canonical_block(block_number, block_hash).await?;
+}
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -33,6 +51,9 @@ async fn main() -> eyre::Result<()> {
     let network = get_network(&opts);
 
     let store = init_store(&data_dir, &network).await;
+
+    #[cfg(feature = "sync-test")]
+    set_sync_block(&mut store);
 
     let blockchain = init_blockchain(opts.evm, store.clone());
 
