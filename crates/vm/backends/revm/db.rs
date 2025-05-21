@@ -8,8 +8,11 @@ use revm::{
     DatabaseRef,
 };
 
-use crate::errors::{EvmError, ProverDBError};
 use crate::{db::DynVmDatabase, prover_db::ProverDB};
+use crate::{
+    db::VmDatabase,
+    errors::{EvmError, ProverDBError},
+};
 
 /// State used when running the EVM. The state can be represented with a [VmDbWrapper] database, or
 /// with a [ProverDB] in case we only want to store the necessary data for some particular
@@ -119,12 +122,14 @@ impl revm::Database for DynVmDatabase {
     type Error = EvmError;
 
     fn basic(&mut self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        let acc_info = match self.get_account_info(CoreAddress::from(address.0.as_ref()))? {
+        let acc_info = match <dyn VmDatabase>::get_account_info(
+            self.as_ref(),
+            CoreAddress::from(address.0.as_ref()),
+        )? {
             None => return Ok(None),
             Some(acc_info) => acc_info,
         };
-        let code = self
-            .get_account_code(acc_info.code_hash)?
+        let code = <dyn VmDatabase>::get_account_code(self.as_ref(), acc_info.code_hash)?
             .map(|b| RevmBytecode::new_raw(RevmBytes(b)));
 
         Ok(Some(RevmAccountInfo {
@@ -136,23 +141,23 @@ impl revm::Database for DynVmDatabase {
     }
 
     fn code_by_hash(&mut self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
-        self.get_account_code(CoreH256::from(code_hash.as_ref()))?
+        <dyn VmDatabase>::get_account_code(self.as_ref(), CoreH256::from(code_hash.as_ref()))?
             .map(|b| RevmBytecode::new_raw(RevmBytes(b)))
             .ok_or_else(|| EvmError::DB(format!("No code for hash {code_hash}")))
     }
 
     fn storage(&mut self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
-        Ok(self
-            .get_storage_slot(
-                CoreAddress::from(address.0.as_ref()),
-                CoreH256::from(index.to_be_bytes()),
-            )?
-            .map(|value| RevmU256::from_limbs(value.0))
-            .unwrap_or_else(|| RevmU256::ZERO))
+        Ok(<dyn VmDatabase>::get_storage_slot(
+            self.as_ref(),
+            CoreAddress::from(address.0.as_ref()),
+            CoreH256::from(index.to_be_bytes()),
+        )?
+        .map(|value| RevmU256::from_limbs(value.0))
+        .unwrap_or_else(|| RevmU256::ZERO))
     }
 
     fn block_hash(&mut self, number: u64) -> Result<RevmB256, Self::Error> {
-        self.get_block_hash(number)?
+        <dyn VmDatabase>::get_block_hash(self.as_ref(), number)?
             .map(|hash| RevmB256::from_slice(&hash.0))
             .ok_or_else(|| EvmError::DB(format!("Block {number} not found")))
     }
@@ -162,12 +167,14 @@ impl revm::DatabaseRef for DynVmDatabase {
     type Error = EvmError;
 
     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        let acc_info = match self.get_account_info(CoreAddress::from(address.0.as_ref()))? {
+        let acc_info = match <dyn VmDatabase>::get_account_info(
+            self.as_ref(),
+            CoreAddress::from(address.0.as_ref()),
+        )? {
             None => return Ok(None),
             Some(acc_info) => acc_info,
         };
-        let code = self
-            .get_account_code(acc_info.code_hash)?
+        let code = <dyn VmDatabase>::get_account_code(self.as_ref(), acc_info.code_hash)?
             .map(|b| RevmBytecode::new_raw(RevmBytes(b)));
 
         Ok(Some(RevmAccountInfo {
@@ -179,23 +186,23 @@ impl revm::DatabaseRef for DynVmDatabase {
     }
 
     fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
-        self.get_account_code(CoreH256::from(code_hash.as_ref()))?
+        <dyn VmDatabase>::get_account_code(self.as_ref(), CoreH256::from(code_hash.as_ref()))?
             .map(|b| RevmBytecode::new_raw(RevmBytes(b)))
             .ok_or_else(|| EvmError::DB(format!("No code for hash {code_hash}")))
     }
 
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
-        Ok(self
-            .get_storage_slot(
-                CoreAddress::from(address.0.as_ref()),
-                CoreH256::from(index.to_be_bytes()),
-            )?
-            .map(|value| RevmU256::from_limbs(value.0))
-            .unwrap_or_else(|| RevmU256::ZERO))
+        Ok(<dyn VmDatabase>::get_storage_slot(
+            self.as_ref(),
+            CoreAddress::from(address.0.as_ref()),
+            CoreH256::from(index.to_be_bytes()),
+        )?
+        .map(|value| RevmU256::from_limbs(value.0))
+        .unwrap_or_else(|| RevmU256::ZERO))
     }
 
     fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
-        self.get_block_hash(number)?
+        <dyn VmDatabase>::get_block_hash(self.as_ref(), number)?
             .map(|hash| RevmB256::from_slice(&hash.0))
             .ok_or_else(|| EvmError::DB(format!("Block {number} not found")))
     }

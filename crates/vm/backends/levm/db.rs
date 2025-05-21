@@ -5,7 +5,7 @@ use ethrex_levm::constants::EMPTY_CODE_HASH;
 use ethrex_levm::db::Database as LevmDatabase;
 
 use crate::db::{DynVmDatabase, VmDatabase};
-use crate::{ProverDB};
+use crate::ProverDB;
 use ethrex_levm::db::error::DatabaseError;
 use std::collections::HashMap;
 use std::result::Result;
@@ -101,13 +101,11 @@ impl LevmDatabase for DatabaseLogger {
 
 impl LevmDatabase for DynVmDatabase {
     fn get_account(&self, address: CoreAddress) -> Result<Account, DatabaseError> {
-        let acc_info = self
-            .get_account_info(address)
+        let acc_info = <dyn VmDatabase>::get_account_info(self.as_ref(), address)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default();
 
-        let acc_code = self
-            .get_account_code(acc_info.code_hash)
+        let acc_code = <dyn VmDatabase>::get_account_code(self.as_ref(), acc_info.code_hash)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default();
 
@@ -120,7 +118,7 @@ impl LevmDatabase for DynVmDatabase {
     }
 
     fn account_exists(&self, address: CoreAddress) -> bool {
-        let acc_info = self.get_account_info(address).unwrap();
+        let acc_info = <dyn VmDatabase>::get_account_info(self.as_ref(), address).unwrap();
         acc_info.is_some()
     }
 
@@ -129,16 +127,16 @@ impl LevmDatabase for DynVmDatabase {
         address: CoreAddress,
         key: CoreH256,
     ) -> Result<ethrex_common::U256, DatabaseError> {
-        Ok(self
-            .get_storage_slot(address, key)
-            .map_err(|e| DatabaseError::Custom(e.to_string()))?
-            .unwrap_or_default())
+        Ok(
+            <dyn VmDatabase>::get_storage_slot(self.as_ref(), address, key)
+                .map_err(|e| DatabaseError::Custom(e.to_string()))?
+                .unwrap_or_default(),
+        )
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<Option<CoreH256>, DatabaseError> {
-        let result = <dyn VmDatabase>::get_block_hash(self.as_ref(), block_number)
-            .map_err(|e| DatabaseError::Custom(e.to_string()));
-        result
+        <dyn VmDatabase>::get_block_hash(self.as_ref(), block_number)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
