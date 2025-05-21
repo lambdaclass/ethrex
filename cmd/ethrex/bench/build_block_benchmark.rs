@@ -1,8 +1,7 @@
-use std::{collections::HashMap, path::Path, str::FromStr, time::{Duration, Instant}};
+use std::{collections::HashMap, str::FromStr, time::{Duration, Instant}};
 
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, measurement::{Measurement, ValueFormatter}, Criterion, Throughput};
-use ethrex::{cli::remove_db, utils::set_datadir, DEFAULT_DATADIR};
 use ethrex_blockchain::{
     payload::{create_payload, BuildPayloadArgs, PayloadBuildResult},
     Blockchain,
@@ -71,11 +70,11 @@ impl ValueFormatter for GasMeasurementFormatter {
         }
     }
 
-    fn scale_values(&self, _throughput: f64, values: &mut [f64]) -> &'static str {
+    fn scale_values(&self, _throughput: f64, _values: &mut [f64]) -> &'static str {
         ""
     }
 
-    fn scale_for_machines(&self, values: &mut [f64]) -> &'static str {
+    fn scale_for_machines(&self, _values: &mut [f64]) -> &'static str {
         ""
     }
 
@@ -119,13 +118,13 @@ fn recover_address_for_sk(sk: &SecretKey) -> Address {
 }
 
 async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
-    let storage_path = "/Users/fran/Library/Application Support/ethrex";
-    if std::fs::exists(Path::new(storage_path)).unwrap_or(false) {
-        std::fs::remove_dir_all(storage_path).unwrap();
+    let storage_path = tempdir::TempDir::new("storage").unwrap();
+    if std::fs::exists(&storage_path).unwrap_or(false) {
+        std::fs::remove_dir_all(&storage_path).unwrap();
     }
     let genesis_file = include_bytes!("../../../test_data/genesis-l1-dev.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
-    let store = Store::new(&storage_path, EngineType::Libmdbx).unwrap();
+    let store = Store::new(&storage_path.into_path().display().to_string(), EngineType::Libmdbx).unwrap();
     for address in accounts {
         let account_info = GenesisAccount {
             code: Bytes::new(),
@@ -234,7 +233,7 @@ pub async fn bench_payload(input: &(&mut Blockchain, Block, &Store)) -> (Duratio
 pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
     c.bench_function("block payload building bench", |b| {
         b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter_custom(|iters| async move {
+            .iter_custom(|_iters| async move {
                 let mut total_duration = Duration::from_secs(0);
                 let mut total_gas_used = 0;
                 let (mut blockchain, genesis_block, store) = {

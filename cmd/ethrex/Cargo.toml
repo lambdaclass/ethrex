@@ -82,6 +82,7 @@ criterion = { version = "0.5.1", features = ["html_reports", "async_futures", "a
 ethrex-sdk.workspace = true
 secp256k1.workspace = true
 k256.workspace = true
+tempdir = { version = "0.3.7" }
 
 [[bench]]
 path = "./bench/import_blocks_benchmark.rs"
