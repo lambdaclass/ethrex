@@ -67,7 +67,7 @@ To run in production mode, ensure the proof coordinator is listening on 0.0.0.0 
 ```
 make init-l1
 ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true make deploy-l1
-ETHREX_PROOF_COORDINATOR_DEV_MODE=false PROOF_COORINATOR_ADDRESS=0.0.0.0 make init-l2
+ETHREX_PROOF_COORDINATOR_DEV_MODE=false PROOF_COORDINATOR_ADDRESS=0.0.0.0 make init-l2
 cd tee
 mkosi vm -f
 ```

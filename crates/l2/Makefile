@@ -64,7 +64,7 @@ L2_PORT=1729
 L1_AUTH_PORT=8551
 L1_RPC_ADDRESS=0.0.0.0
 L2_RPC_ADDRESS=0.0.0.0
-PROOF_COORINATOR_ADDRESS=127.0.0.1
+PROOF_COORDINATOR_ADDRESS=127.0.0.1
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
@@ -163,7 +163,7 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--datadir ${ethrex_L2_DEV_LIBMDBX} \
 	--bridge-address ${BRIDGE_ADDRESS} \
 	--on-chain-proposer-address ${ON_CHAIN_PROPOSER_ADDRESS} \
-	--proof-coordinator-listen-ip ${PROOF_COORINATOR_ADDRESS}
+	--proof-coordinator-listen-ip ${PROOF_COORDINATOR_ADDRESS}
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
