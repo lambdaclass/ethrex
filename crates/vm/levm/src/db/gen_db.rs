@@ -30,15 +30,13 @@ impl GeneralizedDatabase {
     // ================== Account related functions =====================
     /// Gets account, first checking the cache and then the database
     /// (caching in the second case)
-    pub fn get_account(&mut self, address: Address) -> Result<Account, DatabaseError> {
-        match cache::get_account(&self.cache, &address) {
-            Some(acc) => Ok(acc.clone()),
-            None => {
-                let account = self.store.get_account(address)?;
-                cache::insert_account(&mut self.cache, address, account.clone());
-                Ok(account)
-            }
+    pub fn get_account(&mut self, address: Address) -> Result<&Account, DatabaseError> {
+        if !cache::account_is_cached(&self.cache, &address) {
+            let account = self.store.get_account(address)?.clone();
+            cache::insert_account(&mut self.cache, address, account);
         }
+        cache::get_account(&self.cache, &address)
+            .ok_or(DatabaseError::Custom("Cache error".to_owned()))
     }
 
     /// **Accesses to an account's information.**
@@ -49,7 +47,7 @@ impl GeneralizedDatabase {
         &mut self,
         accrued_substate: &mut Substate,
         address: Address,
-    ) -> Result<(Account, bool), DatabaseError> {
+    ) -> Result<(&Account, bool), DatabaseError> {
         let address_was_cold = accrued_substate.touched_accounts.insert(address);
         let account = self.get_account(address)?;
 

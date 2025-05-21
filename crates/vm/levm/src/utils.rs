@@ -388,13 +388,13 @@ pub fn eip7702_get_code(
     // return false meaning that is not a delegation
     // return the same address given
     // return the bytecode of the given address
-    if !has_delegation(&account)? {
+    if !has_delegation(account)? {
         return Ok((false, 0, address, bytecode));
     }
 
     // Here the address has a delegation code
     // The delegation code has the authorized address
-    let auth_address = get_authorized_address(&account)?;
+    let auth_address = get_authorized_address(account)?;
 
     let access_cost = if accrued_substate.touched_accounts.contains(&auth_address) {
         WARM_ADDRESS_ACCESS_COST
@@ -403,7 +403,7 @@ pub fn eip7702_get_code(
         COLD_ADDRESS_ACCESS_COST
     };
 
-    let authorized_bytecode = db.get_account(auth_address)?.code;
+    let authorized_bytecode = db.get_account(auth_address)?.code.clone();
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }
@@ -443,7 +443,7 @@ impl<'a> VM<'a> {
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated =
-                authority_account.code.is_empty() || has_delegation(&authority_account)?;
+                authority_account.code.is_empty() || has_delegation(authority_account)?;
             if !empty_or_delegated {
                 continue;
             }
@@ -489,9 +489,9 @@ impl<'a> VM<'a> {
         let code_address = self.current_call_frame()?.code_address;
         let (code_address_info, _) = self.db.access_account(&mut self.substate, code_address)?;
 
-        if has_delegation(&code_address_info)? {
+        if has_delegation(code_address_info)? {
             self.current_call_frame_mut()?.code_address =
-                get_authorized_address(&code_address_info)?;
+                get_authorized_address(code_address_info)?;
             let code_address = self.current_call_frame()?.code_address;
             let (auth_address_info, _) =
                 self.db.access_account(&mut self.substate, code_address)?;
