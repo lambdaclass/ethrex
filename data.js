@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747846101048,
+  "lastUpdate": 1747846228274,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8365,6 +8365,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209766881646,
             "range": "± 1045219723",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "17429160f3e67e8e377a9f9b574c02c3f9db02c5",
+          "message": "ci(l2): fix L2 sp1 prover integration test steps were skipped on merge to main (#2865)\n\n**Motivation**\n\nFix broken ci\n\n**Description**\n\n- Comment conditional running that only run the steps on the merge queue\n- Left comment with TODO to uncomment when we re enable this job in the\nmerge queue",
+          "timestamp": "2025-05-21T15:55:59Z",
+          "tree_id": "746b79b3607a83946cf3bdf82ed0542e3bd7aa17",
+          "url": "https://github.com/lambdaclass/ethrex/commit/17429160f3e67e8e377a9f9b574c02c3f9db02c5"
+        },
+        "date": 1747846225103,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210896190171,
+            "range": "± 446850687",
             "unit": "ns/iter"
           }
         ]
