@@ -77,8 +77,8 @@ pub enum TestType {
 const RETRIES: u64 = 1000;
 const ETH_TRANSFER_VALUE: u64 = 1000;
 
-// Private key for the rich account present in the gesesis_l2.json file.
-const RICH_ACCOUNT: &str = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
+// Private key for the rich account after making the initial deposits on the L2.
+const RICH_ACCOUNT: &str = "0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31";
 
 async fn deploy_contract(
     client: EthClient,
