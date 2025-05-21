@@ -326,6 +326,7 @@ pub fn eip7702_recover_address(
 
 /// Gets code of an account, returning early if it's not a delegated account, otherwise
 /// Returns tuple (is_delegated, eip7702_cost, code_address, code).
+/// Notice that it also inserts the delegated account to the "touched accounts" set.
 ///
 /// Where:
 /// - `is_delegated`: True if account is a delegated account.
