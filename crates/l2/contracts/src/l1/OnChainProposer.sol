@@ -184,7 +184,8 @@ contract OnChainProposer is
         bytes32 newStateRoot,
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 processedDepositLogsRollingHash
+        bytes32 processedDepositLogsRollingHash,
+        string[] calldata //hexEncodedBlocks
     ) external override onlyLeaderSequencer {
         // TODO: Refactor validation
         require(
@@ -220,7 +221,7 @@ contract OnChainProposer is
             processedDepositLogsRollingHash,
             withdrawalsLogsMerkleRoot
         );
-        emit BatchCommitted(newStateRoot);
+        emit BatchCommitted(batchNumber, newStateRoot);
 
         lastCommittedBatch = batchNumber;
     }

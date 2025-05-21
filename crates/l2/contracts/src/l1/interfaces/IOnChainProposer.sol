@@ -17,7 +17,7 @@ interface IOnChainProposer {
     /// @notice A batch has been committed.
     /// @dev Event emitted when a batch is committed.
     /// @param newStateRoot The new state root of the batch that was committed.
-    event BatchCommitted(bytes32 indexed newStateRoot);
+    event BatchCommitted(uint256 indexed number, bytes32 indexed newStateRoot);
 
     /// @notice A batch has been verified.
     /// @dev Event emitted when a batch is verified.
@@ -38,7 +38,8 @@ interface IOnChainProposer {
         bytes32 newStateRoot,
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 processedDepositLogsRollingHash
+        bytes32 processedDepositLogsRollingHash,
+        string[] calldata _hexEncodedBlocks
     ) external;
 
     /// @notice Method used to verify a batch of L2 blocks.

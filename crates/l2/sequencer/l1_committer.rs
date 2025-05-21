@@ -19,6 +19,7 @@ use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
     merkle_tree::merkelize,
 };
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
     clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
     utils::get_withdrawal_hash,
@@ -39,7 +40,8 @@ use super::{
     SequencerState,
 };
 
-const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str =
+    "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,string[])";
 
 pub struct Committer {
     eth_client: EthClient,
@@ -148,6 +150,7 @@ impl Committer {
             withdrawal_hashes,
             deposit_logs_hash,
             last_block_of_batch,
+            encoded_blocks,
         ) = self
             .prepare_batch_from_block(last_committed_block_number)
             .await?;
@@ -169,6 +172,7 @@ impl Committer {
                 withdrawal_logs_merkle_root,
                 deposit_logs_hash,
                 blobs_bundle,
+                encoded_blocks,
             )
             .await
         {
@@ -188,7 +192,8 @@ impl Committer {
     async fn prepare_batch_from_block(
         &self,
         mut last_added_block_number: BlockNumber,
-    ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
+    ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber, Vec<String>), CommitterError>
+    {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
 
@@ -198,6 +203,7 @@ impl Committer {
         let mut withdrawal_hashes = vec![];
         let mut deposit_logs_hashes = vec![];
         let mut new_state_root = H256::default();
+        let mut encoded_blocks = vec![];
 
         info!("Preparing state diff from block {first_block_of_batch}");
 
@@ -253,6 +259,7 @@ impl Committer {
             };
 
             // Accumulate block data with the rest of the batch.
+            encoded_blocks.push(hex::encode(block_to_commit.encode_to_vec()));
             acc_withdrawals.extend(withdrawals.clone());
             acc_deposits.extend(deposits.clone());
             for account in account_updates {
@@ -322,6 +329,7 @@ impl Committer {
             withdrawal_hashes,
             deposit_logs_hash,
             last_added_block_number,
+            encoded_blocks,
         ))
     }
 
@@ -471,6 +479,7 @@ impl Committer {
         withdrawal_logs_merkle_root: H256,
         deposit_logs_hash: H256,
         blobs_bundle: BlobsBundle,
+        encoded_blocks: Vec<String>,
     ) -> Result<H256, CommitterError> {
         let state_diff_kzg_versioned_hash = if !self.validium {
             let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
@@ -489,6 +498,7 @@ impl Committer {
             Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
             Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
             Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
+            Value::Array(encoded_blocks.into_iter().map(Value::String).collect()),
         ];
 
         let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;

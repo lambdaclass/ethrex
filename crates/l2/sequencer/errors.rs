@@ -227,3 +227,13 @@ pub enum StateUpdaterError {
     #[error("{0}")]
     CalldataParsingError(String),
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum BlockFetcherError {
+    #[error("{0}")]
+    EthClientError(#[from] EthClientError),
+    #[error("{0}")]
+    StoreError(#[from] StoreError),
+    #[error("Internal Error: {0}")]
+    InternalError(String),
+}

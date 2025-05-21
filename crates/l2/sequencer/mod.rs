@@ -17,6 +17,8 @@ pub mod l1_watcher;
 pub mod metrics;
 pub mod proof_coordinator;
 pub mod state_diff;
+
+pub mod block_fetcher;
 pub mod state_updater;
 
 pub mod execution_cache;
@@ -55,7 +57,7 @@ pub async fn start_l2(
     ));
     task_set.spawn(proof_coordinator::start_proof_coordinator(
         store.clone(),
-        rollup_store,
+        rollup_store.clone(),
         cfg.clone(),
     ));
     task_set.spawn(l1_proof_sender::start_l1_proof_sender(
@@ -64,14 +66,22 @@ pub async fn start_l2(
     ));
     task_set.spawn(start_block_producer(
         store.clone(),
-        blockchain,
-        execution_cache,
+        blockchain.clone(),
+        execution_cache.clone(),
         cfg.clone(),
         shared_state.clone(),
     ));
     task_set.spawn(state_updater::start_state_updater(
         cfg.clone(),
         shared_state.clone(),
+    ));
+    task_set.spawn(block_fetcher::start_block_fetcher(
+        store.clone(),
+        blockchain,
+        execution_cache,
+        shared_state.clone(),
+        rollup_store,
+        cfg.clone(),
     ));
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer(cfg));
