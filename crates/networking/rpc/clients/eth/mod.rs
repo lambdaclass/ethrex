@@ -1,6 +1,7 @@
 use std::fmt;
 
 use crate::{
+    eth::max_priority_fee,
     types::{
         block::RpcBlock,
         receipt::{RpcLog, RpcReceipt},
@@ -845,13 +846,9 @@ impl EthClient {
             max_fee_per_gas: self
                 .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
                 .await?,
-            max_priority_fee_per_gas: if let Some(max_priority_fee_per_gas) = overrides.max_priority_fee_per_gas {
-                max_priority_fee_per_gas
-            } else {
-                self.get_max_priority_fee()
-                    .await
-                    .unwrap_or(self.get_fee_from_override_or_get_gas_price(None).await?)
-            },
+            max_priority_fee_per_gas: self
+                .priority_fee_from_override_or_rpc(overrides.max_priority_fee_per_gas)
+                .await?,
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
@@ -901,11 +898,9 @@ impl EthClient {
             max_fee_per_gas: self
                 .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
                 .await?,
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(
-                self.get_max_priority_fee()
-                    .await
-                    .unwrap_or(self.get_fee_from_override_or_get_gas_price(None).await?),
-            ),
+            max_priority_fee_per_gas: self
+                .priority_fee_from_override_or_rpc(overrides.max_priority_fee_per_gas)
+                .await?,
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
@@ -957,11 +952,9 @@ impl EthClient {
             max_fee_per_gas: self
                 .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
                 .await?,
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(
-                self.get_max_priority_fee()
-                    .await
-                    .unwrap_or(self.get_fee_from_override_or_get_gas_price(None).await?),
-            ),
+            max_priority_fee_per_gas: self
+                .priority_fee_from_override_or_rpc(overrides.max_priority_fee_per_gas)
+                .await?,
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
@@ -1210,6 +1203,21 @@ impl EthClient {
                 .try_into()
                 .map_err(|_| EthClientError::Custom("Failed to get gas for fee".to_owned()))?,
         ))
+    }
+
+    async fn priority_fee_from_override_or_rpc(
+        &self,
+        maybe_priority_fee: Option<u64>,
+    ) -> Result<u64, EthClientError> {
+        if let Some(priority_fee) = maybe_priority_fee {
+            return Ok(priority_fee);
+        }
+
+        if let Ok(priority_fee) = self.get_max_priority_fee().await {
+            return Ok(priority_fee);
+        }
+
+        Ok(self.get_fee_from_override_or_get_gas_price(None).await?)
     }
 }
 
