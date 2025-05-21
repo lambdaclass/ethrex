@@ -1,4 +1,5 @@
 use super::eth68::receipt::Receipts68;
+use super::eth69::receipt::Receipts69;
 use crate::rlpx::{
     error::RLPxError,
     message::RLPxMessage,
@@ -58,29 +59,29 @@ impl RLPxMessage for GetReceipts {
 #[derive(Debug)]
 pub(crate) enum Receipts {
     Receipts68(Receipts68),
-    // Receipts69(Receipts69),
+    Receipts69(Receipts69),
 }
 
 impl Receipts {
     pub fn new(id: u64, receipts: Vec<Vec<Receipt>>, eth: &Capability) -> Result<Self, RLPxError> {
         match eth.version {
             68 => Ok(Receipts::Receipts68(Receipts68::new(id, receipts))),
-            //69 => Ok(Receipts::Receipts69(Receipts69::new(id, receipts))),
+            69 => Ok(Receipts::Receipts69(Receipts69::new(id, receipts))),
             _ => Err(RLPxError::IncompatibleProtocol),
         }
     }
 
     pub fn get_receipts(&self) -> Vec<Vec<Receipt>> {
         match self {
-            Receipts::Receipts68(msg) => msg.receipts.clone(),
-            //Receipts::Receipts69(msg) => msg.receipts.clone(),
+            Receipts::Receipts68(msg) => msg.get_receipts(),
+            Receipts::Receipts69(msg) => msg.receipts.clone(),
         }
     }
 
     pub fn get_id(&self) -> u64 {
         match self {
             Receipts::Receipts68(msg) => msg.id,
-            //Receipts::Receipts69(msg) => msg.id,
+            Receipts::Receipts69(msg) => msg.id,
         }
     }
 }
@@ -91,7 +92,7 @@ impl RLPxMessage for Receipts {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         match self {
             Receipts::Receipts68(msg) => msg.encode(buf),
-            //Receipts::Receipts69(msg) => msg.encode(buf),
+            Receipts::Receipts69(msg) => msg.encode(buf),
         }
     }
 
@@ -99,9 +100,7 @@ impl RLPxMessage for Receipts {
         if has_bloom(msg_data)? {
             Ok(Receipts::Receipts68(Receipts68::decode(msg_data)?))
         } else {
-            // this should be eth/69 when implemented
-            //Ok(Receipts::Receipts69(Receipts69::decode(msg_data)?))
-            Err(RLPDecodeError::IncompatibleProtocol)
+            Ok(Receipts::Receipts69(Receipts69::decode(msg_data)?))
         }
     }
 }
