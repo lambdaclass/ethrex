@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747847317750,
+  "lastUpdate": 1747851221964,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9727,6 +9727,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007237881534772182,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "17429160f3e67e8e377a9f9b574c02c3f9db02c5",
+          "message": "ci(l2): fix L2 sp1 prover integration test steps were skipped on merge to main (#2865)\n\n**Motivation**\n\nFix broken ci\n\n**Description**\n\n- Comment conditional running that only run the steps on the merge queue\n- Left comment with TODO to uncomment when we re enable this job in the\nmerge queue",
+          "timestamp": "2025-05-21T15:55:59Z",
+          "tree_id": "746b79b3607a83946cf3bdf82ed0542e3bd7aa17",
+          "url": "https://github.com/lambdaclass/ethrex/commit/17429160f3e67e8e377a9f9b574c02c3f9db02c5"
+        },
+        "date": 1747851221236,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007203333174224343,
             "unit": "Mgas/s"
           }
         ]
