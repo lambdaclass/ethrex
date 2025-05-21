@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-05-20
+
+- Reduce account clone overhead when account data is retrieved [2684](https://github.com/lambdaclass/ethrex/pull/2684)
+
 ### 2025-04-30
 
 - Reduce transaction clone and Vec grow overhead in mempool [2637](https://github.com/lambdaclass/ethrex/pull/2637)
