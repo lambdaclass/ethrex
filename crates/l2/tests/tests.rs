@@ -211,7 +211,6 @@ async fn test_deposit(
     eth_client: &EthClient,
     proposer_client: &EthClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    tokio::time::sleep(Duration::from_secs(15)).await;
     println!("Fetching initial balances on L1 and L2");
 
     let depositor = ethrex_l2_sdk::get_address_from_secret_key(depositor_private_key)?;
