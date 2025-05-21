@@ -83,7 +83,7 @@ impl FullBlockBody {
                 tx.clone(),
                 block_number,
                 block_hash,
-                index,
+                Some(index),
             ));
         }
         FullBlockBody {
