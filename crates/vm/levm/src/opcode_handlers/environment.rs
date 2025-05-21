@@ -30,13 +30,13 @@ impl<'a> VM<'a> {
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
         let (account, address_was_cold) = self.db.access_account(&mut self.substate, address)?;
-        let account_info = account.info.clone();
+        let account_balance = account.info.balance;
 
         let current_call_frame = self.current_call_frame_mut()?;
 
         current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
 
-        current_call_frame.stack.push(account_info.balance)?;
+        current_call_frame.stack.push(account_balance)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
