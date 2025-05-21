@@ -135,7 +135,6 @@ impl Blockchain {
             .ok_or(ChainError::ParentStateNotFound)?;
 
         // Check state root matches the one in block header
-        dbg!("validating state root");
         validate_state_root(&block.header, new_state_root)?;
 
         self.storage
