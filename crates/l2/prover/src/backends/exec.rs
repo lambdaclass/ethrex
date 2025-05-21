@@ -146,8 +146,11 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     };
 
     // Update state trie
-    let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
-    update_tries(&mut state_trie, &mut storage_tries, &acc_account_updates)?;
+    update_tries(
+        &mut state_trie,
+        &mut storage_tries,
+        &acc_account_updates.values().cloned().collect::<Vec<_>>(),
+    )?;
 
     // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();

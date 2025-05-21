@@ -271,8 +271,8 @@ impl StateDiff {
     pub fn to_account_updates(
         &self,
         prev_state: &Trie,
-    ) -> Result<Vec<AccountUpdate>, StateDiffError> {
-        let mut account_updates = Vec::new();
+    ) -> Result<HashMap<Address, AccountUpdate>, StateDiffError> {
+        let mut account_updates = HashMap::new();
 
         for (address, diff) in &self.modified_accounts {
             let account_state = match prev_state
@@ -304,13 +304,16 @@ impl StateDiff {
                 None
             };
 
-            account_updates.push(AccountUpdate {
-                address: *address,
-                removed: false,
-                info: account_info,
-                code: diff.bytecode.clone(),
-                added_storage: diff.storage.clone(),
-            });
+            account_updates.insert(
+                *address,
+                AccountUpdate {
+                    address: *address,
+                    removed: false,
+                    info: account_info,
+                    code: diff.bytecode.clone(),
+                    added_storage: diff.storage.clone(),
+                },
+            );
         }
 
         Ok(account_updates)
