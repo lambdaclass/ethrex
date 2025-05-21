@@ -10,6 +10,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{public_key_from_signing_key, P2PContext},
+    peer_handler::PeerHandler,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
@@ -44,6 +45,8 @@ use ::{
 use crate::l2::BasedOptions;
 #[cfg(feature = "based")]
 use ethrex_common::Public;
+#[cfg(feature = "based")]
+use ethrex_rpc::clients::eth::errors::EthClientError;
 #[cfg(feature = "based")]
 use ethrex_rpc::{EngineClient, EthClient};
 #[cfg(feature = "based")]
@@ -134,9 +137,11 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     #[cfg(feature = "l2")] rollup_store: StoreRollup,
 ) {
+    let peer_handler = PeerHandler::new(peer_table);
+
     // Create SyncManager
     let syncer = SyncManager::new(
-        peer_table.clone(),
+        peer_handler.clone(),
         opts.syncmode.clone(),
         cancel_token,
         blockchain.clone(),
@@ -153,9 +158,10 @@ pub async fn init_rpc_api(
         local_p2p_node,
         local_node_record,
         syncer,
+        peer_handler,
         get_client_version(),
         #[cfg(feature = "based")]
-        get_gateway_http_client(&l2_opts.based_opts),
+        get_gateway_http_client(&l2_opts.based_opts).expect("Failed to get gateway http client"),
         #[cfg(feature = "based")]
         get_gateway_auth_client(&l2_opts.based_opts),
         #[cfg(feature = "based")]
@@ -173,7 +179,7 @@ pub async fn init_rpc_api(
 }
 
 #[cfg(feature = "based")]
-fn get_gateway_http_client(opts: &BasedOptions) -> EthClient {
+fn get_gateway_http_client(opts: &BasedOptions) -> Result<EthClient, EthClientError> {
     let gateway_http_socket_addr = parse_socket_addr(&opts.gateway_addr, &opts.gateway_eth_port)
         .expect("Failed to parse gateway http address and port");
 

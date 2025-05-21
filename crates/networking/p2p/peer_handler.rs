@@ -11,7 +11,7 @@ use ethrex_trie::{verify_range, Node};
 use tokio::sync::Mutex;
 
 use crate::{
-    kademlia::{KademliaTable, PeerChannels},
+    kademlia::{KademliaTable, PeerChannels, PeerData},
     rlpx::{
         eth::{
             blocks::{
@@ -20,7 +20,7 @@ use crate::{
             receipts::{GetReceipts, Receipts},
         },
         message::Message as RLPxMessage,
-        p2p::{Capability, CAP_ETH_68, CAP_SNAP_1},
+        p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
         snap::{
             AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
             StorageRanges, TrieNodes,
@@ -64,16 +64,23 @@ impl PeerHandler {
     pub fn new(peer_table: Arc<Mutex<KademliaTable>>) -> PeerHandler {
         Self { peer_table }
     }
+
+    /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
+    /// This should only be used in tests as it won't be able to interact with the node's connected peers
+    pub fn dummy() -> PeerHandler {
+        let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
+        PeerHandler::new(dummy_peer_table)
+    }
     /// Returns the node id and the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
     /// If no peer is found, this method will try again after 10 seconds
     async fn get_peer_channel_with_retry(
         &self,
-        capability: Capability,
+        capabilities: &[Capability],
     ) -> Option<(H256, PeerChannels)> {
         for _ in 0..PEER_SELECT_RETRY_ATTEMPTS {
             let table = self.peer_table.lock().await;
-            if let Some((id, channels)) = table.get_peer_channels(capability.clone()) {
+            if let Some((id, channels)) = table.get_peer_channels(capabilities) {
                 return Some((id, channels));
             };
             // drop the lock early to no block the rest of processes
@@ -103,7 +110,9 @@ impl PeerHandler {
                 skip: 0,
                 reverse: matches!(order, BlockRequestOrder::NewToOld),
             });
-            let (peer_id, peer_channel) = self.get_peer_channel_with_retry(CAP_ETH_68).await?;
+            let (peer_id, peer_channel) = self
+                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
+                .await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -159,7 +168,9 @@ impl PeerHandler {
                 id: request_id,
                 block_hashes: block_hashes.clone(),
             });
-            let (peer_id, peer_channel) = self.get_peer_channel_with_retry(CAP_ETH_68).await?;
+            let (peer_id, peer_channel) = self
+                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
+                .await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -239,7 +250,9 @@ impl PeerHandler {
                 id: request_id,
                 block_hashes: block_hashes.clone(),
             });
-            let (_, peer_channel) = self.get_peer_channel_with_retry(CAP_ETH_68).await?;
+            let (_, peer_channel) = self
+                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
+                .await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -293,7 +306,9 @@ impl PeerHandler {
                 limit_hash: limit,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self.get_peer_channel_with_retry(CAP_SNAP_1).await?;
+            let (_, peer_channel) = self
+                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
+                .await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -354,7 +369,9 @@ impl PeerHandler {
                 hashes: hashes.clone(),
                 bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self.get_peer_channel_with_retry(CAP_SNAP_1).await?;
+            let (_, peer_channel) = self
+                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
+                .await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -409,7 +426,9 @@ impl PeerHandler {
                 limit_hash: HASH_MAX,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self.get_peer_channel_with_retry(CAP_SNAP_1).await?;
+            let (_, peer_channel) = self
+                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
+                .await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -508,7 +527,9 @@ impl PeerHandler {
                     .collect(),
                 bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self.get_peer_channel_with_retry(CAP_SNAP_1).await?;
+            let (_, peer_channel) = self
+                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
+                .await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -580,7 +601,9 @@ impl PeerHandler {
                     .collect(),
                 bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self.get_peer_channel_with_retry(CAP_SNAP_1).await?;
+            let (_, peer_channel) = self
+                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
+                .await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -645,7 +668,9 @@ impl PeerHandler {
                 limit_hash: HASH_MAX,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
-            let (_, peer_channel) = self.get_peer_channel_with_retry(CAP_SNAP_1).await?;
+            let (_, peer_channel) = self
+                .get_peer_channel_with_retry(&SUPPORTED_SNAP_CAPABILITIES)
+                .await?;
             let mut receiver = peer_channel.receiver.lock().await;
             if let Err(err) = peer_channel.sender.send(request).await {
                 debug!("Failed to send message to peer: {err}");
@@ -693,6 +718,19 @@ impl PeerHandler {
             }
         }
         None
+    }
+
+    /// Returns the PeerData for each connected Peer
+    /// Returns None if it fails to aquire the lock on the kademlia table
+    pub fn read_connected_peers(&self) -> Option<Vec<PeerData>> {
+        Some(
+            self.peer_table
+                .try_lock()
+                .ok()?
+                .filter_peers(&|peer| peer.is_connected)
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
     }
 
     pub async fn remove_peer(&self, peer_id: H256) {
