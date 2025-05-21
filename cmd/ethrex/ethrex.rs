@@ -1,6 +1,4 @@
 use clap::Parser;
-#[cfg(feature = "sync-test")]
-use ethrex::Store;
 use ethrex::{
     cli::CLI,
     initializers::{
@@ -10,6 +8,8 @@ use ethrex::{
     utils::{set_datadir, store_node_config_file, NodeConfigFile},
 };
 use ethrex_p2p::network::peer_table;
+#[cfg(feature = "sync-test")]
+use ethrex_storage::Store;
 #[cfg(feature = "sync-test")]
 use std::env;
 use std::{path::PathBuf, sync::Arc, time::Duration};
