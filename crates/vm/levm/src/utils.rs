@@ -652,7 +652,7 @@ impl<'a> VM<'a> {
         hooks
     }
 
-    /// Gets transaction callee, depending on if it's a Call or Create.
+    /// Gets transaction callee, calculating create address if it's a "Create" transaction.
     pub fn get_tx_callee(&mut self) -> Result<Address, VMError> {
         match self.tx.to() {
             TxKind::Call(address_to) => {

@@ -118,7 +118,7 @@ impl Hook for DefaultHook {
                 vm.current_call_frame()?.msg_value,
             )?;
 
-            // Here bytecode could be from the account itself or from delegated account, the same applies to the code_address
+            // Here bytecode and code_address could be either from the account or from the delegated account.
             let to = vm.current_call_frame()?.to;
             let (_is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
                 eip7702_get_code(vm.db, &mut vm.substate, to)?;
@@ -126,7 +126,7 @@ impl Hook for DefaultHook {
             (bytecode, code_address)
         };
 
-        // Assign code and code_address
+        // Assign code and code_address to callframe
         vm.current_call_frame_mut()?.code_address = code_address;
         vm.current_call_frame_mut()?.set_code(bytecode)?;
 

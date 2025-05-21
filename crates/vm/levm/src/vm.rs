@@ -68,8 +68,8 @@ impl<'a> VM<'a> {
         let initial_call_frame = CallFrame::new(
             self.env.origin,
             callee,
-            Address::default(), // Will be assigned in prepare_execution
-            Bytes::new(),       // Will be assigned in prepare_execution
+            Address::default(), // Will be assigned at the end of prepare_execution
+            Bytes::new(),       // Will be assigned at the end of prepare_execution
             self.tx.value(),
             self.tx.data().clone(),
             false,
