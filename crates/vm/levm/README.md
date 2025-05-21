@@ -201,9 +201,15 @@ make run-hive-debug-levm
 
 ## Performance metrics
 
+To run either flamegraph or samply on the EF tests you have to download the tests first:
+
+```Shell
+make download-state-tests
+```
+
 ### To run Flamegraph on the Ethereum Foundation tests
 
-First install Flamegraph
+First install Flamegraph 
 
 ```Shell
 cargo install flamegraph

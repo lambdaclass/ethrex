@@ -1,4 +1,4 @@
-.PHONY: download-state-tests clean-evm-ef-tests run-evm-ef-tests test-levm test-revm
+.PHONY: download-evm-ef-tests clean-evm-ef-tests run-evm-ef-tests test-levm test-revm run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests
 
 FIXTURES_FILE := .fixtures_url
 STATETEST_ARTIFACT := test.tar.gz
