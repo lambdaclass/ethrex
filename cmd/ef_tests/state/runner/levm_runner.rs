@@ -407,5 +407,5 @@ pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -
         .apply_account_updates(block_hash, account_updates)
         .await
         .unwrap()
-        .unwrap()
+        .unwrap().0
 }

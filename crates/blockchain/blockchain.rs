@@ -128,13 +128,14 @@ impl Blockchain {
         account_updates: &[AccountUpdate],
     ) -> Result<(), ChainError> {
         // Apply the account updates over the last block's state and compute the new state root
-        let new_state_root = self
+        let (new_state_root, snap_info) = self
             .storage
             .apply_account_updates(block.header.parent_hash, account_updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
         // Check state root matches the one in block header
+        dbg!("validating state root");
         validate_state_root(&block.header, new_state_root)?;
 
         self.storage
@@ -144,7 +145,12 @@ impl Blockchain {
         self.storage
             .add_receipts(block.hash(), execution_result.receipts)
             .await
-            .map_err(ChainError::StoreError)
+            .map_err(ChainError::StoreError)?;
+
+        self.storage
+            .apply_account_updates_to_snapshot(snap_info, account_updates);
+
+        Ok(())
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
@@ -283,7 +289,7 @@ impl Blockchain {
         };
 
         // Apply the account updates over all blocks and compute the new state root
-        let new_state_root = self
+        let (new_state_root, snap_info) = self
             .storage
             .apply_account_updates(first_block_header.parent_hash, &account_updates)
             .await
@@ -301,6 +307,9 @@ impl Blockchain {
             .add_receipts_for_blocks(all_receipts)
             .await
             .map_err(|e| (e.into(), None))?;
+
+        self.storage
+            .apply_account_updates_to_snapshot(snap_info, &account_updates);
 
         let elapsed_total = interval.elapsed().as_millis();
         let mut throughput = 0.0;
