@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-#[cfg(feature = "based")]
-use crate::utils::RpcRequest;
 use crate::{
     eth::block,
     rpc::{RpcApiContext, RpcHandler},
@@ -601,44 +599,6 @@ impl RpcHandler for SendRawTransactionRequest {
         }
 
         Ok(transaction)
-    }
-
-    #[cfg(feature = "based")]
-    async fn relay_to_gateway_or_fallback(
-        req: &RpcRequest,
-        context: RpcApiContext,
-    ) -> Result<Value, RpcErr> {
-        use tracing::warn;
-
-        info!("Relaying eth_sendRawTransaction to gateway");
-
-        let gateway_eth_client = context.gateway_eth_client.clone();
-
-        let tx_data = get_transaction_data(&req.params)?;
-
-        let gateway_request = gateway_eth_client.send_raw_transaction(&tx_data);
-
-        let client_response = Self::call(req, context).await;
-
-        let gateway_response = gateway_request
-            .await
-            .map_err(|err| {
-                RpcErr::Internal(format!(
-                    "Could not relay eth_sendRawTransaction to gateway: {err}",
-                ))
-            })
-            .and_then(|hash| {
-                serde_json::to_value(format!("{hash:#x}"))
-                    .map_err(|error| RpcErr::Internal(error.to_string()))
-            });
-
-        if gateway_response.is_err() {
-            warn!(error = ?gateway_response, "Gateway eth_sendRawTransaction failed, falling back to local node");
-        } else {
-            info!("Successfully relayed eth_sendRawTransaction to gateway");
-        }
-
-        gateway_response.or(client_response)
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {

@@ -138,15 +138,9 @@ init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex
 
 BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
 ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
+FEATURES="l2,rollup_storage_libmdbx,metrics"
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
-	if [ -z "$$BASED" ]; then \
-		FEATURES="l2,rollup_storage_libmdbx,metrics"; \
-		echo "Running ethrex L2 vanilla"; \
-	else \
-		FEATURES="metrics,based"; \
-		echo "Running ethrex L2 with based"; \
-	fi; \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features $$FEATURES -- \
 	l2 init \
 	--watcher.block-delay 0 \
