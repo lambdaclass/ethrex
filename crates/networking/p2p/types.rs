@@ -66,6 +66,7 @@ pub struct Node {
     pub udp_port: u16,
     pub tcp_port: u16,
     pub public_key: H512,
+    pub version: Option<String>,
     node_id: OnceLock<H256>,
 }
 
@@ -120,6 +121,7 @@ impl Node {
             udp_port,
             tcp_port,
             public_key,
+            version: None,
             node_id: OnceLock::new(),
         }
     }

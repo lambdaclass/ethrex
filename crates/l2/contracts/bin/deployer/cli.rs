@@ -229,6 +229,15 @@ pub struct DeployerOptions {
         help = "Address of the owner of the CommonBridge contract, who can upgrade the contract."
     )]
     pub bridge_owner: Address,
+    #[arg(
+        long,
+        default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
+        value_name = "PATH",
+        env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
+        help_heading = "Deployer options",
+        help = "Path to the SP1 verification key. This is used for proof verification."
+    )]
+    pub sp1_vk_path: String,
 }
 
 impl Default for DeployerOptions {
@@ -293,6 +302,10 @@ impl Default for DeployerOptions {
                 0x03, 0xd0, 0xa0, 0xae, 0xe6, 0x76, 0xcc, 0x45, 0xbf, 0x70, 0x32, 0x64, 0x9e, 0x08,
                 0x71, 0x92, 0x7c, 0x94, 0x7c, 0x8e,
             ]),
+            sp1_vk_path: format!(
+                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
+                env!("CARGO_MANIFEST_DIR")
+            ),
         }
     }
 }
