@@ -1,5 +1,5 @@
 use ethrex_common::{types::ChainConfig, Address as CoreAddress, H256 as CoreH256};
-use ethrex_trie::{Nibbles, Node, NodeRLP, NodeRef, PathRLP, Trie};
+use ethrex_trie::{Node, NodeRLP, PathRLP, Trie};
 use revm::{
     primitives::{
         AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
@@ -13,8 +13,6 @@ use crate::{
     db::VmDatabase,
     errors::{EvmError, ProverDBError},
 };
-use revm_primitives::alloy_primitives::Keccak256;
-use std::collections::HashMap;
 
 /// State used when running the EVM. The state can be represented with a [VmDbWrapper] database, or
 /// with a [ProverDB] in case we only want to store the necessary data for some particular
