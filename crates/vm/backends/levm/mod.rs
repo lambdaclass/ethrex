@@ -27,7 +27,6 @@ use ethrex_levm::{
     vm::{Substate, VM},
     Environment,
 };
-use ethrex_storage::error::StoreError;
 use ethrex_storage::{hash_address, hash_key, Store};
 use ethrex_trie::{NodeRLP, TrieError};
 use std::cmp::min;

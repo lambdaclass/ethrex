@@ -10,7 +10,6 @@ use ethrex_common::{
     Address, H256,
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult};
-use ethrex_storage::error::StoreError;
 use ethrex_vm::{
     self,
     backends::{self, revm::db::EvmState},

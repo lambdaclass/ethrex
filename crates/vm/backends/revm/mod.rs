@@ -13,8 +13,6 @@ use db::EvmState;
 use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
-use ethrex_storage::error::StoreError;
-
 
 use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;

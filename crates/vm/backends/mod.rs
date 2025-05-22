@@ -15,7 +15,6 @@ use ethrex_common::types::{
 use ethrex_common::Address;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::db::CacheDB;
-use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
 use levm::LEVM;
 use revm::db::EvmState;

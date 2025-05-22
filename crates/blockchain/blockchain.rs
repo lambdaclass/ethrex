@@ -26,7 +26,7 @@ use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
-use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
+use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine, StoreVmDatabase};
 use tracing::info;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
