@@ -193,7 +193,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.send(Message::Disconnect(DisconnectMessage { reason }))
             .await
             .unwrap_or_else(|_| {
-                log_peer_error(
+                log_peer_debug(
                     &self.node,
                     &format!("Could not send Disconnect message: ({:?}).", reason),
                 );
