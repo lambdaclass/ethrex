@@ -25,7 +25,7 @@ ETH_TEST_TAG := v17.0
 COMMIT_LEGACY_TESTS_FOR_TAG := b3f67fe
 
 STATETEST_ARTIFACT := tests.tar.gz
-FIXTURES_FILE := ../../../cmd/ef_tests/blockchain/.fixtures_url
+FIXTURES_FILE := https://github.com/ethereum/execution-spec-tests/releases/download/v4.5.0/fixtures_develop.tar.gz
 STATETEST_URL := $(shell cat $(FIXTURES_FILE))
 
 setup-test-dirs:
