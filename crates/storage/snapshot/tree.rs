@@ -604,8 +604,8 @@ mod tests {
         SnapshotTree::new(db)
     }
 
-    #[tokio::test]
-    async fn test_add_single_account_in_single_difflayer() {
+    #[test]
+    fn test_add_single_account_in_single_difflayer() {
         let tree = create_mock_tree();
         let root = H256::from_low_u64_be(1);
 
@@ -637,8 +637,8 @@ mod tests {
         assert_eq!(retrieved_account, Some(account_state));
     }
 
-    #[tokio::test]
-    async fn test_add_two_accounts_in_different_difflayers() {
+    #[test]
+    fn test_add_two_accounts_in_different_difflayers() {
         let tree = create_mock_tree();
         tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
 
@@ -691,8 +691,8 @@ mod tests {
         assert_eq!(retrieved_account2, Some(account2_state));
     }
 
-    #[tokio::test]
-    async fn test_override_account_in_second_difflayer() {
+    #[test]
+    fn test_override_account_in_second_difflayer() {
         let tree = create_mock_tree();
         tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
         let root1 = H256::from_low_u64_be(1);
@@ -743,7 +743,7 @@ mod tests {
         assert_eq!(retrieved_account, Some(account_state1));
     }
 
-    #[tokio::test]
+    #[test]
     async fn test_override_account_storage_flattening() {
         let tree = create_mock_tree();
         tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
@@ -819,7 +819,7 @@ mod tests {
         assert_eq!(value, Some(U256::one()));
     }
 
-    #[tokio::test]
+    #[test]
     async fn test_override_account_storage_in_second_difflayer() {
         let tree = create_mock_tree();
         tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
