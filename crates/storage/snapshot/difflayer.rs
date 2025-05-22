@@ -13,7 +13,7 @@ use super::{
 #[derive(Clone, Debug)]
 pub struct DiffLayer {
     // Origin (disk layer) block hash
-    origin: H256,
+    pub(crate)  origin: H256,
     /// parent block hash
     parent: H256,
     block_hash: BlockHash,

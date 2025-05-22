@@ -194,7 +194,7 @@ impl SnapshotTree {
 
         let mut children: HashMap<H256, Vec<H256>> = HashMap::new();
 
-        for (hash, snap) in layers.iter() {
+        for (block_hash, snap) in layers.iter() {
             match snap {
                 Layer::DiskLayer(_) => {}
                 Layer::DiffLayer(diff_layer) => {
@@ -203,17 +203,17 @@ impl SnapshotTree {
                         .map_err(|error| SnapshotError::LockError(error.to_string()))?
                         .parent();
                     let entry = children.entry(parent).or_default();
-                    entry.push(*hash);
+                    entry.push(*block_hash);
                 }
             }
         }
 
         let mut to_remove: HashSet<H256> = HashSet::new();
 
-        fn remove(root: H256, children: &HashMap<H256, Vec<H256>>, to_remove: &mut HashSet<H256>) {
-            if !to_remove.contains(&root) {
-                to_remove.insert(root);
-                if let Some(childs) = children.get(&root) {
+        fn remove(block_hash: H256, children: &HashMap<H256, Vec<H256>>, to_remove: &mut HashSet<H256>) {
+            if !to_remove.contains(&block_hash) {
+                to_remove.insert(block_hash);
+                if let Some(childs) = children.get(&block_hash) {
                     for child in childs {
                         remove(*child, children, to_remove);
                     }
@@ -221,11 +221,11 @@ impl SnapshotTree {
             }
         }
 
-        for (root, snap) in layers.iter() {
-            match snap {
+        for (block_hash, layer) in layers.iter() {
+            match layer {
                 Layer::DiskLayer(disk_layer) => {
                     if disk_layer.stale() {
-                        remove(*root, &children, &mut to_remove);
+                        remove(*block_hash, &children, &mut to_remove);
                     }
                 }
                 Layer::DiffLayer(diff_layer) => {
@@ -234,15 +234,15 @@ impl SnapshotTree {
                         .map_err(|error| SnapshotError::LockError(error.to_string()))?
                         .stale()
                     {
-                        remove(*root, &children, &mut to_remove);
+                        remove(*block_hash, &children, &mut to_remove);
                     }
                 }
             }
         }
 
-        for root in to_remove.iter() {
-            layers.remove(root);
-            children.remove(root);
+        for block_hash in to_remove.iter() {
+            layers.remove(block_hash);
+            children.remove(block_hash);
         }
 
         if let Some(base) = new_disk_layer {
@@ -275,7 +275,7 @@ impl SnapshotTree {
             }
             info!(
                 "SnapshotTree: changed disk layer block hash: {}",
-                base.state_root
+                base.block_hash
             );
             rebloom(base.block_hash, &layers, &children, base, None)?;
         }
@@ -355,13 +355,14 @@ impl SnapshotTree {
             .write()
             .map_err(|error| SnapshotError::LockError(error.to_string()))?;
         diff_value.set_parent(base.block_hash());
+        //diff_value.origin = base.block_hash();
 
         Ok(Some(base))
     }
 
     /// Merges the diff into the disk layer.
     ///
-    /// Returning a new disk layer whose root is the diff root.
+    /// Returning a new disk layer whose block hash is the diff block hash.
     ///
     /// Returns Err if the current disk layer is already marked stale.
     fn save_diff(
@@ -369,14 +370,9 @@ impl SnapshotTree {
         diff: Layer,
         layers: &HashMap<H256, Layer>,
     ) -> Result<Arc<DiskLayer>, SnapshotError> {
-        // Note: Interacting with the db should be made through non-async methods, converting this method
-        // into an async one, will give problems, mainly with holding RwLocks across await points.
-        //
-        // This method is called from `cap` and related mainly, which they themselves are called outside the main thread, so blocking is not bad.
-
         let diff = match diff {
             Layer::DiskLayer(disk_layer) => {
-                return Err(SnapshotError::SnapshotIsdiskLayer(disk_layer.state_root))
+                return Err(SnapshotError::SnapshotIsdiskLayer(disk_layer.block_hash))
             }
             Layer::DiffLayer(diff) => diff,
         };
@@ -392,7 +388,7 @@ impl SnapshotTree {
             return Err(SnapshotError::StaleSnapshot);
         }
 
-        // TODO: here we should save the diff to the db (in the future snapshots table) too.
+        // TODO: here we should save the diff layers to the db (in the future snapshots table) too.
         let accounts = diff_value.accounts();
 
         let mut account_hashes = Vec::with_capacity(accounts.len());

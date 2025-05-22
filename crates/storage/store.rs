@@ -1232,16 +1232,14 @@ impl Store {
                 hash, parent_hash
             );
 
-            tokio::task::spawn_blocking(move || {
-                // Use this point to cap the amount of layers if needs be
-                if let Err(error) = store.snapshots.cap(hash, 128) {
-                    warn!(
-                        "Couldn't apply cap to snapshots: {} (current layers {})",
-                        error,
-                        store.snapshots.len()
-                    );
-                }
-            });
+            // Use this point to cap the amount of layers if needs be
+            if let Err(error) = store.snapshots.cap(hash, 12) {
+                warn!(
+                    "Couldn't apply cap to snapshots: {} (current layers {})",
+                    error,
+                    store.snapshots.len()
+                );
+            }
         }
 
         Ok(())

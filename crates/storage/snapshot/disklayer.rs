@@ -56,10 +56,6 @@ impl DiskLayer {
         }
     }
 
-    pub fn root(&self) -> H256 {
-        self.state_root
-    }
-
     pub fn get_account(&self, hash: H256) -> Result<Option<AccountState>, SnapshotError> {
         if self.stale() {
             return Err(SnapshotError::StaleSnapshot);
