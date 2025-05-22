@@ -11,7 +11,7 @@ use crate::{
     },
     utils::RpcErr,
 };
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{vm::StoreVmDatabase, Blockchain};
 use ethrex_common::{
     types::{
         AccessListEntry, BlockHash, BlockHeader, BlockNumber, Fork, GenericTransaction, TxKind,
@@ -22,7 +22,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
-use ethrex_vm::{Evm, ExecutionResult, StoreVmDatabase};
+use ethrex_vm::{Evm, ExecutionResult};
 use serde::Serialize;
 
 use serde_json::Value;

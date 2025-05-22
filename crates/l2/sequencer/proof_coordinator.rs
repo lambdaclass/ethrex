@@ -1,4 +1,5 @@
 use crate::sequencer::errors::ProverServerError;
+use crate::utils::prover::db::to_prover_db;
 use crate::utils::prover::proving_systems::ProofCalldata;
 use crate::utils::prover::save_state::{
     batch_number_has_state_file, write_state, StateFileType, StateType,
@@ -13,7 +14,7 @@ use ethrex_common::{
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::{Evm, EvmError, ProverDB};
+use ethrex_vm::{EvmError, ProverDB};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, net::IpAddr};
 use tokio::{
@@ -322,7 +323,7 @@ impl ProofCoordinator {
         let blocks = self.fetch_blocks(block_numbers).await?;
 
         // Create prover_db
-        let db = Evm::to_prover_db(&self.store.clone(), &blocks)
+        let db = to_prover_db(&self.store.clone(), &blocks)
             .await
             .map_err(EvmError::ProverDB)?;
 

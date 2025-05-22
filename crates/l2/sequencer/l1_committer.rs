@@ -7,6 +7,7 @@ use crate::{
     CommitterConfig, EthConfig, SequencerConfig,
 };
 
+use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     types::{
         blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block, BlockHeader,
@@ -25,7 +26,7 @@ use ethrex_rpc::{
 };
 use ethrex_storage::{AccountUpdate, Store};
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::{Evm, EvmEngine, StoreVmDatabase};
+use ethrex_vm::{Evm, EvmEngine};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
