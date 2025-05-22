@@ -462,12 +462,7 @@ impl SnapshotTree {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, SnapshotError> {
-        debug!(
-            "called get_account_state with block {} address {}",
-            block_hash, address
-        );
         if let Some(snapshot) = self.snapshot(block_hash) {
-            debug!("snapshot found");
             let layers = self
                 .layers
                 .read()
@@ -496,10 +491,6 @@ impl SnapshotTree {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, SnapshotError> {
-        debug!(
-            "called get_storage_at_hash with block {} address {} key {}",
-            block_hash, address, storage_key
-        );
         if let Some(snapshot) = self.snapshot(block_hash) {
             let layers = self
                 .layers
@@ -744,7 +735,7 @@ mod tests {
     }
 
     #[test]
-    async fn test_override_account_storage_flattening() {
+    fn test_override_account_storage_flattening() {
         let tree = create_mock_tree();
         tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
         let root1 = H256::from_low_u64_be(1);
@@ -820,7 +811,7 @@ mod tests {
     }
 
     #[test]
-    async fn test_override_account_storage_in_second_difflayer() {
+    fn test_override_account_storage_in_second_difflayer() {
         let tree = create_mock_tree();
         tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
         let root1 = H256::from_low_u64_be(1);
