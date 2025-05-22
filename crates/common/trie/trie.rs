@@ -391,9 +391,6 @@ impl IntoIterator for Trie {
 pub struct ProofTrie(Trie);
 
 impl ProofTrie {
-    /// Note: This method has a different behavior in regard to non-existent trie root nodes. Normal
-    ///   behavior is to return `Err(InconsistentTrie)`, but this method will return
-    ///   `Ok(Vec::new())` instead.
     pub fn insert(
         &mut self,
         partial_path: Nibbles,
@@ -401,12 +398,12 @@ impl ProofTrie {
     ) -> Result<(), TrieError> {
         self.0.root = if self.0.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
-            match self.0.root.get_node(self.0.db.as_ref())? {
-                Some(x) => x,
-                None => return Ok(()),
-            }
-            .insert(self.0.db.as_ref(), partial_path, external_ref)?
-            .into()
+            self.0
+                .root
+                .get_node(self.0.db.as_ref())?
+                .ok_or(TrieError::InconsistentTree)?
+                .insert(self.0.db.as_ref(), partial_path, external_ref)?
+                .into()
         } else {
             todo!()
         };

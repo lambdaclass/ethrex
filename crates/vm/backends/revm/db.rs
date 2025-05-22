@@ -3,7 +3,7 @@ use ethrex_common::{
     Address as CoreAddress, H256 as CoreH256,
 };
 use ethrex_storage::{error::StoreError, Store};
-use ethrex_trie::{Node, NodeRLP, PathRLP, Trie};
+use ethrex_trie::{Nibbles, Node, NodeRLP, NodeRef, PathRLP};
 use revm::{
     primitives::{
         AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
@@ -17,6 +17,8 @@ use crate::{
     db::StoreWrapper,
     errors::{EvmError, ProverDBError},
 };
+use revm_primitives::alloy_primitives::Keccak256;
+use std::collections::HashMap;
 
 /// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
 /// with a [ProverDB] in case we only want to store the necessary data for some particular
@@ -242,14 +244,54 @@ impl revm::DatabaseRef for StoreWrapper {
 /// calculate all posible child nodes.
 pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Node>> {
     // TODO: Perhaps it's possible to calculate the child nodes instead of storing all possible ones.
-    let trie = Trie::from_nodes(
-        proof.first(),
-        &proof.iter().skip(1).cloned().collect::<Vec<_>>(),
-    )
-    .unwrap();
+    let proof_missing_key = match proof.split_first() {
+        Some((root, nodes)) => {
+            let storage = nodes
+                .iter()
+                .map(|node| {
+                    let mut h = Keccak256::default();
+                    h.update(node);
+                    (h.finalize().0, node)
+                })
+                .collect::<HashMap<_, _>>();
+
+            let mut current_node = Node::decode_raw(root).unwrap();
+            let mut current_path = Nibbles::from_bytes(key);
+            loop {
+                current_node = match current_node {
+                    Node::Branch(node) => {
+                        if let Some(choice) = current_path.next_choice() {
+                            if node.choices[choice].is_valid() {
+                                let NodeRef::Hash(hash) = &node.choices[choice] else {
+                                    unreachable!()
+                                };
+                                Node::decode_raw(storage.get(hash.as_ref()).unwrap()).unwrap()
+                            } else {
+                                break true;
+                            }
+                        } else {
+                            break node.value.is_empty();
+                        }
+                    }
+                    Node::Extension(node) => {
+                        if current_path.skip_prefix(&node.prefix) {
+                            let NodeRef::Hash(hash) = &node.child else {
+                                unreachable!()
+                            };
+                            Node::decode_raw(storage.get(hash.as_ref()).unwrap()).unwrap()
+                        } else {
+                            break true;
+                        }
+                    }
+                    Node::Leaf(node) => break node.partial != current_path,
+                };
+            }
+        }
+        None => true,
+    };
 
     // return some only if this is a proof of exclusion
-    if trie.get(key).unwrap().is_none() {
+    if proof_missing_key {
         let final_node = Node::decode_raw(proof.last().unwrap()).unwrap();
         match final_node {
             Node::Extension(mut node) => {
