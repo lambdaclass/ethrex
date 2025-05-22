@@ -53,6 +53,7 @@ jobs:
           cp test_data/rpc_prover/cache_22240087.json crates/l2/prover/bench
           cd crates/l2/prover/bench
           make prove-sp1-gpu-ci BLOCK_NUMBER=22240087
+          git stash
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
