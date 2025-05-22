@@ -15,25 +15,25 @@ use serde::{Deserialize, Serialize};
 pub struct RpcTransaction {
     #[serde(flatten)]
     pub tx: Transaction,
-    #[serde(with = "serde_utils::u64::hex_str")]
-    block_number: BlockNumber,
+    #[serde(with = "serde_utils::u64::hex_str_opt")]
+    block_number: Option<BlockNumber>,
     block_hash: BlockHash,
     from: Address,
     pub hash: H256,
-    #[serde(with = "serde_utils::u64::hex_str")]
-    transaction_index: u64,
+    #[serde(with = "serde_utils::u64::hex_str_opt")]
+    transaction_index: Option<u64>,
 }
 
 impl RpcTransaction {
     pub fn build(
         tx: Transaction,
-        block_number: BlockNumber,
+        block_number: Option<BlockNumber>,
         block_hash: BlockHash,
-        transaction_index: usize,
+        transaction_index: Option<usize>,
     ) -> Self {
         let from = tx.sender();
         let hash = tx.compute_hash();
-        let transaction_index = transaction_index as u64;
+        let transaction_index = transaction_index.map(|n| n as u64);
         RpcTransaction {
             tx,
             block_number,
