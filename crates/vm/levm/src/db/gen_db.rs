@@ -13,7 +13,6 @@ use crate::vm::Substate;
 use crate::vm::VM;
 
 use super::cache;
-use super::error::DatabaseError;
 use super::CacheDB;
 use super::Database;
 
@@ -36,13 +35,14 @@ impl GeneralizedDatabase {
     // ================== Account related functions =====================
     /// Gets account, first checking the cache and then the database
     /// (caching in the second case)
-    pub fn get_account(&mut self, address: Address) -> Result<&Account, DatabaseError> {
+    pub fn get_account(&mut self, address: Address) -> Result<&Account, VMError> {
         if !cache::account_is_cached(&self.cache, &address) {
             let account = self.get_account_from_database(address)?;
             cache::insert_account(&mut self.cache, address, account);
         }
-        cache::get_account(&self.cache, &address)
-            .ok_or(DatabaseError::Custom("Cache error".to_owned()))
+        cache::get_account(&self.cache, &address).ok_or(VMError::Internal(
+            InternalError::AccountShouldHaveBeenCached,
+        ))
     }
 
     /// **Accesses to an account's information.**
@@ -53,7 +53,7 @@ impl GeneralizedDatabase {
         &mut self,
         accrued_substate: &mut Substate,
         address: Address,
-    ) -> Result<(&Account, bool), DatabaseError> {
+    ) -> Result<(&Account, bool), VMError> {
         let address_was_cold = accrued_substate.touched_accounts.insert(address);
         let account = self.get_account(address)?;
 
@@ -61,10 +61,7 @@ impl GeneralizedDatabase {
     }
 
     /// Gets account from storage, storing in Immutable Cache for efficiency when getting AccountUpdates.
-    pub fn get_account_from_database(
-        &mut self,
-        address: Address,
-    ) -> Result<Account, DatabaseError> {
+    pub fn get_account_from_database(&mut self, address: Address) -> Result<Account, VMError> {
         let account = self.store.get_account(address)?;
         self.immutable_cache.insert(address, account.clone());
         Ok(account)
@@ -75,7 +72,7 @@ impl GeneralizedDatabase {
         &mut self,
         address: Address,
         key: H256,
-    ) -> Result<U256, DatabaseError> {
+    ) -> Result<U256, VMError> {
         let value = self.store.get_storage_value(address, key)?;
         // Account must already be in immutable_cache
         match self.immutable_cache.get_mut(&address) {
@@ -84,9 +81,9 @@ impl GeneralizedDatabase {
             }
             None => {
                 // If we are fetching the storage of an account it means that we previously fetched the account from database before.
-                return Err(DatabaseError::Custom(
+                return Err(VMError::Internal(InternalError::Custom(
                     "Account not found in InMemoryDB when fetching storage".to_string(),
-                ));
+                )));
             }
         }
         Ok(value)
