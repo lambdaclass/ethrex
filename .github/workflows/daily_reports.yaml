@@ -14,7 +14,7 @@ jobs:
       evm: levm
       job_type: daily
 
-  hive-diff-report:
+  post-daily-report:
     name: Post report to slack
     needs: [hive-report-creation]
     runs-on: ubuntu-latest
@@ -22,10 +22,10 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Download results
+      - name: Download hive results
         uses: actions/download-artifact@v4
         with:
-          name: results_daily.md
+          name: ${{ needs.hive-report-creation.outputs.report_artifact_name }}
 
       - name: Post Hive results to Slack
         env:
