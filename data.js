@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747933830791,
+  "lastUpdate": 1747939941856,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8575,6 +8575,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 212317936276,
             "range": "± 479501841",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cdbe4c3cd238347a7dfb3239b42e8baee7af8a94",
+          "message": "feat(l2): integrate TDX as a prover (#2777)\n\n**Motivation**\n\nIn #2677 an example of a TDX-based prover was made. This uses the\nexample code to add a prover.\n\n**Description**\n\nTDX is added as another prover, and made to use the same API",
+          "timestamp": "2025-05-22T17:58:19Z",
+          "tree_id": "2c6135aba5bdeafe913896d19b14108ce6481dd6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cdbe4c3cd238347a7dfb3239b42e8baee7af8a94"
+        },
+        "date": 1747939938942,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210622538381,
+            "range": "± 625186045",
             "unit": "ns/iter"
           }
         ]
