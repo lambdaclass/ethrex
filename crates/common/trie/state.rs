@@ -24,7 +24,7 @@ use super::{node::Node, node_hash::NodeHash};
 // Furthermore, if we ever want to have an eviction
 // policy, this struct can be useful for it.
 struct TrieStateCache {
-    inner: std::cell::RefCell<HashMap<NodeHash, Node>>,
+    inner: std::cell::RefCell<HashMap<NodeHash, Option<Node>>>,
 }
 
 impl TrieStateCache {
@@ -33,17 +33,17 @@ impl TrieStateCache {
             inner: Default::default(),
         }
     }
-    pub fn insert(&self, key: NodeHash, value: Node) {
+    pub fn insert(&self, key: NodeHash, value: Option<Node>) {
         self.inner.borrow_mut().insert(key, value);
     }
-    pub fn get(&self, key: &NodeHash) -> Option<Node> {
+    pub fn get(&self, key: &NodeHash) -> Option<Option<Node>> {
         self.inner.borrow().get(key).cloned()
     }
     pub fn clear(&self) {
         self.inner.borrow_mut().clear();
     }
     pub fn remove(&self, key: &NodeHash) -> Option<Node> {
-        self.inner.borrow_mut().remove(key)
+        self.inner.borrow_mut().remove(key).flatten()
     }
 }
 
@@ -68,18 +68,15 @@ impl TrieState {
             return Ok(Some(Node::decode_raw(hash.as_ref())?));
         }
         match self.cache.get(&hash) {
-            Some(node) => Ok(Some(node.clone())),
+            Some(node) => Ok(node),
             None => {
-                let Some(db_result) = self
+                let db_result = self
                     .db
                     .get(hash)?
                     .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
-                    .transpose()?
-                else {
-                    return Ok(None);
-                };
+                    .transpose()?;
                 self.cache.insert(hash, db_result.clone());
-                Ok(Some(db_result))
+                Ok(db_result)
             }
         }
     }
@@ -88,7 +85,7 @@ impl TrieState {
     pub fn insert_node(&mut self, node: Node, hash: NodeHash) {
         // Don't insert the node if it is already inlined on the parent
         if matches!(hash, NodeHash::Hashed(_)) {
-            self.cache.insert(hash, node);
+            self.cache.insert(hash, Some(node));
         }
     }
 
