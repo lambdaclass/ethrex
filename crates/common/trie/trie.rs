@@ -87,16 +87,19 @@ impl Trie {
     }
 
     /// Insert an RLP-encoded value into the trie.
+    ///
+    /// Note: This method has a different behavior in regard to non-existent trie root nodes. Normal
+    ///   behavior is to return `Err(InconsistentTrie)`, but this method will instead treat it as an
+    ///   empty trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
 
         self.root = if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
-            self.root
-                .get_node(self.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?
-                .insert(self.db.as_ref(), path, value)?
-                .into()
+            match self.root.get_node(self.db.as_ref())? {
+                Some(x) => x.insert(self.db.as_ref(), path, value)?.into(),
+                None => Node::from(LeafNode::new(path, value)).into(),
+            }
         } else {
             // If the trie is empty, just add a leaf.
             Node::from(LeafNode::new(path, value)).into()
