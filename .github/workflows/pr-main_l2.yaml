@@ -62,11 +62,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run cargo check
-        run: cargo check --workspace --exclude ethrex-prover-bench
+        run: cargo check --workspace
 
       - name: Run cargo clippy
         run: |
-          cargo clippy --workspace --exclude ethrex-prover-bench -- -D warnings
+          cargo clippy --workspace -- -D warnings
           make lint
 
       - name: Run cargo fmt
@@ -114,10 +114,12 @@ jobs:
             ethrex_l2.cache-from=type=local,src=/tmp/buildx-cache/ethrex_l2
             contract_deployer.cache-from=type=local,src=/tmp/buildx-cache/contract_deployer
 
+      # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
         run: |
           cd crates/l2
           make build-prover
+          mkdir -p prover/zkvm/interface/sp1/out && touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
 
       - name: Build test
         run: |
@@ -139,6 +141,7 @@ jobs:
           cd crates/l2
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_VALIDIUM=${{ matrix.validium }} \
+          ETHREX_WATCHER_BLOCK_DELAY=0 \
           docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
 
       - name: Run test

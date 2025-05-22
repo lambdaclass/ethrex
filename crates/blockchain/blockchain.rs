@@ -21,11 +21,12 @@ use ethrex_common::types::{BlobsBundle, Fork, ELASTICITY_MULTIPLIER};
 use ethrex_common::{Address, H256};
 use mempool::Mempool;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};
-use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
+use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine, StoreVmDatabase};
 use tracing::info;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -36,6 +37,10 @@ pub struct Blockchain {
     pub evm_engine: EvmEngine,
     storage: Store,
     pub mempool: Mempool,
+    /// Whether the node's chain is in or out of sync with the current chain
+    /// This will be set to true once the initial sync has taken place and wont be set to false after
+    /// This does not reflect whether there is an ongoing sync process
+    is_synced: AtomicBool,
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +55,7 @@ impl Blockchain {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
+            is_synced: AtomicBool::new(false),
         }
     }
 
@@ -58,6 +64,7 @@ impl Blockchain {
             evm_engine: EvmEngine::default(),
             storage: store,
             mempool: Mempool::new(),
+            is_synced: AtomicBool::new(false),
         }
     }
 
@@ -77,11 +84,8 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let mut vm = Evm::new(
-            self.evm_engine,
-            self.storage.clone(),
-            block.header.parent_hash,
-        );
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let mut vm = Evm::new(self.evm_engine, vm_db);
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
@@ -204,11 +208,8 @@ impl Blockchain {
             .map_err(|e| (e.into(), None))?;
         let fork = chain_config.fork(first_block_header.timestamp);
 
-        let mut vm = Evm::new(
-            self.evm_engine,
-            self.storage.clone(),
-            first_block_header.parent_hash,
-        );
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), first_block_header.parent_hash);
+        let mut vm = Evm::new(self.evm_engine, vm_db);
 
         let blocks_len = blocks.len();
         let mut all_receipts: HashMap<BlockHash, Vec<Receipt>> = HashMap::new();
@@ -471,6 +472,19 @@ impl Blockchain {
         }
 
         Ok(())
+    }
+
+    /// Marks the node's chain as up to date with the current chain
+    /// Once the initial sync has taken place, the node will be consireded as sync
+    pub fn set_synced(&self) {
+        self.is_synced.store(true, Ordering::Relaxed);
+    }
+
+    /// Returns whether the node's chain is up to date with the current chain
+    /// This will be true if the initial sync has already taken place and does not reflect whether there is an ongoing sync process
+    /// The node should accept incoming p2p transactions if this method returns true
+    pub fn is_synced(&self) -> bool {
+        self.is_synced.load(Ordering::Relaxed)
     }
 }
 
