@@ -8,6 +8,10 @@ use ethrex::{
     utils::{set_datadir, store_node_config_file, NodeConfigFile},
 };
 use ethrex_p2p::network::peer_table;
+#[cfg(feature = "sync-test")]
+use ethrex_storage::Store;
+#[cfg(feature = "sync-test")]
+use std::env;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
@@ -17,6 +21,26 @@ use tracing::info;
 use ethrex::l2::L2Options;
 #[cfg(feature = "l2")]
 use ethrex_storage_rollup::StoreRollup;
+#[cfg(feature = "sync-test")]
+async fn set_sync_block(store: &Store) {
+    let get_latest = match env::var("SYNC-LATEST")
+        .expect("Failed to get sync configuration from environment")
+        .as_str()
+    {
+        "false" => false,
+        _ => true,
+    };
+    let block_number = env::var("SYNC-BLOCK-NUM")
+        .expect("Failed to retrieve sync block number from environment")
+        .parse()
+        .expect("Error converting block number environmental variable to int");
+    let block_hash = store
+        .get_canonical_block_hash(block_number)
+        .await
+        .expect("Could not get hash for block number provided by env variable");
+    store.update_latest_block_number(block_number);
+    store.set_canonical_block(block_number, block_hash);
+}
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -33,6 +57,9 @@ async fn main() -> eyre::Result<()> {
     let network = get_network(&opts);
 
     let store = init_store(&data_dir, &network).await;
+
+    #[cfg(feature = "sync-test")]
+    set_sync_block(&store).await;
 
     let blockchain = init_blockchain(opts.evm, store.clone());
 

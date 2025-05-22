@@ -11,6 +11,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_storage::Store;
+use std::env;
 use tracing::error;
 
 pub const HASH_FIRST_BYTE_DECODER: u8 = 160;
@@ -111,11 +112,17 @@ impl GetBlockHeaders {
         } else {
             (self.skip + 1) as i64
         };
-        let limit = if self.limit > BLOCK_HEADER_LIMIT {
+
+        let limit = if let Ok(env_var_block_limit) = env::var("BLOCK-HEADER-LIMIT") {
+            env_var_block_limit
+                .parse()
+                .expect("Block header limit environmental variable is not a number")
+        } else if self.limit > BLOCK_HEADER_LIMIT {
             BLOCK_HEADER_LIMIT
         } else {
             self.limit
         };
+
         for _ in 0..limit {
             match storage.get_block_header(current_block as u64) {
                 Ok(Some(block_header)) => {
