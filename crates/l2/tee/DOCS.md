@@ -69,7 +69,8 @@ make init-l1
 ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true make deploy-l1
 ETHREX_PROOF_COORDINATOR_DEV_MODE=false PROOF_COORDINATOR_ADDRESS=0.0.0.0 make init-l2
 cd tee
-mkosi vm -f
+
+nix-build image.nix -I nixpkgs=https://github.com/NixOS/nixpkgs/archive/3fcbdcfc707e0aa42c541b7743e05820472bdaec.tar.gz
 ```
 
 ## Troubleshooting

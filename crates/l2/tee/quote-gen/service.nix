@@ -1,12 +1,19 @@
 let
   pkgs = import <nixpkgs> { };
+  gitignoreSrc = pkgs.fetchFromGitHub { 
+    owner = "hercules-ci";
+    repo = "gitignore.nix";
+    rev = "637db329424fd7e46cf4185293b9cc8c88c95394";
+    sha256 = "sha256-HG2cCnktfHsKV0s4XW83gU3F57gaTljL9KNSuG6bnQs";
+  };
+  inherit (import gitignoreSrc { inherit (pkgs) lib; }) gitignoreSource;
 in
 let
   quoteGen = pkgs.rustPlatform.buildRustPackage rec {
     pname = "quote-gen";
     version = "0.1";
 
-    src = pkgs.lib.cleanSource ./../../../../.;
+    src = gitignoreSource ./../../../../.;
     sourceRoot = "${src.name}/crates/l2/tee/quote-gen";
 
     cargoDeps = pkgs.rustPlatform.importCargoLock {
