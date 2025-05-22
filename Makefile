@@ -80,7 +80,7 @@ HIVE_REVISION := 4a1ed079ce5ebb46240e4ef9141d72e7236bca36
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
-HIVE_SHALLOW_SINCE := 2024-09-02
+HIVE_SHALLOW_SINCE := 2025-05-21
 QUIET ?= false
 
 hive:
