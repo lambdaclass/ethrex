@@ -128,9 +128,7 @@ impl GetBlockHeaders {
                 // TODO(#1073)
                 // Research what we should do when an error is found in a P2P request.
                 Err(err) => {
-                    tracing::error!(
-                        "Error accessing DB while building header response for peer: {err}"
-                    );
+                    error!("Error accessing DB while building header response for peer: {err}");
                     return vec![];
                 }
             }
@@ -237,7 +235,7 @@ impl GetBlockBodies {
                     continue;
                 }
                 Err(err) => {
-                    tracing::error!(
+                    error!(
                         "Error accessing DB while building block bodies response for peer: {err}"
                     );
                     return vec![];
