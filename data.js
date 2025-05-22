@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747932934344,
+  "lastUpdate": 1747933830791,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8545,6 +8545,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211028602464,
             "range": "± 696217113",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3e81f78fbb4d1cd47792061ea1bff6d85b15ce7a",
+          "message": "chore(levm): update state tests and make state use blockchain's tests (#2871)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n- Update blockchain tests from 4.3.0 to 4.5.0\n- Update state tests from pectra-devnet-6 to 4.5.0\n- Remove tests from old forks (Constantinople folder)\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-22T16:15:49Z",
+          "tree_id": "628b4809bf03af7da9ffefd81477a85c8e5135ec",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3e81f78fbb4d1cd47792061ea1bff6d85b15ce7a"
+        },
+        "date": 1747933827574,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212317936276,
+            "range": "± 479501841",
             "unit": "ns/iter"
           }
         ]
