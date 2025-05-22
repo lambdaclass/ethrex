@@ -90,7 +90,7 @@ fn create_access_list_inner(
                     .with_db(db)
                     .append_handler_register(inspector_handle_register)
                     .build();
-                evm.transact().map_err(EvmError::from)?
+                evm.transact()?
             }
             EvmState::Execution(db) => {
                 let mut evm = evm_builder
