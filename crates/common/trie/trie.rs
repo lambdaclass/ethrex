@@ -184,20 +184,16 @@ impl Trie {
     /// Obtains all encoded nodes traversed until reaching the node where every path is stored.
     /// The list doesn't include the root node, this is returned separately.
     /// Will still be constructed even if some path is not stored in the trie.
-    ///
-    /// Note: This method has a different behavior in regard to non-existent trie root nodes. Normal
-    ///   behavior is to return `Err(InconsistentTrie)`, but this method will return
-    ///   `Ok((None, Vec::new()))` instead.
     pub fn get_proofs(
         &self,
         paths: &[PathRLP],
     ) -> Result<(Option<NodeRLP>, Vec<NodeRLP>), TrieError> {
         if self.root.is_valid() {
-            let encoded_root = match self.root.get_node(self.db.as_ref())? {
-                Some(x) => x,
-                None => return Ok((None, Vec::new())),
-            }
-            .encode_raw();
+            let encoded_root = self
+                .root
+                .get_node(self.db.as_ref())?
+                .ok_or(TrieError::InconsistentTree)?
+                .encode_raw();
 
             let mut node_path = HashSet::new();
             for path in paths {
@@ -395,6 +391,9 @@ impl IntoIterator for Trie {
 pub struct ProofTrie(Trie);
 
 impl ProofTrie {
+    /// Note: This method has a different behavior in regard to non-existent trie root nodes. Normal
+    ///   behavior is to return `Err(InconsistentTrie)`, but this method will return
+    ///   `Ok(Vec::new())` instead.
     pub fn insert(
         &mut self,
         partial_path: Nibbles,
@@ -402,12 +401,12 @@ impl ProofTrie {
     ) -> Result<(), TrieError> {
         self.0.root = if self.0.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
-            self.0
-                .root
-                .get_node(self.0.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?
-                .insert(self.0.db.as_ref(), partial_path, external_ref)?
-                .into()
+            match self.0.root.get_node(self.0.db.as_ref())? {
+                Some(x) => x,
+                None => return Ok(()),
+            }
+            .insert(self.0.db.as_ref(), partial_path, external_ref)?
+            .into()
         } else {
             todo!()
         };
