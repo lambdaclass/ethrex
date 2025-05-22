@@ -141,7 +141,7 @@ ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .en
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	if [ -z "$$BASED" ]; then \
-		FEATURES="l2,rollup_storage_libmdbx,metrics"; \
+		FEATURES="l2,rollup_storage_libmdbx,metrics,aligned"; \
 		echo "Running ethrex L2 vanilla"; \
 	else \
 		FEATURES="metrics,based"; \

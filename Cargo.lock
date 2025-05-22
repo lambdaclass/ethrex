@@ -3698,6 +3698,7 @@ dependencies = [
  "aligned-sdk",
  "bincode",
  "bytes",
+ "cfg-if",
  "directories",
  "envy",
  "ethereum-types 0.15.1",
