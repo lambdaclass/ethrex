@@ -102,3 +102,12 @@ For example, the file `quote.example` contains a quote, which can be turned into
 
 39618efd10b14136ab416d6acfff8e36b23533a90000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 ```
+
+### # write failed /proc/self/uid_map: Operation not permitted
+
+If you get the error `unshare: write failed /proc/self/uid_map: Operation not permitted` when building the image, it's probably because your OS has unprivileged userns restricted by default. You can undo this by running the following commands as root, or running the build as root while disabling sandboxing.
+
+```
+sysctl kernel.unprivileged_userns_apparmor_policy=0
+sysctl kernel.apparmor_restrict_unprivileged_userns=0
+```

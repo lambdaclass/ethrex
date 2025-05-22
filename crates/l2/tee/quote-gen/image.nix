@@ -1,3 +1,6 @@
+# sysctl kernel.unprivileged_userns_apparmor_policy=0
+# sysctl kernel.apparmor_restrict_unprivileged_userns=0
+
 let
   pkgs = import <nixpkgs> { };
 in
@@ -20,8 +23,6 @@ in
       ];
 
       system.stateVersion = "25.11";
-
-      services.mingetty.autologinUser = "root";
 
       boot = {
         loader.grub.enable = false;
