@@ -1,3 +1,4 @@
+pub mod blobs_bundle_cache;
 use std::sync::Arc;
 
 use crate::SequencerConfig;
@@ -6,6 +7,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use execution_cache::ExecutionCache;
+use blobs_bundle_cache::BlobsBundleCache;
 use tokio::task::JoinSet;
 use tracing::{error, info};
 
@@ -32,6 +34,7 @@ pub async fn start_l2(
     info!("Starting Proposer");
 
     let execution_cache = Arc::new(ExecutionCache::default());
+    let blobs_bundle_cache = Arc::new(BlobsBundleCache::default());
 
     let mut task_set = JoinSet::new();
     task_set.spawn(l1_watcher::start_l1_watcher(
@@ -43,6 +46,7 @@ pub async fn start_l2(
         store.clone(),
         rollup_store.clone(),
         execution_cache.clone(),
+        blobs_bundle_cache.clone(),
         cfg.clone(),
     ));
     task_set.spawn(proof_coordinator::start_proof_coordinator(
@@ -50,6 +54,7 @@ pub async fn start_l2(
         rollup_store,
         cfg.clone(),
         execution_cache.clone(),
+        blobs_bundle_cache.clone(),
     ));
     task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
     task_set.spawn(start_block_producer(

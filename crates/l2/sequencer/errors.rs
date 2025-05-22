@@ -81,6 +81,10 @@ pub enum ProverServerError {
     StateDiffError(#[from] StateDiffError),
     #[error("ProverServer encountered a ExecutionCacheError")]
     ExecutionCacheError(#[from] ExecutionCacheError),
+    #[error("ProverServer encountered a BlobsBundleCacheError: {0}")]
+    BlobsBundleCacheError(#[from] super::blobs_bundle_cache::BlobsBundleCacheError),
+    #[error("ProverServer encountered a BlobsBundleError: {0}")]
+    BlobsBundleError(#[from] ethrex_common::types::BlobsBundleError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -171,6 +175,8 @@ pub enum CommitterError {
     InternalError(String),
     #[error("Failed to get withdrawals: {0}")]
     FailedToGetWithdrawals(#[from] UtilsError),
+    #[error("Committer failed to push to BlobsBundleCache: {0}")]
+    BlobsBundleCacheError(#[from] super::blobs_bundle_cache::BlobsBundleCacheError),
 }
 
 #[derive(Debug, thiserror::Error)]

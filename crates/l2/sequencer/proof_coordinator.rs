@@ -6,14 +6,12 @@ use crate::utils::prover::save_state::{
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
-use ethrex_common::types::{blob_to_kzg_commitment_and_proof, blobs_bundle};
+use ethrex_common::types::{blobs_bundle, bytes_from_blob};
 use ethrex_common::{
     types::{Block, BlockHeader},
     Address,
 };
-use ethrex_l2_common::{
-    get_block_deposits, get_block_withdrawals, get_tx_and_receipts, prepare_state_diff, StateDiff,
-};
+use ethrex_l2_common::{get_block_deposits, get_block_withdrawals, get_tx_and_receipts, StateDiff};
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::{AccountUpdate, Store};
 use ethrex_storage_rollup::StoreRollup;
@@ -30,8 +28,9 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
+use super::blobs_bundle_cache::BlobsBundleCache;
 use super::errors::SequencerError;
-use super::execution_cache::{self, ExecutionCache};
+use super::execution_cache::ExecutionCache;
 use super::utils::sleep_random;
 
 #[serde_as]
@@ -61,6 +60,7 @@ struct ProofCoordinator {
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
     execution_cache: Arc<ExecutionCache>,
+    blobs_bundle_cache: Arc<BlobsBundleCache>,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -133,6 +133,7 @@ pub async fn start_proof_coordinator(
     rollup_store: StoreRollup,
     cfg: SequencerConfig,
     execution_cache: Arc<ExecutionCache>,
+    blobs_bundle_cache: Arc<BlobsBundleCache>,
 ) -> Result<(), SequencerError> {
     let proof_coordinator = ProofCoordinator::new_from_config(
         &cfg.proof_coordinator,
@@ -142,6 +143,7 @@ pub async fn start_proof_coordinator(
         store,
         rollup_store,
         execution_cache,
+        blobs_bundle_cache,
     )
     .await?;
     proof_coordinator.run().await;
@@ -158,6 +160,7 @@ impl ProofCoordinator {
         store: Store,
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
+        blobs_bundle_cache: Arc<BlobsBundleCache>,
     ) -> Result<Self, SequencerError> {
         let eth_client = EthClient::new_with_config(
             eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
@@ -179,6 +182,7 @@ impl ProofCoordinator {
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             rollup_store,
             execution_cache,
+            blobs_bundle_cache,
         })
     }
 
@@ -397,21 +401,28 @@ impl ProofCoordinator {
             }
         }
 
-        let state_diff = prepare_state_diff(
-            first_block.header.number.clone(),
-            last_block.header.clone(),
-            self.store.clone(),
-            &all_withdrawals,
-            &all_deposits,
-            all_account_updates.into_values().collect(),
-        )
-        .await?;
+        let cached_blobs_bundle = self.blobs_bundle_cache.get(batch_number)?;
 
-        let blob_data = state_diff.encode()?;
-        let blob = blobs_bundle::blob_from_bytes(blob_data)
-            .map_err(|err| ProverServerError::Custom(err.to_string()))?;
-        let (blob_commitment, blob_proof) = blob_to_kzg_commitment_and_proof(&blob)
-            .map_err(|err| ProverServerError::Custom(err.to_string()))?;
+        let (state_diff, blob_commitment, blob_proof) = match cached_blobs_bundle {
+            Some(mut bundle) => {
+                let (Some(blob), Some(commitment), Some(proof)) = (
+                    bundle.blobs.pop(),
+                    bundle.commitments.pop(),
+                    bundle.proofs.pop(),
+                ) else {
+                    return Err(ProverServerError::Custom(format!(
+                        "Cached BlobsBundle for batch {batch_number} is empty"
+                    )));
+                };
+                let state_diff = StateDiff::decode(&bytes_from_blob(blob.to_vec().into()))?;
+                (state_diff, commitment, proof)
+            }
+            None => {
+                return Err(ProverServerError::Custom(format!(
+                "BlobsBundle for batch {batch_number} not found in cache. Prover input cannot be created."
+            )));
+            }
+        };
 
         debug!("Created prover input for batch {batch_number}");
 
@@ -422,7 +433,9 @@ impl ProofCoordinator {
             elasticity_multiplier: self.elasticity_multiplier,
             #[cfg(feature = "l2")]
             state_diff,
+            #[cfg(feature = "l2")]
             blob_commitment,
+            #[cfg(feature = "l2")]
             blob_proof,
         })
     }

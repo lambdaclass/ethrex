@@ -32,6 +32,7 @@ use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
 use super::{
+    blobs_bundle_cache::BlobsBundleCache,
     errors::{BlobEstimationError, SequencerError},
     execution_cache::ExecutionCache,
     utils::sleep_random,
@@ -50,12 +51,14 @@ pub struct Committer {
     arbitrary_base_blob_gas_price: u64,
     execution_cache: Arc<ExecutionCache>,
     validium: bool,
+    blobs_bundle_cache: Arc<BlobsBundleCache>,
 }
 
 pub async fn start_l1_committer(
     store: Store,
     rollup_store: StoreRollup,
     execution_cache: Arc<ExecutionCache>,
+    blobs_bundle_cache: Arc<BlobsBundleCache>,
     cfg: SequencerConfig,
 ) -> Result<(), SequencerError> {
     let mut committer = Committer::new_from_config(
@@ -64,6 +67,7 @@ pub async fn start_l1_committer(
         store,
         rollup_store,
         execution_cache,
+        blobs_bundle_cache,
     )?;
     committer.run().await;
     Ok(())
@@ -76,6 +80,7 @@ impl Committer {
         store: Store,
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
+        blobs_bundle_cache: Arc<BlobsBundleCache>,
     ) -> Result<Self, CommitterError> {
         Ok(Self {
             eth_client: EthClient::new_with_config(
@@ -96,6 +101,7 @@ impl Committer {
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
             validium: committer_config.validium,
+            blobs_bundle_cache,
         })
     }
 
@@ -135,7 +141,7 @@ impl Committer {
             deposit_logs_hash,
             last_block_of_batch,
         ) = self
-            .prepare_batch_from_block(last_committed_block_number)
+            .prepare_batch_from_block(last_committed_block_number, batch_to_commit)
             .await?;
 
         if last_committed_block_number == last_block_of_batch {
@@ -174,6 +180,7 @@ impl Committer {
     async fn prepare_batch_from_block(
         &self,
         mut last_added_block_number: BlockNumber,
+        batch_number_for_cache: u64,
     ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
@@ -268,7 +275,6 @@ impl Committer {
 
             match result {
                 Ok(bundle) => {
-                    // Save current blobs_bundle and continue to add more blocks.
                     blobs_bundle = bundle;
                     for (_, tx) in &withdrawals {
                         let hash = get_withdrawal_hash(tx)
@@ -300,6 +306,9 @@ impl Committer {
                 }
             }
         }
+
+        self.blobs_bundle_cache.push(batch_number_for_cache, blobs_bundle.clone())?;
+
         let deposit_logs_hash = self.get_deposit_hash(deposit_logs_hashes)?;
         Ok((
             blobs_bundle,
