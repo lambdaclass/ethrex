@@ -25,6 +25,10 @@ pub enum DeployerError {
     FailedToDeployContract(#[from] DeployError),
     #[error("Internal error: {0}")]
     InternalError(String),
+    #[error("No signer was set up")]
+    NoSigner,
+    #[error("Remote signer URL was provided without a public key")]
+    RemoteUrlWithoutPubkey,
     #[error("IO error: {0}")]
     IO(#[from] std::io::Error),
 }

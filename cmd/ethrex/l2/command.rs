@@ -22,7 +22,7 @@ use reqwest::Url;
 use std::{fs::create_dir_all, future::IntoFuture, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
-use tracing::info;
+use tracing::{error, info};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
@@ -124,7 +124,11 @@ impl Command {
                     info!("P2P is disabled");
                 }
 
-                let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
+                let l2_sequencer_cfg =
+                    SequencerConfig::try_from(opts.sequencer_opts).map_err(|err| {
+                        error!("{err}");
+                        err
+                    })?;
 
                 let l2_sequencer =
                     ethrex_l2::start_l2(store, rollup_store, blockchain, l2_sequencer_cfg)

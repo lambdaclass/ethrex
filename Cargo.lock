@@ -3099,6 +3099,7 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+ "thiserror 2.0.12",
  "tokio",
  "tokio-util",
  "tracing",
@@ -3143,6 +3144,7 @@ dependencies = [
  "lazy_static",
  "once_cell",
  "rayon",
+ "reqwest",
  "secp256k1",
  "serde",
  "serde_json",
@@ -3530,6 +3532,7 @@ dependencies = [
  "hex",
  "keccak-hash",
  "lazy_static",
+ "reqwest",
  "secp256k1",
  "serde_json",
  "thiserror 2.0.12",
@@ -7400,6 +7403,7 @@ name = "quote-pusher"
 version = "0.1.0"
 dependencies = [
  "ethereum-types",
+ "ethrex-common",
  "ethrex-rpc",
  "ethrex-sdk",
  "hex",
