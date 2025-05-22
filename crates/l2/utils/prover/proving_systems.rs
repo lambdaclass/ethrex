@@ -21,6 +21,7 @@ impl ProverType {
             ProverType::RISC0,
             ProverType::SP1,
             ProverType::Pico,
+            ProverType::Aligned,
         ]
         .into_iter()
     }

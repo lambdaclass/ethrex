@@ -91,7 +91,7 @@ impl L1ProofSender {
                     )
                     .await?;
 
-                info!("Response: {response:#x}");
+                info!("Response: {:?}", response);
 
                 // trim to 20 bytes, also removes 0x prefix
                 let trimmed_response = &response[26..];
