@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747954081890,
+  "lastUpdate": 1747954447848,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10174,6 +10174,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007357865919063872,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "657ba027088cf61604dde6559b4727f27af5f11c",
+          "message": "perf(l2): remove cloning state for limiting batch size (#2825)\n\n**Motivation**\n\nIn this PR we remove the cloning of the context before executing every\ntransaction to check if it doesn't exceed the state diff size limit.\n\n**Description**\n\n* Add new functions specific for the L2 `apply_transaction_l2` and\n`execute_tx_l2`.\n* Now `apply_transaction_l2` returns a CallFrameBackup that is needed\nfor reverting the changes made by the transaction. This revert is\ndifferent from the transaction revert, this has to undo every\nmodification even the pre execute validation changes.\n* Simplify the encoding of the structs `WithdrawalLog`, `DepositLog`,\n`BlockHeader` and `AccountStateDiff` when calculating the StateDiff.\nThis leads to better consistency and being less error prone to future\nchanges.\n* Expose the VM function to restore the state from a `CallFrameBackup`.\n\n**Comparison against main**\nHow to replicate:\nInside `crates/l2`\n- Terminal 1: `init-l1`\n- Terminal 2: `make deploy-l1 update-system-contracts init-l2`\n- Terminal 3: `cargo run --manifest-path ../../cmd/load_test/Cargo.toml\n-- -k ../../test_data/private_keys.txt -t erc20 -N 50 -n\nhttp://localhost:1729`\n\nFor Terminal 3 if necessary run `ulimit -n 65536` before the command.\n\nGigagas comparison:\nmain: `[METRIC] BLOCK BUILDING THROUGHPUT: 0.0028166668076660267\nGigagas/s TIME SPENT: 30733 msecs`\nthis PR: `BLOCK BUILDING THROUGHPUT: 0.3342272162162162 Gigagas/s TIME\nSPENT: 259 msecs`\n\nLoadtest comparision:\nmain: `Load test finished. Elapsed time: 254 seconds`\nthis PR: `Load test finished. Elapsed time: 34 seconds`\n\nCloses #2413 \nCloses #2655\n\n---------\n\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>",
+          "timestamp": "2025-05-22T19:38:28Z",
+          "tree_id": "28e499a32519baff9ecf2d2196070b3d817ccb60",
+          "url": "https://github.com/lambdaclass/ethrex/commit/657ba027088cf61604dde6559b4727f27af5f11c"
+        },
+        "date": 1747954444944,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007404800294406281,
             "unit": "Mgas/s"
           }
         ]
