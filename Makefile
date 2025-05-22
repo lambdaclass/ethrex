@@ -140,7 +140,7 @@ clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
 
 install-cli: ## 🛠️ Installs the ethrex-l2 cli
-	cargo install --path cmd/ethrex_l2/ --force
+	cargo install --path cmd/ethrex_l2/ --force --locked
 
 start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
 	@if [ -z "$$L" ]; then \
