@@ -126,6 +126,10 @@ pub enum BlockProducerError {
     Custom(String),
     #[error("Failed to parse withdrawal: {0}")]
     FailedToParseWithdrawal(#[from] UtilsError),
+    #[error("Failed to encode AccountStateDiff: {0}")]
+    FailedToEncodeAccountStateDiff(#[from] StateDiffError),
+    #[error("Failed to get data from: {0}")]
+    FailedToGetDataFrom(String),
 }
 
 #[derive(Debug, thiserror::Error)]
