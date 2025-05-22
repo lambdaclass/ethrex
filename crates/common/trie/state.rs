@@ -10,6 +10,19 @@ use super::db::TrieDB;
 /// All nodes are stored in the DB and no node is ever removed
 use super::{node::Node, node_hash::NodeHash};
 
+// Struct that wraps around a mutable
+// hashmap to be used as a cache for the Trie.
+//
+// I'not a fan of get/set methods, but the alternative
+// is to make the TrieState struct mutable in a lot of places
+// where not needed, potentially exposing the implementation
+// to bugs. Thus, the alternative is to use a RefCell.
+// Since RefCells can panic at runtime, I find it safer to
+// use get/set methods to properly drop the borrow of
+// the RefCell after accessing or modifying the map.
+//
+// Furthermore, if we ever want to have an eviction
+// policy, this struct can be useful for it.
 struct TrieStateCache {
     inner: std::cell::RefCell<HashMap<NodeHash, Node>>,
 }
