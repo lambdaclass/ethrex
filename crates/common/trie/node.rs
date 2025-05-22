@@ -41,7 +41,7 @@ impl From<LeafNode> for Node {
 
 impl Node {
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, state: &mut TrieState, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(&self, state: &TrieState, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
         match self {
             Node::Branch(n) => n.get(state, path),
             Node::Extension(n) => n.get(state, path),
@@ -82,7 +82,7 @@ impl Node {
     /// Only nodes with encoded len over or equal to 32 bytes are included
     pub fn get_path(
         &self,
-        state: &mut TrieState,
+        state: &TrieState,
         path: Nibbles,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {

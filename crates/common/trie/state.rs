@@ -24,24 +24,18 @@ impl TrieState {
     }
 
     /// Retrieves a node based on its hash
-    pub fn get_node(&mut self, hash: NodeHash) -> Result<Option<Node>, TrieError> {
+    pub fn get_node(&self, hash: NodeHash) -> Result<Option<Node>, TrieError> {
         // Decode the node if it is inlined
         if let NodeHash::Inline(_) = hash {
             return Ok(Some(Node::decode_raw(hash.as_ref())?));
         }
-        match self.cache.get(&hash) {
-            None => {
-                let node = self
-                    .db
-                    .get(hash)?
-                    .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
-                    .transpose()?;
-                // FIXME: Change this to Option<Node>
-                self.cache.insert(hash, node.clone().unwrap());
-                return Ok(node);
-            }
-            Some(cached_node) => return Ok(Some(cached_node.clone())),
-        }
+        if let Some(node) = self.cache.get(&hash) {
+            return Ok(Some(node.clone()));
+        };
+        self.db
+            .get(hash)?
+            .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+            .transpose()
     }
 
     /// Inserts a node

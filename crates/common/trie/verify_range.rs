@@ -65,7 +65,7 @@ pub fn verify_range(
         // We need to check that the proof confirms the non-existance of the first key
         // and that there are no more elements to the right of the first key
         let value = fill_state(&mut trie.state, root, first_key, &proof_nodes)?;
-        let has_right_element = has_right_element(root, first_key.as_bytes(), &mut trie.state)?;
+        let has_right_element = has_right_element(root, first_key.as_bytes(), &trie.state)?;
         if has_right_element || !value.is_empty() {
             return Err(TrieError::Verify(
                 "no keys returned but more are available on the trie".to_string(),
@@ -91,7 +91,7 @@ pub fn verify_range(
                 "correct proof but invalid data".to_string(),
             ));
         }
-        return has_right_element(root, first_key.as_bytes(), &mut trie.state);
+        return has_right_element(root, first_key.as_bytes(), &trie.state);
     }
 
     // Regular Case: Two edge proofs
@@ -111,7 +111,7 @@ pub fn verify_range(
         trie.insert(key.0.to_vec(), value.clone())?;
     }
     // Check for elements to the right of the range before we wipe the sate
-    let has_right_element = has_right_element(root, last_key.as_bytes(), &mut trie.state)?;
+    let has_right_element = has_right_element(root, last_key.as_bytes(), &trie.state)?;
     // Check that the hash is the one we expected (aka the trie was properly reconstructed from the edge proofs and the range)
     let hash = trie.hash()?;
     if hash != root {
@@ -189,7 +189,7 @@ fn get_child<'a>(path: &'a mut Nibbles, node: &'a Node) -> Option<NodeHash> {
 fn has_right_element(
     root_hash: H256,
     key: &[u8],
-    trie_state: &mut TrieState,
+    trie_state: &TrieState,
 ) -> Result<bool, TrieError> {
     let path = Nibbles::from_bytes(key);
     has_right_element_inner(root_hash.into(), path, trie_state)
@@ -200,7 +200,7 @@ fn has_right_element(
 fn has_right_element_inner(
     node_hash: NodeHash,
     mut path: Nibbles,
-    trie_state: &mut TrieState,
+    trie_state: &TrieState,
 ) -> Result<bool, TrieError> {
     let Ok(Some(node)) = trie_state.get_node(node_hash) else {
         return Ok(false);
