@@ -255,7 +255,8 @@ impl LEVM {
         {
             let mut account = db
                 .get_account(address)
-                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
+                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?
+                .clone(); // Not a big deal cloning here because it's an EOA.
 
             account.info.balance += increment.into();
             db.cache.insert(address, account);
