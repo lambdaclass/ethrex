@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747948625816,
+  "lastUpdate": 1747954081890,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8725,6 +8725,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 212357885815,
             "range": "± 911239814",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4c9fcfa179fb41f534e3faec1bd25926adafa266",
+          "message": "ci(core): updating hive revision (#2881)\n\n**Motivation**\n\nIn our lambdaclass/hive fork, we have updated upstream. When [that\nPR](https://github.com/lambdaclass/hive/pull/28) is merged, we should\nupdate the branch name here and test it.\n\n**Description**\n\n- Updates the hive revision\n- Also updates \"HIVE_SHALLOW_SINCE\"\n\nCloses #2760",
+          "timestamp": "2025-05-22T21:53:50Z",
+          "tree_id": "661efb1c7f5fc50738bff485277f2d818b33d71a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4c9fcfa179fb41f534e3faec1bd25926adafa266"
+        },
+        "date": 1747954078428,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 209919577170,
+            "range": "± 354279090",
             "unit": "ns/iter"
           }
         ]
