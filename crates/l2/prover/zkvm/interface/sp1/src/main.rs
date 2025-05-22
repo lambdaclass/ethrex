@@ -6,7 +6,7 @@ use ethrex_common::{types::{BYTES_PER_BLOB, blobs_bundle::blob_from_bytes}, Addr
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
 use kzg_rs::{
-    dtypes::Blob, kzg_proof::compute_challenges_and_evaluate_polynomial,
+    dtypes::Blob, kzg_proof::verify_blob_kzg_proof,
     trusted_setup::get_kzg_settings,
 };
 use std::collections::HashMap;
@@ -152,6 +152,7 @@ pub fn main() {
         panic!("invalid state diffs")
     }
 
+
     #[cfg(feature = "l2")]
     let (blob_challenge, blob_evaluation) = {
         let encoded_state_diff = state_diff
@@ -162,26 +163,11 @@ pub fn main() {
         let commitment = G1Affine::from_compressed(&blob_commitment)
             .expect("failed to deserialize blob commitment");
 
-        let (challenges, evaluations) = compute_challenges_and_evaluate_polynomial(
-            vec![blob],
-            &[commitment],
-            &get_kzg_settings(),
-        )
-        .expect("failed to compute KZG blob challenge or evaluation");
+        let blob_proof_valid = verify_blob_kzg_proof(blob, &blob_commitment, &blob_proof, &get_kzg_settings()).expect("failed to verify blob proof (neither valid or invalid proof)");
 
-        // takes little-endian bytes from the bls12_381's Scalar type
-        let mut challenge_bytes = challenges[0].to_bytes();
-        let mut evaluation_bytes = evaluations[0].to_bytes();
-
-        // convert to big-endian
-        challenge_bytes.reverse();
-        evaluation_bytes.reverse();
-
-        // from_slice() interprets bytes in big-endian
-        let challenge = H256::from_slice(&challenge_bytes);
-        let evaluation = H256::from_slice(&evaluation_bytes);
-
-        (challenge, evaluation)
+        if !blob_proof_valid {
+            panic!("invalid blob proof");
+        }
     };
 
     // Output gas for measurement purposes
