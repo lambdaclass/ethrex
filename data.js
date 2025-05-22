@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747941861455,
+  "lastUpdate": 1747945169909,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8635,6 +8635,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 213865795858,
             "range": "± 411569545",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "689e1834d99a3e8213f882f6473e4486e67b683d",
+          "message": "feat(l1): add `mempool_content` rpc endpoint (#2869)\n\n**Motivation**\nAdds an RPC method that allows reading all transactions currently in the\nmempool.\nThis endpoint was based off of Geth's `txpool_content` endpoint\n([doc](https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-txpool#txpool-content))\nand follows the same response logic & format.\nAs we have no notion of `queued` mempool transactions currenlty, this\nfield will be permanently left empty\nThe namescape and endpoint currently uses `txpool` instead of `mempool`\nfor immediate compatibility with components compatible with geth, we\nshould consider changing the name back to `mempool` to reflect our own\ntypes as this is not a standard endpoint and names differ between\nimplementations.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add `Mempool::content` method which returns all transactions\n* Add `mempool_content` rpc endpoint which returns all mempool\ntransactions grouped by sender and indexed by nonce\n* (Misc) `RpcTransaction::build` now supports optional transaction index\n& block number\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2864",
+          "timestamp": "2025-05-22T19:25:23Z",
+          "tree_id": "7fdf73b3229d752e83bf3d73518f067a4aeb438c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/689e1834d99a3e8213f882f6473e4486e67b683d"
+        },
+        "date": 1747945166194,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 213321919656,
+            "range": "± 550308900",
             "unit": "ns/iter"
           }
         ]
