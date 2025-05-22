@@ -29,7 +29,7 @@ impl MetricsGatherer {
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
     ) -> Result<Self, MetricsGathererError> {
-        let eth_client = EthClient::new(&eth_config.rpc_url);
+        let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
         Ok(Self {
             eth_client,
             common_bridge_address: watcher_config.bridge_address,

@@ -1,5 +1,5 @@
 use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
-use crate::{EthConfig, L1WatcherConfig};
+use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
@@ -17,7 +17,7 @@ use tracing::{debug, error, info, warn};
 use super::utils::random_duration;
 
 use spawned_concurrency::{
-    send_after, CallResponse, CastResponse, GenServer, GenServerHandle, GenServerInMsg,
+    send_after, CallResponse, CastResponse, GenServer, GenServerInMsg,
 };
 use spawned_rt::mpsc::Sender;
 
@@ -40,11 +40,11 @@ impl L1WatcherState {
         blockchain: Arc<Blockchain>,
         eth_config: &EthConfig,
         watcher_config: &L1WatcherConfig,
-    ) -> Self {
-        let eth_client = EthClient::new(&eth_config.rpc_url);
-        let l2_client = EthClient::new("http://localhost:1729");
+    ) -> Result<Self, L1WatcherError> {
+        let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
+        let l2_client = EthClient::new("http://localhost:1729")?;
         let last_block_fetched = U256::zero();
-        Self {
+        Ok(Self {
             store,
             blockchain,
             eth_client,
@@ -54,7 +54,7 @@ impl L1WatcherState {
             last_block_fetched,
             check_interval: watcher_config.check_interval_ms,
             l1_block_delay: watcher_config.watcher_block_delay,
-        }
+        })
     }
 }
 
@@ -73,11 +73,17 @@ pub enum OutMessage {
 pub struct L1Watcher {}
 
 impl L1Watcher {
-    pub async fn check(server: &mut GenServerHandle<L1Watcher>) -> OutMessage {
-        match server.cast(InMessage::Check).await {
-            Ok(_) => OutMessage::Done,
-            Err(_) => OutMessage::Error,
-        }
+    pub async fn spawn(store: Store, blockchain: Arc<Blockchain>, cfg: SequencerConfig) {
+        let state = L1WatcherState::new(
+            store.clone(),
+            blockchain.clone(),
+            &cfg.eth,
+            &cfg.l1_watcher,
+        ).unwrap();
+        let mut l1_watcher = L1Watcher::start(state);
+        
+        // Perform the check and suscrib a periodic Check.
+        let _ = l1_watcher.cast(InMessage::Check).await;
     }
 }
 
