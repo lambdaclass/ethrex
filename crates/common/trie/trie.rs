@@ -87,19 +87,16 @@ impl Trie {
     }
 
     /// Insert an RLP-encoded value into the trie.
-    ///
-    /// Note: This method has a different behavior in regard to non-existent trie root nodes. Normal
-    ///   behavior is to return `Err(InconsistentTrie)`, but this method will instead treat it as an
-    ///   empty trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
 
         self.root = if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
-            match self.root.get_node(self.db.as_ref())? {
-                Some(x) => x.insert(self.db.as_ref(), path, value)?.into(),
-                None => Node::from(LeafNode::new(path, value)).into(),
-            }
+            self.root
+                .get_node(self.db.as_ref())?
+                .ok_or(TrieError::InconsistentTree)?
+                .insert(self.db.as_ref(), path, value)?
+                .into()
         } else {
             // If the trie is empty, just add a leaf.
             Node::from(LeafNode::new(path, value)).into()
@@ -187,16 +184,20 @@ impl Trie {
     /// Obtains all encoded nodes traversed until reaching the node where every path is stored.
     /// The list doesn't include the root node, this is returned separately.
     /// Will still be constructed even if some path is not stored in the trie.
+    ///
+    /// Note: This method has a different behavior in regard to non-existent trie root nodes. Normal
+    ///   behavior is to return `Err(InconsistentTrie)`, but this method will return
+    ///   `Ok((None, Vec::new()))` instead.
     pub fn get_proofs(
         &self,
         paths: &[PathRLP],
     ) -> Result<(Option<NodeRLP>, Vec<NodeRLP>), TrieError> {
         if self.root.is_valid() {
-            let encoded_root = self
-                .root
-                .get_node(self.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?
-                .encode_raw();
+            let encoded_root = match self.root.get_node(self.db.as_ref())? {
+                Some(x) => x,
+                None => return Ok((None, Vec::new())),
+            }
+            .encode_raw();
 
             let mut node_path = HashSet::new();
             for path in paths {
