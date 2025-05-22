@@ -170,7 +170,8 @@ impl SnapshotTree {
                 .layers
                 .write()
                 .map_err(|error| SnapshotError::LockError(error.to_string()))?;
-            let base = self.save_diff(Self::flatten_diff(head_block_hash, &mut layers)?)?;
+            let base =
+                self.save_diff(Self::flatten_diff(head_block_hash, &mut layers)?, &layers)?;
             layers.clear();
             layers.insert(head_block_hash, Layer::DiskLayer(base));
             return Ok(());
@@ -246,25 +247,25 @@ impl SnapshotTree {
 
         if let Some(base) = new_disk_layer {
             fn rebloom(
-                root: H256,
+                block_hash: H256,
                 layers: &HashMap<H256, Layer>,
                 children: &HashMap<H256, Vec<H256>>,
                 base: Arc<DiskLayer>,
                 parent_diffed: Option<Bloom>,
             ) -> Result<(), SnapshotError> {
-                if let Some(layer) = layers.get(&root) {
+                if let Some(layer) = layers.get(&block_hash) {
                     let diffed = match layer {
                         Layer::DiskLayer(_) => None,
                         Layer::DiffLayer(layer) => {
                             let mut layer = layer
                                 .write()
                                 .map_err(|error| SnapshotError::LockError(error.to_string()))?;
-                            layer.rebloom(base.clone(), parent_diffed);
+                            layer.rebloom(base.block_hash, parent_diffed);
                             Some(layer.diffed)
                         }
                     };
 
-                    if let Some(childs) = children.get(&root) {
+                    if let Some(childs) = children.get(&block_hash) {
                         for child in childs {
                             rebloom(*child, layers, children, base.clone(), diffed)?;
                         }
@@ -276,7 +277,7 @@ impl SnapshotTree {
                 "SnapshotTree: changed disk layer block hash: {}",
                 base.state_root
             );
-            rebloom(base.state_root, &layers, &children, base, None)?;
+            rebloom(base.block_hash, &layers, &children, base, None)?;
         }
 
         info!(
@@ -348,7 +349,7 @@ impl SnapshotTree {
         }
 
         // Persist the bottom most layer
-        let base = self.save_diff(Layer::DiffLayer(parent))?;
+        let base = self.save_diff(Layer::DiffLayer(parent), layers)?;
         layers.insert(base.block_hash, Layer::DiskLayer(base.clone()));
         let mut diff_value = diff
             .write()
@@ -363,7 +364,11 @@ impl SnapshotTree {
     /// Returning a new disk layer whose root is the diff root.
     ///
     /// Returns Err if the current disk layer is already marked stale.
-    fn save_diff(&self, diff: Layer) -> Result<Arc<DiskLayer>, SnapshotError> {
+    fn save_diff(
+        &self,
+        diff: Layer,
+        layers: &HashMap<H256, Layer>,
+    ) -> Result<Arc<DiskLayer>, SnapshotError> {
         // Note: Interacting with the db should be made through non-async methods, converting this method
         // into an async one, will give problems, mainly with holding RwLocks across await points.
         //
@@ -378,7 +383,10 @@ impl SnapshotTree {
         let diff_value = diff
             .read()
             .map_err(|error| SnapshotError::LockError(error.to_string()))?;
-        let prev_disk = diff_value.origin();
+        let prev_disk = match &layers[&diff_value.origin()] {
+            Layer::DiskLayer(disk_layer) => disk_layer.clone(),
+            Layer::DiffLayer(_) => unreachable!(),
+        };
 
         if prev_disk.mark_stale() {
             return Err(SnapshotError::StaleSnapshot);
@@ -569,7 +577,7 @@ impl SnapshotTree {
 
         let mut layer = DiffLayer::new(
             parent_value.parent(),
-            parent_value.origin().clone(),
+            parent_value.origin(),
             layer_value.block_hash(),
             layer_value.root(),
             parent_value.accounts(),

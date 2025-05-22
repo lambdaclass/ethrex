@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use ethrex_common::{
     types::{AccountState, BlockHash},
@@ -6,14 +6,14 @@ use ethrex_common::{
 };
 
 use super::{
-    disklayer::DiskLayer,
     error::SnapshotError,
     tree::{Layer, Layers},
 };
 
 #[derive(Clone, Debug)]
 pub struct DiffLayer {
-    origin: Arc<DiskLayer>,
+    // Origin (disk layer) block hash
+    origin: H256,
     /// parent block hash
     parent: H256,
     block_hash: BlockHash,
@@ -28,14 +28,14 @@ pub struct DiffLayer {
 impl DiffLayer {
     pub fn new(
         parent: H256,
-        origin: Arc<DiskLayer>,
+        origin: H256,
         block_hash: BlockHash,
         state_root: H256,
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     ) -> Self {
         DiffLayer {
-            origin: origin.clone(),
+            origin,
             parent,
             block_hash,
             state_root,
@@ -49,7 +49,7 @@ impl DiffLayer {
 
 impl DiffLayer {
     /// Recreates the bloom filter of this layer, either using the parent diff filter as base or a new one.
-    pub fn rebloom(&mut self, origin: Arc<DiskLayer>, parent_diffed: Option<Bloom>) {
+    pub fn rebloom(&mut self, origin: H256, parent_diffed: Option<Bloom>) {
         // Set the new origin that triggered a rebloom.
         self.origin = origin;
 
@@ -97,7 +97,10 @@ impl DiffLayer {
 
         // If bloom misses we can skip diff layers
         if !hit {
-            return self.origin.get_account(hash);
+            return match &layers[&self.origin] {
+                Layer::DiskLayer(disk_layer) => disk_layer.get_account(hash),
+                Layer::DiffLayer(_) => unreachable!(),
+            };
         }
 
         // Start traversing layers.
@@ -129,7 +132,10 @@ impl DiffLayer {
 
         // If bloom misses we can skip diff layers
         if !hit {
-            return self.origin.get_storage(account_hash, storage_hash);
+            return match &layers[&self.origin] {
+                Layer::DiskLayer(disk_layer) => disk_layer.get_storage(account_hash, storage_hash),
+                Layer::DiffLayer(_) => unreachable!(),
+            };
         }
 
         // Start traversing layers.
@@ -159,20 +165,20 @@ impl DiffLayer {
     ) -> DiffLayer {
         let mut layer = DiffLayer::new(
             self.block_hash,
-            self.origin.clone(),
+            self.origin,
             block,
             state_root,
             accounts,
             storage,
         );
 
-        layer.rebloom(self.origin.clone(), Some(self.diffed));
+        layer.rebloom(self.origin, Some(self.diffed));
 
         layer
     }
 
-    pub fn origin(&self) -> Arc<DiskLayer> {
-        self.origin.clone()
+    pub fn origin(&self) -> H256 {
+        self.origin
     }
 
     pub fn diffed(&self) -> Bloom {

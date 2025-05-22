@@ -25,7 +25,7 @@ use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -1173,6 +1173,8 @@ impl Store {
         block: Block,
         account_updates: Vec<AccountUpdate>,
     ) -> Result<(), SnapshotError> {
+        use tracing::warn;
+
         let store = self.clone();
 
         let hash = block.hash();
@@ -1230,10 +1232,14 @@ impl Store {
                 hash, parent_hash
             );
 
-            // Use this point to cap the amount of layers if needs be
             tokio::task::spawn_blocking(move || {
+                // Use this point to cap the amount of layers if needs be
                 if let Err(error) = store.snapshots.cap(hash, 128) {
-                    error!("Error applying cap to snapshots: {}", error);
+                    warn!(
+                        "Couldn't apply cap to snapshots: {} (current layers {})",
+                        error,
+                        store.snapshots.len()
+                    );
                 }
             });
         }

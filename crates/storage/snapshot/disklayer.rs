@@ -61,6 +61,10 @@ impl DiskLayer {
     }
 
     pub fn get_account(&self, hash: H256) -> Result<Option<AccountState>, SnapshotError> {
+        if self.stale() {
+            return Err(SnapshotError::StaleSnapshot);
+        }
+
         // Try to get the account from the cache.
         if let Some(value) = self.cache.accounts.get(&hash) {
             return Ok(value.clone());
@@ -79,6 +83,10 @@ impl DiskLayer {
         account_hash: H256,
         storage_hash: H256,
     ) -> Result<Option<U256>, SnapshotError> {
+        if self.stale() {
+            return Err(SnapshotError::StaleSnapshot);
+        }
+
         // Look into the cache first.
         if let Some(value) = self.cache.storages.get(&(account_hash, storage_hash)) {
             return Ok(value);
@@ -107,14 +115,14 @@ impl DiskLayer {
     ) -> DiffLayer {
         let mut layer = DiffLayer::new(
             self.block_hash,
-            self.clone(),
+            self.block_hash,
             block_hash,
             state_root,
             accounts,
             storage,
         );
 
-        layer.rebloom(self.clone(), None);
+        layer.rebloom(self.block_hash, None);
 
         layer
     }
