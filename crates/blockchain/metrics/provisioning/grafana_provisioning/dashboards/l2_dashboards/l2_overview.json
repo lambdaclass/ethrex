@@ -808,6 +808,23 @@
                     "range": true,
                     "refId": "A",
                     "useBackend": false
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prom-001"
+                    },
+                    "disableTextWrap": false,
+                    "editorMode": "builder",
+                    "expr": "transactions_total",
+                    "fullMetaSearch": false,
+                    "hide": false,
+                    "includeNullMetadata": true,
+                    "instant": false,
+                    "legendFormat": "transactionsTotal",
+                    "range": true,
+                    "refId": "B",
+                    "useBackend": false
                 }
             ],
             "title": "Committed Operations",
