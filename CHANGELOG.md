@@ -5,6 +5,7 @@
 ### 2025-05-22
 
 - Add block snapshots with diff layers. [2664](https://github.com/lambdaclass/ethrex/pull/2664)
+- Make disk layer in snapshots use the database. [2848](https://github.com/lambdaclass/ethrex/pull/2848)
 
 ### 2025-05-20
 
