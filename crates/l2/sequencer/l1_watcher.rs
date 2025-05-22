@@ -16,9 +16,7 @@ use tracing::{debug, error, info, warn};
 
 use super::utils::random_duration;
 
-use spawned_concurrency::{
-    send_after, CallResponse, CastResponse, GenServer, GenServerInMsg,
-};
+use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
 use spawned_rt::mpsc::Sender;
 
 #[derive(Clone)]
@@ -74,16 +72,14 @@ pub struct L1Watcher {}
 
 impl L1Watcher {
     pub async fn spawn(store: Store, blockchain: Arc<Blockchain>, cfg: SequencerConfig) {
-        let state = L1WatcherState::new(
-            store.clone(),
-            blockchain.clone(),
-            &cfg.eth,
-            &cfg.l1_watcher,
-        ).unwrap();
-        let mut l1_watcher = L1Watcher::start(state);
-        
-        // Perform the check and suscrib a periodic Check.
-        let _ = l1_watcher.cast(InMessage::Check).await;
+        match L1WatcherState::new(store.clone(), blockchain.clone(), &cfg.eth, &cfg.l1_watcher) {
+            Ok(state) => {
+                let mut l1_watcher = L1Watcher::start(state);
+                // Perform the check and suscrib a periodic Check.
+                let _ = l1_watcher.cast(InMessage::Check).await;
+            }
+            Err(error) => error!("L1 Watcher Error: {}", error),
+        };
     }
 }
 
