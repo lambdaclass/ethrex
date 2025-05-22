@@ -102,8 +102,8 @@ impl DiskLayer {
         self: Arc<Self>, // import self is like this
         block_hash: BlockHash,
         state_root: H256,
-        accounts: HashMap<H256, AccountState>,
-        storage: HashMap<H256, HashMap<H256, U256>>,
+        accounts: HashMap<H256, Option<AccountState>>,
+        storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     ) -> DiffLayer {
         let mut layer = DiffLayer::new(
             self.block_hash,

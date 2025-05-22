@@ -19,8 +19,8 @@ pub struct DiffLayer {
     block_hash: BlockHash,
     state_root: H256,
     stale: bool,
-    accounts: HashMap<H256, AccountState>, // None if deleted
-    storage: HashMap<H256, HashMap<H256, U256>>,
+    accounts: HashMap<H256, Option<AccountState>>, // None if deleted
+    storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     /// tracks all diffed items up to disk layer
     pub(crate) diffed: Bloom,
 }
@@ -31,8 +31,8 @@ impl DiffLayer {
         origin: Arc<DiskLayer>,
         block_hash: BlockHash,
         state_root: H256,
-        accounts: HashMap<H256, AccountState>,
-        storage: HashMap<H256, HashMap<H256, U256>>,
+        accounts: HashMap<H256, Option<AccountState>>,
+        storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     ) -> Self {
         DiffLayer {
             origin: origin.clone(),
@@ -119,7 +119,7 @@ impl DiffLayer {
             .get(&account_hash)
             .and_then(|x| x.get(&storage_hash))
         {
-            return Ok(Some(*value));
+            return Ok(*value);
         }
 
         let bloom_hash = account_hash ^ storage_hash;
@@ -154,8 +154,8 @@ impl DiffLayer {
         &self,
         block: BlockHash,
         state_root: H256,
-        accounts: HashMap<H256, AccountState>,
-        storage: HashMap<H256, HashMap<H256, U256>>,
+        accounts: HashMap<H256, Option<AccountState>>,
+        storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     ) -> DiffLayer {
         let mut layer = DiffLayer::new(
             self.block_hash,
@@ -191,7 +191,7 @@ impl DiffLayer {
 
         // If it's in this layer, return it.
         if let Some(value) = self.accounts.get(&hash) {
-            return Ok(Some(value.clone()));
+            return Ok(value.clone());
         }
 
         // delegate to parent
@@ -220,7 +220,7 @@ impl DiffLayer {
             .get(&account_hash)
             .and_then(|x| x.get(&storage_hash))
         {
-            return Ok(Some(*value));
+            return Ok(*value);
         }
 
         // delegate to parent
@@ -233,22 +233,22 @@ impl DiffLayer {
         }
     }
 
-    pub fn add_accounts(&mut self, accounts: HashMap<H256, AccountState>) {
+    pub fn add_accounts(&mut self, accounts: HashMap<H256, Option<AccountState>>) {
         self.accounts.extend(accounts);
     }
 
-    pub fn add_storage(&mut self, storage: HashMap<H256, HashMap<H256, U256>>) {
+    pub fn add_storage(&mut self, storage: HashMap<H256, HashMap<H256, Option<U256>>>) {
         for (address, st) in storage.iter() {
             let entry = self.storage.entry(*address).or_default();
             entry.extend(st);
         }
     }
 
-    pub fn accounts(&self) -> HashMap<H256, AccountState> {
+    pub fn accounts(&self) -> HashMap<H256, Option<AccountState>> {
         self.accounts.clone()
     }
 
-    pub fn storage(&self) -> HashMap<H256, HashMap<H256, U256>> {
+    pub fn storage(&self) -> HashMap<H256, HashMap<H256, Option<U256>>> {
         self.storage.clone()
     }
 

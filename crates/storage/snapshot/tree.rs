@@ -106,8 +106,8 @@ impl SnapshotTree {
         block_hash: H256,
         block_state_root: H256,
         parent_block_hash: H256,
-        accounts: HashMap<H256, AccountState>,
-        storage: HashMap<H256, HashMap<H256, U256>>,
+        accounts: HashMap<H256, Option<AccountState>>,
+        storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     ) -> Result<(), SnapshotError> {
         info!("Creating new diff snapshot");
         if block_hash == parent_block_hash {
@@ -391,9 +391,15 @@ impl SnapshotTree {
         let mut account_states = Vec::with_capacity(accounts.len());
 
         for (hash, acc) in accounts.iter() {
-            account_hashes.push(*hash);
-            account_states.push(acc.clone());
-            prev_disk.cache.accounts.insert(*hash, Some(acc.clone()));
+            if let Some(acc) = acc {
+                // TODO: Important, if acc is None it means it comes from a account update
+                // with the removed flag, should we remove it from db too?
+                account_hashes.push(*hash);
+                account_states.push(acc.clone());
+                prev_disk.cache.accounts.insert(*hash, Some(acc.clone()));
+            } else {
+                prev_disk.cache.accounts.remove(hash);
+            }
         }
 
         prev_disk
@@ -411,12 +417,20 @@ impl SnapshotTree {
             let mut keys = Vec::new();
             let mut values = Vec::new();
             for (storage_hash, value) in storage.iter() {
-                values.push(*value);
-                keys.push(*storage_hash);
-                prev_disk
-                    .cache
-                    .storages
-                    .insert((*account_hash, *storage_hash), Some(*value));
+                // TODO: Important, if acc is None it means it had a value of zero should we remove it from db too?
+                if let Some(value) = &value {
+                    values.push(*value);
+                    keys.push(*storage_hash);
+                    prev_disk
+                        .cache
+                        .storages
+                        .insert((*account_hash, *storage_hash), Some(*value));
+                } else {
+                    prev_disk
+                        .cache
+                        .storages
+                        .remove(&(*account_hash, *storage_hash));
+                }
             }
             storage_values.push(values);
             storage_keys.push(keys);
@@ -613,7 +627,7 @@ mod tests {
             root,
             root,
             H256::zero(),
-            HashMap::from([(account_hash, account_state.clone())]),
+            HashMap::from([(account_hash, Some(account_state.clone()))]),
             HashMap::new(),
         )
         .unwrap();
@@ -654,7 +668,7 @@ mod tests {
             root1,
             root1,
             H256::zero(),
-            HashMap::from([(account1_hash, account1_state.clone())]),
+            HashMap::from([(account1_hash, Some(account1_state.clone()))]),
             HashMap::new(),
         )
         .unwrap();
@@ -664,7 +678,7 @@ mod tests {
             root2,
             root2,
             root1,
-            HashMap::from([(account2_hash, account2_state.clone())]),
+            HashMap::from([(account2_hash, Some(account2_state.clone()))]),
             HashMap::new(),
         )
         .unwrap();
@@ -705,7 +719,7 @@ mod tests {
             root1,
             root1,
             H256::zero(),
-            HashMap::from([(account_hash, account_state1.clone())]),
+            HashMap::from([(account_hash, Some(account_state1.clone()))]),
             HashMap::new(),
         )
         .unwrap();
@@ -715,7 +729,7 @@ mod tests {
             root2,
             root2,
             root1,
-            HashMap::from([(account_hash, account_state2.clone())]),
+            HashMap::from([(account_hash, Some(account_state2.clone()))]),
             HashMap::new(),
         )
         .unwrap();
@@ -761,10 +775,10 @@ mod tests {
             root1,
             root1,
             H256::zero(),
-            HashMap::from([(account_hash, account_state1.clone())]),
+            HashMap::from([(account_hash, Some(account_state1.clone()))]),
             HashMap::from([(account_hash, {
-                let mut map: HashMap<H256, U256> = HashMap::new();
-                map.insert(H256::zero(), U256::one());
+                let mut map: HashMap<H256, Option<U256>> = HashMap::new();
+                map.insert(H256::zero(), Some(U256::one()));
                 map
             })]),
         )
@@ -774,10 +788,10 @@ mod tests {
             root2,
             root2,
             root1,
-            HashMap::from([(account_hash, account_state2.clone())]),
+            HashMap::from([(account_hash, Some(account_state2.clone()))]),
             HashMap::from([(account_hash, {
-                let mut map: HashMap<H256, U256> = HashMap::new();
-                map.insert(H256::zero(), U256::zero());
+                let mut map: HashMap<H256, Option<U256>> = HashMap::new();
+                map.insert(H256::zero(), Some(U256::zero()));
                 map
             })]),
         )
@@ -837,10 +851,10 @@ mod tests {
             root1,
             root1,
             H256::zero(),
-            HashMap::from([(account_hash, account_state1.clone())]),
+            HashMap::from([(account_hash, Some(account_state1.clone()))]),
             HashMap::from([(account_hash, {
-                let mut map: HashMap<H256, U256> = HashMap::new();
-                map.insert(H256::zero(), U256::one());
+                let mut map: HashMap<H256, Option<U256>> = HashMap::new();
+                map.insert(H256::zero(), Some(U256::one()));
                 map
             })]),
         )
@@ -851,10 +865,10 @@ mod tests {
             root2,
             root2,
             root1,
-            HashMap::from([(account_hash, account_state2.clone())]),
+            HashMap::from([(account_hash, Some(account_state2.clone()))]),
             HashMap::from([(account_hash, {
-                let mut map: HashMap<H256, U256> = HashMap::new();
-                map.insert(H256::zero(), U256::zero());
+                let mut map: HashMap<H256, Option<U256>> = HashMap::new();
+                map.insert(H256::zero(), Some(U256::zero()));
                 map
             })]),
         )

@@ -1198,7 +1198,7 @@ impl Store {
                 let mut accounts = HashMap::new();
                 let state_trie = store.open_state_trie(state_root);
 
-                let mut storage: HashMap<H256, HashMap<H256, U256>> = HashMap::new();
+                let mut storage: HashMap<H256, HashMap<H256, Option<U256>>> = HashMap::new();
 
                 for update in account_updates.iter() {
                     let hashed_address = hash_address_fixed(&update.address);
@@ -1208,15 +1208,18 @@ impl Store {
                             Some(encoded_state) => AccountState::decode(&encoded_state).unwrap(),
                             None => AccountState::default(),
                         };
-                        accounts.insert(hashed_address, account_state.clone());
+                        accounts.insert(hashed_address, Some(account_state.clone()));
 
                         for (storage_key, storage_value) in &update.added_storage {
-                            // TODO: if its zero what should we do here?
+                            let slots = storage.entry(hashed_address).or_default();
                             if !storage_value.is_zero() {
-                                let slots = storage.entry(hashed_address).or_default();
-                                slots.insert(*storage_key, *storage_value);
+                                slots.insert(*storage_key, Some(*storage_value));
+                            } else {
+                                slots.insert(*storage_key, None);
                             }
                         }
+                    } else {
+                        accounts.insert(hashed_address, None);
                     }
                 }
 
