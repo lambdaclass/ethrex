@@ -1,6 +1,4 @@
-use prometheus::{
-    Encoder, Gauge, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder,
-};
+use prometheus::{Encoder, Gauge, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -9,7 +7,7 @@ pub static METRICS_L2: LazyLock<MetricsL2> = LazyLock::new(MetricsL2::default);
 
 pub struct MetricsL2 {
     status_tracker: IntGaugeVec,
-    operations_tracker: IntCounterVec,
+    operations_tracker: IntGaugeVec,
     gas_price: IntGauge,
     blob_usage: Gauge,
 }
@@ -31,7 +29,7 @@ impl MetricsL2 {
                 &["block_type"],
             )
             .unwrap(),
-            operations_tracker: IntCounterVec::new(
+            operations_tracker: IntGaugeVec::new(
                 Opts::new(
                     "l2_operations_tracker",
                     "Keeps track of the L2 deposits & withdrawals",
@@ -68,17 +66,17 @@ impl MetricsL2 {
         Ok(())
     }
 
-    pub fn inc_operation_by_type(
+    pub fn set_operation_by_type(
         &self,
         operation_type: MetricsL2OperationType,
-        inc_amount: usize,
+        amount: u64,
     ) -> Result<(), MetricsError> {
         let builder = self
             .operations_tracker
             .get_metric_with_label_values(&[operation_type.to_str()])
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
-        builder.inc_by(inc_amount.try_into()?);
+        builder.set(amount.try_into()?);
 
         Ok(())
     }

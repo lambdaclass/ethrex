@@ -23,7 +23,7 @@ use ethrex_l2_sdk::{
 };
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_l2::{MetricsL2BlockType, MetricsL2OperationType, METRICS_L2};
+use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};
 use ethrex_rpc::{
     clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
     utils::get_withdrawal_hash,
@@ -204,6 +204,8 @@ impl Committer {
         let mut deposit_logs_hashes = vec![];
         let mut new_state_root = H256::default();
 
+        #[cfg(feature = "metrics")]
+        let mut tx_count = 0_u64;
         info!("Preparing state diff from block {first_block_of_batch}");
 
         loop {
@@ -238,6 +240,13 @@ impl Committer {
                 txs_and_receipts.push((tx.clone(), receipt));
             }
 
+            metrics!(
+                tx_count += txs_and_receipts
+                    .len()
+                    .try_into()
+                    .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
+                    .unwrap_or(0)
+            );
             // Get block withdrawals and deposits
             let withdrawals = self.get_block_withdrawals(&txs_and_receipts)?;
             let deposits = self.get_block_deposits(&txs_and_receipts);
@@ -321,22 +330,18 @@ impl Committer {
             }
         }
 
-        metrics!(
-            let _ = METRICS_L2
-                .inc_operation_by_type(MetricsL2OperationType::Deposits, deposit_logs_hashes.len())
-                .inspect_err(|e| tracing::error!(
-                    "Failed to increment deposits metric: {}",
-                    e.to_string()
-                ));
-        );
-        metrics!(
-            let _ = METRICS_L2
-                .inc_operation_by_type(MetricsL2OperationType::Withdrawals, withdrawal_hashes.len())
-                .inspect_err(|e| tracing::error!(
-                    "Failed to increment withdrawals metric: {}",
-                    e.to_string()
-                ));
-        );
+        metrics!(if let (Ok(deposits_count), Ok(withdrawals_count)) = (
+            deposit_logs_hashes.len().try_into(),
+            withdrawal_hashes.len().try_into()
+        ) {
+            let _ = self
+                .rollup_store
+                .update_operations_count(tx_count, deposits_count, withdrawals_count)
+                .await
+                .inspect_err(|e| {
+                    tracing::error!("Failed to update operations metric: {}", e.to_string())
+                });
+        });
 
         let deposit_logs_hash = self.get_deposit_hash(deposit_logs_hashes)?;
         Ok((

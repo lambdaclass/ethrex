@@ -163,11 +163,6 @@ pub async fn fill_transactions(
             continue;
         }
 
-        // Increment the total transaction counter
-        // CHECK: do we want it here to count every processed transaction
-        // or we want it before the return?
-        metrics!(METRICS_TX.inc_tx());
-
         let previous_context = context.clone();
 
         // Execute tx

@@ -4,7 +4,8 @@ use crate::{
 };
 use ::ethrex_storage_rollup::StoreRollup;
 use ethereum_types::Address;
-use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};
+use ethrex_metrics::metrics_l2::{MetricsL2BlockType, MetricsL2OperationType, METRICS_L2};
+use ethrex_metrics::metrics_transactions::METRICS_TX;
 use ethrex_rpc::clients::eth::EthClient;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -77,6 +78,18 @@ impl MetricsGatherer {
                         *last_block,
                     )?;
                 }
+            }
+
+            if let Ok(operations_metrics) = self.rollup_store.get_operations_count().await {
+                let (transactions, deposits, withdrawals) = (
+                    operations_metrics[0],
+                    operations_metrics[1],
+                    operations_metrics[2],
+                );
+                METRICS_L2.set_operation_by_type(MetricsL2OperationType::Deposits, deposits)?;
+                METRICS_L2
+                    .set_operation_by_type(MetricsL2OperationType::Withdrawals, withdrawals)?;
+                METRICS_TX.set_tx_count(transactions)?;
             }
 
             METRICS_L2.set_block_type_and_block_number(

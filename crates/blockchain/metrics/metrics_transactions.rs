@@ -1,6 +1,6 @@
 use ethrex_common::types::TxType;
 use prometheus::{
-    Encoder, Gauge, IntCounter, IntCounterVec, IntGaugeVec, Opts, Registry, TextEncoder,
+    Encoder, Gauge, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder,
 };
 use std::sync::LazyLock;
 
@@ -11,7 +11,7 @@ pub static METRICS_TX: LazyLock<MetricsTx> = LazyLock::new(MetricsTx::default);
 #[derive(Debug, Clone)]
 pub struct MetricsTx {
     pub transactions_tracker: IntCounterVec,
-    pub transactions_total: IntCounter,
+    pub transactions_total: IntGauge,
     pub mempool_tx_count: IntGaugeVec,
     pub transactions_per_second: Gauge,
 }
@@ -34,7 +34,7 @@ impl MetricsTx {
             )
             .unwrap(),
 
-            transactions_total: IntCounter::new(
+            transactions_total: IntGauge::new(
                 "transactions_total",
                 "Keeps track of all transactions",
             )
@@ -70,8 +70,9 @@ impl MetricsTx {
         txs_builder.inc();
     }
 
-    pub fn inc_tx(&self) {
-        self.transactions_total.inc();
+    pub fn set_tx_count(&self, count: u64) -> Result<(), MetricsError> {
+        self.transactions_total.set(count.try_into()?);
+        Ok(())
     }
 
     pub fn set_mempool_tx_count(&self, count: usize, is_blob: bool) -> Result<(), MetricsError> {

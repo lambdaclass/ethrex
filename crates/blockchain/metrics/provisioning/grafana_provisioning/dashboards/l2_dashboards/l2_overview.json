@@ -18,7 +18,7 @@
     "editable": true,
     "fiscalYearStartMonth": 0,
     "graphTooltip": 0,
-    "id": 3,
+    "id": 1,
     "links": [],
     "panels": [
         {
@@ -810,7 +810,7 @@
                     "useBackend": false
                 }
             ],
-            "title": "",
+            "title": "Committed Operations",
             "type": "stat"
         },
         {
