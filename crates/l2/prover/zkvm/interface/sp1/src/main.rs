@@ -164,8 +164,8 @@ pub fn main() {
 
         let blob_proof_valid = KzgProof::verify_blob_kzg_proof(
             blob,
-            &blob_commitment.into(),
-            &blob_proof.into(),
+            &Bytes48::from_slice(&blob_commitment),
+            &Bytes48::from_slice(&blob_proof),
             &get_kzg_settings(),
         )
         .expect("failed to verify blob proof (neither valid or invalid proof)");
