@@ -43,7 +43,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::info;
+use tracing::debug;
 
 use super::{
     eth::transactions::NewPooledTransactionHashes, p2p::DisconnectReason, utils::log_peer_warn,
@@ -193,7 +193,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         self.send(Message::Disconnect(DisconnectMessage { reason }))
             .await
             .unwrap_or_else(|_| {
-                log_peer_error(
+                log_peer_debug(
                     &self.node,
                     &format!("Could not send Disconnect message: ({:?}).", reason),
                 );
@@ -206,7 +206,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         error: RLPxError,
         table: Arc<Mutex<crate::kademlia::KademliaTable>>,
     ) {
-        log_peer_error(&self.node, &format!("{error_text}: ({error})"));
+        log_peer_debug(&self.node, &format!("{error_text}: ({error})"));
 
         // Send disconnect message only if error is different than RLPxError::DisconnectRequested
         // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
@@ -224,7 +224,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             _ => {
                 let remote_public_key = self.node.public_key;
-                log_peer_error(
+                log_peer_debug(
                     &self.node,
                     &format!("{error_text}: ({error}), discarding peer {remote_public_key}"),
                 );
@@ -305,11 +305,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 if negotiated_eth_version == 0 {
                     return Err(RLPxError::NoMatchingCapabilities());
                 }
-                info!("Negotatied eth version: eth/{}", negotiated_eth_version);
+                debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
                 self.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
 
                 if negotiated_snap_version != 0 {
-                    info!("Negotatied snap version: snap/{}", negotiated_snap_version);
+                    debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
                     self.negotiated_snap_capability =
                         Some(Capability::snap(negotiated_snap_version));
                 }
