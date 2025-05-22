@@ -87,7 +87,11 @@ impl MetricsGatherer {
                 MetricsL2BlockType::LastVerifiedBatch,
                 last_verified_batch,
             )?;
-            METRICS_L2.set_gas_price(gas_price.try_into().unwrap());
+            METRICS_L2.set_gas_price(
+                gas_price
+                    .try_into()
+                    .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,
+            );
 
             debug!("L2 Metrics Gathered");
             sleep(self.check_interval).await;
