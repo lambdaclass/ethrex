@@ -74,7 +74,7 @@ async fn main() -> Result<(), DeployerError> {
     .await?;
 
     if opts.deposit_rich {
-        make_deposits(bridge_address, &eth_client, &opts).await?;
+        let _ = make_deposits(bridge_address, &eth_client, &opts).await;
     }
 
     write_contract_addresses_to_env(
