@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747939941856,
+  "lastUpdate": 1747941861455,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8605,6 +8605,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210622538381,
             "range": "± 625186045",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "90105443+DiegoCivi@users.noreply.github.com",
+            "name": "DiegoC",
+            "username": "DiegoCivi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e4dd54a99730972916d45e30f91a960f05be57ed",
+          "message": "refactor(l1): add hiveview creation when running hive tests (#2883)\n\n**Motivation**\n\nRun the hiveview as default when running hive tests for a better\nvisualization\n\n**Description**\n\nNew makefile target that builds and executes the hiveview with the logs\ncreated when running hive tests\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-05-22T18:30:06Z",
+          "tree_id": "80b1403e1be01e3578533bf335d7913cf90230af",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e4dd54a99730972916d45e30f91a960f05be57ed"
+        },
+        "date": 1747941858430,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 213865795858,
+            "range": "± 411569545",
             "unit": "ns/iter"
           }
         ]
