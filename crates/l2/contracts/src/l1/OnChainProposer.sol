@@ -91,6 +91,7 @@ contract OnChainProposer is
     /// @dev It sets the bridge address.
     /// @param _validium initialize the contract in validium mode.
     /// @param owner the address of the owner who can perform upgrades.
+    /// @param alignedProofAggregator the address of the alignedProofAggregatorService contract.
     /// @param r0verifier the address of the risc0 groth16 verifier.
     /// @param sp1verifier the address of the sp1 groth16 verifier.
     function initialize(
