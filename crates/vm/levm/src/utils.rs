@@ -394,10 +394,7 @@ impl<'a> VM<'a> {
                 continue;
             };
 
-            // 4. Add authority to accessed_addresses (as defined in EIP-2929).
-            let (authority_account, _address_was_cold) = self
-                .db
-                .access_account(&mut self.substate, authority_address)?;
+            let authority_account = self.db.get_account(authority_address)?;
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated =
@@ -442,6 +439,9 @@ impl<'a> VM<'a> {
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
+
+            // 4. Touch account (at the end so that we only touch it if everything goes right)
+            self.substate.touched_accounts.insert(authority_address);
         }
 
         self.substate.refunded_gas = refunded_gas;
