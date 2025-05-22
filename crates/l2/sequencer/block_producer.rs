@@ -27,6 +27,8 @@ use super::{
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_transactions::METRICS_TX;
 
 pub struct BlockProducer {
     block_time_ms: u64,
@@ -156,6 +158,9 @@ impl BlockProducer {
             .inspect_err(|e| {
                 tracing::error!("Failed to set metric: block_number {}", e.to_string())
             });
+            #[allow(clippy::as_conversions)]
+            let tps = block.body.transactions.len() as f64 / (self.block_time_ms as f64 / 1000_f64);
+            METRICS_TX.set_transactions_per_second(tps);
         );
 
         Ok(())

@@ -1,5 +1,7 @@
 use ethrex_common::types::TxType;
-use prometheus::{Encoder, IntCounter, IntCounterVec, IntGaugeVec, Opts, Registry, TextEncoder};
+use prometheus::{
+    Encoder, Gauge, IntCounter, IntCounterVec, IntGaugeVec, Opts, Registry, TextEncoder,
+};
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -11,6 +13,7 @@ pub struct MetricsTx {
     pub transactions_tracker: IntCounterVec,
     pub transactions_total: IntCounter,
     pub mempool_tx_count: IntGaugeVec,
+    pub transactions_per_second: Gauge,
 }
 
 impl Default for MetricsTx {
@@ -42,6 +45,11 @@ impl MetricsTx {
                     "Keeps track of the amount of txs on the mempool",
                 ),
                 &["type"],
+            )
+            .unwrap(),
+            transactions_per_second: Gauge::new(
+                "transactions_per_second",
+                "Keeps track of the TPS",
             )
             .unwrap(),
         }
@@ -79,6 +87,10 @@ impl MetricsTx {
         Ok(())
     }
 
+    pub fn set_transactions_per_second(&self, tps: f64) {
+        self.transactions_per_second.set(tps);
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
@@ -87,6 +99,8 @@ impl MetricsTx {
         r.register(Box::new(self.transactions_tracker.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.mempool_tx_count.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.transactions_per_second.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
