@@ -14,10 +14,10 @@ use super::{BlockHash, BlockHeader, BlockNumber, ChainConfig};
 // See https://github.com/ethereum/go-ethereum/blob/530adfc8e3ef9c8b6356facecdec10b30fb81d7d/core/forkid/forkid.go#L51
 const TIMESTAMP_THRESHOLD: u64 = 1438269973;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct ForkId {
-    fork_hash: H32,
-    fork_next: BlockNumber,
+    pub fork_hash: H32,
+    pub fork_next: BlockNumber,
 }
 
 impl ForkId {
