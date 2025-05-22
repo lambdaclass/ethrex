@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747865023122,
+  "lastUpdate": 1747929022746,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8455,6 +8455,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211086403479,
             "range": "± 1561907584",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "490cd625706c1f8d70e3a986178f149f4a710c72",
+          "message": "fix(l1): added checks to newpayload and forkchoiceupdated (#2831)\n\n**Motivation**\n\nThis should fix some sync and inconsistent behaviour problems with the\nhive engine tests. The problem was happening when a sync process had\nbegun, and a block from that sync process entered the server. Some\nchecks for that scenario have been added.\n\nAlso made some tests in the CI easier to read and edit, while adding a\ncouple of them.\n\n**Description**\n\n- Made the CI tests have 1 by 1.\n- Added some fixed CI tests to \"Paris Engine tests\" and \"Engine\nwithdrawal tests\"\n- Added a check to forkchoiceupdatet for the body to be present before\nforking.\n- Added a check to execute_payload for the body of the parent to be\npresent before executing.\n\nFixes some tests in #1285",
+          "timestamp": "2025-05-22T14:56:41Z",
+          "tree_id": "89459d91933857f8d155c9eaebc56e7b7466dc1e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/490cd625706c1f8d70e3a986178f149f4a710c72"
+        },
+        "date": 1747929019645,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 213378710035,
+            "range": "± 744251123",
             "unit": "ns/iter"
           }
         ]
