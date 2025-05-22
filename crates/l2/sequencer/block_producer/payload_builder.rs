@@ -167,8 +167,6 @@ pub async fn fill_transactions(
             continue;
         }
 
-        let previous_context = context.clone();
-
         // Execute tx
         let (receipt, transaction_backup) = match apply_transaction_l2(&head_tx, context) {
             Ok((receipt, transaction_backup)) => {
