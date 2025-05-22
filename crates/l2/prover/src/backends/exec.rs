@@ -172,8 +172,6 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         #[cfg(feature = "l2")]
         deposit_logs_hash,
         #[cfg(feature = "l2")]
-        blob_challenge: H256::zero(),
-        #[cfg(feature = "l2")]
-        blob_evaluation: H256::zero(),
+        blob_versioned_hash: H256::zero(),
     })
 }
