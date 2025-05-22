@@ -1,6 +1,9 @@
 DETERMINISTIC_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C
 DEPLOYMENT_PATH := deploydeps/automata-dcap-attestation/evm/deployment
 
+ETHREX_TDX_DEV_MODE ?= false
+ON_CHAIN_PROPOSER ?= 0x0
+
 deploy-p256:
 	rex send $(DETERMINISTIC_DEPLOYER) 0 $(PRIVATE_KEY) --calldata $(shell cat assets/p256.hex)
 
@@ -37,26 +40,33 @@ lib/openzeppelin-contracts:
 	mkdir -p lib
 	cd lib; git clone https://github.com/OpenZeppelin/openzeppelin-contracts
 
-solc_out/Counter.bin: src/Counter.sol lib/openzeppelin-contracts
+solc_out/TDXVerifier.bin: src/TDXVerifier.sol lib/openzeppelin-contracts
 	mkdir -p solc_out
-	solc src/Counter.sol --bin --allow-paths lib/ -o solc_out/ --overwrite
+	solc src/TDXVerifier.sol --bin --allow-paths lib/ -o solc_out/ --overwrite
 
-deploy: solc_out/Counter.bin
-	$(eval CONTRACT_BIN := $(shell cat solc_out/Counter.bin))
+deploy: solc_out/TDXVerifier.bin
+	$(eval CONTRACT_BIN := $(shell cat solc_out/TDXVerifier.bin))
 	$(eval DCAP_ADDRESS := $(shell cat ${DEPLOYMENT_PATH}/AutomataDcapAttestationFee))
 	rex deploy --print-address $(CONTRACT_BIN) 0 $(PRIVATE_KEY) -- \
-		"constructor(address)" $(DCAP_ADDRESS) > ${DEPLOYMENT_PATH}/Counter
-
-mkenv:
-	echo CONTRACT_ADDRESS=$(shell cat ${DEPLOYMENT_PATH}/Counter) > .env.out
-	echo ENCLAVE_ID_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataEnclaveIdentityDao)  >> .env.out
-	echo FMSPC_TCB_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataFmspcTcbDao)  >> .env.out
-	echo PCK_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataPckDao)  >> .env.out
-	echo PCS_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataPcsDao)  >> .env.out
+		"constructor(address,address,bool)" $(DCAP_ADDRESS) $(ON_CHAIN_PROPOSER) $(ETHREX_TDX_DEV_MODE) \
+		> ${DEPLOYMENT_PATH}/TDXVerifier
 
 deploy-deps: deploy-dcap setup-pccs-ca
 
+automata-dcap-qpl:
+	git clone https://github.com/automata-network/automata-dcap-qpl
+	cd automata-dcap-qpl/automata-dcap-qpl-tool; git clone https://github.com/automata-network/pccs-reader-rs
+	rm automata-dcap-qpl/Cargo.toml
+	echo "" >> automata-dcap-qpl/automata-dcap-qpl-tool/Cargo.toml
+	echo "[workspace]" >> automata-dcap-qpl/automata-dcap-qpl-tool/Cargo.toml
+	cd automata-dcap-qpl/automata-dcap-qpl-tool; cargo build --release
+
+deploy-all:
+	make deploy-deps
+	make deploy
+	make automata-dcap-qpl
+
 clean:
-	rm -rf deploydeps cache out deployment/*
+	rm -rf deploydeps cache out deployment/* automata-dcap-qpl
 
 .PHONY: deploy-all deploy deploy-pccs deploy-dcap clean
