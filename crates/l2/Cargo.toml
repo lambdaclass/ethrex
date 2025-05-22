@@ -35,6 +35,8 @@ rand.workspace = true
 thiserror.workspace = true
 directories = "5.0.1"
 bincode = "1.3.3"
+spawned-concurrency = {git = "https://github.com/lambdaclass/spawned.git"}
+spawned-rt = {git = "https://github.com/lambdaclass/spawned.git"}
 
 zkvm_interface = { path = "./prover/zkvm/interface/" }
 

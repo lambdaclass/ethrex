@@ -1,18 +1,21 @@
 use std::sync::Arc;
 
+use spawned_concurrency::GenServer as _;
+
 use crate::SequencerConfig;
 use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use execution_cache::ExecutionCache;
+use l1_watcher::{L1Watcher, L1WatcherState};
 use tokio::task::JoinSet;
 use tracing::{error, info};
 
 pub mod block_producer;
 pub mod l1_committer;
 pub mod l1_proof_sender;
-pub mod l1_watcher;
+mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
@@ -34,12 +37,17 @@ pub async fn start_l2(
 
     let execution_cache = Arc::new(ExecutionCache::default());
 
-    let mut task_set = JoinSet::new();
-    task_set.spawn(l1_watcher::start_l1_watcher(
+    let mut l1_watcher = L1Watcher::start(L1WatcherState::new(
         store.clone(),
         blockchain.clone(),
-        cfg.clone(),
+        &cfg.eth,
+        &cfg.l1_watcher,
     ));
+    // L1Watcher::check perform the check and suscribes a periodic check.
+    let _ = L1Watcher::check(&mut l1_watcher).await;
+
+    let mut task_set = JoinSet::new();
+
     task_set.spawn(l1_committer::start_l1_committer(
         store.clone(),
         rollup_store.clone(),
