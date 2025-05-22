@@ -18,9 +18,7 @@ use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
 };
 
-use ethrex_vm::{
-    EvmError, {Evm, EvmEngine},
-};
+use ethrex_vm::{Evm, EvmEngine, EvmError, StoreVmDatabase};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
@@ -179,7 +177,9 @@ pub struct PayloadBuildContext {
 
 impl PayloadBuildContext {
     pub fn new(payload: Block, evm_engine: EvmEngine, storage: &Store) -> Result<Self, EvmError> {
-        let config = storage.get_chain_config()?;
+        let config = storage
+            .get_chain_config()
+            .map_err(|e| EvmError::DB(e.to_string()))?;
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
             config
@@ -187,7 +187,9 @@ impl PayloadBuildContext {
                 .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
         );
-        let vm = Evm::new(evm_engine, storage.clone(), payload.header.parent_hash);
+
+        let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
+        let vm = Evm::new(evm_engine, vm_db);
 
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
@@ -215,7 +217,9 @@ impl PayloadBuildContext {
     }
 
     fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        Ok(self.store.get_chain_config()?)
+        self.store
+            .get_chain_config()
+            .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     fn base_fee_per_gas(&self) -> Option<u64> {
