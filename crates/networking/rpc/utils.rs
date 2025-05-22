@@ -164,6 +164,7 @@ pub enum RpcNamespace {
     Debug,
     Web3,
     Net,
+    Mempool,
     #[cfg(feature = "l2")]
     EthrexL2,
 }
@@ -194,6 +195,8 @@ impl RpcRequest {
                 "debug" => Ok(RpcNamespace::Debug),
                 "web3" => Ok(RpcNamespace::Web3),
                 "net" => Ok(RpcNamespace::Net),
+                // TODO: The namespace is set to match geth's namespace for compatibility, consider changing it in the future
+                "txpool" => Ok(RpcNamespace::Mempool),
                 #[cfg(feature = "l2")]
                 "ethrex" => Ok(RpcNamespace::EthrexL2),
                 _ => Err(RpcErr::MethodNotFound(self.method.clone())),

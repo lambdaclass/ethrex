@@ -4,6 +4,7 @@ mod engine;
 mod eth;
 #[cfg(feature = "l2")]
 pub mod l2;
+mod mempool;
 mod net;
 mod rpc;
 

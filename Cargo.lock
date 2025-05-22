@@ -3157,6 +3157,7 @@ dependencies = [
  "hex",
  "jsonwebtoken",
  "keccak-hash",
+ "lazy_static",
  "rand 0.8.5",
  "reqwest",
  "secp256k1",
@@ -3453,6 +3454,7 @@ dependencies = [
  "bytes",
  "cfg-if",
  "derive_more 1.0.0",
+ "dyn-clone",
  "ethereum-types",
  "ethrex-common",
  "ethrex-levm",
@@ -7349,22 +7351,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1885c039570dc00dcb4ff087a89e185fd56bae234ddc7f056a945bf36467248d"
 dependencies = [
  "proc-macro2",
-]
-
-[[package]]
-name = "quote-pusher"
-version = "0.1.0"
-dependencies = [
- "ethereum-types",
- "ethrex-rpc",
- "ethrex-sdk",
- "hex",
- "reqwest",
- "secp256k1",
- "serde_json",
- "serial_test",
- "thiserror 2.0.12",
- "tokio",
 ]
 
 [[package]]

@@ -9,7 +9,6 @@ use crate::engine::{
     },
     ExchangeCapabilitiesRequest,
 };
-use crate::eth;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -37,6 +36,7 @@ use crate::utils::{
     RpcSuccessResponse,
 };
 use crate::{admin, net};
+use crate::{eth, mempool};
 use axum::extract::State;
 use axum::{routing::post, Json, Router};
 use axum_extra::{
@@ -274,6 +274,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
+        Ok(RpcNamespace::Mempool) => map_mempool_requests(req, context).await,
         Ok(RpcNamespace::Engine) => Err(RpcErr::Internal(
             "Engine namespace not allowed in map_http_requests".to_owned(),
         )),
@@ -406,6 +407,17 @@ pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value
         "net_version" => net::version(req, contex),
         "net_peerCount" => net::peer_count(req, contex),
         unknown_net_method => Err(RpcErr::MethodNotFound(unknown_net_method.to_owned())),
+    }
+}
+
+pub async fn map_mempool_requests(
+    req: &RpcRequest,
+    contex: RpcApiContext,
+) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        // TODO: The endpoint name matches geth's endpoint for compatibility, consider changing it in the future
+        "txpool_content" => mempool::content(contex).await,
+        unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
     }
 }
 
