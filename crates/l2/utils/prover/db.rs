@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::Block;
 use ethrex_common::{Address, H256};
+use ethrex_levm::db::error::DatabaseError;
 use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
 use ethrex_trie::{Node, PathRLP};
 use ethrex_trie::{NodeRLP, Trie, TrieError};
@@ -41,7 +42,11 @@ pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, P
         let new_store: DynVmDatabase = Box::new(StoreVmDatabase::new(store.clone(), block.hash()));
 
         // Replace the store
-        *logger.store.lock().unwrap() = Box::new(new_store);
+        *logger.store.lock().map_err(|err| {
+            ProverDBError::Database(DatabaseError::Custom(format!(
+                "Failed to lock 'store' with error: {err}"
+            )))
+        })? = Box::new(new_store);
     }
 
     // index accessed account addresses and storage keys
@@ -203,11 +208,11 @@ pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec
         proof.first(),
         &proof.iter().skip(1).cloned().collect::<Vec<_>>(),
     )
-    .unwrap();
+    .ok()?;
 
     // return some only if this is a proof of exclusion
-    if trie.get(key).unwrap().is_none() {
-        let final_node = Node::decode_raw(proof.last().unwrap()).unwrap();
+    if trie.get(key).ok()?.is_none() {
+        let final_node = Node::decode_raw(proof.last()?).ok()?;
         match final_node {
             Node::Extension(mut node) => {
                 let mut variants = Vec::with_capacity(node.prefix.len());
