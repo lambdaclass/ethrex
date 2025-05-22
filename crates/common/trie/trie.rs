@@ -234,8 +234,10 @@ impl Trie {
                             unreachable!()
                         };
 
-                        let rlp = storage.remove(&hash).ok_or(TrieError::InconsistentTree)?;
-                        *choice = inner(storage, rlp)?.into();
+                        if hash.is_valid() {
+                            let rlp = storage.remove(&hash).ok_or(TrieError::InconsistentTree)?;
+                            *choice = inner(storage, rlp)?.into();
+                        }
                     }
 
                     node.into()
