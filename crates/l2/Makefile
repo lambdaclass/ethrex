@@ -12,10 +12,10 @@ L1_GENESIS_FILE_PATH=../../test_data/genesis-l1-dev.json
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-init: init-local-l1 deploy-l1 update-system-contracts init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
+init: init-local-l1 update-system-contracts deploy-l1 init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
 
 ## Same as init but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
-init-testnet: deploy-l1-testnet update-system-contracts  init-l2
+init-testnet: update-system-contracts deploy-l1-testnet init-l2
 
 down: down-local-l1 down-l2 down-metrics## 🛑 Shuts down the localnet
 
@@ -25,7 +25,7 @@ restart: restart-local-l1 deploy-l1 purge_prover_state restart-l2 ## 🔄 Restar
 
 ## Same as restart but for testnet deployment. The local database is cleaned and the contracts are deployed again.
 restart-testnet:
-	down-l2 down-metrics rm-db-l2 deploy-l1-testnet update-system-contracts init-l2
+	down-l2 down-metrics rm-db-l2 update-system-contracts deploy-l1-testnet init-l2
 
 # CLI
 cli: ## 🛠️ Installs the L2 Lambda ethrex CLI
@@ -49,7 +49,6 @@ ethrex_BIN_PATH=$(ethrex_PATH)/target/release/ethrex
 ethrex_DEV_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/dev/docker-compose-dev.yaml
 ethrex_L2_DOCKER_COMPOSE_PATH=./docker-compose-l2.yaml
 ethrex_METRICS_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics.yaml
-ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics-l1-dev.overrides.yaml
 ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics-l2.overrides.yaml
 CI_ETHREX_WORKDIR := /usr/local/bin
 
@@ -62,19 +61,22 @@ ethrex_L1_DEV_LIBMDBX=dev_ethrex_l1
 L1_PORT=8545
 L2_PORT=1729
 L1_AUTH_PORT=8551
+L1_RPC_ADDRESS=0.0.0.0
+L2_RPC_ADDRESS=0.0.0.0
+PROOF_COORINATOR_ADDRESS=127.0.0.1
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
 
 # Local L1
 init-local-l1: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
-	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH} up -d
+	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH}  up -d
 
 init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "dev" -- \
 	--network ${L1_GENESIS_FILE_PATH} \
 	--http.port ${L1_PORT} \
-	--http.addr 0.0.0.0 \
+	--http.addr ${L1_RPC_ADDRESS} \
 	--authrpc.port ${L1_AUTH_PORT} \
 	--dev \
 	--datadir ${ethrex_L1_DEV_LIBMDBX}
@@ -86,14 +88,14 @@ init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
     --features "dev" -- \
     --network ${L1_GENESIS_FILE_PATH} \
     --http.port ${L1_PORT} \
-    --http.addr 0.0.0.0 \
+    --http.addr ${L1_RPC_ADDRESS} \
     --authrpc.port ${L1_AUTH_PORT} \
 	--evm levm \
 	--dev \
     --datadir ${ethrex_L1_DEV_LIBMDBX}
 
 down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
-	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH} down
+	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down
 	docker compose -f docker-compose-l2.yaml down
 
 restart-local-l1: down-local-l1 rm-db-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
@@ -147,15 +149,17 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	fi; \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features $$FEATURES -- \
 	l2 init \
+	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
-	--http.addr 0.0.0.0 \
+	--http.addr ${L2_RPC_ADDRESS} \
 	--metrics \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--evm levm \
 	--datadir ${ethrex_L2_DEV_LIBMDBX} \
 	--bridge-address ${BRIDGE_ADDRESS} \
-	--on-chain-proposer-address ${ON_CHAIN_PROPOSER_ADDRESS}
+	--on-chain-proposer-address ${ON_CHAIN_PROPOSER_ADDRESS} \
+	--proof-coordinator-listen-ip ${PROOF_COORINATOR_ADDRESS}
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d

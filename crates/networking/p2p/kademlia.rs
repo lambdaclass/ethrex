@@ -232,7 +232,7 @@ impl KademliaTable {
     }
 
     /// Returns an iterator for all peers in the table that match the filter
-    fn filter_peers<'a>(
+    pub fn filter_peers<'a>(
         &'a self,
         filter: &'a dyn Fn(&'a PeerData) -> bool,
     ) -> impl Iterator<Item = &'a PeerData> {
@@ -297,17 +297,20 @@ impl KademliaTable {
     /// Set the sender end of the channel between the kademlia table and the peer's active connection
     /// Set the peer's supported capabilities
     /// This function should be called each time a connection is established so the backend can send requests to the peers
+    /// Receives a boolean indicating if the connection is inbound (aka if it was started by the peer and not by this node)
     pub(crate) fn init_backend_communication(
         &mut self,
         node_id: H256,
         channels: PeerChannels,
         capabilities: Vec<Capability>,
+        inbound: bool,
     ) {
         let peer = self.get_by_node_id_mut(node_id);
         if let Some(peer) = peer {
             peer.channels = Some(channels);
             peer.supported_capabilities = capabilities;
             peer.is_connected = true;
+            peer.is_connection_inbound = inbound;
         } else {
             debug!(
                 "[PEERS] Peer with node_id {:?} not found in the kademlia table when trying to init backend communication",
@@ -318,10 +321,13 @@ impl KademliaTable {
 
     /// Returns the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
-    pub fn get_peer_channels(&self, capability: Capability) -> Option<PeerChannels> {
+    pub fn get_peer_channels(&self, capabilities: &[Capability]) -> Option<PeerChannels> {
         let filter = |peer: &PeerData| -> bool {
             // Search for peers with an active connection that support the required capabilities
-            peer.channels.is_some() && peer.supported_capabilities.contains(&capability)
+            peer.channels.is_some()
+                && capabilities
+                    .iter()
+                    .any(|cap| peer.supported_capabilities.contains(cap))
         };
         self.get_random_peer_with_filter(&filter)
             .and_then(|peer| peer.channels.clone())
@@ -354,9 +360,12 @@ pub struct PeerData {
     pub revalidation: Option<bool>,
     /// communication channels between the peer data and its active connection
     pub channels: Option<PeerChannels>,
-    /// Starts as false when a node is added. Set to true when a connection si active. When a
+    /// Starts as false when a node is added. Set to true when a connection becomes active. When a
     /// connection fails, the peer record is removed, so no need to set it to false.
     pub is_connected: bool,
+    /// Set to true if the connection is inbound (aka the connection was started by the peer and not by this node)
+    /// It is only valid as long as is_connected is true
+    pub is_connection_inbound: bool,
 }
 
 impl PeerData {
@@ -375,6 +384,7 @@ impl PeerData {
             channels: None,
             supported_capabilities: vec![],
             is_connected: false,
+            is_connection_inbound: false,
         }
     }
 

@@ -70,7 +70,10 @@ impl<'a> VM<'a> {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (account, address_was_cold) = self.db.access_account(&mut self.substate, callee)?;
+        let (account_is_empty, address_was_cold) = {
+            let (account, address_was_cold) = self.db.access_account(&mut self.substate, callee)?;
+            (account.is_empty(), address_was_cold)
+        };
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, callee)?;
@@ -87,7 +90,7 @@ impl<'a> VM<'a> {
             new_memory_size,
             current_memory_size,
             address_was_cold,
-            account.is_empty(),
+            account_is_empty,
             value_to_transfer,
             gas,
             gas_left,
@@ -555,8 +558,11 @@ impl<'a> VM<'a> {
             (target_address, to)
         };
 
-        let (target_account, target_account_is_cold) =
-            self.db.access_account(&mut self.substate, target_address)?;
+        let (target_account_is_empty, target_account_is_cold) = {
+            let (target_account, target_account_is_cold) =
+                self.db.access_account(&mut self.substate, target_address)?;
+            (target_account.is_empty(), target_account_is_cold)
+        };
 
         let (current_account, _current_account_is_cold) =
             self.db.access_account(&mut self.substate, to)?;
@@ -565,7 +571,7 @@ impl<'a> VM<'a> {
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::selfdestruct(
                 target_account_is_cold,
-                target_account.is_empty(),
+                target_account_is_empty,
                 balance_to_transfer,
             )?)?;
 
@@ -623,10 +629,13 @@ impl<'a> VM<'a> {
             (deployer_address, max_message_call_gas)
         };
 
-        let deployer_account = self
-            .db
-            .access_account(&mut self.substate, deployer_address)?
-            .0;
+        let (deployer_balance, deployer_nonce) = {
+            let deployer_account = self
+                .db
+                .access_account(&mut self.substate, deployer_address)?
+                .0;
+            (deployer_account.info.balance, deployer_account.info.nonce)
+        };
 
         let code = Bytes::from(
             memory::load_range(
@@ -639,7 +648,7 @@ impl<'a> VM<'a> {
 
         let new_address = match salt {
             Some(salt) => calculate_create2_address(deployer_address, &code, salt)?,
-            None => calculate_create_address(deployer_address, deployer_account.info.nonce)?,
+            None => calculate_create_address(deployer_address, deployer_nonce)?,
         };
 
         // touch account
@@ -655,9 +664,9 @@ impl<'a> VM<'a> {
             // 1. Sender doesn't have enough balance to send value.
             // 2. Depth limit has been reached
             // 3. Sender nonce is max.
-            if deployer_account.info.balance < value_in_wei_to_send
+            if deployer_balance < value_in_wei_to_send
                 || new_depth > 1024
-                || deployer_account.info.nonce == u64::MAX
+                || deployer_nonce == u64::MAX
             {
                 // Return reserved gas
                 current_call_frame.gas_used = current_call_frame
@@ -744,8 +753,12 @@ impl<'a> VM<'a> {
         bytecode: Bytes,
         is_delegation: bool,
     ) -> Result<OpcodeResult, VMError> {
-        let sender_account = self.db.access_account(&mut self.substate, msg_sender)?.0;
-
+        let sender_balance = self
+            .db
+            .access_account(&mut self.substate, msg_sender)?
+            .0
+            .info
+            .balance;
         let calldata = {
             let current_call_frame = self.current_call_frame_mut()?;
             // Clear callframe subreturn data
@@ -756,7 +769,7 @@ impl<'a> VM<'a> {
                     .to_vec();
 
             // 1. Validate sender has enough value
-            if should_transfer_value && sender_account.info.balance < value {
+            if should_transfer_value && sender_balance < value {
                 current_call_frame.gas_used = current_call_frame
                     .gas_used
                     .checked_sub(gas_limit)
@@ -767,38 +780,39 @@ impl<'a> VM<'a> {
             calldata
         };
 
-        let new_depth = {
-            let current_call_frame = self.current_call_frame_mut()?;
+        // 2. Validate max depth has not been reached yet.
+        let new_depth = self
+            .current_call_frame()?
+            .depth
+            .checked_add(1)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-            // 2. Validate max depth has not been reached yet.
-            let new_depth = current_call_frame
-                .depth
-                .checked_add(1)
-                .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        if new_depth > 1024 {
+            self.current_call_frame_mut()?.gas_used = self
+                .current_call_frame()?
+                .gas_used
+                .checked_sub(gas_limit)
+                .ok_or(InternalError::GasOverflow)?;
+            self.current_call_frame_mut()?.stack.push(REVERT_FOR_CALL)?;
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+        }
 
-            if new_depth > 1024 {
-                current_call_frame.gas_used = current_call_frame
-                    .gas_used
-                    .checked_sub(gas_limit)
-                    .ok_or(InternalError::GasOverflow)?;
-                current_call_frame.stack.push(REVERT_FOR_CALL)?;
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
-            }
-
-            if bytecode.is_empty() && is_delegation {
-                current_call_frame.gas_used = current_call_frame
-                    .gas_used
-                    .checked_sub(gas_limit)
-                    .ok_or(InternalError::GasOverflow)?;
-                current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
-            }
-            new_depth
-        };
         // Transfer value from caller to callee.
         if should_transfer_value {
             self.decrease_account_balance(msg_sender, value)?;
             self.increase_account_balance(to, value)?;
+        }
+
+        if bytecode.is_empty() && is_delegation {
+            self.current_call_frame_mut()?.gas_used = self
+                .current_call_frame()?
+                .gas_used
+                .checked_sub(gas_limit)
+                .ok_or(InternalError::GasOverflow)?;
+            self.current_call_frame_mut()?
+                .stack
+                .push(SUCCESS_FOR_CALL)?;
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         let new_call_frame = CallFrame::new(

@@ -3097,6 +3097,7 @@ dependencies = [
  "redb",
  "reqwest",
  "secp256k1",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",
@@ -3495,6 +3496,7 @@ dependencies = [
  "bytes",
  "cfg-if",
  "derive_more 1.0.0",
+ "dyn-clone",
  "ethereum-types",
  "ethrex-common",
  "ethrex-levm",
@@ -11505,6 +11507,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "sp1-build",
+ "sp1-sdk",
  "thiserror 2.0.12",
 ]
 

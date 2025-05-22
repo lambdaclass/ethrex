@@ -7,7 +7,8 @@ use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::{EvmError, ExecutionResult, ProverDB, ProverDBError, StoreWrapper};
+use crate::db::DynVmDatabase;
+use crate::{EvmError, ExecutionResult, ProverDB, ProverDBError, StoreVmDatabase};
 use bytes::Bytes;
 use ethrex_common::{
     types::{
@@ -17,6 +18,7 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
+use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
 use ethrex_levm::EVMConfig;
@@ -25,7 +27,6 @@ use ethrex_levm::{
     vm::{Substate, VM},
     Environment,
 };
-use ethrex_storage::error::StoreError;
 use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
 use ethrex_trie::{NodeRLP, TrieError};
 use std::cmp::min;
@@ -238,7 +239,7 @@ impl LEVM {
     pub fn process_withdrawals(
         db: &mut GeneralizedDatabase,
         withdrawals: &[Withdrawal],
-    ) -> Result<(), ethrex_storage::error::StoreError> {
+    ) -> Result<(), EvmError> {
         // For every withdrawal we increment the target account's balance
         for (address, increment) in withdrawals
             .iter()
@@ -246,14 +247,17 @@ impl LEVM {
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
             // We check if it was in block_cache, if not, we get it from DB.
-            let mut account = db.cache.get(&address).cloned().unwrap_or({
-                db.store
+            if let Some(account) = db.cache.get_mut(&address) {
+                account.info.balance += increment.into();
+            } else {
+                let mut account = db
+                    .store
                     .get_account(address)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
-            });
-
-            account.info.balance += increment.into();
-            db.cache.insert(address, account);
+                    .map_err(|e| EvmError::DB(e.to_string()))?
+                    .clone();
+                account.info.balance += increment.into();
+                db.cache.insert(address, account);
+            }
         }
         Ok(())
     }
@@ -386,12 +390,10 @@ impl LEVM {
             return Err(ProverDBError::Custom("Unable to get last block".into()));
         };
 
-        let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(
-            StoreWrapper {
-                store: store.clone(),
-                block_hash: first_block_parent_hash,
-            },
-        )))));
+        let vm_db: DynVmDatabase =
+            Box::new(StoreVmDatabase::new(store.clone(), first_block_parent_hash));
+
+        let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
 
         let mut execution_updates: HashMap<Address, AccountUpdate> = HashMap::new();
         for block in blocks {
@@ -407,10 +409,8 @@ impl LEVM {
             }
 
             // Update de block_hash for the next execution.
-            let new_store = StoreWrapper {
-                store: store.clone(),
-                block_hash: block.hash(),
-            };
+            let new_store: DynVmDatabase =
+                Box::new(StoreVmDatabase::new(store.clone(), block.hash()));
 
             // Replace the store
             *logger.store.lock().unwrap() = Box::new(new_store);
@@ -420,9 +420,7 @@ impl LEVM {
         let state_accessed = logger
             .state_accessed
             .lock()
-            .map_err(|_| {
-                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
-            })?
+            .map_err(|_| ProverDBError::Store("Could not lock mutex".to_string()))?
             .clone();
 
         // fetch all read/written accounts from store
@@ -441,9 +439,7 @@ impl LEVM {
         let code_accessed = logger
             .code_accessed
             .lock()
-            .map_err(|_| {
-                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
-            })?
+            .map_err(|_| ProverDBError::Store("Could not lock mutex".to_string()))?
             .clone();
         let code = accounts
             .values()
@@ -487,9 +483,7 @@ impl LEVM {
         let block_hashes = logger
             .block_hashes_accessed
             .lock()
-            .map_err(|_| {
-                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
-            })?
+            .map_err(|_| ProverDBError::Store("Could not lock mutex".to_string()))?
             .clone()
             .into_iter()
             .map(|(num, hash)| (num, H256::from(hash.0)))
@@ -582,7 +576,9 @@ pub fn generic_system_contract_levm(
     let coinbase_backup = db.cache.get(&block_header.coinbase).cloned();
     let env = Environment {
         origin: system_address,
-        gas_limit: 30_000_000,
+        // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
+        // So we add the base cost that will be taken in the execution.
+        gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
         block_number: block_header.number.into(),
         coinbase: block_header.coinbase,
         timestamp: block_header.timestamp.into(),
@@ -591,7 +587,7 @@ pub fn generic_system_contract_levm(
         gas_price: U256::zero(),
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit: 30_000_000,
+        block_gas_limit: u64::MAX, // System calls, have no constraint on the block's gas limit.
         config,
         ..Default::default()
     };
@@ -648,7 +644,8 @@ pub fn extract_all_requests_levm(
         .output
         .into();
 
-    let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts);
+    let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts)
+        .ok_or(EvmError::InvalidDepositRequest)?;
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
     let consolidation = Requests::from_consolidation_data(consolidation_data);
 
