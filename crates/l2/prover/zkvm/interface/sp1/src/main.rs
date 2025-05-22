@@ -2,7 +2,7 @@
 
 use bls12_381::G1Affine;
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::{types::{BYTES_PER_BLOB, blobs_bundle::blob_from_bytes}, Address, H256};
+use ethrex_common::{types::{BYTES_PER_BLOB, blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash}}, Address, H256};
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
 use kzg_rs::{
@@ -154,20 +154,20 @@ pub fn main() {
 
 
     #[cfg(feature = "l2")]
-    let (blob_challenge, blob_evaluation) = {
+    {
         let encoded_state_diff = state_diff
             .encode()
             .expect("failed to encode state diff");
         let blob_data = blob_from_bytes(encoded_state_diff).expect("failed to convert encoded state diff into blob data");
         let blob = Blob::from_slice(&blob_data).expect("failed to convert blob data into Blob");
-        let commitment = G1Affine::from_compressed(&blob_commitment)
-            .expect("failed to deserialize blob commitment");
 
         let blob_proof_valid = KzgProof::verify_blob_kzg_proof(blob, &blob_commitment, &blob_proof, &get_kzg_settings()).expect("failed to verify blob proof (neither valid or invalid proof)");
 
         if !blob_proof_valid {
             panic!("invalid blob proof");
         }
+
+        kzg_commitment_to_versioned_hash(blob_commitment)
     };
 
     // Output gas for measurement purposes
@@ -182,9 +182,7 @@ pub fn main() {
             #[cfg(feature = "l2")]
             deposit_logs_hash,
             #[cfg(feature = "l2")]
-            blob_challenge,
-            #[cfg(feature = "l2")]
-            blob_evaluation,
+            blob_versioned_hash,
         }
         .encode(),
     );

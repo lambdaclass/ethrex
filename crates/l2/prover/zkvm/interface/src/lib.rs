@@ -63,11 +63,8 @@ pub mod io {
         /// hash of all the deposit logs made in a batch
         pub deposit_logs_hash: H256,
         #[cfg(feature = "l2")]
-        /// challenge for blob KZG commitment
-        pub blob_challenge: H256,
-        #[cfg(feature = "l2")]
-        /// evaluation for blob KZG commitment
-        pub blob_evaluation: H256,
+        /// blob commitment versioned hash
+        pub blob_versioned_hash: H256,
     }
 
     impl ProgramOutput {
@@ -80,9 +77,7 @@ pub mod io {
                 #[cfg(feature = "l2")]
                 self.deposit_logs_hash.to_fixed_bytes(),
                 #[cfg(feature = "l2")]
-                self.blob_challenge.to_fixed_bytes(),
-                #[cfg(feature = "l2")]
-                self.blob_evaluation.to_fixed_bytes(),
+                self.blob_versioned_hash.to_fixed_bytes(),
             ]
             .concat()
         }
