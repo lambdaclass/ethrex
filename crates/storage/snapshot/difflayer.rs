@@ -19,7 +19,7 @@ pub struct DiffLayer {
     block_hash: BlockHash,
     state_root: H256,
     stale: bool,
-    accounts: HashMap<H256, Option<AccountState>>, // None if deleted
+    accounts: HashMap<H256, AccountState>, // None if deleted
     storage: HashMap<H256, HashMap<H256, U256>>,
     /// tracks all diffed items up to disk layer
     pub(crate) diffed: Bloom,
@@ -31,7 +31,7 @@ impl DiffLayer {
         origin: Arc<DiskLayer>,
         block_hash: BlockHash,
         state_root: H256,
-        accounts: HashMap<H256, Option<AccountState>>,
+        accounts: HashMap<H256, AccountState>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> Self {
         DiffLayer {
@@ -154,7 +154,7 @@ impl DiffLayer {
         &self,
         block: BlockHash,
         state_root: H256,
-        accounts: HashMap<H256, Option<AccountState>>,
+        accounts: HashMap<H256, AccountState>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> DiffLayer {
         let mut layer = DiffLayer::new(
@@ -191,7 +191,7 @@ impl DiffLayer {
 
         // If it's in this layer, return it.
         if let Some(value) = self.accounts.get(&hash) {
-            return Ok(value.clone());
+            return Ok(Some(value.clone()));
         }
 
         // delegate to parent
@@ -233,7 +233,7 @@ impl DiffLayer {
         }
     }
 
-    pub fn add_accounts(&mut self, accounts: HashMap<H256, Option<AccountState>>) {
+    pub fn add_accounts(&mut self, accounts: HashMap<H256, AccountState>) {
         self.accounts.extend(accounts);
     }
 
@@ -244,7 +244,7 @@ impl DiffLayer {
         }
     }
 
-    pub fn accounts(&self) -> HashMap<H256, Option<AccountState>> {
+    pub fn accounts(&self) -> HashMap<H256, AccountState> {
         self.accounts.clone()
     }
 

@@ -8,9 +8,9 @@ use std::{
     time::Instant,
 };
 
-use crate::{api::StoreEngine, hash_address_fixed};
+use crate::api::StoreEngine;
 use ethrex_common::{
-    types::{AccountState, BlockHash, Genesis},
+    types::{AccountState, BlockHash},
     H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -102,7 +102,7 @@ impl DiskLayer {
         self: Arc<Self>, // import self is like this
         block_hash: BlockHash,
         state_root: H256,
-        accounts: HashMap<H256, Option<AccountState>>,
+        accounts: HashMap<H256, AccountState>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> DiffLayer {
         let mut layer = DiffLayer::new(

@@ -112,7 +112,9 @@ impl Store {
                     nonce: account_state.nonce,
                 }))
             }
-            Ok(None) => {}
+            Ok(None) => {
+                return Ok(None);
+            }
             Err(snapshot_error) => {
                 debug!("failed to fetch snapshot (state): {}", snapshot_error);
             }
@@ -524,7 +526,8 @@ impl Store {
             .await?;
 
         self.snapshots
-            .rebuild(genesis_hash, genesis_state_root, false);
+            .rebuild(genesis_hash, genesis_state_root, false)
+            .unwrap();
 
         // Set chain config
         self.set_chain_config(&genesis.config).await
@@ -574,9 +577,7 @@ impl Store {
             .snapshots
             .get_storage_at_hash(block_hash, address, storage_key)
         {
-            Ok(Some(Some(value))) => return Ok(Some(value)),
-            // It may be none, but until the disk layer is fixed we can't trust it.
-            Ok(_) => {}
+            Ok(value) => return Ok(value),
             // snapshot errors are non-fatal
             Err(snapshot_error) => {
                 debug!("failed to fetch snapshot (storage): {}", snapshot_error);
@@ -736,8 +737,7 @@ impl Store {
 
         #[cfg(feature = "snapshots")]
         match self.snapshots.get_account_state(block_hash, address) {
-            Ok(Some(value)) => return Ok(Some(value)),
-            Ok(None) => {}
+            Ok(value) => return Ok(value),
             Err(snapshot_error) => {
                 debug!("failed to fetch snapshot (state): {}", snapshot_error);
             }
@@ -754,6 +754,14 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
+        #[cfg(feature = "snapshots")]
+        match self.snapshots.get_account_state(block_hash, address) {
+            Ok(value) => return Ok(value),
+            Err(snapshot_error) => {
+                debug!("failed to fetch snapshot (state): {}", snapshot_error);
+            }
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1195,18 +1203,19 @@ impl Store {
                 for update in account_updates.iter() {
                     let hashed_address = hash_address_fixed(&update.address);
 
-                    if update.removed {
-                        accounts.insert(hashed_address, None);
-                    } else {
+                    if !update.removed {
                         let account_state = match state_trie.get(hashed_address).unwrap() {
                             Some(encoded_state) => AccountState::decode(&encoded_state).unwrap(),
                             None => AccountState::default(),
                         };
-                        accounts.insert(hashed_address, Some(account_state.clone()));
+                        accounts.insert(hashed_address, account_state.clone());
 
                         for (storage_key, storage_value) in &update.added_storage {
-                            let slots = storage.entry(hashed_address).or_default();
-                            slots.insert(*storage_key, *storage_value);
+                            // TODO: if its zero what should we do here?
+                            if !storage_value.is_zero() {
+                                let slots = storage.entry(hashed_address).or_default();
+                                slots.insert(*storage_key, *storage_value);
+                            }
                         }
                     }
                 }

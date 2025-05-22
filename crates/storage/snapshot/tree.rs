@@ -106,7 +106,7 @@ impl SnapshotTree {
         block_hash: H256,
         block_state_root: H256,
         parent_block_hash: H256,
-        accounts: HashMap<H256, Option<AccountState>>,
+        accounts: HashMap<H256, AccountState>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> Result<(), SnapshotError> {
         info!("Creating new diff snapshot");
@@ -391,11 +391,9 @@ impl SnapshotTree {
         let mut account_states = Vec::with_capacity(accounts.len());
 
         for (hash, acc) in accounts.iter() {
-            if let Some(acc) = acc {
-                account_hashes.push(*hash);
-                account_states.push(acc.clone());
-                prev_disk.cache.accounts.insert(*hash, Some(acc.clone()));
-            }
+            account_hashes.push(*hash);
+            account_states.push(acc.clone());
+            prev_disk.cache.accounts.insert(*hash, Some(acc.clone()));
         }
 
         prev_disk
@@ -483,7 +481,7 @@ impl SnapshotTree {
         block_hash: BlockHash,
         address: Address,
         storage_key: H256,
-    ) -> Result<Option<Option<U256>>, SnapshotError> {
+    ) -> Result<Option<U256>, SnapshotError> {
         debug!(
             "called get_storage_at_hash with block {} address {} key {}",
             block_hash, address, storage_key
@@ -495,27 +493,18 @@ impl SnapshotTree {
                 .map_err(|error| SnapshotError::LockError(error.to_string()))?;
             let address = hash_address_fixed(&address);
 
-            let (value, origin_block_hash) = match snapshot {
-                Layer::DiskLayer(snapshot) => (
-                    snapshot.get_storage(address, storage_key)?,
-                    snapshot.block_hash,
-                ),
+            let value = match snapshot {
+                Layer::DiskLayer(snapshot) => snapshot.get_storage(address, storage_key)?,
                 Layer::DiffLayer(snapshot) => {
                     let snapshot = snapshot
                         .read()
                         .map_err(|error| SnapshotError::LockError(error.to_string()))?;
-                    (
-                        snapshot.get_storage(address, storage_key, &layers)?,
-                        snapshot.origin().block_hash,
-                    )
+
+                    snapshot.get_storage(address, storage_key, &layers)?
                 }
             };
 
-            if value.is_none() && block_hash != origin_block_hash {
-                return Ok(None);
-            } else {
-                return Ok(Some(value));
-            }
+            return Ok(value);
         }
 
         Err(SnapshotError::SnapshotNotFound(block_hash))
@@ -624,7 +613,7 @@ mod tests {
             root,
             root,
             H256::zero(),
-            HashMap::from([(account_hash, Some(account_state.clone()))]),
+            HashMap::from([(account_hash, account_state.clone())]),
             HashMap::new(),
         )
         .unwrap();
@@ -665,7 +654,7 @@ mod tests {
             root1,
             root1,
             H256::zero(),
-            HashMap::from([(account1_hash, Some(account1_state.clone()))]),
+            HashMap::from([(account1_hash, account1_state.clone())]),
             HashMap::new(),
         )
         .unwrap();
@@ -675,7 +664,7 @@ mod tests {
             root2,
             root2,
             root1,
-            HashMap::from([(account2_hash, Some(account2_state.clone()))]),
+            HashMap::from([(account2_hash, account2_state.clone())]),
             HashMap::new(),
         )
         .unwrap();
@@ -716,7 +705,7 @@ mod tests {
             root1,
             root1,
             H256::zero(),
-            HashMap::from([(account_hash, Some(account_state1.clone()))]),
+            HashMap::from([(account_hash, account_state1.clone())]),
             HashMap::new(),
         )
         .unwrap();
@@ -726,7 +715,7 @@ mod tests {
             root2,
             root2,
             root1,
-            HashMap::from([(account_hash, Some(account_state2.clone()))]),
+            HashMap::from([(account_hash, account_state2.clone())]),
             HashMap::new(),
         )
         .unwrap();
@@ -772,7 +761,7 @@ mod tests {
             root1,
             root1,
             H256::zero(),
-            HashMap::from([(account_hash, Some(account_state1.clone()))]),
+            HashMap::from([(account_hash, account_state1.clone())]),
             HashMap::from([(account_hash, {
                 let mut map: HashMap<H256, U256> = HashMap::new();
                 map.insert(H256::zero(), U256::one());
@@ -785,7 +774,7 @@ mod tests {
             root2,
             root2,
             root1,
-            HashMap::from([(account_hash, Some(account_state2.clone()))]),
+            HashMap::from([(account_hash, account_state2.clone())]),
             HashMap::from([(account_hash, {
                 let mut map: HashMap<H256, U256> = HashMap::new();
                 map.insert(H256::zero(), U256::zero());
@@ -804,7 +793,7 @@ mod tests {
         let value = tree
             .get_storage_at_hash(root2, address, H256::zero())
             .unwrap();
-        assert_eq!(value, Some(Some(U256::zero())));
+        assert_eq!(value, Some(U256::zero()));
 
         // Retrieve it from the first hash and check it returns the first value
         let retrieved_account = tree.get_account_state(root1, address).unwrap();
@@ -813,7 +802,7 @@ mod tests {
         let value = tree
             .get_storage_at_hash(root1, address, H256::zero())
             .unwrap();
-        assert_eq!(value, Some(Some(U256::one())));
+        assert_eq!(value, Some(U256::one()));
     }
 
     #[tokio::test]
@@ -848,7 +837,7 @@ mod tests {
             root1,
             root1,
             H256::zero(),
-            HashMap::from([(account_hash, Some(account_state1.clone()))]),
+            HashMap::from([(account_hash, account_state1.clone())]),
             HashMap::from([(account_hash, {
                 let mut map: HashMap<H256, U256> = HashMap::new();
                 map.insert(H256::zero(), U256::one());
@@ -862,7 +851,7 @@ mod tests {
             root2,
             root2,
             root1,
-            HashMap::from([(account_hash, Some(account_state2.clone()))]),
+            HashMap::from([(account_hash, account_state2.clone())]),
             HashMap::from([(account_hash, {
                 let mut map: HashMap<H256, U256> = HashMap::new();
                 map.insert(H256::zero(), U256::zero());
@@ -878,7 +867,7 @@ mod tests {
         let value = tree
             .get_storage_at_hash(root2, address, H256::zero())
             .unwrap();
-        assert_eq!(value, Some(Some(U256::zero())));
+        assert_eq!(value, Some(U256::zero()));
 
         // Retrieve it from the first hash and check it returns the first value
         let retrieved_account = tree.get_account_state(root1, address).unwrap();
@@ -887,6 +876,6 @@ mod tests {
         let value = tree
             .get_storage_at_hash(root1, address, H256::zero())
             .unwrap();
-        assert_eq!(value, Some(Some(U256::one())));
+        assert_eq!(value, Some(U256::one()));
     }
 }
