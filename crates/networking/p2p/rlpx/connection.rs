@@ -43,7 +43,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::info;
+use tracing::debug;
 
 use super::{
     eth::transactions::NewPooledTransactionHashes, p2p::DisconnectReason, utils::log_peer_warn,
@@ -305,11 +305,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 if negotiated_eth_version == 0 {
                     return Err(RLPxError::NoMatchingCapabilities());
                 }
-                info!("Negotatied eth version: eth/{}", negotiated_eth_version);
+                debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
                 self.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
 
                 if negotiated_snap_version != 0 {
-                    info!("Negotatied snap version: snap/{}", negotiated_snap_version);
+                    debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
                     self.negotiated_snap_capability =
                         Some(Capability::snap(negotiated_snap_version));
                 }
