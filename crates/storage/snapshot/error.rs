@@ -1,6 +1,8 @@
 use ethrex_common::H256;
 use ethrex_rlp::error::RLPDecodeError;
 
+use crate::error::StoreError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum SnapshotError {
     #[error("SnapShot with root {0} not found.")]
@@ -19,4 +21,6 @@ pub enum SnapshotError {
     RLPDecodeError(#[from] RLPDecodeError),
     #[error("Error getting a lock: {0}")]
     LockError(String),
+    #[error(transparent)]
+    StoreError(#[from] StoreError),
 }

@@ -112,7 +112,9 @@ impl Store {
                     nonce: account_state.nonce,
                 }))
             }
-            Ok(None) => {}
+            Ok(None) => {
+                return Ok(None);
+            }
             Err(snapshot_error) => {
                 debug!("failed to fetch snapshot (state): {}", snapshot_error);
             }
@@ -393,8 +395,18 @@ impl Store {
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
         let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH);
+
+        // For snapshots
+        let mut account_hashes = Vec::with_capacity(1024);
+        let mut account_states = Vec::with_capacity(1024);
+        let mut storage_keys: Vec<Vec<H256>> = Vec::with_capacity(64);
+        let mut storage_values: Vec<Vec<U256>> = Vec::with_capacity(64);
+
         for (address, account) in genesis_accounts {
+            let mut keys = Vec::with_capacity(32);
+            let mut values = Vec::with_capacity(32);
             let hashed_address = hash_address(&address);
+            let hashed_address_fixed = hash_address_fixed(&address);
             // Store account code (as this won't be stored in the trie)
             let code_hash = code_hash(&account.code);
             self.add_account_code(code_hash, account.code).await?;
@@ -406,6 +418,9 @@ impl Store {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+
+                    keys.push(H256(storage_key.to_big_endian()));
+                    values.push(storage_value);
                 }
             }
             let storage_root = storage_trie.hash()?;
@@ -416,8 +431,17 @@ impl Store {
                 storage_root,
                 code_hash,
             };
+            account_hashes.push(hashed_address_fixed);
+            account_states.push(account_state.clone());
+            storage_keys.push(keys);
+            storage_values.push(values);
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
+
+        // Add the initial genesis data to the snapshot db.
+        self.snapshots
+            .add_data(account_hashes, account_states, storage_keys, storage_values);
+
         genesis_state_trie.hash().map_err(StoreError::Trie)
     }
 
@@ -501,6 +525,10 @@ impl Store {
         self.set_canonical_block(genesis_block_number, genesis_hash)
             .await?;
 
+        self.snapshots
+            .rebuild(genesis_hash, genesis_state_root, false)
+            .unwrap();
+
         // Set chain config
         self.set_chain_config(&genesis.config).await
     }
@@ -549,9 +577,7 @@ impl Store {
             .snapshots
             .get_storage_at_hash(block_hash, address, storage_key)
         {
-            Ok(Some(Some(value))) => return Ok(Some(value)),
-            // It may be none, but until the disk layer is fixed we can't trust it.
-            Ok(_) => {}
+            Ok(value) => return Ok(value),
             // snapshot errors are non-fatal
             Err(snapshot_error) => {
                 debug!("failed to fetch snapshot (storage): {}", snapshot_error);
@@ -711,8 +737,7 @@ impl Store {
 
         #[cfg(feature = "snapshots")]
         match self.snapshots.get_account_state(block_hash, address) {
-            Ok(Some(value)) => return Ok(Some(value)),
-            Ok(None) => {}
+            Ok(value) => return Ok(value),
             Err(snapshot_error) => {
                 debug!("failed to fetch snapshot (state): {}", snapshot_error);
             }
@@ -729,6 +754,14 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
+        #[cfg(feature = "snapshots")]
+        match self.snapshots.get_account_state(block_hash, address) {
+            Ok(value) => return Ok(value),
+            Err(snapshot_error) => {
+                debug!("failed to fetch snapshot (state): {}", snapshot_error);
+            }
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1155,7 +1188,7 @@ impl Store {
             if store.snapshots.len() == 0 {
                 // There are no snapshots yet, use this block as root
                 // TODO: find if there is a better place to create the initial "disk layer".
-                store.snapshots.rebuild(hash, state_root)?;
+                store.snapshots.rebuild(hash, state_root, true)?;
                 info!(
                     "Snapshot (disk layer) created for {} with parent {}",
                     hash, parent_hash
@@ -1165,14 +1198,12 @@ impl Store {
                 let mut accounts = HashMap::new();
                 let state_trie = store.open_state_trie(state_root);
 
-                let mut storage: HashMap<H256, HashMap<H256, U256>> = HashMap::new();
+                let mut storage: HashMap<H256, HashMap<H256, Option<U256>>> = HashMap::new();
 
                 for update in account_updates.iter() {
                     let hashed_address = hash_address_fixed(&update.address);
 
-                    if update.removed {
-                        accounts.insert(hashed_address, None);
-                    } else {
+                    if !update.removed {
                         let account_state = match state_trie.get(hashed_address).unwrap() {
                             Some(encoded_state) => AccountState::decode(&encoded_state).unwrap(),
                             None => AccountState::default(),
@@ -1181,8 +1212,14 @@ impl Store {
 
                         for (storage_key, storage_value) in &update.added_storage {
                             let slots = storage.entry(hashed_address).or_default();
-                            slots.insert(*storage_key, *storage_value);
+                            if !storage_value.is_zero() {
+                                slots.insert(*storage_key, Some(*storage_value));
+                            } else {
+                                slots.insert(*storage_key, None);
+                            }
                         }
+                    } else {
+                        accounts.insert(hashed_address, None);
                     }
                 }
 

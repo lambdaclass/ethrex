@@ -45,32 +45,54 @@ impl SnapshotTree {
         }
     }
 
-    /// Rebuilds the tree, marking all current layers stale, creating a new base disk layer from the given root.
-    pub fn rebuild(&self, block_hash: BlockHash, state_root: H256) -> Result<(), SnapshotError> {
-        let mut layers = self
-            .layers
-            .write()
-            .map_err(|error| SnapshotError::LockError(error.to_string()))?;
+    pub fn add_data(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<AccountState>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) {
+        self.db
+            .write_snapshot_account_batch_blocking(account_hashes.clone(), account_states)
+            .expect("convert into a error");
+        self.db
+            .write_snapshot_storage_batches_blocking(account_hashes, storage_keys, storage_values)
+            .expect("convert into a error");
+    }
 
-        for layer in layers.values() {
-            match layer {
-                Layer::DiskLayer(disk_layer) => disk_layer.mark_stale(),
-                Layer::DiffLayer(diff_layer) => diff_layer
-                    .write()
-                    .map_err(|error| SnapshotError::LockError(error.to_string()))?
-                    .mark_stale(),
-            };
+    /// Rebuilds the tree, marking all current layers stale, creating a new base disk layer from the given root.
+    pub fn rebuild(
+        &self,
+        block_hash: BlockHash,
+        state_root: H256,
+        generate: bool,
+    ) -> Result<(), SnapshotError> {
+        let disk = {
+            let mut layers = self
+                .layers
+                .write()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?;
+
+            for layer in layers.values() {
+                match layer {
+                    Layer::DiskLayer(disk_layer) => disk_layer.mark_stale(),
+                    Layer::DiffLayer(diff_layer) => diff_layer
+                        .write()
+                        .map_err(|error| SnapshotError::LockError(error.to_string()))?
+                        .mark_stale(),
+                };
+            }
+
+            layers.clear();
+            let disk = Arc::new(DiskLayer::new(self.db.clone(), block_hash, state_root));
+            layers.insert(block_hash, Layer::DiskLayer(disk.clone()));
+            disk
+        };
+
+        if generate {
+            disk.start_generating();
         }
 
-        layers.clear();
-        layers.insert(
-            block_hash,
-            Layer::DiskLayer(Arc::new(DiskLayer::new(
-                self.db.clone(),
-                block_hash,
-                state_root,
-            ))),
-        );
         Ok(())
     }
 
@@ -85,7 +107,7 @@ impl SnapshotTree {
         block_state_root: H256,
         parent_block_hash: H256,
         accounts: HashMap<H256, Option<AccountState>>,
-        storage: HashMap<H256, HashMap<H256, U256>>,
+        storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     ) -> Result<(), SnapshotError> {
         info!("Creating new diff snapshot");
         if block_hash == parent_block_hash {
@@ -342,6 +364,11 @@ impl SnapshotTree {
     ///
     /// Returns Err if the current disk layer is already marked stale.
     fn save_diff(&self, diff: Layer) -> Result<Arc<DiskLayer>, SnapshotError> {
+        // Note: Interacting with the db should be made through non-async methods, converting this method
+        // into an async one, will give problems, mainly with holding RwLocks across await points.
+        //
+        // This method is called from `cap` and related mainly, which they themselves are called outside the main thread, so blocking is not bad.
+
         let diff = match diff {
             Layer::DiskLayer(disk_layer) => {
                 return Err(SnapshotError::SnapshotIsdiskLayer(disk_layer.state_root))
@@ -360,25 +387,60 @@ impl SnapshotTree {
         // TODO: here we should save the diff to the db (in the future snapshots table) too.
         let accounts = diff_value.accounts();
 
-        // TODO: Need to make sure it's correct to leave the cache as is
-        prev_disk.cache.accounts.clear();
+        let mut account_hashes = Vec::with_capacity(accounts.len());
+        let mut account_states = Vec::with_capacity(accounts.len());
 
         for (hash, acc) in accounts.iter() {
-            prev_disk.cache.accounts.insert(*hash, acc.clone());
-        }
-
-        // TODO: Need to make sure it's correct to leave the cache as is
-        prev_disk.cache.storages.clear();
-
-        let storage = diff_value.storage();
-        for (account_hash, storage) in storage.iter() {
-            for (storage_hash, value) in storage.iter() {
-                prev_disk
-                    .cache
-                    .storages
-                    .insert((*account_hash, *storage_hash), Some(*value));
+            if let Some(acc) = acc {
+                // TODO: Important, if acc is None it means it comes from a account update
+                // with the removed flag, should we remove it from db too?
+                account_hashes.push(*hash);
+                account_states.push(acc.clone());
+                prev_disk.cache.accounts.insert(*hash, Some(acc.clone()));
+            } else {
+                prev_disk.cache.accounts.remove(hash);
             }
         }
+
+        prev_disk
+            .db
+            .write_snapshot_account_batch_blocking(account_hashes, account_states)?;
+
+        let storage = diff_value.storage();
+
+        let mut account_hashes = Vec::with_capacity(storage.len());
+        let mut storage_keys = Vec::with_capacity(storage.len());
+        let mut storage_values = Vec::with_capacity(storage.len());
+
+        for (account_hash, storage) in storage.iter() {
+            account_hashes.push(*account_hash);
+            let mut keys = Vec::new();
+            let mut values = Vec::new();
+            for (storage_hash, value) in storage.iter() {
+                // TODO: Important, if acc is None it means it had a value of zero should we remove it from db too?
+                if let Some(value) = &value {
+                    values.push(*value);
+                    keys.push(*storage_hash);
+                    prev_disk
+                        .cache
+                        .storages
+                        .insert((*account_hash, *storage_hash), Some(*value));
+                } else {
+                    prev_disk
+                        .cache
+                        .storages
+                        .remove(&(*account_hash, *storage_hash));
+                }
+            }
+            storage_values.push(values);
+            storage_keys.push(keys);
+        }
+
+        prev_disk.db.write_snapshot_storage_batches_blocking(
+            account_hashes,
+            storage_keys,
+            storage_values,
+        )?;
 
         let disk = DiskLayer {
             db: self.db.clone(),
@@ -386,6 +448,7 @@ impl SnapshotTree {
             block_hash: diff_value.block_hash(),
             state_root: diff_value.root(),
             stale: Arc::new(AtomicBool::new(false)),
+            generating: prev_disk.generating.clone(),
         };
         Ok(Arc::new(disk))
     }
@@ -412,7 +475,7 @@ impl SnapshotTree {
             let address = hash_address_fixed(&address);
 
             match snapshot {
-                Layer::DiskLayer(snapshot) => snapshot.get_account(address, &layers),
+                Layer::DiskLayer(snapshot) => snapshot.get_account(address),
                 Layer::DiffLayer(snapshot) => snapshot
                     .read()
                     .map_err(|error| SnapshotError::LockError(error.to_string()))?
@@ -432,7 +495,7 @@ impl SnapshotTree {
         block_hash: BlockHash,
         address: Address,
         storage_key: H256,
-    ) -> Result<Option<Option<U256>>, SnapshotError> {
+    ) -> Result<Option<U256>, SnapshotError> {
         debug!(
             "called get_storage_at_hash with block {} address {} key {}",
             block_hash, address, storage_key
@@ -444,27 +507,18 @@ impl SnapshotTree {
                 .map_err(|error| SnapshotError::LockError(error.to_string()))?;
             let address = hash_address_fixed(&address);
 
-            let (value, origin_block_hash) = match snapshot {
-                Layer::DiskLayer(snapshot) => (
-                    snapshot.get_storage(address, storage_key, &layers)?,
-                    snapshot.block_hash,
-                ),
+            let value = match snapshot {
+                Layer::DiskLayer(snapshot) => snapshot.get_storage(address, storage_key)?,
                 Layer::DiffLayer(snapshot) => {
                     let snapshot = snapshot
                         .read()
                         .map_err(|error| SnapshotError::LockError(error.to_string()))?;
-                    (
-                        snapshot.get_storage(address, storage_key, &layers)?,
-                        snapshot.origin().block_hash,
-                    )
+
+                    snapshot.get_storage(address, storage_key, &layers)?
                 }
             };
 
-            if value.is_none() && block_hash != origin_block_hash {
-                return Ok(None);
-            } else {
-                return Ok(Some(value));
-            }
+            return Ok(value);
         }
 
         Err(SnapshotError::SnapshotNotFound(block_hash))
@@ -530,7 +584,6 @@ impl SnapshotTree {
             parent_value.storage(),
         );
 
-        // TODO: should we rebloom here?
         layer.diffed = layer_value.diffed();
 
         Ok(Layer::DiffLayer(Arc::new(RwLock::new(layer))))
@@ -551,8 +604,8 @@ mod tests {
         SnapshotTree::new(db)
     }
 
-    #[test]
-    fn test_add_single_account_in_single_difflayer() {
+    #[tokio::test]
+    async fn test_add_single_account_in_single_difflayer() {
         let tree = create_mock_tree();
         let root = H256::from_low_u64_be(1);
 
@@ -567,7 +620,7 @@ mod tests {
         };
 
         // Add a disklayer to the tree
-        tree.rebuild(H256::zero(), H256::zero()).unwrap();
+        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
 
         // Add a single account in a single difflayer
         tree.update(
@@ -584,10 +637,10 @@ mod tests {
         assert_eq!(retrieved_account, Some(account_state));
     }
 
-    #[test]
-    fn test_add_two_accounts_in_different_difflayers() {
+    #[tokio::test]
+    async fn test_add_two_accounts_in_different_difflayers() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero()).unwrap();
+        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
 
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
@@ -638,10 +691,10 @@ mod tests {
         assert_eq!(retrieved_account2, Some(account2_state));
     }
 
-    #[test]
-    fn test_override_account_in_second_difflayer() {
+    #[tokio::test]
+    async fn test_override_account_in_second_difflayer() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero()).unwrap();
+        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
         let address = Address::from_low_u64_be(1);
@@ -690,10 +743,10 @@ mod tests {
         assert_eq!(retrieved_account, Some(account_state1));
     }
 
-    #[test]
-    fn test_override_account_storage_flattening() {
+    #[tokio::test]
+    async fn test_override_account_storage_flattening() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero()).unwrap();
+        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
 
@@ -724,8 +777,8 @@ mod tests {
             H256::zero(),
             HashMap::from([(account_hash, Some(account_state1.clone()))]),
             HashMap::from([(account_hash, {
-                let mut map: HashMap<H256, U256> = HashMap::new();
-                map.insert(H256::zero(), U256::one());
+                let mut map: HashMap<H256, Option<U256>> = HashMap::new();
+                map.insert(H256::zero(), Some(U256::one()));
                 map
             })]),
         )
@@ -737,8 +790,8 @@ mod tests {
             root1,
             HashMap::from([(account_hash, Some(account_state2.clone()))]),
             HashMap::from([(account_hash, {
-                let mut map: HashMap<H256, U256> = HashMap::new();
-                map.insert(H256::zero(), U256::zero());
+                let mut map: HashMap<H256, Option<U256>> = HashMap::new();
+                map.insert(H256::zero(), Some(U256::zero()));
                 map
             })]),
         )
@@ -754,7 +807,7 @@ mod tests {
         let value = tree
             .get_storage_at_hash(root2, address, H256::zero())
             .unwrap();
-        assert_eq!(value, Some(Some(U256::zero())));
+        assert_eq!(value, Some(U256::zero()));
 
         // Retrieve it from the first hash and check it returns the first value
         let retrieved_account = tree.get_account_state(root1, address).unwrap();
@@ -763,13 +816,13 @@ mod tests {
         let value = tree
             .get_storage_at_hash(root1, address, H256::zero())
             .unwrap();
-        assert_eq!(value, Some(Some(U256::one())));
+        assert_eq!(value, Some(U256::one()));
     }
 
-    #[test]
-    fn test_override_account_storage_in_second_difflayer() {
+    #[tokio::test]
+    async fn test_override_account_storage_in_second_difflayer() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero()).unwrap();
+        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
 
@@ -800,8 +853,8 @@ mod tests {
             H256::zero(),
             HashMap::from([(account_hash, Some(account_state1.clone()))]),
             HashMap::from([(account_hash, {
-                let mut map: HashMap<H256, U256> = HashMap::new();
-                map.insert(H256::zero(), U256::one());
+                let mut map: HashMap<H256, Option<U256>> = HashMap::new();
+                map.insert(H256::zero(), Some(U256::one()));
                 map
             })]),
         )
@@ -814,8 +867,8 @@ mod tests {
             root1,
             HashMap::from([(account_hash, Some(account_state2.clone()))]),
             HashMap::from([(account_hash, {
-                let mut map: HashMap<H256, U256> = HashMap::new();
-                map.insert(H256::zero(), U256::zero());
+                let mut map: HashMap<H256, Option<U256>> = HashMap::new();
+                map.insert(H256::zero(), Some(U256::zero()));
                 map
             })]),
         )
@@ -828,7 +881,7 @@ mod tests {
         let value = tree
             .get_storage_at_hash(root2, address, H256::zero())
             .unwrap();
-        assert_eq!(value, Some(Some(U256::zero())));
+        assert_eq!(value, Some(U256::zero()));
 
         // Retrieve it from the first hash and check it returns the first value
         let retrieved_account = tree.get_account_state(root1, address).unwrap();
@@ -837,6 +890,6 @@ mod tests {
         let value = tree
             .get_storage_at_hash(root1, address, H256::zero())
             .unwrap();
-        assert_eq!(value, Some(Some(U256::one())));
+        assert_eq!(value, Some(U256::one()));
     }
 }

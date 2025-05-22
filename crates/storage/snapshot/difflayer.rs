@@ -20,7 +20,7 @@ pub struct DiffLayer {
     state_root: H256,
     stale: bool,
     accounts: HashMap<H256, Option<AccountState>>, // None if deleted
-    storage: HashMap<H256, HashMap<H256, U256>>,
+    storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     /// tracks all diffed items up to disk layer
     pub(crate) diffed: Bloom,
 }
@@ -32,7 +32,7 @@ impl DiffLayer {
         block_hash: BlockHash,
         state_root: H256,
         accounts: HashMap<H256, Option<AccountState>>,
-        storage: HashMap<H256, HashMap<H256, U256>>,
+        storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     ) -> Self {
         DiffLayer {
             origin: origin.clone(),
@@ -97,7 +97,7 @@ impl DiffLayer {
 
         // If bloom misses we can skip diff layers
         if !hit {
-            return self.origin.get_account(hash, layers);
+            return self.origin.get_account(hash);
         }
 
         // Start traversing layers.
@@ -119,7 +119,7 @@ impl DiffLayer {
             .get(&account_hash)
             .and_then(|x| x.get(&storage_hash))
         {
-            return Ok(Some(*value));
+            return Ok(*value);
         }
 
         let bloom_hash = account_hash ^ storage_hash;
@@ -129,7 +129,7 @@ impl DiffLayer {
 
         // If bloom misses we can skip diff layers
         if !hit {
-            return self.origin.get_storage(account_hash, storage_hash, layers);
+            return self.origin.get_storage(account_hash, storage_hash);
         }
 
         // Start traversing layers.
@@ -155,7 +155,7 @@ impl DiffLayer {
         block: BlockHash,
         state_root: H256,
         accounts: HashMap<H256, Option<AccountState>>,
-        storage: HashMap<H256, HashMap<H256, U256>>,
+        storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     ) -> DiffLayer {
         let mut layer = DiffLayer::new(
             self.block_hash,
@@ -196,7 +196,7 @@ impl DiffLayer {
 
         // delegate to parent
         match &layers[&self.parent] {
-            Layer::DiskLayer(disk_layer) => disk_layer.get_account(hash, layers),
+            Layer::DiskLayer(disk_layer) => disk_layer.get_account(hash),
             Layer::DiffLayer(diff_layer) => diff_layer
                 .read()
                 .map_err(|error| SnapshotError::LockError(error.to_string()))?
@@ -220,14 +220,12 @@ impl DiffLayer {
             .get(&account_hash)
             .and_then(|x| x.get(&storage_hash))
         {
-            return Ok(Some(*value));
+            return Ok(*value);
         }
 
         // delegate to parent
         match &layers[&self.parent] {
-            Layer::DiskLayer(disk_layer) => {
-                disk_layer.get_storage(account_hash, storage_hash, layers)
-            }
+            Layer::DiskLayer(disk_layer) => disk_layer.get_storage(account_hash, storage_hash),
             Layer::DiffLayer(diff_layer) => diff_layer
                 .read()
                 .map_err(|error| SnapshotError::LockError(error.to_string()))?
@@ -239,7 +237,7 @@ impl DiffLayer {
         self.accounts.extend(accounts);
     }
 
-    pub fn add_storage(&mut self, storage: HashMap<H256, HashMap<H256, U256>>) {
+    pub fn add_storage(&mut self, storage: HashMap<H256, HashMap<H256, Option<U256>>>) {
         for (address, st) in storage.iter() {
             let entry = self.storage.entry(*address).or_default();
             entry.extend(st);
@@ -250,7 +248,7 @@ impl DiffLayer {
         self.accounts.clone()
     }
 
-    pub fn storage(&self) -> HashMap<H256, HashMap<H256, U256>> {
+    pub fn storage(&self) -> HashMap<H256, HashMap<H256, Option<U256>>> {
         self.storage.clone()
     }
 
