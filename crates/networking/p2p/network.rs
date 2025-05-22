@@ -6,7 +6,7 @@ use crate::rlpx::{
 use crate::types::{Node, NodeRecord};
 use crate::{
     discv4::server::{DiscoveryError, Discv4Server},
-    rlpx::utils::{log_peer_debug, log_peer_error},
+    rlpx::utils::log_peer_debug,
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{H256, H512};
@@ -159,7 +159,7 @@ pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
     match handshake::as_initiator(context, node.clone(), stream).await {
         Ok(mut conn) => conn.start(table, false).await,
         Err(e) => {
-            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
+            log_peer_debug(&node, &format!("Error creating tcp connection {e}"));
             table.lock().await.replace_peer(node.node_id());
         }
     };
