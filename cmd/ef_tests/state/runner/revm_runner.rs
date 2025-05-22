@@ -4,6 +4,7 @@ use crate::{
     types::EFTest,
     utils::{effective_gas_price, load_initial_state, load_initial_state_levm},
 };
+use alloy_rlp::{BufMut, Decodable, Encodable, Header, RlpDecodable, RlpEncodable};
 use bytes::Bytes;
 use ethrex_common::{
     types::{Account, Fork, TxKind},
@@ -11,7 +12,6 @@ use ethrex_common::{
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult};
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rlp::structs::Encoder;
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use ethrex_vm::{
     self,
@@ -26,7 +26,7 @@ use revm::{
     primitives::{
         alloy_primitives::U160, AccessListItem, Authorization, BlobExcessGasAndPrice,
         BlockEnv as RevmBlockEnv, EVMError as REVMError, ExecutionResult as RevmExecutionResult,
-        SignedAuthorization, TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
+        Log as RevmLog, SignedAuthorization, TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
     },
     Evm as Revm,
 };
@@ -40,21 +40,6 @@ pub fn convert_revm_address_to_levm(address: ethrex_common::Address) -> revm::pr
     revm::primitives::Address::from(U160::from(u160_address))
 }
 
-fn enconde_revm_logs(revm_log: &revm::primitives::Log) {}
-/*
-fn levm_and_revm_logs_match(levm_logs: &Vec<ethrex_common::types::Log>, revm_logs: &Vec<revm::primitives::Log>) -> bool {
-    if levm_logs.len() == revm_logs.len() {
-        for (levm_log, revm_log) in levm_logs.iter().zip(revm_logs.iter()) {
-            let addresses_match = convert_revm_address_to_levm(levm_log.address) == revm_log.address;
-            let data_matches = levm_log.data == *revm_log.data.data;
-            if !(addresses_match && data_matches) {
-                return false;
-            }
-        }
-        true
-    } else { false }
-}
-*/
 fn levm_and_revm_logs_match(
     levm_logs: &Vec<ethrex_common::types::Log>,
     revm_logs: &Vec<revm::primitives::Log>,
@@ -67,7 +52,9 @@ fn levm_and_revm_logs_match(
     };
 
     let revm_keccak_logs = {
-        let mut encoded_logs = revm_logs.iter().map(|&x| enconde_revm_logs(&x)).collect();
+        let logs = revm_logs;
+        let mut encoded_logs = Vec::new();
+        logs.encode(&mut encoded_logs);
         keccak(encoded_logs)
     };
 

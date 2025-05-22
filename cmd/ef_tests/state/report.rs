@@ -1,15 +1,18 @@
 use crate::runner::revm_runner::convert_revm_address_to_levm;
 use crate::runner::{EFTestRunnerError, InternalError};
+use alloy_rlp::Encodable;
 use colored::Colorize;
 use ethrex_common::{
     types::{Account, Fork},
     Address, H256,
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::structs::Encoder;
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use itertools::Itertools;
 use keccak_hash::keccak;
-use revm::primitives::{EVMError, ExecutionResult as RevmExecutionResult};
+use revm::primitives::{EVMError, ExecutionResult as RevmExecutionResult, Log, LogData};
 use serde::{Deserialize, Serialize};
 use spinoff::{spinners::Dots, Color, Spinner};
 use std::{
@@ -18,6 +21,7 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
+//use revm::alloy_primitives::private::alloy_rlp::encode::Encodable;
 
 pub const LEVM_EF_TESTS_SUMMARY_SLACK_FILE_PATH: &str = "./levm_ef_tests_summary_slack.txt";
 pub const LEVM_EF_TESTS_SUMMARY_GITHUB_FILE_PATH: &str = "./levm_ef_tests_summary_github.txt";
@@ -893,28 +897,41 @@ impl TestReRunReport {
         fork: Fork,
     ) {
         let mut logs_diff = vec![];
-        for (i, (levm_log, revm_log)) in levm_logs.iter().zip(revm_logs.iter()).enumerate() {
-            if keccak(encode(levm_log)) != keccak(&revm_log.encode()) {
+
+        let mut levm_logs_rlp = Vec::new();
+        levm_logs.encode(&mut levm_logs_rlp);
+
+        let mut revm_logs_rlp = Vec::new();
+        revm_logs.encode(&mut revm_logs_rlp);
+
+        for (i, (levm_log, revm_log)) in levm_logs_rlp.iter().zip(revm_logs_rlp.iter()).enumerate()
+        {
+            if levm_log != revm_log {
                 let mut diff = format!("{i} logs don't match");
-                if convert_revm_address_to_levm(levm_log.address) != revm_log.address {
+                if convert_revm_address_to_levm(levm_logs[i].address) != revm_logs[i].address {
                     diff += &format!(
                         "Address missmatch: Levm log address: {} - Revm log address: {}",
-                        convert_revm_address_to_levm(levm_log.address),
-                        revm_log.address
+                        convert_revm_address_to_levm(levm_logs[i].address),
+                        revm_logs[i].address
                     );
                 }
-                if levm_log.data != *revm_log.data.data {
+                if levm_logs[i].data != *revm_logs[i].data.data {
                     diff += &format!(
                         "Data missmatch: Levm log data: {:?} - Revm log data: {:?}",
-                        levm_log.data, *revm_log.data.data
+                        levm_logs[i].data, *revm_logs[i].data.data
                     );
                 }
 
-                if levm_log.topics != *revm_log.data.topics() {
+                if levm_logs[i].topics
+                    != (*revm_logs[i].data.topics().to_vec())
+                        .iter()
+                        .map(|x| H256::from_slice(&x.to_vec()))
+                        .collect::<Vec<H256>>()
+                {
                     diff += &format!(
                         "Topics missmatch: Levm log topic: {:?} - Revm log topic: {:?}",
-                        levm_log.topics,
-                        revm_log.data.topics()
+                        levm_logs[i].topics,
+                        revm_logs[i].data.topics()
                     );
                 }
 
