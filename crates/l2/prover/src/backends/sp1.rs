@@ -1,8 +1,8 @@
 use std::{fmt::Debug, sync::LazyLock};
 
-use ethrex_l2::utils::prover::proving_systems::{
-    BatchProof, ProofBytes, ProofCalldata, ProverType,
-};
+#[cfg(feature = "aligned")]
+use ethrex_l2::utils::prover::proving_systems::ProofBytes;
+use ethrex_l2::utils::prover::proving_systems::{BatchProof, ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use sp1_sdk::{
     EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
@@ -93,7 +93,7 @@ pub fn to_batch_proof(proof: ProveOutput) -> Result<BatchProof, Box<dyn std::err
     cfg_if::cfg_if! {
         if #[cfg(feature = "aligned")] {
             Ok(BatchProof::ProofBytes(ProofBytes {
-                proof: bincode::serialize(&proof)?,
+                proof: bincode::serialize(&proof.proof)?,
                 public_values: proof.proof.public_values.to_vec(),
             }))
         }
