@@ -14,7 +14,6 @@ contract SequencerRegistry is
     OwnableUpgradeable
 {
     uint256 public constant MIN_COLLATERAL = 1 ether;
-    uint256 public constant MAX_COLLATERAL = 100 ether;
 
     address public ON_CHAIN_PROPOSER;
 
@@ -66,24 +65,6 @@ contract SequencerRegistry is
         return collateral[sequencer] >= MIN_COLLATERAL;
     }
 
-    function increaseCollateral(address sequencer) public payable {
-        _validateCollateralIncreaseRequest(sequencer, msg.value);
-
-        collateral[sequencer] += msg.value;
-
-        emit CollateralIncreased(sequencer, msg.value);
-    }
-
-    function decreaseCollateral(address sequencer, uint256 amount) public {
-        _validateCollateralDecreaseRequest(sequencer, amount);
-
-        collateral[sequencer] -= amount;
-
-        payable(sequencer).transfer(amount);
-
-        emit CollateralDecreased(sequencer, amount);
-    }
-
     function leaderSequencer() public view returns (address) {
         return futureLeaderSequencer(0);
     }
@@ -126,40 +107,10 @@ contract SequencerRegistry is
             amount >= MIN_COLLATERAL,
             "SequencerRegistry: Insufficient collateral"
         );
-        require(
-            amount <= MAX_COLLATERAL,
-            "SequencerRegistry: Excessive collateral"
-        );
     }
 
     function _validateUnregisterRequest(address sequencer) internal view {
         require(collateral[sequencer] > 0, "SequencerRegistry: Not registered");
-    }
-
-    function _validateCollateralIncreaseRequest(
-        address sequencer,
-        uint256 amount
-    ) internal view {
-        require(collateral[sequencer] > 0, "SequencerRegistry: Not registered");
-        require(
-            amount > 0,
-            "SequencerRegistry: Collateral amount must be greater than zero"
-        );
-    }
-
-    function _validateCollateralDecreaseRequest(
-        address sequencer,
-        uint256 amount
-    ) internal view {
-        require(collateral[sequencer] > 0, "SequencerRegistry: Not registered");
-        require(
-            amount > 0,
-            "SequencerRegistry: Collateral amount must be greater than zero"
-        );
-        require(
-            collateral[sequencer] - amount >= MIN_COLLATERAL,
-            "SequencerRegistry: Cannot decrease collateral below minimum"
-        );
     }
 
     /// @notice Allow owner to upgrade the contract.

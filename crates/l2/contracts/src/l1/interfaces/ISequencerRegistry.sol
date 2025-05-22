@@ -9,19 +9,11 @@ interface ISequencerRegistry {
 
     event SequencerUnregistered(address indexed sequencer);
 
-    event CollateralIncreased(address indexed sequencer, uint256 amount);
-
-    event CollateralDecreased(address indexed sequencer, uint256 amount);
-
     function register(address sequencer) external payable;
 
     function unregister(address sequencer) external;
 
     function isRegistered(address sequencer) external view returns (bool);
-
-    function increaseCollateral(address sequencer) external payable;
-
-    function decreaseCollateral(address sequencer, uint256 amount) external;
 
     function leaderSequencer() external view returns (address);
 
