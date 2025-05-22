@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747929646165,
+  "lastUpdate": 1747932934344,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8515,6 +8515,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 214976557852,
             "range": "± 821463712",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7e49b4bab352ace4b8733dd8001876897dc97ddd",
+          "message": "chore(l1): reduce p2p error and info logs (#2885)\n\n**Motivation**\n\nWhen running the node, even without `debug` the logs are pretty\ndifficult to follow, specially due to p2p errors and infos\n\n**Description**\n\nMake every individual peer error use `debug` instead of `error` level\n(except for boradcasting issues) and remove the capabilities negotiated\n`info` level log.\n\n#### Logs Before\n\n\n![image](https://github.com/user-attachments/assets/c99aef44-e02f-494d-bd5c-7a27169be388)\n\n\n#### Logs After\n\n\n![image](https://github.com/user-attachments/assets/8373aab5-3b99-4c35-ae3a-fc32ebc0067f)",
+          "timestamp": "2025-05-22T16:01:51Z",
+          "tree_id": "c7d55c32e3873527f51915da40ac280d8958c2e0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7e49b4bab352ace4b8733dd8001876897dc97ddd"
+        },
+        "date": 1747932931177,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211028602464,
+            "range": "± 696217113",
             "unit": "ns/iter"
           }
         ]
