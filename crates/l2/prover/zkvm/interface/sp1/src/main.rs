@@ -1,13 +1,9 @@
 #![no_main]
 
-use bls12_381::G1Affine;
 use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_common::{
-    types::{
-        blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash},
-        BYTES_PER_BLOB,
-    },
-    Address, H256,
+    types::blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash},
+    Address,
 };
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
@@ -156,7 +152,7 @@ pub fn main() {
     }
 
     #[cfg(feature = "l2")]
-    {
+    let blob_versioned_hash = {
         let encoded_state_diff = state_diff.encode().expect("failed to encode state diff");
         let blob_data = blob_from_bytes(encoded_state_diff)
             .expect("failed to convert encoded state diff into blob data");
@@ -164,8 +160,10 @@ pub fn main() {
 
         let blob_proof_valid = KzgProof::verify_blob_kzg_proof(
             blob,
-            &kzg_rs::Bytes48::from_slice(&blob_commitment),
-            &kzg_rs::Bytes48::from_slice(&blob_proof),
+            &kzg_rs::Bytes48::from_slice(&blob_commitment)
+                .expect("failed type conversion for blob commitment"),
+            &kzg_rs::Bytes48::from_slice(&blob_proof)
+                .expect("failed type conversion for blob proof"),
             &get_kzg_settings(),
         )
         .expect("failed to verify blob proof (neither valid or invalid proof)");
