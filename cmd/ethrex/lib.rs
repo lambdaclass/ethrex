@@ -3,7 +3,7 @@ pub mod utils;
 
 pub mod cli;
 
-#[cfg(any(feature = "l2", feature = "based"))]
+#[cfg(feature = "l2")]
 pub mod l2;
 
 mod decode;
