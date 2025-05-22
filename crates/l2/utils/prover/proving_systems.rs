@@ -56,12 +56,11 @@ impl ProverType {
     pub fn verifier_getter(&self) -> Option<String> {
         // These values have to match with the OnChainProposer.sol contract
         match self {
+            Self::Aligned => Some("ALIGNEDPROOFAGGREGATOR()".to_string()),
             Self::RISC0 => Some("R0VERIFIER()".to_string()),
             Self::SP1 => Some("SP1VERIFIER()".to_string()),
             Self::Pico => Some("PICOVERIFIER()".to_string()),
             Self::Exec => None,
-            // TODO: review this
-            Self::Aligned => None,
         }
     }
 }

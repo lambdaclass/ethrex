@@ -29,6 +29,7 @@ mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
     "initialize(bool,address,address,address,address,bytes32,bytes32,address[])";
+
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
@@ -338,6 +339,9 @@ async fn initialize_contracts(
         let calldata_values = vec![
             Value::Bool(opts.validium),
             Value::Address(deployer_address),
+            Value::Address(
+                Address::from_str("0xFD471836031dc5108809D173A067e8486B9047A3").unwrap(), //alignedProofAggregatorService contract
+            ),
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
