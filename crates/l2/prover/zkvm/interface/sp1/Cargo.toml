@@ -8,6 +8,12 @@ edition = "2021"
 [dependencies]
 sp1-zkvm = "4.1.7"
 zkvm_interface = { path = "../" }
+kzg-rs = "0.2.6"
+bls12_381 = { version = "=0.8.0-sp1-4.0.0-v2", package = "sp1_bls12_381", default-features = false, features = [
+    "groups",
+    "pairings",
+    "alloc",
+] }
 
 ethrex-common = { path = "../../../../../common", default-features = false }
 ethrex-storage = { path = "../../../../../storage", default-features = false }

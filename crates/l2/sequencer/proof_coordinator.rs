@@ -6,15 +6,20 @@ use crate::utils::prover::save_state::{
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
+use ethrex_common::types::{blobs_bundle, bytes_from_blob};
 use ethrex_common::{
     types::{Block, BlockHeader},
     Address,
 };
+use ethrex_l2_common::{get_block_deposits, get_block_withdrawals, get_tx_and_receipts, StateDiff};
 use ethrex_rpc::clients::eth::EthClient;
-use ethrex_storage::Store;
+use ethrex_storage::{AccountUpdate, Store};
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmError, ProverDB};
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::{fmt::Debug, net::IpAddr};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -23,15 +28,26 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
+use super::blobs_bundle_cache::BlobsBundleCache;
 use super::errors::SequencerError;
+use super::execution_cache::ExecutionCache;
 use super::utils::sleep_random;
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde_as]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
     pub parent_block_header: BlockHeader,
     pub db: ProverDB,
     pub elasticity_multiplier: u64,
+    #[cfg(feature = "l2")]
+    pub state_diff: StateDiff,
+    #[cfg(feature = "l2")]
+    #[serde_as(as = "[_; 48]")]
+    pub blob_commitment: blobs_bundle::Commitment,
+    #[cfg(feature = "l2")]
+    #[serde_as(as = "[_; 48]")]
+    pub blob_proof: blobs_bundle::Proof,
 }
 
 #[derive(Clone)]
@@ -43,6 +59,8 @@ struct ProofCoordinator {
     on_chain_proposer_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
+    execution_cache: Arc<ExecutionCache>,
+    blobs_bundle_cache: Arc<BlobsBundleCache>,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -114,6 +132,8 @@ pub async fn start_proof_coordinator(
     store: Store,
     rollup_store: StoreRollup,
     cfg: SequencerConfig,
+    execution_cache: Arc<ExecutionCache>,
+    blobs_bundle_cache: Arc<BlobsBundleCache>,
 ) -> Result<(), SequencerError> {
     let proof_coordinator = ProofCoordinator::new_from_config(
         &cfg.proof_coordinator,
@@ -122,6 +142,8 @@ pub async fn start_proof_coordinator(
         &cfg.block_producer,
         store,
         rollup_store,
+        execution_cache,
+        blobs_bundle_cache,
     )
     .await?;
     proof_coordinator.run().await;
@@ -137,6 +159,8 @@ impl ProofCoordinator {
         proposer_config: &BlockProducerConfig,
         store: Store,
         rollup_store: StoreRollup,
+        execution_cache: Arc<ExecutionCache>,
+        blobs_bundle_cache: Arc<BlobsBundleCache>,
     ) -> Result<Self, SequencerError> {
         let eth_client = EthClient::new_with_config(
             eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
@@ -157,6 +181,8 @@ impl ProofCoordinator {
             on_chain_proposer_address,
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             rollup_store,
+            execution_cache,
+            blobs_bundle_cache,
         })
     }
 
@@ -326,19 +352,72 @@ impl ProofCoordinator {
             .await
             .map_err(EvmError::ProverDB)?;
 
-        // Get the block_header of the parent of the first block
-        let parent_hash = blocks
-            .first()
-            .ok_or_else(|| {
-                ProverServerError::Custom("No blocks found for the given batch number".to_string())
-            })?
-            .header
-            .parent_hash;
+        // Get the batch's first block
+        let first_block = blocks.first().ok_or_else(|| {
+            ProverServerError::Custom("No blocks found for the given batch number".to_string())
+        })?;
 
+        // Get the batch's first block parent header
         let parent_block_header = self
             .store
-            .get_block_header_by_hash(parent_hash)?
+            .get_block_header_by_hash(first_block.header.parent_hash)?
             .ok_or(ProverServerError::StorageDataIsNone)?;
+
+        // Get all withdrawals and deposits
+        let mut all_withdrawals = Vec::new();
+        let mut all_deposits = Vec::new();
+        let mut all_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
+        for block in &blocks {
+            let txs_and_receipts = get_tx_and_receipts(&block, self.store.clone()).await?;
+            let withdrawals = get_block_withdrawals(&txs_and_receipts)?;
+            let deposits = get_block_deposits(&txs_and_receipts);
+
+            let account_updates = match self.execution_cache.get(block.hash())? {
+                Some(account_updates) => account_updates,
+                None => {
+                    warn!(
+                            "Could not find execution cache result for block {}, falling back to re-execution", block.header.number
+                        );
+                    let mut vm = Evm::default(self.store.clone(), block.header.parent_hash);
+                    vm.execute_block(&block)?;
+                    vm.get_state_transitions()?
+                }
+            };
+
+            all_withdrawals.extend(withdrawals);
+            all_deposits.extend(deposits);
+            for account in account_updates {
+                let address = account.address;
+                if let Some(existing) = all_account_updates.get_mut(&address) {
+                    existing.merge(account);
+                } else {
+                    all_account_updates.insert(address, account);
+                }
+            }
+        }
+
+        let cached_blobs_bundle = self.blobs_bundle_cache.get(batch_number)?;
+
+        let (state_diff, blob_commitment, blob_proof) = match cached_blobs_bundle {
+            Some(mut bundle) => {
+                let (Some(blob), Some(commitment), Some(proof)) = (
+                    bundle.blobs.pop(),
+                    bundle.commitments.pop(),
+                    bundle.proofs.pop(),
+                ) else {
+                    return Err(ProverServerError::Custom(format!(
+                        "Cached BlobsBundle for batch {batch_number} is empty"
+                    )));
+                };
+                let state_diff = StateDiff::decode(&bytes_from_blob(blob.to_vec().into()))?;
+                (state_diff, commitment, proof)
+            }
+            None => {
+                return Err(ProverServerError::Custom(format!(
+                "BlobsBundle for batch {batch_number} not found in cache. Prover input cannot be created."
+            )));
+            }
+        };
 
         debug!("Created prover input for batch {batch_number}");
 
@@ -347,6 +426,12 @@ impl ProofCoordinator {
             blocks,
             parent_block_header,
             elasticity_multiplier: self.elasticity_multiplier,
+            #[cfg(feature = "l2")]
+            state_diff,
+            #[cfg(feature = "l2")]
+            blob_commitment,
+            #[cfg(feature = "l2")]
+            blob_proof,
         })
     }
 

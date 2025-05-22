@@ -1,9 +1,13 @@
 #![no_main]
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::Address;
+use ethrex_common::{
+    types::blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash},
+    Address,
+};
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
+use kzg_rs::{dtypes::Blob, kzg_proof::KzgProof, trusted_setup::get_kzg_settings};
 use std::collections::HashMap;
 #[cfg(feature = "l2")]
 use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
@@ -22,6 +26,9 @@ pub fn main() {
         parent_block_header,
         mut db,
         elasticity_multiplier,
+        state_diff,
+        blob_commitment,
+        blob_proof,
     } = sp1_zkvm::io::read::<ProgramInput>();
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
@@ -107,6 +114,12 @@ pub fn main() {
         parent_header = block.header;
     }
 
+    // Check state diffs are valid
+    #[cfg(feature = "l2")]
+    let state_diff_updates = state_diff
+        .to_account_updates(&state_trie)
+        .expect("failed to calculate account updates from state diffs");
+
     // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
     let Ok(withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
@@ -120,15 +133,47 @@ pub fn main() {
     };
 
     // Update state trie
-    let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
-    update_tries(&mut state_trie, &mut storage_tries, &acc_account_updates)
-        .expect("failed to update state and storage tries");
+    update_tries(
+        &mut state_trie,
+        &mut storage_tries,
+        &acc_account_updates.values().cloned().collect::<Vec<_>>(),
+    )
+    .expect("failed to update state and storage tries");
 
     // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
     if final_state_hash != last_block_state_root {
         panic!("invalid final state trie");
     }
+
+    #[cfg(feature = "l2")]
+    if state_diff_updates != acc_account_updates {
+        panic!("invalid state diffs")
+    }
+
+    #[cfg(feature = "l2")]
+    let blob_versioned_hash = {
+        let encoded_state_diff = state_diff.encode().expect("failed to encode state diff");
+        let blob_data = blob_from_bytes(encoded_state_diff)
+            .expect("failed to convert encoded state diff into blob data");
+        let blob = Blob::from_slice(&blob_data).expect("failed to convert blob data into Blob");
+
+        let blob_proof_valid = KzgProof::verify_blob_kzg_proof(
+            blob,
+            &kzg_rs::Bytes48::from_slice(&blob_commitment)
+                .expect("failed type conversion for blob commitment"),
+            &kzg_rs::Bytes48::from_slice(&blob_proof)
+                .expect("failed type conversion for blob proof"),
+            &get_kzg_settings(),
+        )
+        .expect("failed to verify blob proof (neither valid or invalid proof)");
+
+        if !blob_proof_valid {
+            panic!("invalid blob proof");
+        }
+
+        kzg_commitment_to_versioned_hash(&blob_commitment)
+    };
 
     // Output gas for measurement purposes
     sp1_zkvm::io::commit(&cumulative_gas_used);
@@ -141,6 +186,8 @@ pub fn main() {
             withdrawals_merkle_root,
             #[cfg(feature = "l2")]
             deposit_logs_hash,
+            #[cfg(feature = "l2")]
+            blob_versioned_hash,
         }
         .encode(),
     );
