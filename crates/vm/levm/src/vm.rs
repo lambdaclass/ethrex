@@ -43,6 +43,8 @@ pub struct VM<'a> {
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
+    /// All contracts addresses that have been successfully delegated in current transaction.
+    pub delegate_contracts_in_tx: HashSet<Address>,
 }
 
 impl<'a> VM<'a> {
@@ -58,6 +60,7 @@ impl<'a> VM<'a> {
             hooks,
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
+            delegate_contracts_in_tx: HashSet::new(),
         }
     }
 
@@ -169,7 +172,7 @@ impl<'a> VM<'a> {
     pub fn execute_precompile(&mut self) -> Result<ExecutionReport, VMError> {
         let precompile_address = self.current_call_frame()?.code_address;
 
-        let precompile_result = match self.is_delegation_target(precompile_address) {
+        let precompile_result = match self.delegate_contracts_in_tx.contains(&precompile_address) {
             // Avoid executing precompile if it is target of a delegation in EIP-7702 transaction.
             true => {
                 let gas_limit = self.current_call_frame()?.gas_limit;

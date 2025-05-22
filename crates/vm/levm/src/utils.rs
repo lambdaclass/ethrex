@@ -473,6 +473,9 @@ impl<'a> VM<'a> {
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
+
+            // If delegation was successful insert target of delegation into "delegate contracts" set
+            self.delegate_contracts_in_tx.insert(auth_tuple.address);
         }
 
         self.substate.refunded_gas = refunded_gas;
@@ -704,12 +707,5 @@ impl<'a> VM<'a> {
                 Ok(created_address)
             }
         }
-    }
-
-    /// Checks if an address is delegation target in current transaction.
-    pub fn is_delegation_target(&self, address: Address) -> bool {
-        self.tx.authorization_list().as_ref().map_or(false, |list| {
-            list.iter().any(|item| item.address == address)
-        })
     }
 }
