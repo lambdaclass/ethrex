@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747954447848,
+  "lastUpdate": 1747958158845,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10203,6 +10203,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007404800294406281,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9899326156309274fcc9c87d7342d99eba76c10a",
+          "message": "refactor(l2): remove all based features (#2868)\n\n**Motivation**\n\nWe want to remove all based features in the project\n\n**Description**\n\n* All feature flags `based` were removed.\n* All functions related to specific behavior from based rollups were\nremoved",
+          "timestamp": "2025-05-22T20:23:03Z",
+          "tree_id": "3aeb6e6f4a7437120359898134d69aac80277ea3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9899326156309274fcc9c87d7342d99eba76c10a"
+        },
+        "date": 1747958157916,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007354280214424951,
             "unit": "Mgas/s"
           }
         ]
