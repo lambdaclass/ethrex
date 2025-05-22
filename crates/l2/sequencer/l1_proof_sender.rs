@@ -72,10 +72,16 @@ impl L1ProofSender {
         let mut needed_proof_types = vec![];
         if !cfg.dev_mode {
             for prover_type in ProverType::all() {
+                info!("checking if {prover_type} proof is needed");
                 let Some(getter) = prover_type.verifier_getter() else {
                     continue;
                 };
                 let calldata = keccak(getter)[..4].to_vec();
+
+                info!(
+                    "Calling on-chain prover address: {}",
+                    committer_cfg.on_chain_proposer_address
+                );
 
                 let response = eth_client
                     .call(
@@ -84,6 +90,8 @@ impl L1ProofSender {
                         Overrides::default(),
                     )
                     .await?;
+
+                info!("Response: {response:#x}");
 
                 // trim to 20 bytes, also removes 0x prefix
                 let trimmed_response = &response[26..];
