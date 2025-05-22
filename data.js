@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747929022746,
+  "lastUpdate": 1747929646165,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8485,6 +8485,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 213378710035,
             "range": "± 744251123",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "128638963+santiago-MV@users.noreply.github.com",
+            "name": "santiago-MV",
+            "username": "santiago-MV"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1094c2dbdd37a925fa591b6a9816e319285be18c",
+          "message": "fix(l1,l2): solved make install-cli problem (#2873)\n\n**Motivation**\n\nWhile trying to run the `make install-cli` command it failed.\n\n**Description**\n\nThe problem was that the libmdbx crate was trying to install the 0.5.4\n(not the one in the `Cargo.lock` file) version which needs a version of\nrust with the feature \"edition2024\", that is estable after the 1.85.0\nversion (Ethrex is using 1.82.0).\nI found two solutions:\n1. Upgrading the rust version to 1.85.0 in the `.tool-versions` file\n2. Adding `--locked` flag to the makefile command\n\nThe first one may introduce more problems on the code. The second one\nensures that the `cargo install` command, called by `make`, installs the\nversions specified in the `Cargo.lock` file, solving the error.\nWith this change the `make install-cli` command installs the ethrex l2\ncli (As said in the makefile).\n\nCloses #2870",
+          "timestamp": "2025-05-22T15:05:54Z",
+          "tree_id": "8a032ec52af4e5bae77d3c35b8fdbbbb5eeecaf0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1094c2dbdd37a925fa591b6a9816e319285be18c"
+        },
+        "date": 1747929642321,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 214976557852,
+            "range": "± 821463712",
             "unit": "ns/iter"
           }
         ]
