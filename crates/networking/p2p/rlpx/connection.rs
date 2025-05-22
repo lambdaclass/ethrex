@@ -206,7 +206,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         error: RLPxError,
         table: Arc<Mutex<crate::kademlia::KademliaTable>>,
     ) {
-        log_peer_error(&self.node, &format!("{error_text}: ({error})"));
+        log_peer_debug(&self.node, &format!("{error_text}: ({error})"));
 
         // Send disconnect message only if error is different than RLPxError::DisconnectRequested
         // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
@@ -224,7 +224,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             _ => {
                 let remote_public_key = self.node.public_key;
-                log_peer_error(
+                log_peer_debug(
                     &self.node,
                     &format!("{error_text}: ({error}), discarding peer {remote_public_key}"),
                 );
