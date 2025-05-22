@@ -24,9 +24,6 @@ pub struct Options {
     pub sponsorable_addresses_file_path: Option<String>,
     #[arg(long, value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
     pub sponsor_private_key: Option<SecretKey>,
-    #[cfg(feature = "based")]
-    #[command(flatten)]
-    pub based_opts: BasedOptions,
 }
 
 #[derive(Parser, Default)]
@@ -371,48 +368,4 @@ impl Default for ProofCoordinatorOptions {
             dev_mode: true,
         }
     }
-}
-
-#[cfg(feature = "based")]
-#[derive(Parser, Default)]
-pub struct BasedOptions {
-    #[arg(
-        long = "gateway.addr",
-        default_value = "0.0.0.0",
-        value_name = "GATEWAY_ADDRESS",
-        env = "GATEWAY_ADDRESS",
-        help_heading = "Based options"
-    )]
-    pub gateway_addr: String,
-    #[arg(
-        long = "gateway.eth_port",
-        default_value = "8546",
-        value_name = "GATEWAY_ETH_PORT",
-        env = "GATEWAY_ETH_PORT",
-        help_heading = "Based options"
-    )]
-    pub gateway_eth_port: String,
-    #[arg(
-        long = "gateway.auth_port",
-        default_value = "8553",
-        value_name = "GATEWAY_AUTH_PORT",
-        env = "GATEWAY_AUTH_PORT",
-        help_heading = "Based options"
-    )]
-    pub gateway_auth_port: String,
-    #[arg(
-        long = "gateway.jwtsecret",
-        default_value = "jwt.hex",
-        value_name = "GATEWAY_JWTSECRET_PATH",
-        env = "GATEWAY_JWTSECRET_PATH",
-        help_heading = "Based options"
-    )]
-    pub gateway_jwtsecret: String,
-    #[arg(
-        long = "gateway.pubkey",
-        value_name = "GATEWAY_PUBKEY",
-        env = "GATEWAY_PUBKEY",
-        help_heading = "Based options"
-    )]
-    pub gateway_pubkey: String,
 }

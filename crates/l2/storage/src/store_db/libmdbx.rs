@@ -172,9 +172,9 @@ impl StoreEngineRollup for Store {
 
         self.write::<OperationsCount>(
             0,
-            dbg!(OperationsCountRLP::from_bytes(
+            OperationsCountRLP::from_bytes(
                 vec![transaction_count, withdrawals_count, deposits_count].encode_to_vec(),
-            )),
+            ),
         )
         .await
     }
@@ -184,7 +184,7 @@ impl StoreEngineRollup for Store {
             .read::<OperationsCount>(0)
             .await?
             .map(|operations| operations.to());
-        match dbg!(operations) {
+        match operations {
             Some(mut operations) => Ok([
                 operations.remove(0),
                 operations.remove(0),

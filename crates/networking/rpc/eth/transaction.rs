@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-#[cfg(feature = "based")]
-use crate::utils::RpcRequest;
 use crate::{
     eth::block,
     rpc::{RpcApiContext, RpcHandler},
@@ -22,7 +20,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
-use ethrex_vm::{Evm, ExecutionResult};
+use ethrex_vm::{Evm, ExecutionResult, StoreVmDatabase};
 use serde::Serialize;
 
 use serde_json::Value;
@@ -169,9 +167,9 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
         };
         let tx = RpcTransaction::build(
             tx.clone(),
-            block_number,
+            Some(block_number),
             block_header.compute_block_hash(),
-            self.transaction_index,
+            Some(self.transaction_index),
         );
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -214,8 +212,12 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
             Some(tx) => tx,
             None => return Ok(Value::Null),
         };
-        let tx =
-            RpcTransaction::build(tx.clone(), block_number, self.block, self.transaction_index);
+        let tx = RpcTransaction::build(
+            tx.clone(),
+            Some(block_number),
+            self.block,
+            Some(self.transaction_index),
+        );
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -257,8 +259,12 @@ impl RpcHandler for GetTransactionByHashRequest {
             _ => return Ok(Value::Null),
         };
 
-        let transaction =
-            RpcTransaction::build(transaction, block_number, block_hash, index as usize);
+        let transaction = RpcTransaction::build(
+            transaction,
+            Some(block_number),
+            block_hash,
+            Some(index as usize),
+        );
         serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -341,11 +347,8 @@ impl RpcHandler for CreateAccessListRequest {
             _ => return Ok(Value::Null),
         };
 
-        let mut vm = Evm::new(
-            context.blockchain.evm_engine,
-            context.storage.clone(),
-            header.compute_block_hash(),
-        );
+        let vm_db = StoreVmDatabase::new(context.storage.clone(), header.compute_block_hash());
+        let mut vm = Evm::new(context.blockchain.evm_engine, vm_db);
         let chain_config = context.storage.get_chain_config()?;
         let fork = chain_config.get_fork(header.timestamp);
 
@@ -571,11 +574,8 @@ fn simulate_tx(
     blockchain: Arc<Blockchain>,
     fork: Fork,
 ) -> Result<ExecutionResult, RpcErr> {
-    let mut vm = Evm::new(
-        blockchain.evm_engine,
-        storage.clone(),
-        block_header.compute_block_hash(),
-    );
+    let db = StoreVmDatabase::new(storage.clone(), block_header.compute_block_hash());
+    let mut vm = Evm::new(blockchain.evm_engine, db);
 
     match vm.simulate_tx_from_generic(transaction, block_header, fork)? {
         ExecutionResult::Revert {
@@ -601,44 +601,6 @@ impl RpcHandler for SendRawTransactionRequest {
         }
 
         Ok(transaction)
-    }
-
-    #[cfg(feature = "based")]
-    async fn relay_to_gateway_or_fallback(
-        req: &RpcRequest,
-        context: RpcApiContext,
-    ) -> Result<Value, RpcErr> {
-        use tracing::warn;
-
-        info!("Relaying eth_sendRawTransaction to gateway");
-
-        let gateway_eth_client = context.gateway_eth_client.clone();
-
-        let tx_data = get_transaction_data(&req.params)?;
-
-        let gateway_request = gateway_eth_client.send_raw_transaction(&tx_data);
-
-        let client_response = Self::call(req, context).await;
-
-        let gateway_response = gateway_request
-            .await
-            .map_err(|err| {
-                RpcErr::Internal(format!(
-                    "Could not relay eth_sendRawTransaction to gateway: {err}",
-                ))
-            })
-            .and_then(|hash| {
-                serde_json::to_value(format!("{hash:#x}"))
-                    .map_err(|error| RpcErr::Internal(error.to_string()))
-            });
-
-        if gateway_response.is_err() {
-            warn!(error = ?gateway_response, "Gateway eth_sendRawTransaction failed, falling back to local node");
-        } else {
-            info!("Successfully relayed eth_sendRawTransaction to gateway");
-        }
-
-        gateway_response.or(client_response)
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
