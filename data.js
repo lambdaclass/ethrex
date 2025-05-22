@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747945948025,
+  "lastUpdate": 1747948625816,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8695,6 +8695,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211303410426,
             "range": "± 1101724722",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9899326156309274fcc9c87d7342d99eba76c10a",
+          "message": "refactor(l2): remove all based features (#2868)\n\n**Motivation**\n\nWe want to remove all based features in the project\n\n**Description**\n\n* All feature flags `based` were removed.\n* All functions related to specific behavior from based rollups were\nremoved",
+          "timestamp": "2025-05-22T20:23:03Z",
+          "tree_id": "3aeb6e6f4a7437120359898134d69aac80277ea3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9899326156309274fcc9c87d7342d99eba76c10a"
+        },
+        "date": 1747948622466,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212357885815,
+            "range": "± 911239814",
             "unit": "ns/iter"
           }
         ]
