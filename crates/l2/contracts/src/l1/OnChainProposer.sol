@@ -339,11 +339,6 @@ contract OnChainProposer is
                 depositsLogHash,
             "OnChainProposer: deposits hash public input does not match with committed deposits"
         );
-        require(
-            batchCommitments[batchNumber].blob ==
-                depositsLogHash,
-            "OnChainProposer: deposits hash public input does not match with committed deposits"
-        );
         bytes32 blobVersionedHash = bytes32(publicData[128:160]);
         require(
             batchCommitments[batchNumber].stateDiffKZGVersionedHash ==
