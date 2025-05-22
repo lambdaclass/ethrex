@@ -123,21 +123,26 @@ display-hive-alternatives:
 	@echo "   - go-ethereum: https://github.com/ethereum/go-ethereum"
 	@echo ""
 
-# Runs a hive testing suite
+# Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080
 # The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
 run-hive: display-hive-alternatives build-image setup-hive ## 🧪 Run Hive testing suite
 	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
+	$(MAKE) view-hive
 
 run-hive-all: display-hive-alternatives build-image setup-hive ## 🧪 Run all Hive testing suites
 	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
+	$(MAKE) view-hive
 
 run-hive-debug: display-hive-alternatives build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive && ./hive --sim $(SIMULATION) --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
+	cd hive && ./hive --sim $(SIMULATION) --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output go build ./cmd/hiveview && ./hiveview --serve --logdir ./workspace/logs
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
+
+view-hive:
+	cd hive && go build ./cmd/hiveview && ./hiveview --serve --logdir ./workspace/logs
 
 install-cli: ## 🛠️ Installs the ethrex-l2 cli
 	cargo install --path cmd/ethrex_l2/ --force
