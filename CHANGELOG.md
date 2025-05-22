@@ -2,9 +2,13 @@
 
 ## Perf
 
-### 2025-05-19
+### 2025-05-22
 
 - Add immutable cache to LEVM that stores in memory data read from the Database so that getting account doesn't need to consult the Database again. [2829](https://github.com/lambdaclass/ethrex/pull/2829)
+
+### 2025-05-20
+
+- Reduce account clone overhead when account data is retrieved [2684](https://github.com/lambdaclass/ethrex/pull/2684)
 
 ### 2025-04-30
 
