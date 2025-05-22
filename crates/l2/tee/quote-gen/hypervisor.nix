@@ -6,52 +6,47 @@ let
   };
   qemu = (pkgs.qemu.overrideAttrs (oldAttrs: rec {
     srcs = [
-      (pkgs.fetchFromGitHub {
+      (pkgs.fetchgit {
         name = "qemu";
+        url = "https://git.launchpad.net/~kobuk-team/ubuntu/+source/qemu";
+        rev = "cee4831c72ad8e57e6a10626fbb74fd3236e88ff";
+        hash = "sha256-T+2IvPJHTxcaX4KZpttfVdFD3HyMLcRs92SLevPvnaE=";
+      })
+      (pkgs.fetchFromGitHub {
+        name = "qemu-intel";
         owner = "intel";
         repo = "qemu-tdx";
         rev = "tdx-upstream-snapshot-2025-05-20";
-        fetchSubmodules = true;
-        hash = "sha256-qm0KasKH1afx0vyAeuZOsPNJvS5E3znTI/XP/pyQ64o=";
-      })
-      (pkgs.fetchFromGitLab {
-        name = "keycodemapdb";
-        owner = "qemu-project";
-        repo = "keycodemapdb";
-        rev = "f5772a62ec52591ff6870b7e8ef32482371f22c6";
-        fetchSubmodules = true;
-        hash = "sha256-EQrnBAXQhllbVCHpOsgREzYGncMUPEIoWFGnjo+hrH4=";
-      })
-      (pkgs.fetchFromGitLab {
-        name = "berkeley-softfloat-3";
-        owner = "qemu-project";
-        repo = "berkeley-softfloat-3";
-        rev = "b64af41c3276f97f0e181920400ee056b9c88037";
-        fetchSubmodules = true;
-        hash = "sha256-Yflpx+mjU8mD5biClNpdmon24EHg4aWBZszbOur5VEA=";
-      })
-      (pkgs.fetchFromGitLab {
-        name = "berkeley-testfloat-3";
-        owner = "qemu-project";
-        repo = "berkeley-testfloat-3";
-        rev = "e7af9751d9f9fd3b47911f51a5cfd08af256a9ab";
-        fetchSubmodules = true;
-        hash = "sha256-inQAeYlmuiRtZm37xK9ypBltCJ+ycyvIeIYZK8a+RYU=";
+        hash = "sha256-CrfcR/pfPbpj1I8jAZDE0y+lGN59C+Wio6lCVtn/d1g=";
       })
     ];
-    patches = [];
-    nativeBuildInputs = oldAttrs.nativeBuildInputs ++ [ pkgs.python3Packages.distutils ];
+    patches = [ ];
+    nativeBuildInputs = with pkgs; oldAttrs.nativeBuildInputs ++ [ 
+    python3Packages.distutils
+        dtc
+        pixman
+        vde2
+        lzo
+        snappy
+        libtasn1
+        libslirp
+        libcbor
+    ];
     postUnpack = ''
-      mv keycodemapdb qemu/subprojects
-      mv berkeley-softfloat-3 qemu/subprojects
-      cp qemu/subprojects/packagefiles/berkeley-softfloat-3/* qemu/subprojects/berkeley-softfloat-3
-      mv berkeley-testfloat-3 qemu/subprojects
-      cp qemu/subprojects/packagefiles/berkeley-testfloat-3/* qemu/subprojects/berkeley-testfloat-3
+      cp -R qemu-intel/pc-bios/* qemu/pc-bios
       cd qemu
     '';
     sourceRoot = ".";
+    postPatch = ''
+      for fname in $(cat debian/patches/series | sed '/^#/d')
+        do
+          patch -p1 < "debian/patches/$fname"
+        done
+    '';
   })).override {
     minimal = true;
+    spiceSupport = true;
+    enableBlobs = true;
     hostCpuTargets = [ "x86_64-softmmu" ];
   };
 in
@@ -60,9 +55,10 @@ let
    ${qemu}/bin/qemu-system-x86_64 -machine q35,kernel_irqchip=split,confidential-guest-support=tdx,hpet=off -smp 2 -m 2G \
         -accel kvm -cpu host -nographic -nodefaults \
         -bios ${OVMF.mergedFirmware} \
-        -nic user,model=virtio-net-pci \
-        -chardev stdio,mux=on,id=console,signal=off -device virtconsole,chardev=console -mon console \
-        -drive file=$1,if=none,id=virtio-disk0 -device virtio-blk-pci,drive=virtio-disk0 \
+        -no-user-config \
+        -serial mon:stdio \
+        -netdev user,id=net0,net=192.168.76.0/24 -device e1000,netdev=net0 \
+        -device ide-hd,bus=ide.0,drive=main,bootindex=0 -drive "if=none,media=disk,id=main,file.filename=$1,discard=unmap,detect-zeroes=unmap" \
         -object '{"qom-type":"tdx-guest","id":"tdx","quote-generation-socket":{"type": "vsock", "cid":"2","port":"4050"}}'
   '';
 in 

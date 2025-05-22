@@ -1,6 +1,3 @@
-# sysctl kernel.unprivileged_userns_apparmor_policy=0
-# sysctl kernel.apparmor_restrict_unprivileged_userns=0
-
 let
   pkgs = import <nixpkgs> { };
 in
@@ -27,6 +24,7 @@ in
       boot = {
         loader.grub.enable = false;
         initrd.systemd.enable = true;
+        kernelParams = [ "console=ttyS0" ];
       };
       system.image = {
         id = "ethrex";
@@ -41,7 +39,7 @@ in
         # bind-mount the store
         "/nix/store" = {
           device = "/usr/nix/store";
-          options = [ "bind" ];
+          options = [ "bind" "ro" ];
         };
       };
       image.repart = {
