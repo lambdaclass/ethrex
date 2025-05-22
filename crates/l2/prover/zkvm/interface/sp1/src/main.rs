@@ -6,7 +6,7 @@ use ethrex_common::{types::{BYTES_PER_BLOB, blobs_bundle::blob_from_bytes}, Addr
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
 use kzg_rs::{
-    dtypes::Blob, kzg_proof::verify_blob_kzg_proof,
+    dtypes::Blob, kzg_proof::KzgProof,
     trusted_setup::get_kzg_settings,
 };
 use std::collections::HashMap;
@@ -163,7 +163,7 @@ pub fn main() {
         let commitment = G1Affine::from_compressed(&blob_commitment)
             .expect("failed to deserialize blob commitment");
 
-        let blob_proof_valid = verify_blob_kzg_proof(blob, &blob_commitment, &blob_proof, &get_kzg_settings()).expect("failed to verify blob proof (neither valid or invalid proof)");
+        let blob_proof_valid = KzgProof::verify_blob_kzg_proof(blob, &blob_commitment, &blob_proof, &get_kzg_settings()).expect("failed to verify blob proof (neither valid or invalid proof)");
 
         if !blob_proof_valid {
             panic!("invalid blob proof");
