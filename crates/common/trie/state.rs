@@ -9,9 +9,34 @@ use super::db::TrieDB;
 /// It contains a table mapping node hashes to rlp encoded nodes
 /// All nodes are stored in the DB and no node is ever removed
 use super::{node::Node, node_hash::NodeHash};
+
+struct TrieStateCache {
+    inner: std::cell::RefCell<HashMap<NodeHash, Node>>,
+}
+
+impl TrieStateCache {
+    pub fn new_empty() -> Self {
+        Self {
+            inner: Default::default(),
+        }
+    }
+    pub fn insert(&self, key: NodeHash, value: Node) {
+        self.inner.borrow_mut().insert(key, value);
+    }
+    pub fn get(&self, key: &NodeHash) -> Option<Node> {
+        self.inner.borrow().get(key).cloned()
+    }
+    pub fn clear(&self) {
+        self.inner.borrow_mut().clear();
+    }
+    pub fn remove(&self, key: &NodeHash) -> Option<Node> {
+        self.inner.borrow_mut().remove(key)
+    }
+}
+
 pub struct TrieState {
     db: Box<dyn TrieDB>,
-    cache: HashMap<NodeHash, Node>,
+    cache: TrieStateCache,
 }
 
 impl TrieState {
@@ -19,7 +44,7 @@ impl TrieState {
     pub fn new(db: Box<dyn TrieDB>) -> TrieState {
         TrieState {
             db,
-            cache: Default::default(),
+            cache: TrieStateCache::new_empty(),
         }
     }
 
@@ -29,13 +54,21 @@ impl TrieState {
         if let NodeHash::Inline(_) = hash {
             return Ok(Some(Node::decode_raw(hash.as_ref())?));
         }
-        if let Some(node) = self.cache.get(&hash) {
-            return Ok(Some(node.clone()));
-        };
-        self.db
-            .get(hash)?
-            .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
-            .transpose()
+        match self.cache.get(&hash) {
+            Some(node) => Ok(Some(node.clone())),
+            None => {
+                let Some(db_result) = self
+                    .db
+                    .get(hash)?
+                    .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+                    .transpose()?
+                else {
+                    return Ok(None);
+                };
+                self.cache.insert(hash, db_result.clone());
+                Ok(Some(db_result))
+            }
+        }
     }
 
     /// Inserts a node
