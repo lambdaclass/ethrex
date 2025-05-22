@@ -103,6 +103,21 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
+        #[cfg(feature = "snapshots")]
+        match self.snapshots.get_account_state(block_hash, address) {
+            Ok(Some(account_state)) => {
+                return Ok(Some(AccountInfo {
+                    code_hash: account_state.code_hash,
+                    balance: account_state.balance,
+                    nonce: account_state.nonce,
+                }))
+            }
+            Ok(None) => {}
+            Err(snapshot_error) => {
+                debug!("failed to fetch snapshot (state): {}", snapshot_error);
+            }
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
