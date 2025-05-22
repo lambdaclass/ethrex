@@ -26,7 +26,7 @@ use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};
-use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
+use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine, StoreVmDatabase};
 use tracing::info;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -74,21 +74,28 @@ impl Blockchain {
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
-        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-            // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone()).await?;
-            return Err(ChainError::ParentNotFound);
+        // Feda (#2831): We search for the entire block because during full/batch sync
+        // we can have the header without the body indicating it's still syncing.
+        let parent = self
+            .storage
+            .get_block_by_hash(block.header.parent_hash)
+            .await?;
+        let parent_header = match parent {
+            Some(parent_block) => parent_block.header,
+            None => {
+                // If the parent is not present, we store it as pending.
+                self.storage.add_pending_block(block.clone()).await?;
+                return Err(ChainError::ParentNotFound);
+            }
         };
+
         let chain_config = self.storage.get_chain_config()?;
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let mut vm = Evm::new(
-            self.evm_engine,
-            self.storage.clone(),
-            block.header.parent_hash,
-        );
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let mut vm = Evm::new(self.evm_engine, vm_db);
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
@@ -211,11 +218,8 @@ impl Blockchain {
             .map_err(|e| (e.into(), None))?;
         let fork = chain_config.fork(first_block_header.timestamp);
 
-        let mut vm = Evm::new(
-            self.evm_engine,
-            self.storage.clone(),
-            first_block_header.parent_hash,
-        );
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), first_block_header.parent_hash);
+        let mut vm = Evm::new(self.evm_engine, vm_db);
 
         let blocks_len = blocks.len();
         let mut all_receipts: HashMap<BlockHash, Vec<Receipt>> = HashMap::new();
@@ -235,16 +239,18 @@ impl Blockchain {
             }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
-                let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-                    return Err((
-                        ChainError::ParentNotFound,
-                        Some(BatchBlockProcessingFailure {
-                            failed_block_hash: block.hash(),
-                            last_valid_hash,
-                        }),
-                    ));
-                };
-                parent_header
+                match find_parent_header(&block.header, &self.storage) {
+                    Ok(parent_header) => parent_header,
+                    Err(error) => {
+                        return Err((
+                            error,
+                            Some(BatchBlockProcessingFailure {
+                                failed_block_hash: block.hash(),
+                                last_valid_hash,
+                            }),
+                        ))
+                    }
+                }
             } else {
                 // for the subsequent ones, the parent is the previous block
                 blocks[i - 1].header.clone()
@@ -561,8 +567,8 @@ pub async fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainE
     )))
 }
 
-/// Validates if the provided block could be the new head of the chain, and returns the
-/// parent_header in that case. If not found, the new block is saved as pending.
+/// Searchs the header of the parent block header. If the parent header is missing,
+/// Returns a ChainError::ParentNotFound. If the storage has an error it propagates it
 pub fn find_parent_header(
     block_header: &BlockHeader,
     storage: &Store,
