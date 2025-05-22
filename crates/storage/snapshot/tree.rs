@@ -349,11 +349,11 @@ impl SnapshotTree {
 
         // Persist the bottom most layer
         let base = self.save_diff(Layer::DiffLayer(parent))?;
-        layers.insert(base.state_root, Layer::DiskLayer(base.clone()));
+        layers.insert(base.block_hash, Layer::DiskLayer(base.clone()));
         let mut diff_value = diff
             .write()
             .map_err(|error| SnapshotError::LockError(error.to_string()))?;
-        diff_value.set_parent(base.root());
+        diff_value.set_parent(base.block_hash());
 
         Ok(Some(base))
     }
@@ -524,7 +524,7 @@ impl SnapshotTree {
             Layer::DiffLayer(diff) => diff.clone(),
         };
 
-        // If parent is not a diff layer, layer is first in line, return layer.
+        // Get parent
         let parent = {
             let layer_value = layer
                 .read()
@@ -532,6 +532,7 @@ impl SnapshotTree {
             layers[&layer_value.parent()].clone()
         };
 
+        // If parent is not a diff layer, layer is first in line, return layer.
         let parent = match parent {
             Layer::DiskLayer(_) => return Ok(Layer::DiffLayer(layer)),
             Layer::DiffLayer(diff) => diff,

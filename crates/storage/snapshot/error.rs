@@ -5,9 +5,9 @@ use crate::error::StoreError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SnapshotError {
-    #[error("SnapShot with root {0} not found.")]
+    #[error("Snapshot with block hash {0} not found.")]
     SnapshotNotFound(H256),
-    #[error("SnapShot with root {0} is the disk layer, wrong api usage.")]
+    #[error("Snapshot with block hash {0} is the disk layer, wrong api usage.")]
     SnapshotIsdiskLayer(H256),
     #[error("Tried to create a snapshot cycle")]
     SnapshotCycle,

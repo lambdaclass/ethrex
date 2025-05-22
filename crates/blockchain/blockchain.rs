@@ -143,9 +143,13 @@ impl Blockchain {
             .await
             .map_err(ChainError::StoreError)?;
 
-        self.storage
+        if let Err(error) = self
+            .storage
             .add_block_snapshot(block.clone(), account_updates.to_vec())
-            .await;
+            .await
+        {
+            tracing::error!("Error adding block snapshot: {}", error);
+        }
 
         Ok(())
     }
