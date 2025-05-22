@@ -14,7 +14,7 @@ use ethrex_storage::error::StoreError;
 use ethrex_vm::{
     self,
     backends::{self, revm::db::EvmState},
-    fork_to_spec_id, StoreWrapper,
+    fork_to_spec_id, DynVmDatabase, EvmError,
 };
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 use revm::{
@@ -22,7 +22,7 @@ use revm::{
     inspectors::TracerEip3155 as RevmTracerEip3155,
     primitives::{
         AccessListItem, Authorization, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv,
-        EVMError as REVMError, ExecutionResult as RevmExecutionResult, SignedAuthorization,
+        EVMError as RevmError, ExecutionResult as RevmExecutionResult, SignedAuthorization,
         TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
     },
     Evm as Revm,
@@ -81,7 +81,7 @@ pub async fn re_run_failed_ef_test_tx(
     re_run_report: &mut TestReRunReport,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let (mut state, _block_hash) = load_initial_state(test).await;
+    let (mut state, _block_hash, _store) = load_initial_state(test).await;
     let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
     if !test.post.has_vector_for_fork(vector, *fork) {
         return Ok(());
@@ -104,7 +104,7 @@ pub fn prepare_revm_for_tx<'state>(
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
-) -> Result<Revm<'state, RevmTracerEip3155, &'state mut State<StoreWrapper>>, EFTestRunnerError> {
+) -> Result<Revm<'state, RevmTracerEip3155, &'state mut State<DynVmDatabase>>, EFTestRunnerError> {
     let chain_spec = initial_state
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;
@@ -219,7 +219,7 @@ pub fn prepare_revm_for_tx<'state>(
 pub fn compare_levm_revm_execution_results(
     vector: &TestVector,
     levm_execution_report: &ExecutionReport,
-    revm_execution_result: Result<RevmExecutionResult, REVMError<StoreError>>,
+    revm_execution_result: Result<RevmExecutionResult, RevmError<EvmError>>,
     re_run_report: &mut TestReRunReport,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
@@ -462,7 +462,7 @@ pub async fn _run_ef_test_tx_revm(
     test: &EFTest,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let (mut state, _block_hash) = load_initial_state(test).await;
+    let (mut state, _block_hash, _store) = load_initial_state(test).await;
     let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
     let revm_execution_result = revm.transact_commit();
     drop(revm); // Need to drop the state mutable reference.
@@ -473,7 +473,7 @@ pub async fn _run_ef_test_tx_revm(
 }
 
 pub async fn _ensure_post_state_revm(
-    revm_execution_result: Result<RevmExecutionResult, REVMError<StoreError>>,
+    revm_execution_result: Result<RevmExecutionResult, RevmError<EvmError>>,
     vector: &TestVector,
     test: &EFTest,
     revm_state: &mut EvmState,

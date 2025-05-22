@@ -395,7 +395,7 @@ mod tests {
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::{
         backends::levm::{CacheDB, LEVM},
-        StoreWrapper,
+        DynVmDatabase, StoreVmDatabase,
     };
 
     use super::*;
@@ -457,11 +457,9 @@ mod tests {
         // Write all the account_updates and proofs for each block
         // TODO: Update. We are executing only the last block and using the block_number as batch_number
         for block in &blocks {
-            let store = StoreWrapper {
-                store: in_memory_db.clone(),
-                block_hash: block.hash(),
-            };
-            let mut db = GeneralizedDatabase::new(Arc::new(store.clone()), CacheDB::new());
+            let store: DynVmDatabase =
+                Box::new(StoreVmDatabase::new(in_memory_db.clone(), block.hash()));
+            let mut db = GeneralizedDatabase::new(Arc::new(store), CacheDB::new());
             LEVM::execute_block(blocks.last().unwrap(), &mut db)?;
             let account_updates = LEVM::get_state_transitions(&mut db)?;
 

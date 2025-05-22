@@ -25,7 +25,7 @@ use ethrex_rpc::{
 };
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::Evm;
+use ethrex_vm::{Evm, EvmEngine, StoreVmDatabase};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
@@ -231,8 +231,12 @@ impl Committer {
                     warn!(
                             "Could not find execution cache result for block {}, falling back to re-execution", last_added_block_number + 1
                         );
-                    let mut vm =
-                        Evm::default(self.store.clone(), block_to_commit.header.parent_hash);
+
+                    let vm_db = StoreVmDatabase::new(
+                        self.store.clone(),
+                        block_to_commit.header.parent_hash,
+                    );
+                    let mut vm = Evm::new(EvmEngine::default(), vm_db);
                     vm.execute_block(&block_to_commit)?;
                     vm.get_state_transitions()?
                 }
