@@ -198,6 +198,8 @@ impl Discv4Server {
                     .lock()
                     .await
                     .pong_answered(peer.node.node_id(), current_unix_time());
+
+                // if the ENR_seq field is not up to date, don't establish a rlpx connection yet
                 if let Some(enr_seq) = msg.enr_seq {
                     if enr_seq > peer.record.seq {
                         debug!("Found outdated enr-seq, send an enr_request");

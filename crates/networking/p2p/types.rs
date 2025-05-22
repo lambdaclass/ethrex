@@ -326,11 +326,9 @@ impl NodeRecord {
     }
 
     pub fn set_fork_id(&mut self, fork_id: &ForkId, signer: &SigningKey) -> Result<(), String> {
-        let pairs = self.decode_pairs();
-
-        if let Some(existing_fork_id) = pairs.eth {
-            if existing_fork_id == *fork_id {
-                return Ok(()); // No changes needed
+        if let Some((_, value)) = self.pairs.iter().find(|(k, _)| k == "eth") {
+            if *fork_id == ForkId::decode(&value[1..]).expect("No fork Id in NodeRecord pairs") {
+                return Ok(());
             }
         }
 
