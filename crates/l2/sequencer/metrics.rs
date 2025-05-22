@@ -1,7 +1,8 @@
 use crate::{
     sequencer::errors::{MetricsGathererError, SequencerError},
-    CommitterConfig, EthConfig, L1WatcherConfig, SequencerConfig,
+    CommitterConfig, EthConfig, SequencerConfig,
 };
+use ::ethrex_storage_rollup::StoreRollup;
 use ethereum_types::Address;
 use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};
 use ethrex_rpc::clients::eth::EthClient;
@@ -9,30 +10,33 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error};
 
-pub async fn start_metrics_gatherer(cfg: SequencerConfig) -> Result<(), SequencerError> {
+pub async fn start_metrics_gatherer(
+    cfg: SequencerConfig,
+    rollup_store: StoreRollup,
+) -> Result<(), SequencerError> {
     let mut metrics_gatherer =
-        MetricsGatherer::new_from_config(&cfg.l1_watcher, &cfg.l1_committer, &cfg.eth).await?;
+        MetricsGatherer::new_from_config(rollup_store, &cfg.l1_committer, &cfg.eth).await?;
     metrics_gatherer.run().await;
     Ok(())
 }
 
 pub struct MetricsGatherer {
     eth_client: EthClient,
-    common_bridge_address: Address,
     on_chain_proposer_address: Address,
     check_interval: Duration,
+    rollup_store: StoreRollup,
 }
 
 impl MetricsGatherer {
     pub async fn new_from_config(
-        watcher_config: &L1WatcherConfig,
+        rollup_store: StoreRollup,
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
     ) -> Result<Self, MetricsGathererError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
         Ok(Self {
             eth_client,
-            common_bridge_address: watcher_config.bridge_address,
+            rollup_store,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             check_interval: Duration::from_millis(1000),
         })
@@ -61,6 +65,19 @@ impl MetricsGatherer {
                 .await?;
 
             let gas_price = self.eth_client.get_gas_price().await?;
+
+            if let Ok(Some(last_verified_batch_blocks)) = self
+                .rollup_store
+                .get_block_numbers_by_batch(last_verified_batch)
+                .await
+            {
+                if let Some(last_block) = last_verified_batch_blocks.last() {
+                    METRICS_L2.set_block_type_and_block_number(
+                        MetricsL2BlockType::LastVerifiedBlock,
+                        *last_block,
+                    )?;
+                }
+            }
 
             METRICS_L2.set_block_type_and_block_number(
                 MetricsL2BlockType::LastCommittedBatch,
