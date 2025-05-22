@@ -253,9 +253,9 @@ impl LEVM {
             .filter(|withdrawal| withdrawal.amount > 0)
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
-            let mut account = db.get_account(address).map_err(|_| {
-                StoreError::Custom(format!("Withdrawal account {address} not found"))
-            })?;
+            let mut account = db
+                .get_account(address)
+                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
 
             account.info.balance += increment.into();
             db.cache.insert(address, account);
