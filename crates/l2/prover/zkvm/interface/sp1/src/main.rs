@@ -2,13 +2,16 @@
 
 use bls12_381::G1Affine;
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::{types::{BYTES_PER_BLOB, blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash}}, Address, H256};
+use ethrex_common::{
+    types::{
+        blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash},
+        BYTES_PER_BLOB,
+    },
+    Address, H256,
+};
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
-use kzg_rs::{
-    dtypes::Blob, kzg_proof::KzgProof,
-    trusted_setup::get_kzg_settings,
-};
+use kzg_rs::{dtypes::Blob, kzg_proof::KzgProof, trusted_setup::get_kzg_settings};
 use std::collections::HashMap;
 #[cfg(feature = "l2")]
 use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
@@ -152,22 +155,26 @@ pub fn main() {
         panic!("invalid state diffs")
     }
 
-
     #[cfg(feature = "l2")]
     {
-        let encoded_state_diff = state_diff
-            .encode()
-            .expect("failed to encode state diff");
-        let blob_data = blob_from_bytes(encoded_state_diff).expect("failed to convert encoded state diff into blob data");
+        let encoded_state_diff = state_diff.encode().expect("failed to encode state diff");
+        let blob_data = blob_from_bytes(encoded_state_diff)
+            .expect("failed to convert encoded state diff into blob data");
         let blob = Blob::from_slice(&blob_data).expect("failed to convert blob data into Blob");
 
-        let blob_proof_valid = KzgProof::verify_blob_kzg_proof(blob, &blob_commitment, &blob_proof, &get_kzg_settings()).expect("failed to verify blob proof (neither valid or invalid proof)");
+        let blob_proof_valid = KzgProof::verify_blob_kzg_proof(
+            blob,
+            &blob_commitment.into(),
+            &blob_proof.into(),
+            &get_kzg_settings(),
+        )
+        .expect("failed to verify blob proof (neither valid or invalid proof)");
 
         if !blob_proof_valid {
             panic!("invalid blob proof");
         }
 
-        kzg_commitment_to_versioned_hash(blob_commitment)
+        kzg_commitment_to_versioned_hash(&blob_commitment)
     };
 
     // Output gas for measurement purposes
