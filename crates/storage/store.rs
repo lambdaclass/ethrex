@@ -393,8 +393,18 @@ impl Store {
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
         let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH);
+
+        // For snapshots
+        let mut account_hashes = Vec::with_capacity(1024);
+        let mut account_states = Vec::with_capacity(1024);
+        let mut storage_keys: Vec<Vec<H256>> = Vec::with_capacity(64);
+        let mut storage_values: Vec<Vec<U256>> = Vec::with_capacity(64);
+
         for (address, account) in genesis_accounts {
+            let mut keys = Vec::with_capacity(32);
+            let mut values = Vec::with_capacity(32);
             let hashed_address = hash_address(&address);
+            let hashed_address_fixed = hash_address_fixed(&address);
             // Store account code (as this won't be stored in the trie)
             let code_hash = code_hash(&account.code);
             self.add_account_code(code_hash, account.code).await?;
@@ -406,6 +416,9 @@ impl Store {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+
+                    keys.push(H256(storage_key.to_big_endian()));
+                    values.push(storage_value);
                 }
             }
             let storage_root = storage_trie.hash()?;
@@ -416,8 +429,17 @@ impl Store {
                 storage_root,
                 code_hash,
             };
+            account_hashes.push(hashed_address_fixed);
+            account_states.push(account_state.clone());
+            storage_keys.push(keys);
+            storage_values.push(values);
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
+
+        // Add the initial genesis data to the snapshot db.
+        self.snapshots
+            .add_data(account_hashes, account_states, storage_keys, storage_values);
+
         genesis_state_trie.hash().map_err(StoreError::Trie)
     }
 
@@ -500,6 +522,9 @@ impl Store {
             .await?;
         self.set_canonical_block(genesis_block_number, genesis_hash)
             .await?;
+
+        self.snapshots
+            .rebuild(genesis_hash, genesis_state_root, false);
 
         // Set chain config
         self.set_chain_config(&genesis.config).await
@@ -1155,7 +1180,7 @@ impl Store {
             if store.snapshots.len() == 0 {
                 // There are no snapshots yet, use this block as root
                 // TODO: find if there is a better place to create the initial "disk layer".
-                store.snapshots.rebuild(hash, state_root)?;
+                store.snapshots.rebuild(hash, state_root, true)?;
                 info!(
                     "Snapshot (disk layer) created for {} with parent {}",
                     hash, parent_hash

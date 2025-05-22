@@ -45,8 +45,28 @@ impl SnapshotTree {
         }
     }
 
+    pub fn add_data(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<AccountState>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) {
+        self.db
+            .write_snapshot_account_batch_blocking(account_hashes.clone(), account_states)
+            .expect("convert into a error");
+        self.db
+            .write_snapshot_storage_batches_blocking(account_hashes, storage_keys, storage_values)
+            .expect("convert into a error");
+    }
+
     /// Rebuilds the tree, marking all current layers stale, creating a new base disk layer from the given root.
-    pub fn rebuild(&self, block_hash: BlockHash, state_root: H256) -> Result<(), SnapshotError> {
+    pub fn rebuild(
+        &self,
+        block_hash: BlockHash,
+        state_root: H256,
+        generate: bool,
+    ) -> Result<(), SnapshotError> {
         let disk = {
             let mut layers = self
                 .layers
@@ -68,7 +88,11 @@ impl SnapshotTree {
             layers.insert(block_hash, Layer::DiskLayer(disk.clone()));
             disk
         };
-        disk.start_generating();
+
+        if generate {
+            disk.start_generating();
+        }
+
         Ok(())
     }
 
@@ -593,7 +617,7 @@ mod tests {
         };
 
         // Add a disklayer to the tree
-        tree.rebuild(H256::zero(), H256::zero()).unwrap();
+        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
 
         // Add a single account in a single difflayer
         tree.update(
@@ -613,7 +637,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_two_accounts_in_different_difflayers() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero()).unwrap();
+        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
 
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
@@ -667,7 +691,7 @@ mod tests {
     #[tokio::test]
     async fn test_override_account_in_second_difflayer() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero()).unwrap();
+        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
         let address = Address::from_low_u64_be(1);
@@ -719,7 +743,7 @@ mod tests {
     #[tokio::test]
     async fn test_override_account_storage_flattening() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero()).unwrap();
+        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
 
@@ -795,7 +819,7 @@ mod tests {
     #[tokio::test]
     async fn test_override_account_storage_in_second_difflayer() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero()).unwrap();
+        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
 

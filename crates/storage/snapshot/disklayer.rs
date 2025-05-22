@@ -8,9 +8,9 @@ use std::{
     time::Instant,
 };
 
-use crate::api::StoreEngine;
+use crate::{api::StoreEngine, hash_address_fixed};
 use ethrex_common::{
-    types::{AccountState, BlockHash},
+    types::{AccountState, BlockHash, Genesis},
     H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -37,7 +37,8 @@ impl fmt::Debug for DiskLayer {
         f.debug_struct("DiskLayer")
             .field("db", &self.db)
             .field("cache", &self.cache)
-            .field("root", &self.state_root)
+            .field("block_hash", &self.block_hash)
+            .field("state_root", &self.state_root)
             .field("stale", &self.stale)
             .finish_non_exhaustive()
     }
@@ -54,9 +55,7 @@ impl DiskLayer {
             generating: Arc::new(AtomicBool::new(false)),
         }
     }
-}
 
-impl DiskLayer {
     pub fn root(&self) -> H256 {
         self.state_root
     }
