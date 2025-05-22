@@ -141,7 +141,7 @@ run-hive-debug: display-hive-alternatives build-image setup-hive ## 🐞 Run Hiv
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
 
-view-hive:
+view-hive: ## 🛠️ Builds hiveview with the logs from the hive execution
 	cd hive && go build ./cmd/hiveview && ./hiveview --serve --logdir ./workspace/logs
 
 install-cli: ## 🛠️ Installs the ethrex-l2 cli
