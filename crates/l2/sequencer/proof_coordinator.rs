@@ -357,11 +357,6 @@ impl ProofCoordinator {
             ProverServerError::Custom("No blocks found for the given batch number".to_string())
         })?;
 
-        // Get the batch's last block
-        let last_block = blocks.last().ok_or_else(|| {
-            ProverServerError::Custom("No blocks found for the given batch number".to_string())
-        })?;
-
         // Get the batch's first block parent header
         let parent_block_header = self
             .store
