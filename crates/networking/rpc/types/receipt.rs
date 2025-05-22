@@ -1,8 +1,11 @@
 use ethrex_common::{
     constants::GAS_PER_BLOB,
     serde_utils,
-    types::{BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType},
-    Address, Bytes, H256,
+    types::{
+        bloom_from_logs, BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind,
+        TxType,
+    },
+    Address, Bloom, Bytes, H256,
 };
 use ethrex_vm::create_contract_address;
 
@@ -50,6 +53,7 @@ pub struct RpcReceiptInfo {
     pub status: bool,
     #[serde(with = "serde_utils::u64::hex_str")]
     pub cumulative_gas_used: u64,
+    pub logs_bloom: Bloom,
 }
 
 impl From<Receipt> for RpcReceiptInfo {
@@ -58,6 +62,7 @@ impl From<Receipt> for RpcReceiptInfo {
             tx_type: receipt.tx_type,
             status: receipt.succeeded,
             cumulative_gas_used: receipt.cumulative_gas_used,
+            logs_bloom: bloom_from_logs(&receipt.logs),
         }
     }
 }

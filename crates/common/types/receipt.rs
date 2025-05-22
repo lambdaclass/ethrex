@@ -62,7 +62,7 @@ impl Receipt {
     }
 }
 
-fn bloom_from_logs(logs: &[Log]) -> Bloom {
+pub fn bloom_from_logs(logs: &[Log]) -> Bloom {
     let mut bloom = Bloom::zero();
     for log in logs {
         bloom.accrue(BloomInput::Raw(log.address.as_ref()));
