@@ -75,13 +75,8 @@ pub async fn fill_transactions(
     context: &mut PayloadBuildContext,
     store: &Store,
 ) -> Result<(), BlockProducerError> {
-    // Maybe we can cache this to not calculate it every time
-    let header_encoded_len = *BLOCK_HEADER_LEN;
-    let withdrawals_log_len = *WITHDRAWAL_LOG_LEN;
-    let deposits_log_len = *DEPOSITS_LOG_LEN;
-
     // version (u8) + header fields (struct) + withdrawals_len (u16) + deposits_len (u16) + accounts_diffs_len (u16)
-    let mut acc_size_without_accounts = 1 + header_encoded_len + 2 + 2 + 2;
+    let mut acc_size_without_accounts = 1 + *BLOCK_HEADER_LEN + 2 + 2 + 2;
     let mut size_accounts_diffs = 0;
     let mut account_diffs = HashMap::new();
 
@@ -187,8 +182,8 @@ pub async fn fill_transactions(
             &merged_diffs,
             &head_tx,
             &receipt,
-            deposits_log_len,
-            withdrawals_log_len,
+            *DEPOSITS_LOG_LEN,
+            *WITHDRAWAL_LOG_LEN,
         )?;
 
         if acc_size_without_accounts + tx_size_without_accounts + new_accounts_diff_size
