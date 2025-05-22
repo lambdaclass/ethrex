@@ -208,6 +208,11 @@ impl Trie {
         }
     }
 
+    /// Builds a trie from a set of nodes.
+    ///
+    /// Note: This method will not ensure neither that all node references are valid nor that there
+    ///   are no dangling nodes. Invalid references will be reflected in the final trie by
+    ///   `InconsistentTree` errors at runtime, whereas dangling nodes will be ignored.
     pub fn from_nodes(root: Option<&NodeRLP>, nodes: &[NodeRLP]) -> Result<Self, TrieError> {
         let Some(root) = root else {
             return Ok(Trie::stateless());
@@ -235,8 +240,10 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
-                            let rlp = storage.remove(&hash).ok_or(TrieError::InconsistentTree)?;
-                            *choice = inner(storage, rlp)?.into();
+                            *choice = match storage.remove(&hash) {
+                                Some(rlp) => inner(storage, rlp)?.into(),
+                                None => hash.into(),
+                            };
                         }
                     }
 
@@ -247,8 +254,10 @@ impl Trie {
                         unreachable!()
                     };
 
-                    let rlp = storage.remove(&hash).ok_or(TrieError::InconsistentTree)?;
-                    node.child = inner(storage, rlp)?.into();
+                    node.child = match storage.remove(&hash) {
+                        Some(rlp) => inner(storage, rlp)?.into(),
+                        None => hash.into(),
+                    };
 
                     node.into()
                 }
