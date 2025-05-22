@@ -114,8 +114,6 @@ impl MetricsL2 {
 /// [MetricsL2BlockType::LastCommittedBatch] and [MetricsL2BlockType::LastVerifiedBatch] Matche the crates/l2/contracts/src/l1/OnChainProposer.sol variables
 pub enum MetricsL2BlockType {
     LastCommittedBlock,
-    // TODO: add metrics for LastVerifiedBlock right now there isn't an easy way to check what
-    // the last block of a batch is from the l1_proof_sender
     LastVerifiedBlock,
     LastCommittedBatch,
     LastVerifiedBatch,
