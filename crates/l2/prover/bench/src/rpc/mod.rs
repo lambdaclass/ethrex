@@ -208,7 +208,7 @@ pub async fn get_account(
     let trie = Trie::from_nodes(Some(root), &other)
         .map_err(|err| format!("failed to build account proof trie: {err}"))?;
     if trie
-        .get(&hash_address(address))
+        .get(hash_address(address))
         .map_err(|err| format!("failed get account from proof trie: {err}"))?
         .is_none()
     {
