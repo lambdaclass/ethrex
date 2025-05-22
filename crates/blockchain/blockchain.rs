@@ -16,7 +16,7 @@ use ethrex_common::types::{
     validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHash,
     BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
-use ethrex_common::types::{BlobsBundle, Fork, ELASTICITY_MULTIPLIER};
+use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
 
 use ethrex_common::{Address, H256};
 use mempool::Mempool;
@@ -216,7 +216,6 @@ impl Blockchain {
             .storage
             .get_chain_config()
             .map_err(|e| (e.into(), None))?;
-        let fork = chain_config.fork(first_block_header.timestamp);
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), first_block_header.parent_hash);
         let mut vm = Evm::new(self.evm_engine, vm_db);
