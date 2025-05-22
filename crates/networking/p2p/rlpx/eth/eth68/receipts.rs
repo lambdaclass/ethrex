@@ -26,18 +26,17 @@ impl Receipts68 {
             };
         }
         let mut transformed_receipts = vec![];
-        for r in &receipts[0] {
-            transformed_receipts.push(Receipt68::new(
-                r.tx_type,
-                r.succeeded,
-                r.cumulative_gas_used,
-                r.logs.clone(),
-            ));
+        for r in &receipts {
+            transformed_receipts.push(vec![Receipt68::new(
+                r[0].tx_type,
+                r[0].succeeded,
+                r[0].cumulative_gas_used,
+                r[0].logs.clone(),
+            )]);
         }
-
         Self {
             id,
-            receipts: vec![transformed_receipts],
+            receipts: transformed_receipts,
         }
     }
 
@@ -46,15 +45,15 @@ impl Receipts68 {
             return vec![];
         }
         let mut receipts = vec![];
-        for r in &self.receipts[0] {
-            receipts.push(Receipt::new(
-                r.tx_type,
-                r.succeeded,
-                r.cumulative_gas_used,
-                r.logs.clone(),
-            ));
+        for r in &self.receipts {
+            receipts.push(vec![Receipt::new(
+                r[0].tx_type,
+                r[0].succeeded,
+                r[0].cumulative_gas_used,
+                r[0].logs.clone(),
+            )]);
         }
-        vec![receipts]
+        receipts
     }
 }
 

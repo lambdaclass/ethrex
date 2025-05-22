@@ -15,7 +15,6 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
-use tracing::info;
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getreceipts-0x0f
 #[derive(Debug)]
@@ -65,7 +64,6 @@ pub(crate) enum Receipts {
 
 impl Receipts {
     pub fn new(id: u64, receipts: Vec<Vec<Receipt>>, eth: &Capability) -> Result<Self, RLPxError> {
-        info!(" eth cap eth/{}", eth.version);
         match eth.version {
             68 => Ok(Receipts::Receipts68(Receipts68::new(id, receipts))),
             69 => Ok(Receipts::Receipts69(Receipts69::new(id, receipts))),
@@ -99,7 +97,6 @@ impl RLPxMessage for Receipts {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        info!("Has Bloom");
         if has_bloom(msg_data)? {
             Ok(Receipts::Receipts68(Receipts68::decode(msg_data)?))
         } else {
@@ -109,7 +106,7 @@ impl RLPxMessage for Receipts {
 }
 
 // We should receive something like this:
-// [request-id, [[r1, r2, r3,... ]]]
+// [request-id, [[r1], [r2], [r3],... ]]
 // in this fn, we're checking if r1 has a bloom field inside
 fn has_bloom(msg_data: &[u8]) -> Result<bool, RLPDecodeError> {
     let decompressed_data = snappy_decompress(msg_data)?;
