@@ -2,9 +2,13 @@
 
 ## Perf
 
-### 2025-05-19
+### 2025-05-22
 
 - Add block snapshots with diff layers. [2664](https://github.com/lambdaclass/ethrex/pull/2664)
+
+### 2025-05-20
+
+- Reduce account clone overhead when account data is retrieved [2684](https://github.com/lambdaclass/ethrex/pull/2684)
 
 ### 2025-04-30
 
