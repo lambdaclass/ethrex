@@ -76,11 +76,11 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-HIVE_REVISION := f9004c7e85de003bbdeb4fbcc4a9dbf8c3c4c9c2
+HIVE_REVISION := 4a1ed079ce5ebb46240e4ef9141d72e7236bca36
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
-HIVE_SHALLOW_SINCE := 2024-09-02
+HIVE_SHALLOW_SINCE := 2025-05-21
 QUIET ?= false
 
 hive:
