@@ -68,13 +68,13 @@ impl Trie {
     }
 
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
-    pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(&mut self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         if let Some(root) = &self.root {
             let root_node = self
                 .state
                 .get_node(*root)?
                 .ok_or(TrieError::InconsistentTree)?;
-            root_node.get(&self.state, Nibbles::from_bytes(path))
+            root_node.get(&mut self.state, Nibbles::from_bytes(path))
         } else {
             Ok(None)
         }
@@ -150,7 +150,7 @@ impl Trie {
     /// Obtain a merkle proof for the given path.
     /// The proof will contain all the encoded nodes traversed until reaching the node where the path is stored (including this last node).
     /// The proof will still be constructed even if the path is not stored in the trie, proving its absence.
-    pub fn get_proof(&self, path: &PathRLP) -> Result<Vec<NodeRLP>, TrieError> {
+    pub fn get_proof(&mut self, path: &PathRLP) -> Result<Vec<NodeRLP>, TrieError> {
         // Will store all the encoded nodes traversed until reaching the node containing the path
         let mut node_path = Vec::new();
         let Some(root) = &self.root else {
@@ -161,7 +161,7 @@ impl Trie {
             node_path.push(root.as_ref().to_vec());
         }
         if let Some(root_node) = self.state.get_node(*root)? {
-            root_node.get_path(&self.state, Nibbles::from_bytes(path), &mut node_path)?;
+            root_node.get_path(&mut self.state, Nibbles::from_bytes(path), &mut node_path)?;
         }
         Ok(node_path)
     }
@@ -170,7 +170,7 @@ impl Trie {
     /// The list doesn't include the root node, this is returned separately.
     /// Will still be constructed even if some path is not stored in the trie.
     pub fn get_proofs(
-        &self,
+        &mut self,
         paths: &[PathRLP],
     ) -> Result<(Option<NodeRLP>, Vec<NodeRLP>), TrieError> {
         let Some(root_node) = self
@@ -258,7 +258,7 @@ impl Trie {
 
     /// Obtain the encoded node given its path.
     /// Allows usage of full paths (byte slice of 32 bytes) or compact-encoded nibble slices (with length lower than 32)
-    pub fn get_node(&self, partial_path: &PathRLP) -> Result<Vec<u8>, TrieError> {
+    pub fn get_node(&mut self, partial_path: &PathRLP) -> Result<Vec<u8>, TrieError> {
         // Convert compact-encoded nibbles into a byte slice if necessary
         let partial_path = match partial_path.len() {
             // Compact-encoded nibbles
@@ -282,7 +282,11 @@ impl Trie {
         self.get_node_inner(root_node, partial_path)
     }
 
-    fn get_node_inner(&self, node: Node, mut partial_path: Nibbles) -> Result<Vec<u8>, TrieError> {
+    fn get_node_inner(
+        &mut self,
+        node: Node,
+        mut partial_path: Nibbles,
+    ) -> Result<Vec<u8>, TrieError> {
         // If we reached the end of the partial path, return the current node
         if partial_path.is_empty() {
             return Ok(node.encode_raw());
