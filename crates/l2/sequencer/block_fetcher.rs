@@ -251,37 +251,4 @@ impl BlockFetcher {
             .await
             .map_err(BlockFetcherError::StoreError)
     }
-
-    async fn yyy(&self) -> Result<(), BlockFetcherError> {
-        // let last_block_number_known = self.store.get_latest_block_number().await?;
-
-        // let version = 3;
-
-        // let head_hash = self
-        //     .store
-        //     .get_block_header(last_block_number_known)?
-        //     .ok_or(BlockFetcherError::InternalError(
-        //         "Failed to get last block known header".to_string(),
-        //     ))?
-        //     .compute_block_hash();
-
-        // // Assumed to be the Sequencer that committed the block.
-        // // The fee recipient is the sender of the transaction that committed the block.
-        // // To get the transaction that committed the block in L1, we need to watch for
-        // // BatchCommitted events.
-        // let fee_recipient
-
-        // let args = BuildPayloadArgs {
-        //     parent: head_hash,
-        //     timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
-        //     fee_recipient: self.coinbase_address,
-        //     random: H256::zero(),
-        //     withdrawals: Default::default(),
-        //     beacon_root: Some(H256::zero()),
-        //     version,
-        //     elasticity_multiplier: ELASTICITY_MULTIPLIER,
-        // };
-
-        Ok(())
-    }
 }
