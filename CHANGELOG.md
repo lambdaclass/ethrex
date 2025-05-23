@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-05-22
+
+- Refactor Patricia Merkle Trie to avoid rehashing the entire path on every insert [2687](https://github.com/lambdaclass/ethrex/pull/2687)
+
 ### 2025-05-20
 
 - Reduce account clone overhead when account data is retrieved [2684](https://github.com/lambdaclass/ethrex/pull/2684)
