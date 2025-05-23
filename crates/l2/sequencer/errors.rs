@@ -5,6 +5,7 @@ use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_sdk::merkle_tree::MerkleError;
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_storage::error::StoreError;
@@ -248,8 +249,16 @@ pub enum BlockFetcherError {
     StoreError(#[from] StoreError),
     #[error("Internal Error: {0}")]
     InternalError(String),
-    #[error("Failed to store fetchedblock: {0}")]
+    #[error("Failed to store fetched block: {0}")]
     ChainError(#[from] ChainError),
+    #[error("Failed apply forkchoice for fetched block: {0}")]
+    InvalidForkChoice(#[from] InvalidForkChoice),
     #[error("Failed to push fetched block to execution cache: {0}")]
     ExecutionCacheError(#[from] ExecutionCacheError),
+    #[error("Failed to RLP decode fetched block: {0}")]
+    RLPDecodeError(#[from] RLPDecodeError),
+    #[error("{0}")]
+    UtilsError(#[from] UtilsError),
+    #[error("Missing bytes from calldata: {0}")]
+    WrongBatchCalldata(String),
 }

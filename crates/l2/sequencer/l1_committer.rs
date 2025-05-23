@@ -7,6 +7,7 @@ use crate::{
     CommitterConfig, EthConfig, SequencerConfig,
 };
 
+use bytes::Bytes;
 use ethrex_common::{
     types::{
         blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, BlobsBundleError,
@@ -180,7 +181,7 @@ impl Committer {
                 info!(
                     "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}.",
                 );
-                self.rollup_store.store_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes).await?;
+                self.rollup_store.seal_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes).await?;
                 Ok(())
             }
             Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
@@ -192,17 +193,7 @@ impl Committer {
     async fn prepare_batch_from_block(
         &self,
         mut last_added_block_number: BlockNumber,
-    ) -> Result<
-        (
-            BlobsBundle,
-            H256,
-            Vec<H256>,
-            H256,
-            BlockNumber,
-            Vec<Vec<u8>>,
-        ),
-        CommitterError,
-    > {
+    ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber, Vec<Bytes>), CommitterError> {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
 
@@ -272,7 +263,7 @@ impl Committer {
             };
 
             // Accumulate block data with the rest of the batch.
-            encoded_blocks.push(block_to_commit.encode_to_vec());
+            encoded_blocks.push(block_to_commit.encode_to_vec().into());
             acc_withdrawals.extend(withdrawals.clone());
             acc_deposits.extend(deposits.clone());
             for account in account_updates {
@@ -492,7 +483,7 @@ impl Committer {
         withdrawal_logs_merkle_root: H256,
         deposit_logs_hash: H256,
         blobs_bundle: BlobsBundle,
-        encoded_blocks: Vec<Vec<u8>>,
+        encoded_blocks: Vec<Bytes>,
     ) -> Result<H256, CommitterError> {
         let state_diff_kzg_versioned_hash = if !self.validium {
             let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
@@ -511,12 +502,7 @@ impl Committer {
             Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
             Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
             Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
-            Value::Array(
-                encoded_blocks
-                    .into_iter()
-                    .map(|b| Value::Bytes(b.into()))
-                    .collect(),
-            ),
+            Value::Array(encoded_blocks.into_iter().map(Value::Bytes).collect()), // bytes[] = T[] con T = bytes
         ];
 
         let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;

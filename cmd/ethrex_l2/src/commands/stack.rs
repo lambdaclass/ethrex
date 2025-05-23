@@ -294,7 +294,7 @@ impl Command {
 
                     // Store batch info in L2 storage
                     rollup_store
-                        .store_batch(
+                        .seal_batch(
                             batch_number,
                             first_block_number,
                             last_block_number,

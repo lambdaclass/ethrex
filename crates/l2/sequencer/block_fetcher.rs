@@ -1,16 +1,19 @@
 use std::{cmp::min, ops::Deref, sync::Arc, time::Duration};
 
-use ethrex_blockchain::Blockchain;
-use ethrex_common::{types::Block, Address, U256};
+use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
+use ethrex_common::{
+    types::{Block, BlockNumber, Transaction},
+    Address, H256, U256,
+};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_rpc::EthClient;
+use ethrex_rpc::{types::receipt::RpcLog, utils::get_withdrawal_hash, EthClient};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use keccak_hash::keccak;
 use tokio::{sync::Mutex, time::sleep};
 use tracing::{error, info};
 
-use crate::SequencerConfig;
+use crate::{utils::helpers::is_withdrawal_l2, SequencerConfig};
 
 use super::{
     errors::{BlockFetcherError, SequencerError},
@@ -79,7 +82,7 @@ impl BlockFetcher {
     pub async fn run(&mut self) {
         loop {
             if let Err(err) = self.main_logic().await {
-                error!("Block Producer Error: {}", err);
+                error!("Block Fetcher Error: {err}");
             }
 
             sleep(Duration::from_millis(self.fetch_interval_ms)).await;
@@ -114,16 +117,13 @@ impl BlockFetcher {
                 .get_last_committed_batch(self.on_chain_proposer_address)
                 .await?;
 
-            let l2_batches_behind =
-                last_l2_committed_batch_number.checked_sub(last_l2_batch_number_known).ok_or(
-                    BlockFetcherError::InternalError(
-                        "Failed to calculate batches behind. Last batch number known is greater than last committed batch number.".to_string(),
-                    ),
-                )?;
+            let l2_batches_behind = last_l2_committed_batch_number.checked_sub(last_l2_batch_number_known).ok_or(
+                BlockFetcherError::InternalError(
+                    "Failed to calculate batches behind. Last batch number known is greater than last committed batch number.".to_string(),
+                ),
+            )?;
 
-            info!(
-                "Node is {l2_batches_behind} batches behind. Last committed batch number: {last_l2_committed_batch_number}, last batch number known: {last_l2_batch_number_known}",
-            );
+            info!("Node is {l2_batches_behind} batches behind. Last committed batch number: {last_l2_committed_batch_number}, last batch number known: {last_l2_batch_number_known}");
 
             if self.last_l1_block_fetched.is_zero() {
                 self.last_l1_block_fetched = self
@@ -133,118 +133,35 @@ impl BlockFetcher {
                     .into();
             }
 
-            let last_l1_block_number = self.eth_client.get_block_number().await?;
+            let batch_committed_logs = self.get_logs().await?;
 
-            let mut missing_batches_logs = Vec::new();
+            let mut missing_batches_logs = self.filter_logs(&batch_committed_logs).await?;
 
-            while self.last_l1_block_fetched < last_l1_block_number {
-                let new_last_l1_fetched_block = min(
-                    self.last_l1_block_fetched + self.max_block_step,
-                    last_l1_block_number,
-                );
+            missing_batches_logs.sort_by_key(|(_log, batch_number)| *batch_number);
 
-                info!(
-                    "Fetching logs from block {} to {}",
-                    self.last_l1_block_fetched + 1,
-                    new_last_l1_fetched_block
-                );
-
-                let logs = self
-                    .eth_client
-                    .get_logs(
-                        self.last_l1_block_fetched + 1,
-                        new_last_l1_fetched_block,
-                        self.on_chain_proposer_address,
-                        keccak(b"BatchCommitted(uint256,bytes32)"),
-                    )
-                    .await?;
-
-                let last_block_number_known = self.store.get_latest_block_number().await?;
-
-                let last_batch_number_known = self
-                    .rollup_store
-                    .get_batch_number_by_block(last_block_number_known)
-                    .await?
-                    .ok_or(BlockFetcherError::InternalError(format!(
-                        "Failed to get last batch number known for block {last_block_number_known}"
-                    )))?;
-
-                for batch_committed_log in logs.into_iter() {
-                    let committed_batch_number = U256::from_big_endian(
-                        batch_committed_log
-                            .log
-                            .topics
-                            .get(1)
-                            .ok_or(BlockFetcherError::InternalError(
-                                "Failed to get committed batch number from BatchCommitted log"
-                                    .to_string(),
-                            ))?
-                            .as_bytes(),
-                    );
-
-                    if committed_batch_number > last_batch_number_known.into() {
-                        missing_batches_logs.push(batch_committed_log);
-                    }
-                }
-
-                self.last_l1_block_fetched = new_last_l1_fetched_block;
-
-                sleep(Duration::from_millis(self.fetch_interval_ms)).await;
-            }
-
-            for batch_committed_log in missing_batches_logs {
-                let tx = self
+            for (batch_committed_log, batch_number) in missing_batches_logs {
+                let batch_commit_tx_calldata = self
                     .eth_client
                     .get_transaction_by_hash(batch_committed_log.transaction_hash)
                     .await?
                     .ok_or(BlockFetcherError::InternalError(format!(
                         "Failed to get transaction receipt for transaction {:x}",
                         batch_committed_log.transaction_hash
-                    )))?;
-                // dbg!(tx.data.len());
-                // dbg!(hex::encode(&tx.data));
-                // dbg!(hex::encode(tx.data.clone()));
-                // let a = tx.data.strip_prefix(b"0x").unwrap_or(&tx.data);
+                    )))?
+                    .data;
 
-                // let (block, _) = BlockBody::decode_unfinished(a).unwrap();
-                // dbg!(block);
-                decode(&tx.data);
+                let batch = Self::decode_batch_from_calldata(&batch_commit_tx_calldata)?;
 
-                // TODO: Get from calldata
-                let batch_withdrawal_hashes = Vec::new();
-                // TODO: Get from calldata or log
-                let batch_number = u64::default();
-                // TODO: Get from calldata
-                let batch = Vec::new();
+                self.store_batch(&batch).await?;
 
-                for block in batch.iter() {
-                    self.blockchain.add_block(block).await?;
-
-                    info!(
-                        "Fetched new block {:#x} from transaction {:#x}",
-                        block.hash(),
-                        batch_committed_log.transaction_hash
-                    );
-                }
-
-                self.rollup_store
-                    .store_batch(
-                        batch_number,
-                        batch.first().unwrap().header.number,
-                        batch.last().unwrap().header.number,
-                        batch_withdrawal_hashes,
-                    )
-                    .await?;
-
-                info!(
-                    "Stored batch {} from transaction {:#x}",
-                    batch_number, batch_committed_log.transaction_hash
-                );
+                self.seal_batch(&batch, batch_number).await?;
             }
 
             sleep(Duration::from_millis(self.fetch_interval_ms)).await;
         }
+
         info!("Node is up to date");
+
         Ok(())
     }
 
@@ -260,96 +177,245 @@ impl BlockFetcher {
             .map_err(BlockFetcherError::StoreError)
     }
 
-    // async fn yyy(&self) -> Result<(), BlockFetcherError> {
-    // let last_block_number_known = self.store.get_latest_block_number().await?;
+    async fn get_logs(&mut self) -> Result<Vec<RpcLog>, BlockFetcherError> {
+        let last_l1_block_number = self.eth_client.get_block_number().await?;
 
-    // let version = 3;
+        let mut batch_committed_logs = Vec::new();
+        while self.last_l1_block_fetched < last_l1_block_number {
+            let new_last_l1_fetched_block = min(
+                self.last_l1_block_fetched + self.max_block_step,
+                last_l1_block_number,
+            );
 
-    // let head_hash = self
-    //     .store
-    //     .get_block_header(last_block_number_known)?
-    //     .ok_or(BlockFetcherError::InternalError(
-    //         "Failed to get last block known header".to_string(),
-    //     ))?
-    //     .compute_block_hash();
+            info!(
+                "Fetching logs from block {} to {}",
+                self.last_l1_block_fetched + 1,
+                new_last_l1_fetched_block
+            );
 
-    // // Assumed to be the Sequencer that committed the block.
-    // // The fee recipient is the sender of the transaction that committed the block.
-    // // To get the transaction that committed the block in L1, we need to watch for
-    // // BatchCommitted events.
-    // let fee_recipient
+            // Fetch logs from the L1 chain for the BatchCommitted event.
+            let logs = self
+                .eth_client
+                .get_logs(
+                    self.last_l1_block_fetched + 1,
+                    new_last_l1_fetched_block,
+                    self.on_chain_proposer_address,
+                    keccak(b"BatchCommitted(uint256,bytes32)"),
+                )
+                .await?;
 
-    // let args = BuildPayloadArgs {
-    //     parent: head_hash,
-    //     timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
-    //     fee_recipient: self.coinbase_address,
-    //     random: H256::zero(),
-    //     withdrawals: Default::default(),
-    //     beacon_root: Some(H256::zero()),
-    //     version,
-    //     elasticity_multiplier: ELASTICITY_MULTIPLIER,
-    // };
+            // Update the last L1 block fetched.
+            self.last_l1_block_fetched = new_last_l1_fetched_block;
 
-    //     Ok(())
-    // }
-}
+            batch_committed_logs.extend_from_slice(&logs);
 
-// Necesitamos block, withdrawal hash y los batches
-#[allow(clippy::indexing_slicing)]
-#[allow(clippy::unwrap_used)]
-#[allow(clippy::as_conversions)]
-fn decode(data: &[u8]) {
-    // function commitBatch(
-    //     uint256 batchNumber,
-    //     bytes32 newStateRoot,
-    //     bytes32 stateDiffKZGVersionedHash,
-    //     bytes32 withdrawalsLogsMerkleRoot,
-    //     bytes32 processedDepositLogsRollingHash,
-    //     bytes[] calldata _hexEncodedBlocks
-    // ) external;
+            sleep(Duration::from_millis(self.fetch_interval_ms)).await;
+        }
 
-    // data =   4 bytes (function selector) 0..4
-    //          || 8 bytes (batch number)   4..36
-    //          || 32 bytes (new state root) 36..68
-    //          || 32 bytes (state diff KZG versioned hash) 68..100
-    //          || 32 bytes (withdrawals logs merkle root) 100..132
-    //          || 32 bytes (processed deposit logs rolling hash) 132..164
-    // println!("offset array: {:?}", hex::encode(&data[164..196])); // offset array
-    // println!("length array: {:?}", hex::encode(&data[196..228])); // length array
-    let a = U256::from_big_endian(&data[196..228]).as_u64();
-    let base = 228;
-    for i in 0..a {
-        let b: usize = base + i as usize * 32;
-        let string_offset = U256::from_big_endian(&data[b..b + 32]).as_usize();
-        // println!("string offset: {:?}", hex::encode(&data[b..b + 32])); // string offset
-        let string_len =
-            U256::from_big_endian(&data[base + string_offset..base + string_offset + 32])
-                .as_usize();
-        // dbg!(string_len);
-        // println!(
-        //     "string len: {:?}",
-        //     hex::encode(&data[base + string_offset..base + string_offset + 32])
-        // ); // string len
-        // println!(
-        //     "string: {:?}",
-        //     hex::encode(&data[base + string_offset + 32..base + string_offset + 32 + string_len])
-        // ); // string
-        let (block, _) = Block::decode_unfinished(
-            &data[base + string_offset + 32..base + string_offset + 32 + string_len],
-        )
-        .unwrap();
-        // dbg!(block);
+        Ok(batch_committed_logs)
+    }
+
+    async fn filter_logs(&self, logs: &[RpcLog]) -> Result<Vec<(RpcLog, U256)>, BlockFetcherError> {
+        let mut filtered_logs = Vec::new();
+
+        let last_block_number_known = self.store.get_latest_block_number().await?;
+
+        let last_batch_number_known = self
+            .rollup_store
+            .get_batch_number_by_block(last_block_number_known)
+            .await?
+            .ok_or(BlockFetcherError::InternalError(format!(
+                "Failed to get last batch number known for block {last_block_number_known}"
+            )))?;
+
+        // Filter missing batches logs
+        for batch_committed_log in logs.iter().cloned() {
+            let committed_batch_number = U256::from_big_endian(
+                batch_committed_log
+                    .log
+                    .topics
+                    .get(1)
+                    .ok_or(BlockFetcherError::InternalError(
+                        "Failed to get committed batch number from BatchCommitted log".to_string(),
+                    ))?
+                    .as_bytes(),
+            );
+
+            if committed_batch_number > last_batch_number_known.into() {
+                filtered_logs.push((batch_committed_log, committed_batch_number));
+            }
+        }
+
+        Ok(filtered_logs)
+    }
+
+    // TODO: Move to calldata module (SDK)
+    fn decode_batch_from_calldata(calldata: &[u8]) -> Result<Vec<Block>, BlockFetcherError> {
+        // function commitBatch(
+        //     uint256 batchNumber,
+        //     bytes32 newStateRoot,
+        //     bytes32 stateDiffKZGVersionedHash,
+        //     bytes32 withdrawalsLogsMerkleRoot,
+        //     bytes32 processedDepositLogsRollingHash,
+        //     bytes[] calldata _hexEncodedBlocks
+        // ) external;
+
+        // data =   4 bytes (function selector) 0..4
+        //          || 8 bytes (batch number)   4..36
+        //          || 32 bytes (new state root) 36..68
+        //          || 32 bytes (state diff KZG versioned hash) 68..100
+        //          || 32 bytes (withdrawals logs merkle root) 100..132
+        //          || 32 bytes (processed deposit logs rolling hash) 132..164
+
+        let batch_length_in_blocks = U256::from_big_endian(calldata.get(196..228).ok_or(
+            BlockFetcherError::WrongBatchCalldata("Couldn't get batch length bytes".to_owned()),
+        )?)
+        .as_usize();
+
+        let base = 228;
+
+        let mut batch = Vec::new();
+
+        for block_i in 0..batch_length_in_blocks {
+            let block_length_offset = base + block_i * 32;
+
+            let dynamic_offset = U256::from_big_endian(
+                calldata
+                    .get(block_length_offset..block_length_offset + 32)
+                    .ok_or(BlockFetcherError::WrongBatchCalldata(
+                        "Couldn't get dynamic offset bytes".to_owned(),
+                    ))?,
+            )
+            .as_usize();
+
+            let block_length_in_bytes = U256::from_big_endian(
+                calldata
+                    .get(base + dynamic_offset..base + dynamic_offset + 32)
+                    .ok_or(BlockFetcherError::WrongBatchCalldata(
+                        "Couldn't get block length bytes".to_owned(),
+                    ))?,
+            )
+            .as_usize();
+
+            let block_offset = base + dynamic_offset + 32;
+
+            let block = Block::decode(
+                calldata
+                    .get(block_offset..block_offset + block_length_in_bytes)
+                    .ok_or(BlockFetcherError::WrongBatchCalldata(
+                        "Couldn't get block bytes".to_owned(),
+                    ))?,
+            )?;
+
+            batch.push(block);
+        }
+
+        Ok(batch)
+    }
+
+    async fn store_batch(&self, batch: &[Block]) -> Result<(), BlockFetcherError> {
+        for block in batch.iter() {
+            self.blockchain.add_block(block).await?;
+
+            apply_fork_choice(&self.store, block.hash(), block.hash(), block.hash()).await?;
+
+            info!(
+                "Added fetched block {} with hash {:#x}",
+                block.header.number,
+                block.hash()
+            );
+        }
+
+        Ok(())
+    }
+
+    async fn seal_batch(
+        &self,
+        batch: &[Block],
+        batch_number: U256,
+    ) -> Result<(), BlockFetcherError> {
+        self.rollup_store
+            .seal_batch(
+                batch_number.as_u64(),
+                batch
+                    .first()
+                    .ok_or(BlockFetcherError::InternalError(
+                        "Batch is empty. This shouldn't happen.".to_owned(),
+                    ))?
+                    .header
+                    .number,
+                batch
+                    .last()
+                    .ok_or(BlockFetcherError::InternalError(
+                        "Batch is empty. This shouldn't happen.".to_owned(),
+                    ))?
+                    .header
+                    .number,
+                self.get_batch_withdrawal_hashes(batch).await?,
+            )
+            .await?;
+
+        info!("Sealed batch {batch_number}."); //. First block: {}, last block: {}",);
+
+        Ok(())
+    }
+
+    async fn get_batch_withdrawal_hashes(
+        &self,
+        batch: &[Block],
+    ) -> Result<Vec<H256>, BlockFetcherError> {
+        let mut withdrawal_hashes = Vec::new();
+
+        for block in batch {
+            let block_withdrawals = self.get_block_withdrawals(block.header.number).await?;
+
+            for (_tx_hash, tx) in &block_withdrawals {
+                let hash = get_withdrawal_hash(tx).ok_or(BlockFetcherError::InternalError(
+                    "Invalid withdraw transaction".to_owned(),
+                ))?;
+                withdrawal_hashes.push(hash);
+            }
+        }
+
+        Ok(withdrawal_hashes)
+    }
+
+    async fn get_block_withdrawals(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Vec<(H256, Transaction)>, BlockFetcherError> {
+        let Some(block_body) = self.store.get_block_body(block_number).await? else {
+            return Err(BlockFetcherError::InternalError(format!(
+                "Block {block_number} is supposed to be in store at this point"
+            )));
+        };
+
+        let mut txs_and_receipts = vec![];
+        for (index, tx) in block_body.transactions.iter().enumerate() {
+            let receipt = self
+                .store
+                .get_receipt(
+                    block_number,
+                    index.try_into().map_err(|_| {
+                        BlockFetcherError::InternalError(
+                            "Failed to convert index to u64".to_owned(),
+                        )
+                    })?,
+                )
+                .await?
+                .ok_or(BlockFetcherError::InternalError(
+                    "Transactions in a block should have a receipt".to_owned(),
+                ))?;
+            txs_and_receipts.push((tx.clone(), receipt));
+        }
+
+        let mut ret = vec![];
+
+        for (tx, receipt) in txs_and_receipts {
+            if is_withdrawal_l2(&tx, &receipt)? {
+                ret.push((tx.compute_hash(), tx.clone()))
+            }
+        }
+        Ok(ret)
     }
 }
-
-/*
-
-..  || offset array || length_array (n)
-    --
-    || bytes_offset_0 || bytes_offset_1 || ... || bytes_offset_n ||
-    || bytes_length_0 || bytes_0
-    || bytes_length_1 || bytes_1
-    ...
-    || bytes_length_n || bytes_n ||
-
-*/
