@@ -58,7 +58,7 @@ impl L1WatcherState {
 
 #[derive(Clone)]
 pub enum InMessage {
-    Check,
+    Watch,
 }
 
 #[allow(dead_code)]
@@ -68,15 +68,15 @@ pub enum OutMessage {
     Error,
 }
 
-pub struct L1Watcher {}
+pub struct L1Watcher;
 
 impl L1Watcher {
     pub async fn spawn(store: Store, blockchain: Arc<Blockchain>, cfg: SequencerConfig) {
         match L1WatcherState::new(store.clone(), blockchain.clone(), &cfg.eth, &cfg.l1_watcher) {
             Ok(state) => {
                 let mut l1_watcher = L1Watcher::start(state);
-                // Perform the check and suscrib a periodic Check.
-                let _ = l1_watcher.cast(InMessage::Check).await;
+                // Perform the check and suscribe a periodic Watch.
+                let _ = l1_watcher.cast(InMessage::Watch).await;
             }
             Err(error) => error!("L1 Watcher Error: {}", error),
         };
@@ -109,9 +109,9 @@ impl GenServer for L1Watcher {
         state: &mut Self::State,
     ) -> CastResponse {
         match message {
-            Self::InMsg::Check => {
+            Self::InMsg::Watch => {
                 let check_interval = random_duration(state.check_interval);
-                send_after(check_interval, tx.clone(), Self::InMsg::Check);
+                send_after(check_interval, tx.clone(), Self::InMsg::Watch);
                 match get_logs(state).await {
                     Ok(logs) => {
                         // We may not have a deposit nor a withdrawal, that means no events -> no logs.
