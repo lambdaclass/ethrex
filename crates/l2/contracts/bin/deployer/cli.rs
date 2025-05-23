@@ -111,6 +111,14 @@ pub struct DeployerOptions {
     )]
     pub genesis_l1_path: String,
     #[arg(
+        long,
+        value_name = "PATH",
+        env = "ETHREX_DEPLOYER_GENESIS_L2_PATH",
+        help_heading = "Deployer options",
+        help = "Path to the l2 genesis file. The default is ../../test_data/genesis-l2.json"
+    )]
+    pub genesis_l2_path: String,
+    #[arg(
         long = "committer.l1-address",
         default_value = "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b",
         value_name = "ADDRESS",
@@ -187,6 +195,26 @@ pub struct DeployerOptions {
     )]
     pub sp1_deploy_verifier: bool,
     #[arg(
+        long = "tdx.verifier-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER",
+        required_if_eq("tdx_deploy_verifier", "false"),
+        help_heading = "Deployer options",
+        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+    )]
+    pub tdx_verifier_address: Option<Address>,
+    #[arg(
+        long = "tdx.deploy-verifier",
+        default_value = "false",
+        value_name = "BOOLEAN",
+        action = ArgAction::SetTrue,
+        env = "ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER",
+        required_unless_present = "tdx_verifier_address",
+        help_heading = "Deployer options",
+        help = "If set to true, it will deploy the contract and override the address above with the deployed one.",
+    )]
+    pub tdx_deploy_verifier: bool,
+    #[arg(
         long,
         default_value = "false",
         value_name = "BOOLEAN",
@@ -221,6 +249,15 @@ pub struct DeployerOptions {
         help = "Address of the owner of the CommonBridge contract, who can upgrade the contract."
     )]
     pub bridge_owner: Address,
+    #[arg(
+        long,
+        default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
+        value_name = "PATH",
+        env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
+        help_heading = "Deployer options",
+        help = "Path to the SP1 verification key. This is used for proof verification."
+    )]
+    pub sp1_vk_path: String,
     #[arg(
         long,
         default_value = "false",
@@ -266,6 +303,7 @@ impl Default for DeployerOptions {
             deposit_rich: false,
             private_keys_file_path: "../../test_data/private_keys_l1.txt".to_string(),
             genesis_l1_path: "../../test_data/genesis-l1-dev.json".to_string(),
+            genesis_l2_path: "../../test_data/genesis-l2.json".to_string(),
             // 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
             committer_l1_address: H160([
                 0x3d, 0x1e, 0x15, 0xa1, 0xa5, 0x55, 0x78, 0xf7, 0xc9, 0x20, 0x88, 0x4a, 0x99, 0x43,
@@ -291,6 +329,11 @@ impl Default for DeployerOptions {
                 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
             ])),
             sp1_deploy_verifier: false,
+            tdx_verifier_address: Some(H160([
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
+            ])),
+            tdx_deploy_verifier: false,
             randomize_contract_deployment: false,
             validium: false,
             // 0x03d0a0aee676cc45bf7032649e0871927c947c8e
@@ -303,6 +346,10 @@ impl Default for DeployerOptions {
                 0x03, 0xd0, 0xa0, 0xae, 0xe6, 0x76, 0xcc, 0x45, 0xbf, 0x70, 0x32, 0x64, 0x9e, 0x08,
                 0x71, 0x92, 0x7c, 0x94, 0x7c, 0x8e,
             ]),
+            sp1_vk_path: format!(
+                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
+                env!("CARGO_MANIFEST_DIR")
+            ),
             deploy_based_contracts: false,
             // 0x03d0a0aee676cc45bf7032649e0871927c947c8e
             sequencer_registry_owner: H160([

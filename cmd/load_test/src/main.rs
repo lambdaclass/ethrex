@@ -1,5 +1,6 @@
 use clap::{Parser, ValueEnum};
 use ethereum_types::{Address, H160, H256, U256};
+use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::eth::BlockByNumber;
@@ -62,7 +63,7 @@ struct Cli {
         long,
         short = 'w',
         default_value_t = 0,
-        help = "Timeout to wait for all transactions to be included. If 0 is specified, wait indefinitely."
+        help = "Timeout in minutes. If the node doesn't provide updates in this time, it's considered stuck and the load test fails. If 0 is specified, the load test will wait indefinitely."
     )]
     wait: u64,
 }
@@ -78,8 +79,8 @@ pub enum TestType {
 const RETRIES: u64 = 1000;
 const ETH_TRANSFER_VALUE: u64 = 1000;
 
-// Private key for the rich account present in the gesesis_l2.json file.
-const RICH_ACCOUNT: &str = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
+// Private key for the rich account after making the initial deposits on the L2.
+const RICH_ACCOUNT: &str = "0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31";
 
 async fn deploy_contract(
     client: EthClient,
@@ -240,7 +241,8 @@ async fn load_test(
                             value,
                             nonce: Some(nonce + i),
                             max_fee_per_gas: Some(u64::MAX),
-                            max_priority_fee_per_gas: Some(10),
+                            max_priority_fee_per_gas: Some(10_u64),
+                            gas_limit: Some(TX_GAS_COST * 100),
                             ..Default::default()
                         },
                     )
@@ -248,13 +250,11 @@ async fn load_test(
                 let client = client.clone();
                 sleep(Duration::from_micros(800)).await;
                 let _sent = client.send_eip1559_transaction(&tx, &sk).await?;
-                println!(
-                    "Tx number {} sent! From: {}. To: {}",
-                    nonce + i + 1,
-                    encoded_src,
-                    dst.encode_hex::<String>()
-                );
             }
+            println!(
+                "{} transactions have been sent for {}",
+                tx_amount, encoded_src
+            );
             Ok::<(), EthClientError>(())
         });
     }
@@ -268,18 +268,18 @@ async fn load_test(
 // Waits until the nonce of each account has reached the tx_amount.
 async fn wait_until_all_included(
     client: EthClient,
-    wait: Option<Duration>,
+    timeout: Option<Duration>,
     accounts: &[Account],
     tx_amount: u64,
 ) -> Result<(), String> {
-    let start_time = tokio::time::Instant::now();
-
     for (_, sk) in accounts {
         let client = client.clone();
         let src = get_address_from_secret_key(sk).expect("Failed to get address from secret key");
         let encoded_src: String = src.encode_hex();
+        let mut last_updated = tokio::time::Instant::now();
+        let mut last_nonce = 0;
+
         loop {
-            let elapsed = start_time.elapsed();
             let nonce = client.get_nonce(src, BlockByNumber::Latest).await.unwrap();
             if nonce >= tx_amount {
                 println!(
@@ -289,14 +289,23 @@ async fn wait_until_all_included(
                 break;
             } else {
                 println!(
-                    "Waiting for transactions to be included from {}. Nonce: {}. Needs: {}. Percentage: {:2}%. Elapsed time: {}s.",
-                    encoded_src, nonce, tx_amount, (nonce as f64 / tx_amount as f64) * 100.0, elapsed.as_secs()
+                    "Waiting for transactions to be included from {}. Nonce: {}. Needs: {}. Percentage: {:2}%.",
+                    encoded_src, nonce, tx_amount, (nonce as f64 / tx_amount as f64) * 100.0
                 );
             }
 
-            if let Some(wait) = wait {
-                if elapsed > wait {
-                    return Err("Timeout reached for transactions to be included".to_string());
+            if let Some(timeout) = timeout {
+                if last_nonce == nonce {
+                    let inactivity_time = last_updated.elapsed();
+                    if inactivity_time > timeout {
+                        return Err(format!(
+                            "Node inactive for {} seconds. Timeout reached.",
+                            inactivity_time.as_secs()
+                        ));
+                    }
+                } else {
+                    last_nonce = nonce;
+                    last_updated = tokio::time::Instant::now();
                 }
             }
 
@@ -333,7 +342,7 @@ async fn main() {
     let pkeys_path = Path::new(&cli.pkeys);
     let accounts = parse_pk_file(pkeys_path)
         .unwrap_or_else(|_| panic!("Failed to parse private keys file {}", pkeys_path.display()));
-    let client = EthClient::new(&cli.node);
+    let client = EthClient::new(&cli.node).expect("Failed to create EthClient");
 
     // We ask the client for the chain id.
     let chain_id = client
@@ -379,7 +388,7 @@ async fn main() {
     };
 
     println!(
-        "Starting load test with {} transactions per account",
+        "Starting load test with {} transactions per account...",
         cli.tx_amount
     );
     let time_now = tokio::time::Instant::now();

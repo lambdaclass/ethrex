@@ -26,6 +26,8 @@ pub enum SequencerError {
     ProofSenderError(#[from] ProofSenderError),
     #[error("Failed to start MetricsGatherer: {0}")]
     MetricsGathererError(#[from] MetricsGathererError),
+    #[error("Sequencer error: {0}")]
+    EthClientError(#[from] EthClientError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -74,6 +76,8 @@ pub enum ProverServerError {
     InternalError(String),
     #[error("ProverServer failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
+    #[error("Failed to execute command: {0}")]
+    ComandError(std::io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -122,6 +126,10 @@ pub enum BlockProducerError {
     Custom(String),
     #[error("Failed to parse withdrawal: {0}")]
     FailedToParseWithdrawal(#[from] UtilsError),
+    #[error("Failed to encode AccountStateDiff: {0}")]
+    FailedToEncodeAccountStateDiff(#[from] StateDiffError),
+    #[error("Failed to get data from: {0}")]
+    FailedToGetDataFrom(String),
 }
 
 #[derive(Debug, thiserror::Error)]

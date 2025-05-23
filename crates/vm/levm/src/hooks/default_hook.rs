@@ -20,7 +20,7 @@ pub struct DefaultHook;
 
 impl Hook for DefaultHook {
     /// ## Description
-    /// This method performs validations and returns an error if any of the validations fail.
+    /// This method performs validations and returns an error if any of these fail.
     /// It also makes pre-execution changes:
     /// - It increases sender nonce
     /// - It substracts up-front-cost from sender balance.
@@ -29,7 +29,10 @@ impl Hook for DefaultHook {
     ///   See 'docs' for more information about validations.
     fn prepare_execution(&self, vm: &mut VM<'_>) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
-        let sender_account = vm.db.get_account(sender_address)?;
+        let (sender_balance, sender_nonce) = {
+            let sender_account = vm.db.get_account(sender_address)?;
+            (sender_account.info.balance, sender_account.info.nonce)
+        };
 
         if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;
@@ -44,7 +47,7 @@ impl Hook for DefaultHook {
                 TxValidationError::GasLimitPriceProductOverflow,
             ))?;
 
-        validate_sender_balance(vm, &sender_account)?;
+        validate_sender_balance(vm, sender_balance)?;
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = vm.env.tx_max_fee_per_blob_gas {
@@ -70,9 +73,9 @@ impl Hook for DefaultHook {
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // check for nonce mismatch
-        if sender_account.info.nonce != vm.env.tx_nonce {
+        if sender_nonce != vm.env.tx_nonce {
             return Err(VMError::TxValidation(TxValidationError::NonceMismatch {
-                expected: sender_account.info.nonce,
+                expected: sender_nonce,
                 actual: vm.env.tx_nonce,
             }));
         }
@@ -90,7 +93,7 @@ impl Hook for DefaultHook {
         }
 
         // (9) SENDER_NOT_EOA
-        validate_sender(&sender_account)?;
+        validate_sender(vm.db.get_account(sender_address)?)?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;
@@ -102,24 +105,14 @@ impl Hook for DefaultHook {
 
         // [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
         // Transaction is type 4 if authorization_list is Some
-        if vm.authorization_list.is_some() {
+        if vm.tx.authorization_list().is_some() {
             validate_type_4_tx(vm)?;
         }
 
-        if vm.is_create() {
-            // Assign bytecode to context and empty calldata
-            vm.current_call_frame_mut()?.bytecode =
-                std::mem::take(&mut vm.current_call_frame_mut()?.calldata);
-            vm.current_call_frame_mut()?.valid_jump_destinations =
-                get_valid_jump_destinations(&vm.current_call_frame()?.bytecode).unwrap_or_default();
-        } else {
-            // Transfer value to receiver
-            // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
-            vm.increase_account_balance(
-                vm.current_call_frame()?.to,
-                vm.current_call_frame()?.msg_value,
-            )?;
-        }
+        transfer_value_if_applicable(vm)?;
+
+        set_bytecode_and_code_address(vm)?;
+
         Ok(())
     }
 
@@ -230,7 +223,7 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
 
 // In Cancun the only addresses destroyed are contracts created in this transaction
 pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
-    let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
+    let selfdestruct_set = vm.substate.selfdestruct_set.clone();
     for address in selfdestruct_set {
         let account_to_remove = vm.get_account_mut(address)?;
         *account_to_remove = Account::default();
@@ -357,7 +350,7 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
 }
 
 pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
-    let Some(auth_list) = &vm.authorization_list else {
+    let Some(auth_list) = vm.tx.authorization_list() else {
         // vm.authorization_list should be Some at this point.
         return Err(VMError::Internal(InternalError::UndefinedState(-1)));
     };
@@ -408,7 +401,7 @@ pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), VMError> {
     Ok(())
 }
 
-pub fn validate_sender_balance(vm: &mut VM<'_>, sender_account: &Account) -> Result<(), VMError> {
+pub fn validate_sender_balance(vm: &mut VM<'_>, sender_balance: U256) -> Result<(), VMError> {
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame()?.msg_value;
 
@@ -438,7 +431,7 @@ pub fn validate_sender_balance(vm: &mut VM<'_>, sender_account: &Account) -> Res
             TxValidationError::InsufficientAccountFunds,
         ))?;
 
-    if sender_account.info.balance < balance_for_valid_tx {
+    if sender_balance < balance_for_valid_tx {
         return Err(VMError::TxValidation(
             TxValidationError::InsufficientAccountFunds,
         ));
@@ -478,6 +471,42 @@ pub fn deduct_caller(
 
     vm.decrease_account_balance(sender_address, up_front_cost)
         .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
+
+    Ok(())
+}
+
+/// Transfer msg_value to transaction recipient ONLY if it is a non-privileged CALL transaction.
+/// Note that non-privileged is a concept of L2 and in L1 every transaction is non-privileged
+pub fn transfer_value_if_applicable(vm: &mut VM<'_>) -> Result<(), VMError> {
+    // Transfer value only in Call transactions that are not privileged.
+    if !vm.is_create() && !vm.env.is_privileged {
+        vm.increase_account_balance(
+            vm.current_call_frame()?.to,
+            vm.current_call_frame()?.msg_value,
+        )?;
+    }
+    Ok(())
+}
+
+/// Sets bytecode and code_address to CallFrame
+pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
+    // Get bytecode and code_address for assigning those values to the callframe.
+    let (bytecode, code_address) = if vm.is_create() {
+        // Here bytecode is the calldata and the code_address is just the created contract address.
+        let calldata = std::mem::take(&mut vm.current_call_frame_mut()?.calldata);
+        (calldata, vm.current_call_frame()?.to)
+    } else {
+        // Here bytecode and code_address could be either from the account or from the delegated account.
+        let to = vm.current_call_frame()?.to;
+        let (_is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
+            eip7702_get_code(vm.db, &mut vm.substate, to)?;
+
+        (bytecode, code_address)
+    };
+
+    // Assign code and code_address to callframe
+    vm.current_call_frame_mut()?.code_address = code_address;
+    vm.current_call_frame_mut()?.set_code(bytecode)?;
 
     Ok(())
 }

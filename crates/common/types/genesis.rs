@@ -292,7 +292,7 @@ impl ChainConfig {
 }
 
 #[allow(unused)]
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct GenesisAccount {
     #[serde(default, with = "crate::serde_utils::bytes")]
     pub code: Bytes,
@@ -351,6 +351,7 @@ impl Genesis {
                 .config
                 .is_prague_activated(self.timestamp)
                 .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH)),
+            ..Default::default()
         }
     }
 
@@ -372,7 +373,6 @@ impl Genesis {
         Trie::compute_hash_from_unsorted_iter(iter)
     }
 }
-
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;

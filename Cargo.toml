@@ -18,13 +18,12 @@ members = [
   "crates/l2/prover/bench",
   "crates/l2/sdk",
   "crates/l2/storage",
-  "crates/l2/tee/quote-pusher",
   "crates/networking/p2p",
   "crates/networking/rpc",
   "crates/storage",
   "crates/vm",
   "crates/vm/levm",
-  "crates/vm/levm/bench/revm_comparison",
+  "crates/vm/levm/bench/revm_comparison"
 ]
 resolver = "2"
 

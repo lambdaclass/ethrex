@@ -5,6 +5,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::{rpc::NodeData, utils::RpcErr};
+mod peers;
+pub use peers::peers;
 
 #[derive(Serialize, Debug)]
 struct NodeInfo {
