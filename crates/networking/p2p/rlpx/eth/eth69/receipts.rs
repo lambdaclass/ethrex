@@ -24,7 +24,7 @@ impl Receipts69 {
 }
 
 impl RLPxMessage for Receipts69 {
-    const CODE: u8 = 0x1F;
+    const CODE: u8 = 0x0F;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
