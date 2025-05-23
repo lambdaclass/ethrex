@@ -75,6 +75,8 @@ impl L1ProofVerifier {
             .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
 
+        info!("Verifying batch {batch_to_verify}");
+
         if !batch_number_has_all_needed_proofs(batch_to_verify, &[ProverType::Aligned])
             .is_ok_and(|has_all_proofs| has_all_proofs)
         {
@@ -84,10 +86,13 @@ impl L1ProofVerifier {
 
         match self.verify_proof_aggregation(batch_to_verify).await? {
             Some(verify_tx_hash) => {
-                info!("L1 proof verifier batch {batch_to_verify} verified in AlignedProofAggregatorService, with transaction hash {verify_tx_hash:#x}");
+                info!("Batch {batch_to_verify} verified in AlignedProofAggregatorService, with transaction hash {verify_tx_hash:#x}");
             }
             None => {
-                info!("L1 proof verifier proof not aggregated yet, waiting for 20 seconds");
+                info!(
+                    "Batch {batch_to_verify} not aggregated yet, waiting for {} seconds",
+                    self.proof_send_interval_ms / 1000
+                );
             }
         }
         Ok(())
