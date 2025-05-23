@@ -99,7 +99,7 @@ pub fn build_opcode_handler_map<'a>() -> [fn(&mut VM<'a>, u8) -> Result<OpcodeRe
     let f: fn(&mut VM<'a>, u8) -> Result<OpcodeResult, VMError> =
         |_, _| Err(VMError::InvalidOpcode);
     let mut map = [f; 256];
-    for i in 0..255 {
+    for i in 0..256 {
         map[i] = from_u8(i as u8);
     }
     map

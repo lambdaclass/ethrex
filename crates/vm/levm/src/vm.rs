@@ -126,7 +126,7 @@ impl<'a> VM<'a> {
 
         loop {
             let current_call_frame = self.current_call_frame()?;
-            let instruction_number = current_call_frame
+            let instruction_number: u8 = current_call_frame
                 .bytecode
                 .get(current_call_frame.pc)
                 .copied()
