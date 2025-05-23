@@ -9,6 +9,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
+#[derive(Debug)]
 pub(crate) struct BlockRangeUpdate {
     pub(crate) earliest_block: u64,
     pub(crate) lastest_block: u64,
