@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748024598284,
+  "lastUpdate": 1748028206867,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10676,6 +10676,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007419362340216323,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "00999f5774d72bf1803e085450e355d7f8cc4ecf",
+          "message": "fix(l2): fix conversion factor in benchmark (#2907)\n\n**Motivation**\n\nThe factor used to convert from gas to Mgas is incorrect.\n\n**Description**\n\nChanges to the correct factor (1e6 = 1 million).",
+          "timestamp": "2025-05-23T15:06:09Z",
+          "tree_id": "ffe758426400f2a63be6a183b690a9fe0ec1b9c2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/00999f5774d72bf1803e085450e355d7f8cc4ecf"
+        },
+        "date": 1748028204188,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007383064090019569,
             "unit": "Mgas/s"
           }
         ]
