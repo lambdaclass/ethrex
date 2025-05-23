@@ -4,6 +4,7 @@ use crate::{
     environment::Environment,
     errors::{ExecutionReport, OpcodeResult, PrecompileError, VMError},
     hooks::hook::Hook,
+    instruction_table::build_opcode_handler_map,
     precompiles::execute_precompile,
     TransientStorage,
 };
@@ -41,6 +42,7 @@ pub struct VM<'a> {
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
+    pub instruction_map: [fn(&mut VM<'a>, u8) -> Result<OpcodeResult, VMError>; 256],
 }
 
 impl<'a> VM<'a> {
@@ -56,6 +58,7 @@ impl<'a> VM<'a> {
             hooks,
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
+            instruction_map: build_opcode_handler_map(),
         }
     }
 
@@ -122,9 +125,15 @@ impl<'a> VM<'a> {
         }
 
         loop {
-            let opcode = self.current_call_frame()?.next_opcode();
+            let instruction_number = *self
+                .current_call_frame()?
+                .bytecode
+                .get(self.current_call_frame()?.pc)
+                .ok_or(0)
+                .unwrap();
+            let instruction = self.instruction_map[instruction_number as usize];
 
-            let op_result = self.execute_opcode(opcode);
+            let op_result = instruction(self, instruction_number);
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {
