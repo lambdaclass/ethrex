@@ -17,7 +17,7 @@ use std::{
     fs::File,
     io,
     net::{SocketAddr, ToSocketAddrs},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::sync::Mutex;
@@ -117,15 +117,15 @@ pub fn set_data_sub_dir(datadir: &str, network: &Option<String>) -> String {
     let network = network
         .clone()
         .expect("--network is required and it was not provided");
-    let sub_path = if DEFAULT_PUBLIC_NETWORKS.contains(&network.to_lowercase().as_str()) {
-        &network.clone()
+    let network_path = network.replace(".", "_");
+    let sub_path = if DEFAULT_PUBLIC_NETWORKS.contains(&network_path.to_lowercase().as_str()) {
+        Path::new(&network).to_path_buf()
     } else {
-        &(String::from(DEFAULT_CUSTOM_DIR).to_owned() + &network.clone())
+        Path::new(DEFAULT_CUSTOM_DIR).join(&network_path)
     };
 
-    let mut final_path = PathBuf::from(datadir);
-    final_path.push(sub_path);
-    final_path.to_str().unwrap().to_string()
+    let final_path = Path::new(datadir).join(sub_path);
+    final_path.display().to_string()
 }
 
 pub fn set_datadir(datadir: &str) -> String {
