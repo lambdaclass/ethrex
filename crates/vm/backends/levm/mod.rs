@@ -7,27 +7,29 @@ use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::{EvmError, ExecutionResult, ProverDB, ProverDBError, StoreWrapper};
+use crate::db::DynVmDatabase;
+use crate::{EvmError, ExecutionResult, ProverDB, ProverDBError, StoreVmDatabase};
 use bytes::Bytes;
 use ethrex_common::{
     types::{
-        requests::Requests, AccessList, AuthorizationTuple, Block, BlockHeader, EIP1559Transaction,
-        EIP7702Transaction, Fork, GenericTransaction, Receipt, Transaction, TxKind, Withdrawal,
-        GWEI_TO_WEI, INITIAL_BASE_FEE,
+        requests::Requests, AccessList, AccountUpdate, AuthorizationTuple, Block, BlockHeader,
+        EIP1559Transaction, EIP7702Transaction, Fork, GenericTransaction, Receipt, Transaction,
+        TxKind, Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
     },
     Address, H256, U256,
 };
+use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
+use ethrex_levm::utils::restore_cache_state;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::{Substate, VM},
     Environment,
 };
-use ethrex_storage::error::StoreError;
-use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
+use ethrex_storage::{hash_address, hash_key, Store};
 use ethrex_trie::{NodeRLP, TrieError};
 use std::cmp::min;
 use std::collections::HashMap;
@@ -97,15 +99,12 @@ impl LEVM {
         Ok(BlockExecutionResult { receipts, requests })
     }
 
-    pub fn execute_tx(
-        // The transaction to execute.
+    fn setup_env(
         tx: &Transaction,
-        // The transactions recovered address
         tx_sender: Address,
-        // The block header for the current block.
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
-    ) -> Result<ExecutionReport, EvmError> {
+    ) -> Result<Environment, EvmError> {
         let chain_config = db.store.get_chain_config();
         let gas_price: U256 = tx
             .effective_gas_price(block_header.base_fee_per_gas)
@@ -138,10 +137,58 @@ impl LEVM {
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
         };
 
+        Ok(env)
+    }
+
+    pub fn execute_tx(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transactions recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+    ) -> Result<ExecutionReport, EvmError> {
+        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
         let mut vm = VM::new(env, db, tx);
 
         vm.execute().map_err(VMError::into)
     }
+
+    pub fn execute_tx_l2(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transactions recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+    ) -> Result<(ExecutionReport, CallFrameBackup), EvmError> {
+        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
+        let mut vm = VM::new(env, db, tx);
+
+        let report_result = vm.execute().map_err(EvmError::from)?;
+
+        // Here we differ from the execute_tx function from the L1.
+        // We need to check if the transaction exceeded the blob size limit.
+        // If it did, we need to revert the state changes made by the transaction and return the error.
+        let call_frame_backup = vm
+            .call_frames
+            .pop()
+            .ok_or(VMError::OutOfBounds)?
+            .call_frame_backup;
+
+        Ok((report_result, call_frame_backup))
+    }
+
+    pub fn restore_cache_state(
+        db: &mut GeneralizedDatabase,
+        call_frame_backup: CallFrameBackup,
+    ) -> Result<(), EvmError> {
+        restore_cache_state(db, call_frame_backup).map_err(VMError::from)?;
+        Ok(())
+    }
+
     pub fn simulate_tx_from_generic(
         // The transaction to execute.
         tx: &GenericTransaction,
@@ -239,7 +286,7 @@ impl LEVM {
     pub fn process_withdrawals(
         db: &mut GeneralizedDatabase,
         withdrawals: &[Withdrawal],
-    ) -> Result<(), ethrex_storage::error::StoreError> {
+    ) -> Result<(), EvmError> {
         // For every withdrawal we increment the target account's balance
         for (address, increment) in withdrawals
             .iter()
@@ -253,7 +300,7 @@ impl LEVM {
                 let mut account = db
                     .store
                     .get_account(address)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
+                    .map_err(|e| EvmError::DB(e.to_string()))?
                     .clone();
                 account.info.balance += increment.into();
                 db.cache.insert(address, account);
@@ -390,12 +437,10 @@ impl LEVM {
             return Err(ProverDBError::Custom("Unable to get last block".into()));
         };
 
-        let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(
-            StoreWrapper {
-                store: store.clone(),
-                block_hash: first_block_parent_hash,
-            },
-        )))));
+        let vm_db: DynVmDatabase =
+            Box::new(StoreVmDatabase::new(store.clone(), first_block_parent_hash));
+
+        let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
 
         let mut execution_updates: HashMap<Address, AccountUpdate> = HashMap::new();
         for block in blocks {
@@ -411,10 +456,8 @@ impl LEVM {
             }
 
             // Update de block_hash for the next execution.
-            let new_store = StoreWrapper {
-                store: store.clone(),
-                block_hash: block.hash(),
-            };
+            let new_store: DynVmDatabase =
+                Box::new(StoreVmDatabase::new(store.clone(), block.hash()));
 
             // Replace the store
             *logger.store.lock().unwrap() = Box::new(new_store);
@@ -424,9 +467,7 @@ impl LEVM {
         let state_accessed = logger
             .state_accessed
             .lock()
-            .map_err(|_| {
-                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
-            })?
+            .map_err(|_| ProverDBError::Store("Could not lock mutex".to_string()))?
             .clone();
 
         // fetch all read/written accounts from store
@@ -445,9 +486,7 @@ impl LEVM {
         let code_accessed = logger
             .code_accessed
             .lock()
-            .map_err(|_| {
-                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
-            })?
+            .map_err(|_| ProverDBError::Store("Could not lock mutex".to_string()))?
             .clone();
         let code = accounts
             .values()
@@ -491,9 +530,7 @@ impl LEVM {
         let block_hashes = logger
             .block_hashes_accessed
             .lock()
-            .map_err(|_| {
-                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
-            })?
+            .map_err(|_| ProverDBError::Store("Could not lock mutex".to_string()))?
             .clone()
             .into_iter()
             .map(|(num, hash)| (num, H256::from(hash.0)))
