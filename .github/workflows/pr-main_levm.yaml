@@ -64,7 +64,7 @@ jobs:
           cd crates/vm/levm
           if [ "$(awk '/Summary:/ {print $(NF)}' test_result_pr_short.txt)" != "(100.00%)" ]; then
               echo "Percentage is not 100%."
-              
+              grep -v '(100%)' crates/vm/levm/test_result_pr_short.txt
               exit 1
           fi
 
