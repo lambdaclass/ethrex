@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748014568329,
+  "lastUpdate": 1748014863750,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8875,6 +8875,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 210857321691,
             "range": "± 374234079",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1d6d9b6067c5039fe3c2c5e927196ad35ef3c41e",
+          "message": "fix(l2): fix AccountUpdate import (#2905)\n\n**Motivation**\n\nIn #2867 the AccountUpdate import was moved, but the TDX quote generator\nwasn't updated.\n\n**Description**\n\nThis PR fixes the import.",
+          "timestamp": "2025-05-23T14:45:52Z",
+          "tree_id": "c9bc7182fbe60718b9bcf477dc437670d5fe2275",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1d6d9b6067c5039fe3c2c5e927196ad35ef3c41e"
+        },
+        "date": 1748014860396,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 213326752388,
+            "range": "± 1281629110",
             "unit": "ns/iter"
           }
         ]
