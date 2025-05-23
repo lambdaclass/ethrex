@@ -59,10 +59,7 @@ pub async fn start_l2(
         rollup_store,
     ));
     #[cfg(feature = "aligned")]
-    task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(
-        cfg.clone(),
-        rollup_store,
-    ));
+    task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(cfg.clone()));
     task_set.spawn(start_block_producer(
         store.clone(),
         blockchain,

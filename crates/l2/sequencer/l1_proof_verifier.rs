@@ -5,7 +5,6 @@ use aligned_sdk::{
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::EthClient;
-use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 use tracing::{error, info};
 
@@ -26,17 +25,9 @@ use super::{
 const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatchAligned(uint256,bytes,bytes32,bytes32[])";
 
-pub async fn start_l1_proof_verifier(
-    cfg: SequencerConfig,
-    rollup_store: StoreRollup,
-) -> Result<(), SequencerError> {
-    let proof_sender = L1ProofVerifier::new(
-        &cfg.proof_coordinator,
-        &cfg.l1_committer,
-        &cfg.eth,
-        rollup_store,
-    )
-    .await?;
+pub async fn start_l1_proof_verifier(cfg: SequencerConfig) -> Result<(), SequencerError> {
+    let proof_sender =
+        L1ProofVerifier::new(&cfg.proof_coordinator, &cfg.l1_committer, &cfg.eth).await?;
     proof_sender.run().await;
     Ok(())
 }
@@ -47,7 +38,6 @@ struct L1ProofVerifier {
     l1_private_key: SecretKey,
     on_chain_proposer_address: Address,
     proof_send_interval_ms: u64,
-    rollup_storage: StoreRollup,
 }
 
 impl L1ProofVerifier {
@@ -55,7 +45,6 @@ impl L1ProofVerifier {
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
-        rollup_storage: StoreRollup,
     ) -> Result<Self, ProofVerifierError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
 
@@ -65,7 +54,6 @@ impl L1ProofVerifier {
             l1_private_key: cfg.l1_private_key,
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
-            rollup_storage,
         })
     }
 
@@ -114,11 +102,14 @@ impl L1ProofVerifier {
         let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
         let public_inputs = proof.public_values();
         // TODO: use a hardcoded vk
-        let vk = proof.vk().try_into().map_err(|e| {
-            ProofVerifierError::DecodingError(format!("Failed to decode vk: {e:?}"))
-        })?;
+        let vk = proof.vk();
 
-        let verification_data = AggregationModeVerificationData::SP1 { vk, public_inputs };
+        let verification_data = AggregationModeVerificationData::SP1 {
+            vk: vk.clone().try_into().map_err(|e| {
+                ProofVerifierError::DecodingError(format!("Failed to decode vk: {e:?}"))
+            })?,
+            public_inputs: public_inputs.clone(),
+        };
 
         let proof_status = check_proof_verification(
             &verification_data,
@@ -152,7 +143,7 @@ impl L1ProofVerifier {
         let calldata_values = [
             Value::Uint(U256::from(batch_number)),
             Value::Bytes(public_inputs.into()),
-            Value::FixedBytes(vk),
+            Value::FixedBytes(vk.into()),
             Value::Array(merkle_path),
         ];
 

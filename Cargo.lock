@@ -3297,45 +3297,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethereum_hashing"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c853bd72c9e5787f8aafc3df2907c2ed03cff3150c3acd94e2e53a98ab70a8ab"
-dependencies = [
- "cpufeatures",
- "ring 0.17.14",
- "sha2 0.10.8",
-]
-
-[[package]]
-name = "ethereum_serde_utils"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70cbccfccf81d67bff0ab36e591fa536c8a935b078a7b0e58c1d00d418332fc9"
-dependencies = [
- "alloy-primitives 0.8.25",
- "hex",
- "serde",
- "serde_derive",
- "serde_json",
-]
-
-[[package]]
-name = "ethereum_ssz"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86da3096d1304f5f28476ce383005385459afeaf0eea08592b65ddbc9b258d16"
-dependencies = [
- "alloy-primitives 0.8.25",
- "ethereum_serde_utils",
- "itertools 0.13.0",
- "serde",
- "serde_derive",
- "smallvec",
- "typenum",
-]
-
-[[package]]
 name = "ethers"
 version = "2.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4017,6 +3978,7 @@ dependencies = [
  "bytes",
  "cfg-if",
  "derive_more 1.0.0",
+ "dyn-clone",
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-levm",
@@ -8286,22 +8248,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1885c039570dc00dcb4ff087a89e185fd56bae234ddc7f056a945bf36467248d"
 dependencies = [
  "proc-macro2",
-]
-
-[[package]]
-name = "quote-pusher"
-version = "0.1.0"
-dependencies = [
- "ethereum-types 0.15.1",
- "ethrex-rpc",
- "ethrex-sdk",
- "hex",
- "reqwest 0.12.15",
- "secp256k1",
- "serde_json",
- "serial_test",
- "thiserror 2.0.12",
- "tokio",
 ]
 
 [[package]]
