@@ -2,7 +2,10 @@ use crate::{
     call_frame::CallFrame,
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
-    errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
+    errors::{
+        ExecutionReport, InternalError, OpcodeResult, OutOfGasError, PrecompileError, TxResult,
+        VMError,
+    },
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     utils::{address_to_word, word_to_address, *},
@@ -833,8 +836,25 @@ impl<'a> VM<'a> {
         self.call_frames.push(new_call_frame);
 
         if self.is_precompile()? {
-            // Execute precompile immediately and handle result.
-            let report = self.execute_precompile()?;
+            let report = if self.delegate_contracts_in_tx.contains(&code_address) {
+                let result = if gas_limit > 0 {
+                    TxResult::Success
+                } else {
+                    TxResult::Revert(VMError::PrecompileError(PrecompileError::NotEnoughGas))
+                };
+                
+                ExecutionReport {
+                    result,
+                    gas_used: 0,
+                    gas_refunded: self.substate.refunded_gas,
+                    output: Bytes::new(),
+                    logs: vec![],
+                }
+            } else {
+                // Execute precompile immediately and handle result.
+                self.execute_precompile()?
+            };
+
             self.handle_return(&report)?;
         } else {
             // Backup Substate before executing opcodes of new callframe.
