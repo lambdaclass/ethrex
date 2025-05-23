@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748018383476,
+  "lastUpdate": 1748020000667,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8935,6 +8935,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 212592699348,
             "range": "± 788043133",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1cad47ec64d1b0ed169ca0332f1b9380786d69ab",
+          "message": "feat(l1): add code offset by capability (#2910)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nThe protocol capability offset was hardcoded within the msg code. \n\n**Description**\n\nIn order to decouple the msg code from the protocol offset, a const was\ncreated with the len of the protocol.\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n[geth\nreference](https://github.com/ethereum/go-ethereum/blob/20ad4f500e7fafab93f6d94fa171a5c0309de6ce/cmd/devp2p/internal/ethtest/protocol.go#L62)\n\nCloses #2902",
+          "timestamp": "2025-05-23T16:11:30Z",
+          "tree_id": "5a99b42ad7d81b80b4490cc9d039a45082dd91b2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1cad47ec64d1b0ed169ca0332f1b9380786d69ab"
+        },
+        "date": 1748019996858,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212592892495,
+            "range": "± 917018352",
             "unit": "ns/iter"
           }
         ]
