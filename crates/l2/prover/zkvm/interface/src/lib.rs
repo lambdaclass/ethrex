@@ -39,6 +39,7 @@ pub mod io {
         /// value used to calculate base fee
         pub elasticity_multiplier: u64,
         #[cfg(feature = "l2")]
+        #[serde_as(as = "SerdeJSON")]
         pub state_diff: StateDiff,
         #[cfg(feature = "l2")]
         #[serde_as(as = "[_; 48]")]
