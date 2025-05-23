@@ -1,3 +1,4 @@
+use crate::rlpx::error::RLPxError;
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
@@ -8,12 +9,29 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
+use ethrex_storage::Store;
 
 #[derive(Debug)]
 pub(crate) struct BlockRangeUpdate {
     pub(crate) earliest_block: u64,
     pub(crate) lastest_block: u64,
     pub(crate) lastest_block_hash: BlockHash,
+}
+
+impl BlockRangeUpdate {
+    pub async fn new(storage: &Store) -> Result<Self, RLPxError> {
+        let lastest_block = storage.get_latest_block_number().await?;
+        let block_header = storage
+            .get_block_header(lastest_block)?
+            .ok_or(RLPxError::NotFound(format!("Block {lastest_block}")))?;
+        let lastest_block_hash = block_header.compute_block_hash();
+
+        Ok(Self {
+            earliest_block: 0,
+            lastest_block,
+            lastest_block_hash,
+        })
+    }
 }
 
 impl RLPxMessage for BlockRangeUpdate {
