@@ -109,7 +109,7 @@ async fn main() {
 }
 
 fn write_benchmark_file(gas_used: f64, elapsed: f64) {
-    let rate = gas_used / 10e6 / elapsed;
+    let rate = gas_used / 1e6 / elapsed;
 
     let backend = if cfg!(feature = "sp1") {
         "SP1"
