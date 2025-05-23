@@ -196,7 +196,7 @@ pub enum InternalError {
     AccountNotDelegated,
     #[error("No recipient found for privilege transaction")]
     RecipientNotFoundForPrivilegeTransaction,
-    //TODO: Refactor all errors
+    //TODO: Refactor all errors. https://github.com/lambdaclass/ethrex/issues/2886
     #[error("Custom error: {0}")]
     Custom(String),
 }
