@@ -16,11 +16,17 @@ in
     {
       imports = [
         "${modulesPath}/image/repart.nix"
+        "${modulesPath}/profiles/minimal.nix"
         ./service.nix
       ];
 
       system.stateVersion = "25.11";
-
+      environment.systemPackages = lib.mkOverride 99 [];
+      
+      boot.kernelModules = [ "tdx_guest" "tsm" ];
+      boot.initrd.availableKernelModules  = [ "dm_mod" "dm_verity" "erofs" "sd_mod" "ahci" ];
+      boot.initrd.includeDefaultModules = false;
+      nix.enable = false;
       boot = {
         loader.grub.enable = false;
         initrd.systemd.enable = true;
@@ -35,8 +41,6 @@ in
           fsType = "tmpfs";
           options = [ "mode=0755" ];
         };
-
-        # bind-mount the store
         "/nix/store" = {
           device = "/usr/nix/store";
           options = [ "bind" "ro" ];
@@ -46,15 +50,14 @@ in
         name = "ethrex-image";
         verityStore = {
           enable = true;
-          ukiPath = "/EFI/BOOT/BOOT${pkgs.stdenv.hostPlatform.efiArch}.EFI";
+          ukiPath = "/EFI/BOOT/BOOTX64.EFI";
         };
         partitions = {
           ${partitionIds.esp} = {
-            # the UKI is injected into this partition by the verityStore module
             repartConfig = {
               Type = "esp";
               Format = "vfat";
-              SizeMinBytes = if pkgs.stdenv.hostPlatform.isx86_64 then "64M" else "96M";
+              SizeMinBytes = "96M";
             };
           };
           ${partitionIds.store-verity}.repartConfig = {
