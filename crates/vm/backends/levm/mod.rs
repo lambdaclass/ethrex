@@ -12,9 +12,9 @@ use crate::{EvmError, ExecutionResult, ProverDB, ProverDBError, StoreVmDatabase}
 use bytes::Bytes;
 use ethrex_common::{
     types::{
-        requests::Requests, AccessList, AuthorizationTuple, Block, BlockHeader, EIP1559Transaction,
-        EIP7702Transaction, Fork, GenericTransaction, Receipt, Transaction, TxKind, Withdrawal,
-        GWEI_TO_WEI, INITIAL_BASE_FEE,
+        requests::Requests, AccessList, AccountUpdate, AuthorizationTuple, Block, BlockHeader,
+        EIP1559Transaction, EIP7702Transaction, Fork, GenericTransaction, Receipt, Transaction,
+        TxKind, Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
     },
     Address, H256, U256,
 };
@@ -29,7 +29,7 @@ use ethrex_levm::{
     vm::{Substate, VM},
     Environment,
 };
-use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
+use ethrex_storage::{hash_address, hash_key, Store};
 use ethrex_trie::{NodeRLP, TrieError};
 use std::cmp::min;
 use std::collections::HashMap;

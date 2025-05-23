@@ -1,4 +1,5 @@
 mod account;
+mod account_update;
 pub mod blobs_bundle;
 mod block;
 mod constants;
@@ -11,6 +12,7 @@ pub mod transaction;
 pub mod tx_fields;
 
 pub use account::*;
+pub use account_update::*;
 pub use blobs_bundle::*;
 pub use block::*;
 pub use constants::*;

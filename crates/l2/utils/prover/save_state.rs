@@ -1,7 +1,7 @@
 use crate::utils::prover::errors::SaveStateError;
 use crate::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use directories::ProjectDirs;
-use ethrex_storage::AccountUpdate;
+use ethrex_common::types::AccountUpdate;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::fs::{create_dir, read_dir, File};

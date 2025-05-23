@@ -10,10 +10,10 @@ use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::spec_id;
 use db::EvmState;
-use ethrex_common::types::AccountInfo;
+use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
-use ethrex_storage::AccountUpdate;
+
 use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;
 use revm::Database;
@@ -280,7 +280,7 @@ impl REVM {
     /// Gets the state_transitions == [AccountUpdate] from the [EvmState].
     pub fn get_state_transitions(
         initial_state: &mut EvmState,
-    ) -> Vec<ethrex_storage::AccountUpdate> {
+    ) -> Vec<ethrex_common::types::AccountUpdate> {
         match initial_state {
             EvmState::Store(db) => {
                 db.merge_transitions(BundleRetention::PlainState);

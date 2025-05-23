@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
+use crate::{types::AccountInfo, Address, H256, U256};
 use bytes::Bytes;
-use ethrex_common::{types::AccountInfo, Address, H256, U256};
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

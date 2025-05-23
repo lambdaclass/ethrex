@@ -5,7 +5,10 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_common::{
-    types::{tx_fields::*, EIP1559Transaction, EIP7702Transaction, Fork, Transaction, TxKind},
+    types::{
+        tx_fields::*, AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction,
+        TxKind,
+    },
     H256, U256,
 };
 use ethrex_levm::{
@@ -15,7 +18,6 @@ use ethrex_levm::{
     EVMConfig, Environment,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::AccountUpdate;
 use ethrex_vm::backends;
 use keccak_hash::keccak;
 

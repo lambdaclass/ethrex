@@ -1,8 +1,8 @@
 #![no_main]
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
+use ethrex_common::types::AccountUpdate;
 use ethrex_common::Address;
-use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
 use std::collections::HashMap;
 #[cfg(feature = "l2")]

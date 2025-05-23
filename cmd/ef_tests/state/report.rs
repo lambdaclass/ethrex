@@ -1,11 +1,10 @@
 use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
 use ethrex_common::{
-    types::{Account, Fork},
+    types::{Account, AccountUpdate, Fork},
     Address, H256,
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
-use ethrex_storage::AccountUpdate;
 use ethrex_vm::EvmError;
 use itertools::Itertools;
 use revm::primitives::{EVMError as RevmError, ExecutionResult as RevmExecutionResult};

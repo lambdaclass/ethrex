@@ -13,8 +13,8 @@ use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Req
 use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::{
     compute_receipts_root, validate_block_header, validate_cancun_header_fields,
-    validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHash,
-    BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
+    validate_prague_header_fields, validate_pre_cancun_header_fields, AccountUpdate, Block,
+    BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_common::types::{BlobsBundle, Fork, ELASTICITY_MULTIPLIER};
 
@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
-use ethrex_storage::{AccountUpdate, Store};
+use ethrex_storage::Store;
 use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine, StoreVmDatabase};
 use tracing::info;
 
