@@ -218,9 +218,11 @@ impl Trie {
 
     /// Builds a trie from a set of nodes.
     ///
-    /// Note: This method will not ensure neither that all node references are valid nor that there
-    ///   are no dangling nodes. Invalid references will be reflected in the final trie by
-    ///   `InconsistentTree` errors at runtime, whereas dangling nodes will be ignored.
+    /// Note: This method will not ensure that all node references are valid. Invalid references
+    ///   will cause other methods (including, but not limited to `Trie::get`, `Trie::insert` and
+    ///   `Trie::remove`) to return `Err(InconsistentTrie)`.
+    /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
+    ///   root node are considered dangling.
     pub fn from_nodes(root: Option<&NodeRLP>, nodes: &[NodeRLP]) -> Result<Self, TrieError> {
         let Some(root) = root else {
             return Ok(Trie::stateless());
@@ -423,7 +425,7 @@ impl ProofTrie {
                 .insert(self.0.db.as_ref(), partial_path, external_ref)?
                 .into()
         } else {
-            todo!()
+            external_ref.into()
         };
 
         Ok(())
