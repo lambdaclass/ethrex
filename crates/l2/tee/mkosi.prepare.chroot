@@ -2,7 +2,7 @@
 if [[ "$1" != "build" ]]; then
     exit
 fi
-cd /work/src/proj
+cd /work/src/ethrex/crates/l2/tee/quote-gen
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source /.cargo/env
 rustup toolchain install
