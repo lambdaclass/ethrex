@@ -4,8 +4,6 @@ members = [
   "cmd/ef_tests/state",
   "cmd/ethrex",
   "cmd/ethrex_l2",
-  "tools/hive_report",
-  "tools/loc",
   "cmd/load_test",
   "crates/blockchain",
   "crates/blockchain/dev",
