@@ -3718,6 +3718,7 @@ dependencies = [
  "hex",
  "jsonwebtoken 9.3.1",
  "keccak-hash",
+ "lazy_static",
  "rand 0.8.5",
  "reqwest 0.12.15",
  "secp256k1",
@@ -3910,16 +3911,12 @@ dependencies = [
  "serde_json",
  "sha2 0.10.8",
  "sha3",
- "ssz_types",
- "strum_macros 0.24.3",
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
  "tower-http",
  "tracing",
  "tracing-subscriber 0.3.19",
- "tree_hash",
- "tree_hash_derive",
 ]
 
 [[package]]
@@ -10600,22 +10597,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ssz_types"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dad0fa7e9a85c06d0a6ba5100d733fff72e231eb6db2d86078225cf716fd2d95"
-dependencies = [
- "ethereum_serde_utils",
- "ethereum_ssz",
- "itertools 0.13.0",
- "serde",
- "serde_derive",
- "smallvec",
- "tree_hash",
- "typenum",
-]
-
-[[package]]
 name = "stability"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10683,19 +10664,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f64def088c51c9510a8579e3c5d67c65349dcf755e5479ad3d010aa6454e2c32"
 dependencies = [
  "strum_macros 0.27.1",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.24.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e385be0d24f186b4ce2f9982191e7101bb737312ad61c1f2f984f34bcf85d59"
-dependencies = [
- "heck 0.4.1",
- "proc-macro2",
- "quote",
- "rustversion",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -11544,31 +11512,6 @@ checksum = "1ad61aed86bc3faea4300c7aee358b4c6d0c8d6ccc36524c96e4c92ccf26e77e"
 dependencies = [
  "num-integer",
  "strength_reduce",
-]
-
-[[package]]
-name = "tree_hash"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c58eb0f518840670270d90d97ffee702d8662d9c5494870c9e1e9e0fa00f668"
-dependencies = [
- "alloy-primitives 0.8.25",
- "ethereum_hashing",
- "ethereum_ssz",
- "smallvec",
- "typenum",
-]
-
-[[package]]
-name = "tree_hash_derive"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "699e7fb6b3fdfe0c809916f251cf5132d64966858601695c3736630a87e7166a"
-dependencies = [
- "darling",
- "proc-macro2",
- "quote",
- "syn 2.0.100",
 ]
 
 [[package]]
