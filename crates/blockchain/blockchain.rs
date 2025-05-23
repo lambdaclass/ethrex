@@ -16,7 +16,7 @@ use ethrex_common::types::{
     validate_prague_header_fields, validate_pre_cancun_header_fields, AccountUpdate, Block,
     BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
-use ethrex_common::types::{BlobsBundle, Fork, ELASTICITY_MULTIPLIER};
+use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
 
 use ethrex_common::{Address, H256};
 use mempool::Mempool;
@@ -216,7 +216,6 @@ impl Blockchain {
             .storage
             .get_chain_config()
             .map_err(|e| (e.into(), None))?;
-        let fork = chain_config.fork(first_block_header.timestamp);
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), first_block_header.parent_hash);
         let mut vm = Evm::new(self.evm_engine, vm_db);
@@ -228,15 +227,6 @@ impl Blockchain {
 
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
-            if is_crossing_spuriousdragon(fork, chain_config.fork(block.header.timestamp)) {
-                return Err((
-                    ChainError::Custom("Crossing fork boundary in bulk mode".into()),
-                    Some(BatchBlockProcessingFailure {
-                        last_valid_hash,
-                        failed_block_hash: block.hash(),
-                    }),
-                ));
-            }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
                 match find_parent_header(&block.header, &self.storage) {
@@ -675,16 +665,6 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
 /// Calculates the blob gas required by a transaction
 fn get_total_blob_gas(tx: &EIP4844Transaction) -> u64 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u64
-}
-
-fn is_crossing_spuriousdragon(from: Fork, to: Fork) -> bool {
-    if from >= Fork::SpuriousDragon {
-        return false;
-    }
-    if to < Fork::SpuriousDragon {
-        return false;
-    }
-    from != to
 }
 
 #[cfg(test)]
