@@ -491,12 +491,12 @@ impl Committer {
     fn generate_blobs_bundle(&self, state_diff: &StateDiff) -> Result<BlobsBundle, CommitterError> {
         let blob_data = state_diff.encode().map_err(CommitterError::from)?;
 
+        let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
+
         metrics!(
             #[allow(clippy::as_conversions)]
             METRICS_L2.set_blob_usage_percentage((blob_data.len() as f64 / BYTES_PER_BLOB as f64 ) * 100_f64);
         );
-
-        let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
 
         BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)
     }
