@@ -12,7 +12,7 @@ set -e
 
 # TODO(#2486): Move this to a cached build outside.
 echo "Building load test"
-cargo build --release --manifest-path ./cmd/load_test/Cargo.toml
+cargo build --release --manifest-path ./tools/load_test/Cargo.toml
 
 echo "Starting load test"
 start_time=$(date +%s)

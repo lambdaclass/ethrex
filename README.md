@@ -114,7 +114,7 @@ make test CRATE="ethrex-blockchain"
 
 #### Load tests
 
-More information in the [load test documentation](cmd/load_test/README.md).
+More information in the [load test documentation](tools/load_test/README.md).
 
 #### Hive Tests
 

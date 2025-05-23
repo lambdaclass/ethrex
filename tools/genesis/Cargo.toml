@@ -3,7 +3,7 @@ name = "tools"
 edition = "2021"
 
 [dependencies]
-ethrex-common = { path = "../crates/common" }
+ethrex-common = { path = "../../crates/common" }
 serde_json = { version = "1.0", features = [ "preserve_order" ] }
 
 [lib]
