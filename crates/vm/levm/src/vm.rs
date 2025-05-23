@@ -166,6 +166,7 @@ impl<'a> VM<'a> {
         }
     }
 
+    /// Executes precompile and handles the output that it returns, generating a report.
     pub fn execute_precompile(&mut self) -> Result<ExecutionReport, VMError> {
         let callframe = self.current_call_frame_mut()?;
 
