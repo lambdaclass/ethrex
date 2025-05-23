@@ -226,8 +226,7 @@ impl BlockFetcher {
                         batch.last().unwrap().header.number,
                         batch_withdrawal_hashes,
                     )
-                    .await
-                    .map_err(BlockFetcherError::StoreError)?;
+                    .await?;
 
                 info!(
                     "Stored batch {} from transaction {:#x}",
