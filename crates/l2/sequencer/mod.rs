@@ -12,6 +12,8 @@ use tracing::{error, info};
 pub mod block_producer;
 pub mod l1_committer;
 pub mod l1_proof_sender;
+#[cfg(feature = "aligned")]
+pub mod l1_proof_verifier;
 pub mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
@@ -52,6 +54,11 @@ pub async fn start_l2(
         cfg.clone(),
     ));
     task_set.spawn(l1_proof_sender::start_l1_proof_sender(
+        cfg.clone(),
+        rollup_store,
+    ));
+    #[cfg(feature = "aligned")]
+    task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(
         cfg.clone(),
         rollup_store,
     ));

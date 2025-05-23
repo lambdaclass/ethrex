@@ -5,10 +5,7 @@ use aligned_sdk::{
 use ethers::signers::{Signer, Wallet};
 use ethrex_common::{Address, H160, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_rpc::{
-    clients::{eth::WrappedTransaction, Overrides},
-    EthClient,
-};
+use ethrex_rpc::{clients::Overrides, EthClient};
 use ethrex_storage_rollup::StoreRollup;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
@@ -26,7 +23,10 @@ use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 
-use super::{errors::SequencerError, utils::sleep_random};
+use super::{
+    errors::SequencerError,
+    utils::{send_verify_tx, sleep_random},
+};
 
 const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -251,35 +251,14 @@ impl L1ProofSender {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let gas_price = self
-            .eth_client
-            .get_gas_price_with_extra(20)
-            .await?
-            .try_into()
-            .map_err(|_| {
-                ProofSenderError::InternalError("Failed to convert gas_price to a u64".to_owned())
-            })?;
-
-        let verify_tx = self
-            .eth_client
-            .build_eip1559_transaction(
-                self.on_chain_proposer_address,
-                self.l1_address,
-                calldata.into(),
-                Overrides {
-                    max_fee_per_gas: Some(gas_price),
-                    max_priority_fee_per_gas: Some(gas_price),
-                    ..Default::default()
-                },
-            )
-            .await?;
-
-        let mut tx = WrappedTransaction::EIP1559(verify_tx);
-
-        let verify_tx_hash = self
-            .eth_client
-            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
-            .await?;
+        let verify_tx_hash = send_verify_tx(
+            calldata,
+            &self.eth_client,
+            self.on_chain_proposer_address,
+            self.l1_address,
+            &self.l1_private_key,
+        )
+        .await?;
 
         info!("Sent proof for batch {batch_number}, with transaction hash {verify_tx_hash:#x}");
 

@@ -1,0 +1,172 @@
+use aligned_sdk::{
+    aggregation_layer::{check_proof_verification, AggregationModeVerificationData, ProofStatus},
+    common::types::Network,
+};
+use ethrex_common::{Address, H256, U256};
+use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_rpc::EthClient;
+use ethrex_storage_rollup::StoreRollup;
+use secp256k1::SecretKey;
+use tracing::{error, info};
+
+use crate::{
+    sequencer::errors::ProofVerifierError,
+    utils::prover::{
+        proving_systems::ProverType,
+        save_state::{batch_number_has_all_needed_proofs, read_proof, StateFileType},
+    },
+    CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
+};
+
+use super::{
+    errors::SequencerError,
+    utils::{send_verify_tx, sleep_random},
+};
+
+const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
+    "verifyBatchAligned(uint256,bytes,bytes32,bytes32[])";
+
+pub async fn start_l1_proof_verifier(
+    cfg: SequencerConfig,
+    rollup_store: StoreRollup,
+) -> Result<(), SequencerError> {
+    let proof_sender = L1ProofVerifier::new(
+        &cfg.proof_coordinator,
+        &cfg.l1_committer,
+        &cfg.eth,
+        rollup_store,
+    )
+    .await?;
+    proof_sender.run().await;
+    Ok(())
+}
+
+struct L1ProofVerifier {
+    eth_client: EthClient,
+    l1_address: Address,
+    l1_private_key: SecretKey,
+    on_chain_proposer_address: Address,
+    proof_send_interval_ms: u64,
+    rollup_storage: StoreRollup,
+}
+
+impl L1ProofVerifier {
+    async fn new(
+        cfg: &ProofCoordinatorConfig,
+        committer_cfg: &CommitterConfig,
+        eth_cfg: &EthConfig,
+        rollup_storage: StoreRollup,
+    ) -> Result<Self, ProofVerifierError> {
+        let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
+
+        Ok(Self {
+            eth_client,
+            l1_address: cfg.l1_address,
+            l1_private_key: cfg.l1_private_key,
+            on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
+            proof_send_interval_ms: cfg.proof_send_interval_ms,
+            rollup_storage,
+        })
+    }
+
+    async fn run(&self) {
+        loop {
+            info!("Running L1 Proof Verifier");
+            if let Err(err) = self.main_logic().await {
+                error!("L1 Proof Verifier Error: {}", err);
+            }
+
+            sleep_random(self.proof_send_interval_ms).await;
+        }
+    }
+
+    // TODO: verify all already aggregated proofs in one tx
+    async fn main_logic(&self) -> Result<(), ProofVerifierError> {
+        let batch_to_verify = 1 + self
+            .eth_client
+            .get_last_verified_batch(self.on_chain_proposer_address)
+            .await?;
+
+        if !batch_number_has_all_needed_proofs(batch_to_verify, &[ProverType::Aligned])
+            .is_ok_and(|has_all_proofs| has_all_proofs)
+        {
+            info!("Missing proofs for batch {batch_to_verify}, skipping sending");
+            return Ok(());
+        }
+
+        match self.verify_proof_aggregation(batch_to_verify).await? {
+            Some(verify_tx_hash) => {
+                info!("L1 proof verifier batch {batch_to_verify} verified in AlignedProofAggregatorService, with transaction hash {verify_tx_hash:#x}");
+            }
+            None => {
+                info!("L1 proof verifier proof not aggregated yet, waiting for 20 seconds");
+            }
+        }
+        Ok(())
+    }
+
+    async fn verify_proof_aggregation(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, ProofVerifierError> {
+        info!("L1 proof verifier: Verifying proof in aggregation mode");
+
+        let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
+        let public_inputs = proof.public_values();
+        // TODO: use a hardcoded vk
+        let vk = proof.vk().try_into().map_err(|e| {
+            ProofVerifierError::DecodingError(format!("Failed to decode vk: {e:?}"))
+        })?;
+
+        let verification_data = AggregationModeVerificationData::SP1 { vk, public_inputs };
+
+        let proof_status = check_proof_verification(
+            &verification_data,
+            Network::Devnet,
+            self.eth_client.urls.first().unwrap().as_str().into(),
+            "http://127.0.0.1:58801".to_string(), // beacon_client
+            None,
+        )
+        .await
+        .map_err(|e| ProofVerifierError::InternalError(format!("{:?}", e)))?;
+
+        // We can make this prettier. Aligned updated their API and this was just a quick fix.
+        let merkle_path = match proof_status {
+            ProofStatus::Verified { merkle_path, .. } => merkle_path,
+            ProofStatus::Invalid => {
+                return Err(ProofVerifierError::InternalError(
+                    "Proof was found in the blob but the Merkle Root verification failed."
+                        .to_string(),
+                ));
+            }
+            ProofStatus::NotFound => {
+                return Ok(None);
+            }
+        };
+
+        let merkle_path = merkle_path
+            .iter()
+            .map(|x| Value::FixedBytes(bytes::Bytes::from_owner(*x)))
+            .collect();
+
+        let calldata_values = [
+            Value::Uint(U256::from(batch_number)),
+            Value::Bytes(public_inputs.into()),
+            Value::FixedBytes(vk),
+            Value::Array(merkle_path),
+        ];
+
+        let calldata = encode_calldata(ALIGNED_VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
+
+        let verify_tx_hash = send_verify_tx(
+            calldata,
+            &self.eth_client,
+            self.on_chain_proposer_address,
+            self.l1_address,
+            &self.l1_private_key,
+        )
+        .await?;
+
+        Ok(Some(verify_tx_hash))
+    }
+}

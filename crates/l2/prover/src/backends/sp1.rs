@@ -95,6 +95,7 @@ pub fn to_batch_proof(proof: ProveOutput) -> Result<BatchProof, Box<dyn std::err
             Ok(BatchProof::ProofBytes(ProofBytes {
                 proof: bincode::serialize(&proof.proof)?,
                 public_values: proof.proof.public_values.to_vec(),
+                vk:  proof.vk.hash_bytes().into(),
             }))
         }
         else {

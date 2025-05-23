@@ -24,6 +24,8 @@ pub enum SequencerError {
     CommitterError(#[from] CommitterError),
     #[error("Failed to start ProofSender: {0}")]
     ProofSenderError(#[from] ProofSenderError),
+    #[error("Failed to start ProofVerifier: {0}")]
+    ProofVerifierError(#[from] ProofVerifierError),
     #[error("Failed to start MetricsGatherer: {0}")]
     MetricsGathererError(#[from] MetricsGathererError),
     #[error("Sequencer error: {0}")]
@@ -94,6 +96,20 @@ pub enum ProofSenderError {
     FailedToParseOnChainProposerResponse(String),
     #[error("Proof Sender failed because of a store error: {0}")]
     StoreError(#[from] StoreError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProofVerifierError {
+    #[error("Failed because of an EthClient error: {0}")]
+    EthClientError(#[from] EthClientError),
+    #[error("Unexpected Error: {0}")]
+    InternalError(String),
+    #[error("ProofVerifier decoding error: {0}")]
+    DecodingError(String),
+    #[error("Failed with a SaveStateError: {0}")]
+    SaveStateError(#[from] SaveStateError),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
 }
 
 #[derive(Debug, thiserror::Error)]
