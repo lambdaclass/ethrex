@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748014039124,
+  "lastUpdate": 1748014568329,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8845,6 +8845,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 211559583769,
             "range": "± 274520707",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "74764cd7f3129eb09741a1a0fba173ad5240bb90",
+          "message": "docs(levm): mention solidity compiler dependency for levm benchmark tool (#2906)\n\n**Motivation**\nFollowing the `rev_comparison` levm bench tool's README to run the tool\nresults in an error as the solidity compiler is not installed. This is\nnot mentioned as a dependency, so this PR updates the README to mention\nthat solidity compiler is required to use the tool and how to install\nit.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Mention solidity compiler dependency + how to install it on levm's\n`rev_comparison` benchmark tool README\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-23T14:42:31Z",
+          "tree_id": "a3bf707d25d74da35af0fed62d9dc230ea8219af",
+          "url": "https://github.com/lambdaclass/ethrex/commit/74764cd7f3129eb09741a1a0fba173ad5240bb90"
+        },
+        "date": 1748014564985,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 210857321691,
+            "range": "± 374234079",
             "unit": "ns/iter"
           }
         ]
