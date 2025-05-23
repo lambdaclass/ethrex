@@ -213,9 +213,14 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (address, new_state_account) in db.cache.drain() {
-            let initial_state_account = db.store.get_account(address)?;
-            let account_existed = db.store.account_exists(address);
+        for (address, new_state_account) in db.cache.iter() {
+            // In case the account is not in immutable_cache (rare) we search for it in the actual database.
+            let initial_state_account =
+                db.immutable_cache
+                    .get(address)
+                    .ok_or(EvmError::Custom(format!(
+                        "Failed to get account {address} from immutable cache",
+                    )))?;
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -238,10 +243,12 @@ impl LEVM {
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = HashMap::new();
-            for (key, storage_slot) in &new_state_account.storage {
-                let storage_before_block = db.store.get_storage_value(address, *key)?;
-                if *storage_slot != storage_before_block {
-                    added_storage.insert(*key, *storage_slot);
+
+            for (key, new_value) in &new_state_account.storage {
+                let old_value = initial_state_account.storage.get(key).ok_or_else(|| { EvmError::Custom(format!("Failed to get old value from account's initial storage for address: {address}"))})?;
+
+                if new_value != old_value {
+                    added_storage.insert(*key, *new_value);
                     storage_updated = true;
                 }
             }
@@ -252,17 +259,15 @@ impl LEVM {
                 None
             };
 
-            let mut removed = !initial_state_account.is_empty() && new_state_account.is_empty();
+            // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
+            let removed = new_state_account.is_empty();
 
             // https://eips.ethereum.org/EIPS/eip-161
-            // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
-            if !account_existed && new_state_account.is_empty() {
+            // If account is now empty and it didn't exist in the trie before, no need to make changes.
+            // This check is necessary just in case we keep empty accounts in the trie. If we're sure we don't, this code can be removed.
+            // `initial_state_account.is_empty()` check can be removed but I added it because it's short-circuiting, this way we don't hit the db very often.
+            if removed && initial_state_account.is_empty() && !db.store.account_exists(*address) {
                 continue;
-            }
-            // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-            // Note: An account can be empty but still exist in the trie (if that's the case we remove it)
-            if new_state_account.is_empty() {
-                removed = true;
             }
 
             if !removed && !acc_info_updated && !storage_updated {
@@ -271,7 +276,7 @@ impl LEVM {
             }
 
             let account_update = AccountUpdate {
-                address,
+                address: *address,
                 removed,
                 info,
                 code,
@@ -280,6 +285,8 @@ impl LEVM {
 
             account_updates.push(account_update);
         }
+        db.cache.clear();
+        db.immutable_cache.clear();
         Ok(account_updates)
     }
 
@@ -293,18 +300,13 @@ impl LEVM {
             .filter(|withdrawal| withdrawal.amount > 0)
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
-            // We check if it was in block_cache, if not, we get it from DB.
-            if let Some(account) = db.cache.get_mut(&address) {
-                account.info.balance += increment.into();
-            } else {
-                let mut account = db
-                    .store
-                    .get_account(address)
-                    .map_err(|e| EvmError::DB(e.to_string()))?
-                    .clone();
-                account.info.balance += increment.into();
-                db.cache.insert(address, account);
-            }
+            let mut account = db
+                .get_account(address)
+                .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?
+                .clone(); // Not a big deal cloning here because it's an EOA.
+
+            account.info.balance += increment.into();
+            db.cache.insert(address, account);
         }
         Ok(())
     }
