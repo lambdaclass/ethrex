@@ -7,6 +7,8 @@ use crate::{
     CommitterConfig, EthConfig, SequencerConfig,
 };
 
+#[cfg(feature = "metrics")]
+use ethrex_common::types::BYTES_PER_BLOB;
 use ethrex_common::{
     types::{
         blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, BlobsBundleError,
@@ -19,6 +21,9 @@ use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
     merkle_tree::merkelize,
 };
+use ethrex_metrics::metrics;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};
 use ethrex_rpc::{
     clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
     utils::get_withdrawal_hash,
@@ -159,6 +164,20 @@ impl Committer {
             .await
         {
             Ok(commit_tx_hash) => {
+                metrics!(
+                let _ = METRICS_L2
+                    .set_block_type_and_block_number(
+                        MetricsL2BlockType::LastCommittedBlock,
+                        last_block_of_batch,
+                    )
+                    .inspect_err(|e| {
+                        tracing::error!(
+                            "Failed to set metric: last committed block {}",
+                            e.to_string()
+                        )
+                    });
+                );
+
                 info!(
                     "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}.",
                 );
@@ -185,6 +204,8 @@ impl Committer {
         let mut deposit_logs_hashes = vec![];
         let mut new_state_root = H256::default();
 
+        #[cfg(feature = "metrics")]
+        let mut tx_count = 0_u64;
         info!("Preparing state diff from block {first_block_of_batch}");
 
         loop {
@@ -219,6 +240,13 @@ impl Committer {
                 txs_and_receipts.push((tx.clone(), receipt));
             }
 
+            metrics!(
+                tx_count += txs_and_receipts
+                    .len()
+                    .try_into()
+                    .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
+                    .unwrap_or(0)
+            );
             // Get block withdrawals and deposits
             let withdrawals = self.get_block_withdrawals(&txs_and_receipts)?;
             let deposits = self.get_block_deposits(&txs_and_receipts);
@@ -305,6 +333,20 @@ impl Committer {
                 }
             }
         }
+
+        metrics!(if let (Ok(deposits_count), Ok(withdrawals_count)) = (
+            deposit_logs_hashes.len().try_into(),
+            withdrawal_hashes.len().try_into()
+        ) {
+            let _ = self
+                .rollup_store
+                .update_operations_count(tx_count, deposits_count, withdrawals_count)
+                .await
+                .inspect_err(|e| {
+                    tracing::error!("Failed to update operations metric: {}", e.to_string())
+                });
+        });
+
         let deposit_logs_hash = self.get_deposit_hash(deposit_logs_hashes)?;
         Ok((
             blobs_bundle,
@@ -448,8 +490,15 @@ impl Committer {
     /// Generate the blob bundle necessary for the EIP-4844 transaction.
     fn generate_blobs_bundle(&self, state_diff: &StateDiff) -> Result<BlobsBundle, CommitterError> {
         let blob_data = state_diff.encode().map_err(CommitterError::from)?;
+        #[cfg(feature = "metrics")]
+        let blob_size = blob_data.len();
 
         let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
+
+        metrics!(
+            #[allow(clippy::as_conversions)]
+            METRICS_L2.set_blob_usage_percentage((blob_size as f64 / BYTES_PER_BLOB as f64 ) * 100_f64);
+        );
 
         BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)
     }
