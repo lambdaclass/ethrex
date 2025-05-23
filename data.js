@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747958158845,
+  "lastUpdate": 1747961879487,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10232,6 +10232,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007354280214424951,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4c9fcfa179fb41f534e3faec1bd25926adafa266",
+          "message": "ci(core): updating hive revision (#2881)\n\n**Motivation**\n\nIn our lambdaclass/hive fork, we have updated upstream. When [that\nPR](https://github.com/lambdaclass/hive/pull/28) is merged, we should\nupdate the branch name here and test it.\n\n**Description**\n\n- Updates the hive revision\n- Also updates \"HIVE_SHALLOW_SINCE\"\n\nCloses #2760",
+          "timestamp": "2025-05-22T21:53:50Z",
+          "tree_id": "661efb1c7f5fc50738bff485277f2d818b33d71a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4c9fcfa179fb41f534e3faec1bd25926adafa266"
+        },
+        "date": 1747961879118,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007365047828208882,
             "unit": "Mgas/s"
           }
         ]
