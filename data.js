@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747961879487,
+  "lastUpdate": 1748009997817,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10261,6 +10261,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007365047828208882,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "90105443+DiegoCivi@users.noreply.github.com",
+            "name": "DiegoC",
+            "username": "DiegoCivi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "63fd78dc5cad5e912a3320b39fed69d471007f1f",
+          "message": "refactor(l1): move AccountUpdate to common crate (#2867)\n\n**Motivation**\n\nReduce coupling between crates ethrex_storage and ethrex_vm\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n- Move `account_update.rs` from `storage` to `common/types`\n- Fix imports\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2852",
+          "timestamp": "2025-05-23T13:29:25Z",
+          "tree_id": "35ed7c318e0057fc38603007251d6e9ccfe29d44",
+          "url": "https://github.com/lambdaclass/ethrex/commit/63fd78dc5cad5e912a3320b39fed69d471007f1f"
+        },
+        "date": 1748009994853,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007272762891566265,
             "unit": "Mgas/s"
           }
         ]
