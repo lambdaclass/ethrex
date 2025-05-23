@@ -39,6 +39,14 @@ jobs:
       - name: Clippy exec
         run: |
             cargo clippy -p ethrex-prover --all-targets
+      - name: Check tdx
+        run: |
+            cd crates/l2/tee/quote-gen
+            cargo check
+      - name: Clippy tdx
+        run: |
+            cd crates/l2/tee/quote-gen
+            cargo clippy --all-targets
 
   test:
     # "Test" is a required check, don't change the name
