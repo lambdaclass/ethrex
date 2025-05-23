@@ -5,6 +5,7 @@ use crate::{
         get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
         read_node_config_file,
     },
+    DEFAULT_JWT_PATH, DEFAULT_STORE_DIR,
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
@@ -65,9 +66,10 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
 }
 
 pub async fn init_store(data_dir: &str, network: &str) -> Store {
-    let path = PathBuf::from(data_dir);
+    let path = Path::new(data_dir).join(DEFAULT_STORE_DIR);
+    let data_dir_path = path.display().to_string();
     let store = if path.ends_with("memory") {
-        Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
+        Store::new(&data_dir_path, EngineType::InMemory).expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
             if #[cfg(feature = "redb")] {
@@ -79,7 +81,7 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
                 panic!("Specify the desired database engine.");
             }
         }
-        Store::new(data_dir, engine_type).expect("Failed to create Store")
+        Store::new(&data_dir_path, engine_type).expect("Failed to create Store")
     };
     let genesis = read_genesis_file(network);
     store
@@ -116,6 +118,7 @@ pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
 #[allow(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
+    data_dir: &str,
     #[cfg(feature = "l2")] l2_opts: &L2Options,
     peer_table: Arc<Mutex<KademliaTable>>,
     local_p2p_node: Node,
@@ -138,12 +141,18 @@ pub async fn init_rpc_api(
     )
     .await;
 
+    let authrpc_jwtsecret_path = if opts.authrpc_jwtsecret == DEFAULT_JWT_PATH {
+        Path::new(data_dir).join(DEFAULT_JWT_PATH)
+    } else {
+        Path::new(&opts.authrpc_jwtsecret).to_path_buf()
+    };
+
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
-        read_jwtsecret_file(&opts.authrpc_jwtsecret),
+        read_jwtsecret_file(&authrpc_jwtsecret_path.display().to_string()),
         local_p2p_node,
         local_node_record,
         syncer,

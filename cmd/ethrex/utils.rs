@@ -1,4 +1,4 @@
-use crate::decode;
+use crate::{decode, DEFAULT_CUSTOM_DIR, DEFAULT_PUBLIC_NETWORKS};
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
@@ -17,7 +17,7 @@ use std::{
     fs::File,
     io,
     net::{SocketAddr, ToSocketAddrs},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::sync::Mutex;
@@ -53,7 +53,9 @@ pub fn read_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
 }
 
 pub fn write_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
-    info!("JWT secret not found in the provided path, generating JWT secret");
+    info!(
+        "JWT secret not found in the provided path, generating JWT secret, path {jwt_secret_path}"
+    );
     let secret = generate_jwt_secret();
     std::fs::write(jwt_secret_path, &secret).expect("Unable to write JWT secret file");
     hex::decode(secret)
@@ -109,6 +111,21 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
             io::ErrorKind::NotFound,
             "Failed to parse socket address",
         ))
+}
+
+pub fn set_data_sub_dir(datadir: &str, network: &Option<String>) -> String {
+    let network = network
+        .clone()
+        .expect("--network is required and it was not provided");
+    let network_path = network.replace(".", "_");
+    let sub_path = if DEFAULT_PUBLIC_NETWORKS.contains(&network_path.to_lowercase().as_str()) {
+        Path::new(&network).to_path_buf()
+    } else {
+        Path::new(DEFAULT_CUSTOM_DIR).join(&network_path)
+    };
+
+    let final_path = Path::new(datadir).join(sub_path);
+    final_path.display().to_string()
 }
 
 pub fn set_datadir(datadir: &str) -> String {

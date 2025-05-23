@@ -45,7 +45,7 @@ pub enum EngineType {
 
 impl Store {
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
-        info!("Starting storage engine ({engine_type:?})");
+        info!("Starting storage engine ({engine_type:?}), path: {_path}");
         let store = match engine_type {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
@@ -455,7 +455,7 @@ impl Store {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
             } else {
-                panic!("Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2");
+                return Err(StoreError::Custom(String::from("Storage currently has a different genesis block from the one in the specified genesis file. Try again after clearing the database.")));
             }
         }
         // Store genesis accounts

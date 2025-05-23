@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use ethrex::{
     cli::{import_blocks, remove_db},
-    utils::set_datadir,
+    utils::{set_data_sub_dir, set_datadir},
     DEFAULT_DATADIR,
 };
 use ethrex_vm::EvmEngine;
@@ -9,12 +9,13 @@ use ethrex_vm::EvmEngine;
 #[inline]
 fn block_import() {
     let data_dir = DEFAULT_DATADIR;
-    set_datadir(data_dir);
+
+    let network = "../../test_data/genesis-perf-ci.json";
+
+    set_datadir(&set_data_sub_dir(data_dir, &Some(network.to_string())));
     remove_db(data_dir, true);
 
     let evm_engine = EvmEngine::default();
-
-    let network = "../../test_data/genesis-perf-ci.json";
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(
