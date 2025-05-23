@@ -363,13 +363,15 @@ impl LEVM {
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
         let account = db.get_account(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS)?;
         if !account.has_code() {
-            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
+            return Err(EvmError::SystemContractEmpty(
+                "WITHDRAWAL_REQUEST_PREDEPLOY".to_string(),
+            ));
         }
 
         match report.result {
             TxResult::Success => Ok(report),
             // EIP-7002 specifies that a failed system call invalidates the entire block.
-            TxResult::Revert(vm_error) => Err(EvmError::Custom(format!(
+            TxResult::Revert(vm_error) => Err(EvmError::SystemContractCallFailed(format!(
                 "REVERT when reading withdrawal requests with error: {:?}. According to EIP-7002, the revert of this system call invalidates the block.",
                 vm_error
             ))),
@@ -392,13 +394,15 @@ impl LEVM {
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
         let acc = db.get_account(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS)?;
         if !acc.has_code() {
-            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
+            return Err(EvmError::SystemContractEmpty(
+                "CONSOLIDATION_REQUEST_PREDEPLOY".to_string(),
+            ));
         }
 
         match report.result {
             TxResult::Success => Ok(report),
             // EIP-7251 specifies that a failed system call invalidates the entire block.
-            TxResult::Revert(vm_error) => Err(EvmError::Custom(format!(
+            TxResult::Revert(vm_error) => Err(EvmError::SystemContractCallFailed(format!(
                 "REVERT when dequeuing consolidation requests with error: {:?}. According to EIP-7251, the revert of this system call invalidates the block.",
                 vm_error
             ))),
