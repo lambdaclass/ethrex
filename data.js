@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748022067000,
+  "lastUpdate": 1748024438917,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10587,6 +10587,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007361455121951219,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1d6d9b6067c5039fe3c2c5e927196ad35ef3c41e",
+          "message": "fix(l2): fix AccountUpdate import (#2905)\n\n**Motivation**\n\nIn #2867 the AccountUpdate import was moved, but the TDX quote generator\nwasn't updated.\n\n**Description**\n\nThis PR fixes the import.",
+          "timestamp": "2025-05-23T14:45:52Z",
+          "tree_id": "c9bc7182fbe60718b9bcf477dc437670d5fe2275",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1d6d9b6067c5039fe3c2c5e927196ad35ef3c41e"
+        },
+        "date": 1748024434426,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007419362340216323,
             "unit": "Mgas/s"
           }
         ]
