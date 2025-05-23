@@ -4,7 +4,7 @@ mod errors;
 mod execution_result;
 mod helpers;
 mod prover_db;
-mod tracing;
+pub mod tracing;
 
 pub mod backends;
 

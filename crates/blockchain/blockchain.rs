@@ -4,6 +4,7 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 mod smoke_test;
+pub mod tracing;
 
 use constants::MAX_INITCODE_SIZE;
 use error::MempoolError;
