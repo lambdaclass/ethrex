@@ -2,8 +2,7 @@ use crate::{
     constants::*,
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
-    opcodes::Opcode,
-    utils::*,
+    instruction_table::INSTRUCTION_DISPATCHER_MAP,
     vm::VM,
 };
 
@@ -40,10 +39,10 @@ impl<'a> VM<'a> {
 
     pub fn execute_next_instruction(&mut self) -> Result<OpcodeResult, VMError> {
         // Fetches the bytecode for the next instruction
-        let instruction_number: u8 = self.current_call_frame()?.fetch_next_instruction_number();
+        let instruction_number = *self.current_call_frame()?.fetch_next_instruction_number();
 
         // Intruction map maps the operation's bytecode to the function that handles said operation
-        let instruction_handler = self.instruction_map[instruction_number as usize];
+        let instruction_handler = INSTRUCTION_DISPATCHER_MAP[instruction_number as usize];
 
         // Operation handler is called
         instruction_handler(self, instruction_number)

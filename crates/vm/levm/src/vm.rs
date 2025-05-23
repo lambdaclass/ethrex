@@ -42,7 +42,6 @@ pub struct VM<'a> {
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
-    pub instruction_map: [fn(&mut VM<'a>, u8) -> Result<OpcodeResult, VMError>; 256],
 }
 
 impl<'a> VM<'a> {
@@ -58,7 +57,6 @@ impl<'a> VM<'a> {
             hooks,
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
-            instruction_map: build_opcode_handler_map(),
         }
     }
 
