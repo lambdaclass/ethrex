@@ -36,7 +36,7 @@ pub async fn start_block_fetcher(
     rollup_store: StoreRollup,
     cfg: SequencerConfig,
 ) -> Result<(), SequencerError> {
-    let mut block_fetcher = BlockFetcher::new(&cfg, store.clone(), rollup_store);
+    let mut block_fetcher = BlockFetcher::new(&cfg, store.clone(), rollup_store)?;
     block_fetcher
         .run(store, blockchain, execution_cache, sequencer_state)
         .await;
@@ -44,9 +44,13 @@ pub async fn start_block_fetcher(
 }
 
 impl BlockFetcher {
-    pub fn new(cfg: &SequencerConfig, store: Store, rollup_store: StoreRollup) -> Self {
-        Self {
-            eth_client: EthClient::new(&cfg.eth.rpc_url),
+    pub fn new(
+        cfg: &SequencerConfig,
+        store: Store,
+        rollup_store: StoreRollup,
+    ) -> Result<Self, BlockFetcherError> {
+        Ok(Self {
+            eth_client: EthClient::new_with_multiple_urls(cfg.eth.rpc_url.clone())?,
             on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
             bridge_address: cfg.l1_watcher.bridge_address,
             store,
@@ -54,7 +58,7 @@ impl BlockFetcher {
             fetch_interval_ms: cfg.block_producer.block_time_ms,
             last_l1_block_fetched: U256::zero(),
             max_block_step: cfg.l1_watcher.max_block_step, // TODO: block fetcher config
-        }
+        })
     }
 
     pub async fn run(

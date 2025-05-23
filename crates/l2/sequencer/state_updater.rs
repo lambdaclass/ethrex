@@ -24,19 +24,21 @@ pub async fn start_state_updater(
     sequencer_cfg: SequencerConfig,
     sequencer_state: Arc<Mutex<SequencerState>>,
 ) -> Result<(), SequencerError> {
-    let state_updater = StateUpdater::new(sequencer_cfg);
+    let state_updater = StateUpdater::new(sequencer_cfg)?;
     state_updater.run(sequencer_state).await;
     Ok(())
 }
 
 impl StateUpdater {
-    pub fn new(sequencer_cfg: SequencerConfig) -> Self {
-        Self {
+    pub fn new(sequencer_cfg: SequencerConfig) -> Result<Self, StateUpdaterError> {
+        Ok(Self {
             sequencer_registry: sequencer_cfg.state_updater.sequencer_registry,
             sequencer_address: sequencer_cfg.l1_committer.l1_address,
-            eth_client: Arc::new(EthClient::new(&sequencer_cfg.eth.rpc_url)),
+            eth_client: Arc::new(EthClient::new_with_multiple_urls(
+                sequencer_cfg.eth.rpc_url.clone(),
+            )?),
             check_interval_ms: sequencer_cfg.state_updater.check_interval_ms,
-        }
+        })
     }
 
     pub async fn run(&self, sequencer_state: Arc<Mutex<SequencerState>>) {

@@ -193,7 +193,18 @@ lazy_static::lazy_static! {
 async fn deploy_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
-) -> Result<(Address, Address, Address, Address, Address, Address), DeployerError> {
+) -> Result<
+    (
+        Address,
+        Address,
+        Address,
+        Address,
+        Address,
+        Address,
+        Address,
+    ),
+    DeployerError,
+> {
     trace!("Deploying contracts");
 
     info!("Deploying OnChainProposer");
@@ -244,11 +255,7 @@ async fn deploy_contracts(
         bridge_deployment.implementation_tx_hash,
     );
 
-    let mut spinner = Spinner::new(
-        deploy_frames.clone(),
-        "Deploying SequencerRegistry",
-        Color::Cyan,
-    );
+    info!("Deploying SequencerRegistry");
 
     let sequencer_registry_deployment = deploy_with_proxy(
         opts.private_key,
@@ -259,25 +266,13 @@ async fn deploy_contracts(
     )
     .await?;
 
-    spinner.success(&format!(
-        r#"SequencerRegistry:
-    Deployed implementation at address {}
-    With tx hash {},
-    Deployed proxy at address {}
-    With tx hash {}"#,
-        format!(
-            "{:#x}",
-            sequencer_registry_deployment.implementation_address
-        )
-        .bright_green(),
-        format!(
-            "{:#x}",
-            sequencer_registry_deployment.implementation_tx_hash
-        )
-        .bright_cyan(),
-        format!("{:#x}", sequencer_registry_deployment.proxy_address).bright_green(),
-        format!("{:#x}", sequencer_registry_deployment.proxy_tx_hash).bright_cyan()
-    ));
+    info!(
+        "SequencerRegistry deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
+        sequencer_registry_deployment.proxy_address,
+        sequencer_registry_deployment.proxy_tx_hash,
+        sequencer_registry_deployment.implementation_address,
+        sequencer_registry_deployment.implementation_tx_hash,
+    );
 
     let sp1_verifier_address = if opts.sp1_deploy_verifier {
         info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
@@ -614,6 +609,8 @@ async fn make_deposits(
     Ok(())
 }
 
+// TODO: Add a data struct for this.
+#[allow(clippy::too_many_arguments)]
 fn write_contract_addresses_to_env(
     on_chain_proposer_address: Address,
     bridge_address: Address,
