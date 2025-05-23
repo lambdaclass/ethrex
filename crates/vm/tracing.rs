@@ -1,11 +1,9 @@
 use bytes::Bytes;
+use ethrex_common::serde_utils;
 use ethrex_common::{types::Block, Address, U256};
 use serde::Serialize;
 
-use crate::{
-    backends::revm::{db::EvmState, REVM},
-    Evm, EvmError,
-};
+use crate::{backends::revm::REVM, Evm, EvmError};
 
 /// Collection of traces of each call frame as defined in geth's `callTracer` output
 /// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
@@ -13,7 +11,7 @@ pub type CallTrace = Vec<Call>;
 
 /// Trace of each call frame as defined in geth's `callTracer` output
 /// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Call {
     /// Type of the Call
     pub r#type: CallType,
@@ -24,12 +22,16 @@ pub struct Call {
     /// Amount transfered
     pub value: U256,
     /// Gas provided for the call
+    #[serde(with = "serde_utils::u64::hex_str")]
     pub gas: u64,
     /// Gas used by the call
+    #[serde(with = "serde_utils::u64::hex_str")]
     pub gas_used: u64,
     /// Call data
+    #[serde(with = "serde_utils::bytes")]
     pub input: Bytes,
     /// Return data
+    #[serde(with = "serde_utils::bytes")]
     pub output: Bytes,
     /// Error returned if the call failed
     pub error: Option<String>,
@@ -39,7 +41,6 @@ pub struct Call {
     pub calls: Box<Vec<Call>>,
 }
 
-// CALL, STATICCALL, DELEGATECALL, CREATE, CREATE2, SELFDESTRUCT -> Impl Serialize
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum CallType {

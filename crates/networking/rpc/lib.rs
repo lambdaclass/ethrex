@@ -8,7 +8,7 @@ mod eth;
 pub mod l2;
 mod net;
 mod rpc;
-mod tracer;
+mod tracing;
 
 pub mod clients;
 pub mod types;

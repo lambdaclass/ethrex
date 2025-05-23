@@ -19,6 +19,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{BlobsBundle, Fork, ELASTICITY_MULTIPLIER};
 
+use ::tracing::info;
 use ethrex_common::{Address, H256};
 use mempool::Mempool;
 use std::collections::HashMap;
@@ -28,7 +29,6 @@ use std::{ops::Div, time::Instant};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};
 use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
-use tracing::info;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
