@@ -69,6 +69,10 @@ impl Trie {
         }
     }
 
+    /// Return a reference to the internal database.
+    ///
+    /// Warning: All changes made to the db will bypass the trie and may cause the trie to suddenly
+    ///   become inconsistent.
     pub fn db(&self) -> &dyn TrieDB {
         self.db.as_ref()
     }
@@ -143,6 +147,10 @@ impl Trie {
         }
     }
 
+    /// Compute the hash of the root node and flush any changes into the database.
+    ///
+    /// This method will also compute the hash of all internal nodes indirectly. It will not clear
+    /// the cached nodes.
     pub fn commit(&mut self) -> Result<(), TrieError> {
         if self.root.is_valid() {
             let mut acc = Vec::new();
@@ -332,11 +340,10 @@ impl Trie {
             match node {
                 Node::Branch(branch_node) => match partial_path.next_choice() {
                     Some(idx) => {
-                        let child_hash = &branch_node.choices[idx];
-                        if child_hash.is_valid() {
-                            let child_node = child_hash
-                                .get_node(db)?
-                                .ok_or(TrieError::InconsistentTree)?;
+                        let child_ref = &branch_node.choices[idx];
+                        if child_ref.is_valid() {
+                            let child_node =
+                                child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
                             get_node_inner(db, child_node, partial_path)
                         } else {
                             Ok(vec![])

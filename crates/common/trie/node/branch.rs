@@ -57,11 +57,9 @@ impl BranchNode {
         // Otherwise, check the corresponding choice and delegate accordingly if present.
         if let Some(choice) = path.next_choice() {
             // Delegate to children if present
-            let child_hash = &self.choices[choice];
-            if child_hash.is_valid() {
-                let child_node = child_hash
-                    .get_node(db)?
-                    .ok_or(TrieError::InconsistentTree)?;
+            let child_ref = &self.choices[choice];
+            if child_ref.is_valid() {
+                let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
                 child_node.get(db, path)
             } else {
                 Ok(None)
@@ -84,28 +82,28 @@ impl BranchNode {
         if let Some(choice) = path.next_choice() {
             match (&mut self.choices[choice], value) {
                 // Create new child (leaf node)
-                (choice_hash, ValueOrHash::Value(value)) if !choice_hash.is_valid() => {
+                (choice_ref, ValueOrHash::Value(value)) if !choice_ref.is_valid() => {
                     let new_leaf = LeafNode::new(path, value);
-                    *choice_hash = Node::from(new_leaf).into();
+                    *choice_ref = Node::from(new_leaf).into();
                 }
                 // Insert into existing child and then update it
-                (choice_hash, ValueOrHash::Value(value)) => {
-                    let child_node = choice_hash
+                (choice_ref, ValueOrHash::Value(value)) => {
+                    let child_node = choice_ref
                         .get_node(db)?
                         .ok_or(TrieError::InconsistentTree)?;
 
-                    *choice_hash = child_node.insert(db, path, value)?.into();
+                    *choice_ref = child_node.insert(db, path, value)?.into();
                 }
                 // Insert external node hash if there are no overrides.
-                (choice_hash, value @ ValueOrHash::Hash(hash)) => {
-                    if !choice_hash.is_valid() {
-                        *choice_hash = hash.into();
+                (choice_ref, value @ ValueOrHash::Hash(hash)) => {
+                    if !choice_ref.is_valid() {
+                        *choice_ref = hash.into();
                     } else if path.is_empty() {
                         return Err(TrieError::Verify(
                             "attempt to override proof node with external hash".to_string(),
                         ));
                     } else {
-                        *choice_hash = choice_hash
+                        *choice_ref = choice_ref
                             .get_node(db)?
                             .ok_or(TrieError::InconsistentTree)?
                             .insert(db, path, value)?
@@ -192,15 +190,13 @@ impl BranchNode {
             (0, true) => LeafNode::new(Nibbles::from_hex(vec![16]), self.value).into(),
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
-                let (choice_index, child_hash) = children[0];
-                let child = child_hash
-                    .get_node(db)?
-                    .ok_or(TrieError::InconsistentTree)?;
+                let (choice_index, child_ref) = children[0];
+                let child = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
                 match child {
                     // Replace self with an extension node leading to the child
                     Node::Branch(_) => ExtensionNode::new(
                         Nibbles::from_hex(vec![choice_index as u8]),
-                        child_hash.clone(),
+                        child_ref.clone(),
                     )
                     .into(),
                     // Replace self with the child extension node, updating its path in the process
@@ -260,11 +256,9 @@ impl BranchNode {
         // Check the corresponding choice and delegate accordingly if present.
         if let Some(choice) = path.next_choice() {
             // Continue to child
-            let child_hash = &self.choices[choice];
-            if child_hash.is_valid() {
-                let child_node = child_hash
-                    .get_node(db)?
-                    .ok_or(TrieError::InconsistentTree)?;
+            let child_ref = &self.choices[choice];
+            if child_ref.is_valid() {
+                let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
                 child_node.get_path(db, path, node_path)?;
             }
         }
