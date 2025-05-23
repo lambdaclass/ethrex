@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748010225010,
+  "lastUpdate": 1748014018825,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8785,6 +8785,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 213889778540,
             "range": "± 681049907",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "152b43c2cf6a5b919f4f225c3c73807ca075f8a3",
+          "message": "chore(levm): remove unnecessary spurious dragon check when adding blocks in batch (#2890)\n\n**Motivation**\n\n- We don't want to implement anything for forks previous than Paris, so\nthis can be deleted.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-23T14:31:30Z",
+          "tree_id": "4256cc77a0942c2223903f710b68b848459a81a7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/152b43c2cf6a5b919f4f225c3c73807ca075f8a3"
+        },
+        "date": 1748014015428,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 220160572423,
+            "range": "± 744367666",
             "unit": "ns/iter"
           }
         ]
