@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748024563781,
+  "lastUpdate": 1748024598284,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8995,6 +8995,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 212468107754,
             "range": "± 1002460939",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d3d6217ee82a6de9dd91ff4816803d036f88b301",
+          "message": "feat(l2): reject blob transaction from the rpc client (#2856)\n\n**Motivation**\n\nBlob transactions (EIP-4844) are not to be supported in the L2. If we\naccept this type of transactions they will never leave the mempool\nbecause they won't be included in any block\n\n**Description**\n\nAdded a `#[cfg(feature = \"l2\")]` block to log a debug message and return\nan `RpcErr` when EIP-4844 transactions are encountered in L2\nenvironments.\n\n**How to test**\n\nRun:\n```sh\ncast send --rpc-url http://localhost:1729 --private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 0xb4b46bdaa835f8e4b4d8e208b6559cd267851051 --blob --path <path_to_file>\n```\nThe file can have anything while its size is less than 128kb.\n\nExpected output:\n```sh\nError: server returned an error response: error code -39000: Invalid Ethex L2 message: EIP-4844 transactions are not supported in the L2\n```\n\n**What's next**\n\nIf `based` is supported on L2 #2857 has to be addressed\n\nCloses #2855",
+          "timestamp": "2025-05-23T17:29:29Z",
+          "tree_id": "05e429f10a021336bd4905e225af733dd1729ed2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d3d6217ee82a6de9dd91ff4816803d036f88b301"
+        },
+        "date": 1748024594781,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 211209837202,
+            "range": "± 387889420",
             "unit": "ns/iter"
           }
         ]
