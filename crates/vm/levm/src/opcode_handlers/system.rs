@@ -835,26 +835,8 @@ impl<'a> VM<'a> {
         );
         self.call_frames.push(new_call_frame);
 
-        if self.is_precompile()? {
-            let report = if self.delegate_contracts_in_tx.contains(&code_address) {
-                let result = if gas_limit > 0 {
-                    TxResult::Success
-                } else {
-                    TxResult::Revert(VMError::PrecompileError(PrecompileError::NotEnoughGas))
-                };
-                
-                ExecutionReport {
-                    result,
-                    gas_used: 0,
-                    gas_refunded: self.substate.refunded_gas,
-                    output: Bytes::new(),
-                    logs: vec![],
-                }
-            } else {
-                // Execute precompile immediately and handle result.
-                self.execute_precompile()?
-            };
-
+        if self.is_precompile()? && !self.delegate_contracts_in_tx.contains(&code_address) {
+            let report = self.execute_precompile()?;
             self.handle_return(&report)?;
         } else {
             // Backup Substate before executing opcodes of new callframe.
