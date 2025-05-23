@@ -9,12 +9,14 @@ use crate::constants::{
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::spec_id;
+use crate::tracing::{Call, CallTrace};
 use db::EvmState;
 use ethrex_common::types::AccountInfo;
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 
+use helpers::map_call_trace;
 use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;
 use revm::Database;
@@ -33,6 +35,7 @@ use ethrex_common::{
     },
     Address,
 };
+use revm_inspectors::tracing::TracingInspectorConfig;
 use revm_primitives::Bytes;
 use revm_primitives::{
     ruint::Uint, AccessList as RevmAccessList, AccessListItem, Address as RevmAddress,
@@ -462,10 +465,7 @@ fn run_evm(
             .with_block_env(block_env)
             .with_tx_env(tx_env)
             .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-            .with_spec_id(spec_id)
-            .with_external_context(
-                TracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
-            );
+            .with_spec_id(spec_id);
 
         match state {
             EvmState::Store(db) => {
@@ -728,6 +728,50 @@ pub(crate) fn generic_system_contract_revm(
             Ok(transaction_result.result.into())
         }
     }
+}
+
+pub fn trace_tx(
+    tx: &Transaction,
+    header: &BlockHeader,
+    state: &mut EvmState,
+    spec_id: SpecId,
+    sender: Address,
+) -> Result<CallTrace, EvmError> {
+    let block_env = block_env(header, spec_id);
+    let tx_env = tx_env(tx, sender);
+    trace_evm(tx_env, block_env, state, spec_id)
+}
+
+fn trace_evm(
+    tx_env: TxEnv,
+    block_env: BlockEnv,
+    state: &mut EvmState,
+    spec_id: SpecId,
+) -> Result<CallTrace, EvmError> {
+    let call_trace = {
+        let chain_spec = state.chain_config()?;
+        #[allow(unused_mut)]
+        let mut evm_builder = Evm::builder()
+            .with_block_env(block_env)
+            .with_tx_env(tx_env)
+            .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
+            .with_spec_id(spec_id)
+            .with_external_context(revm_inspectors::tracing::TracingInspector::default());
+
+        match state {
+            EvmState::Store(db) => {
+                let mut evm = evm_builder.with_db(db).build();
+                evm.transact_commit()?;
+                evm.into_context().external.into_traces()
+            }
+            EvmState::Execution(db) => {
+                let mut evm = evm_builder.with_db(db).build();
+                evm.transact_commit()?;
+                evm.into_context().external.into_traces()
+            }
+        }
+    };
+    Ok(map_call_trace(call_trace))
 }
 
 #[allow(unreachable_code)]
