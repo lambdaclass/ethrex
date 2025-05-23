@@ -51,7 +51,7 @@ use super::{
     p2p::DisconnectReason,
     utils::log_peer_warn,
 };
-use tracing::info;
+
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
