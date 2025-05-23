@@ -17,7 +17,7 @@ pub enum StatusMessage {
 }
 
 impl RLPxMessage for StatusMessage {
-    const CODE: u8 = 0x10;
+    const CODE: u8 = 0x00;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         match self {
             StatusMessage::StatusMessage68(msg) => msg.encode(buf),
