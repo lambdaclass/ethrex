@@ -145,18 +145,15 @@ jobs:
             simulation: ethereum/rpc-compat
             test_pattern: ""
             ethrex_flags: ""
-            sim_parallelism: 16
           - name: "Devp2p tests"
             simulation: devp2p
             test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/BasicFindnode|Findnode/PastExpiration|Amplification|Status|AccountRange|StorageRanges|ByteCodes|TrieNodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest # InvalidTxs|BlobViolations
             # Findnode/UnsolicitedNeighbors flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
             ethrex_flags: ""
-            sim_parallelism: 16
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
             test_pattern: engine-(auth|exchange-capabilities)/
             ethrex_flags: ""
-            sim_parallelism: 16
           - name: "Cancun Engine tests"
             simulation: ethereum/engine
             test_pattern: "engine-cancun/Blob Transactions On Block 1|
@@ -203,14 +200,8 @@ jobs:
               Syncing=False|
               Payload Build after New Invalid Payload|
               Invalid NewPayload|
-              Invalid Missing Ancestor ReOrg" # Invalid Missing Ancestor Syncing ReOrG is flaky with high parallelism, moved to another test
+              Invalid Missing Ancestor" # Invalid Missing Ancestor Syncing ReOrG is flaky with high parallelism, tested with 8 and works
             ethrex_flags: ""
-            sim_parallelism: 16
-          - name: "Cancun Engine Invalid Missing Ancestor Syncing ReOrg tests"
-            simulation: ethereum/engine
-            test_pattern: "engine-cancun/Invalid Missing Ancestor Syncing ReOrg"
-            ethrex_flags: ""
-            sim_parallelism: 8
           - name: "Paris Engine tests"
             simulation: ethereum/engine
             test_pattern: "engine-api/RPC|
@@ -238,7 +229,6 @@ jobs:
               Unknown|
               Valid NewPayload->ForkchoiceUpdated" # |Invalid P9 -> flaky
             ethrex_flags: ""
-            sim_parallelism: 16
           - name: "Engine withdrawal tests"
             simulation: ethereum/engine
             test_pattern: "engine-withdrawals/
@@ -262,12 +252,10 @@ jobs:
               Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org [^S]|
               Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org [^S]"
             ethrex_flags: ""
-            sim_parallelism: 16
           - name: "Sync full"
             simulation: ethereum/sync
             test_pattern: ""
             ethrex_flags: "--syncmode full"
-            sim_parallelism: 16
           # Flaky, reenable when fixed
           # - name: "Sync snap"
           #   simulation: ethereum/sync
@@ -293,7 +281,9 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism ${{ matrix.sim_parallelism }}
+        run: chmod +x hive && ./hive --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 8 
+        # We use 8 here instead of 16 due to performance issues in some tests
+        # Notably the tests "Invalid Missing Ancestor Syncing ReOrG" in engine cancun
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
