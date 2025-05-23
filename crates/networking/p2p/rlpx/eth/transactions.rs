@@ -33,7 +33,7 @@ impl Transactions {
 }
 
 impl RLPxMessage for Transactions {
-    const CODE: u8 = 0x12;
+    const CODE: u8 = 0x02;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         let mut encoder = Encoder::new(&mut encoded_data);
@@ -121,7 +121,7 @@ impl NewPooledTransactionHashes {
 }
 
 impl RLPxMessage for NewPooledTransactionHashes {
-    const CODE: u8 = 0x18;
+    const CODE: u8 = 0x08;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -233,7 +233,7 @@ impl GetPooledTransactions {
 }
 
 impl RLPxMessage for GetPooledTransactions {
-    const CODE: u8 = 0x19;
+    const CODE: u8 = 0x09;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -300,7 +300,7 @@ impl PooledTransactions {
 }
 
 impl RLPxMessage for PooledTransactions {
-    const CODE: u8 = 0x1A;
+    const CODE: u8 = 0x0A;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)

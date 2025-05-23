@@ -81,7 +81,7 @@ pub(crate) struct TrieNodes {
 }
 
 impl RLPxMessage for GetAccountRange {
-    const CODE: u8 = 0x21;
+    const CODE: u8 = 0x00;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -118,7 +118,7 @@ impl RLPxMessage for GetAccountRange {
 }
 
 impl RLPxMessage for AccountRange {
-    const CODE: u8 = 0x22;
+    const CODE: u8 = 0x01;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -149,7 +149,7 @@ impl RLPxMessage for AccountRange {
 }
 
 impl RLPxMessage for GetStorageRanges {
-    const CODE: u8 = 0x23;
+    const CODE: u8 = 0x02;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -195,7 +195,7 @@ impl RLPxMessage for GetStorageRanges {
 }
 
 impl RLPxMessage for StorageRanges {
-    const CODE: u8 = 0x24;
+    const CODE: u8 = 0x03;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -222,7 +222,7 @@ impl RLPxMessage for StorageRanges {
 }
 
 impl RLPxMessage for GetByteCodes {
-    const CODE: u8 = 0x25;
+    const CODE: u8 = 0x04;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -249,7 +249,7 @@ impl RLPxMessage for GetByteCodes {
 }
 
 impl RLPxMessage for ByteCodes {
-    const CODE: u8 = 0x26;
+    const CODE: u8 = 0x05;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -274,7 +274,7 @@ impl RLPxMessage for ByteCodes {
 }
 
 impl RLPxMessage for GetTrieNodes {
-    const CODE: u8 = 0x27;
+    const CODE: u8 = 0x06;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -308,7 +308,7 @@ impl RLPxMessage for GetTrieNodes {
 }
 
 impl RLPxMessage for TrieNodes {
-    const CODE: u8 = 0x28;
+    const CODE: u8 = 0x07;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
