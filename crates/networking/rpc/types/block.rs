@@ -81,9 +81,9 @@ impl FullBlockBody {
         for (index, tx) in body.transactions.iter().enumerate() {
             transactions.push(RpcTransaction::build(
                 tx.clone(),
-                block_number,
+                Some(block_number),
                 block_hash,
-                index,
+                Some(index),
             ));
         }
         FullBlockBody {

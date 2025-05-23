@@ -1387,6 +1387,7 @@ dependencies = [
  "bytes",
  "cfg-if",
  "derive_more 1.0.0",
+ "dyn-clone",
  "ethereum-types",
  "ethrex-common",
  "ethrex-levm",

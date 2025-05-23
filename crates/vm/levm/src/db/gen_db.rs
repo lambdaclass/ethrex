@@ -143,7 +143,7 @@ impl<'a> VM<'a> {
         Ok(account.info.nonce)
     }
 
-    /// Inserts account to cache backing up the previus state of it in the CacheBackup (if it wasn't already backed up)
+    /// Inserts account to cache backing up the previous state of it in the CacheBackup (if it wasn't already backed up)
     pub fn insert_account(&mut self, address: Address, account: Account) -> Result<(), VMError> {
         self.backup_account_info(address)?;
         let _ = cache::insert_account(&mut self.db.cache, address, account);

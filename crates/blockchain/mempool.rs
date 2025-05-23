@@ -199,6 +199,19 @@ impl Mempool {
 
         Ok(nonce)
     }
+
+    /// Returns all transactions currently in the pool
+    pub fn content(&self) -> Result<Vec<Transaction>, MempoolError> {
+        let pooled_transactions = self
+            .transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        Ok(pooled_transactions
+            .iter()
+            .map(|(_, mem_tx)| mem_tx.transaction())
+            .cloned()
+            .collect())
+    }
 }
 
 #[derive(Debug, Default)]

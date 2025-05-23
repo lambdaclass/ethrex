@@ -18,9 +18,11 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
+use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
+use ethrex_levm::utils::restore_cache_state;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
@@ -97,15 +99,12 @@ impl LEVM {
         Ok(BlockExecutionResult { receipts, requests })
     }
 
-    pub fn execute_tx(
-        // The transaction to execute.
+    fn setup_env(
         tx: &Transaction,
-        // The transactions recovered address
         tx_sender: Address,
-        // The block header for the current block.
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
-    ) -> Result<ExecutionReport, EvmError> {
+    ) -> Result<Environment, EvmError> {
         let chain_config = db.store.get_chain_config();
         let gas_price: U256 = tx
             .effective_gas_price(block_header.base_fee_per_gas)
@@ -138,10 +137,58 @@ impl LEVM {
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
         };
 
+        Ok(env)
+    }
+
+    pub fn execute_tx(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transactions recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+    ) -> Result<ExecutionReport, EvmError> {
+        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
         let mut vm = VM::new(env, db, tx);
 
         vm.execute().map_err(VMError::into)
     }
+
+    pub fn execute_tx_l2(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transactions recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+    ) -> Result<(ExecutionReport, CallFrameBackup), EvmError> {
+        let env = Self::setup_env(tx, tx_sender, block_header, db)?;
+        let mut vm = VM::new(env, db, tx);
+
+        let report_result = vm.execute().map_err(EvmError::from)?;
+
+        // Here we differ from the execute_tx function from the L1.
+        // We need to check if the transaction exceeded the blob size limit.
+        // If it did, we need to revert the state changes made by the transaction and return the error.
+        let call_frame_backup = vm
+            .call_frames
+            .pop()
+            .ok_or(VMError::OutOfBounds)?
+            .call_frame_backup;
+
+        Ok((report_result, call_frame_backup))
+    }
+
+    pub fn restore_cache_state(
+        db: &mut GeneralizedDatabase,
+        call_frame_backup: CallFrameBackup,
+    ) -> Result<(), EvmError> {
+        restore_cache_state(db, call_frame_backup).map_err(VMError::from)?;
+        Ok(())
+    }
+
     pub fn simulate_tx_from_generic(
         // The transaction to execute.
         tx: &GenericTransaction,

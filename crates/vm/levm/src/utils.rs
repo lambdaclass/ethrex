@@ -1,6 +1,7 @@
 use crate::{
+    call_frame::CallFrameBackup,
     constants::*,
-    db::gen_db::GeneralizedDatabase,
+    db::{cache, gen_db::GeneralizedDatabase},
     errors::{InternalError, OutOfGasError, TxValidationError, VMError},
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
@@ -134,6 +135,36 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
     }
 
     Ok(valid_jump_destinations)
+}
+
+// ================== Backup related functions =======================
+
+/// Restore the state of the cache to the state it in the callframe backup.
+pub fn restore_cache_state(
+    db: &mut GeneralizedDatabase,
+    callframe_backup: CallFrameBackup,
+) -> Result<(), VMError> {
+    for (address, account) in callframe_backup.original_accounts_info {
+        if let Some(current_account) = cache::get_account_mut(&mut db.cache, &address) {
+            current_account.info = account.info;
+            current_account.code = account.code;
+        }
+    }
+
+    for (address, storage) in callframe_backup.original_account_storage_slots {
+        // This call to `get_account_mut` should never return None, because we are looking up accounts
+        // that had their storage modified, which means they should be in the cache. That's why
+        // we return an internal error in case we haven't found it.
+        let account = cache::get_account_mut(&mut db.cache, &address).ok_or(VMError::Internal(
+            crate::errors::InternalError::AccountNotFound,
+        ))?;
+
+        for (key, value) in storage {
+            account.storage.insert(key, value);
+        }
+    }
+
+    Ok(())
 }
 
 // ================= Blob hash related functions =====================
