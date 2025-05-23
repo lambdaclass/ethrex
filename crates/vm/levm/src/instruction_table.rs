@@ -89,7 +89,7 @@ fn from_u8<'a>(x: u8) -> fn(&mut VM<'a>, u8) -> Result<OpcodeResult, VMError> {
         128..=143 => |vm: &mut VM<'a>, op: u8| vm.op_dup(op as usize - 127),
         // SWAPn
         144..=159 => |vm: &mut VM<'a>, op: u8| vm.op_swap(op as usize - 143),
-        160..=164 => |vm: &mut VM<'a>, op: u8| vm.op_log(op - 159),
+        160..=164 => |vm: &mut VM<'a>, op: u8| vm.op_log(op - 160),
         _ => |_, _| Err(VMError::InvalidOpcode),
     }
 }
