@@ -6,6 +6,7 @@ use crate::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts},
+            status::StatusMessage,
             transactions::{GetPooledTransactions, Transactions},
         },
         frame::RLPxCodec,
@@ -463,7 +464,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::Status(msg_data) => {
                 if let Some(eth) = &self.negotiated_eth_capability {
-                    backend::validate_status(msg_data, &self.storage, eth.version).await?
+                    backend::validate_status(msg_data, &self.storage, eth).await?
                 };
             }
             Message::GetAccountRange(req) => {
@@ -499,12 +500,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::BlockBodies(response)).await?;
             }
             Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
-                let mut receipts = Vec::new();
-                for hash in block_hashes.iter() {
-                    receipts.push(self.storage.get_receipts_for_block(hash)?);
+                if let Some(eth) = &self.negotiated_eth_capability {
+                    let mut receipts = Vec::new();
+                    for hash in block_hashes.iter() {
+                        receipts.push(self.storage.get_receipts_for_block(hash)?);
+                    }
+                    let response = Receipts::new(id, receipts, eth)?;
+                    self.send(Message::Receipts(response)).await?;
                 }
-                let response = Receipts { id, receipts };
-                self.send(Message::Receipts(response)).await?;
             }
             Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)
                 if peer_supports_eth =>
@@ -579,7 +582,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
         if let Some(eth) = self.negotiated_eth_capability.clone() {
-            let status = backend::get_status(&self.storage, eth.version).await?;
+            let status = StatusMessage::new(&self.storage, &eth).await?;
             log_peer_debug(&self.node, "Sending status");
             self.send(Message::Status(status)).await?;
             // The next immediate message in the ETH protocol is the
@@ -592,7 +595,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             match msg {
                 Message::Status(msg_data) => {
                     log_peer_debug(&self.node, "Received Status");
-                    backend::validate_status(msg_data, &self.storage, eth.version).await?
+                    backend::validate_status(msg_data, &self.storage, &eth).await?
                 }
                 Message::Disconnect(disconnect) => {
                     return Err(RLPxError::HandshakeError(format!(
