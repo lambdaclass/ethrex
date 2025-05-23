@@ -6,7 +6,7 @@ use crate::{
     environment::Environment,
     errors::{ExecutionReport, OpcodeResult, VMError},
     hooks::hook::Hook,
-    precompiles::{execute_precompile, is_precompile},
+    precompiles::execute_precompile,
     TransientStorage,
 };
 use bytes::Bytes;
@@ -43,8 +43,6 @@ pub struct VM<'a> {
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
-    /// All contracts addresses that have been successfully delegated in current transaction.
-    pub delegate_contracts_in_tx: HashSet<Address>,
 }
 
 impl<'a> VM<'a> {
@@ -60,7 +58,6 @@ impl<'a> VM<'a> {
             hooks,
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
-            delegate_contracts_in_tx: HashSet::new(),
         }
     }
 
@@ -141,7 +138,7 @@ impl<'a> VM<'a> {
 
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
-        if is_precompile(&self.current_call_frame()?.to, self.env.config.fork) {
+        if self.is_precompile(&self.current_call_frame()?.to) {
             return self.execute_precompile();
         }
 

@@ -2,10 +2,7 @@ use crate::{
     call_frame::CallFrame,
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
-    errors::{
-        ExecutionReport, InternalError, OpcodeResult, OutOfGasError, PrecompileError, TxResult,
-        VMError,
-    },
+    errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     utils::{address_to_word, word_to_address, *},
@@ -835,7 +832,7 @@ impl<'a> VM<'a> {
         );
         self.call_frames.push(new_call_frame);
 
-        if self.is_precompile()? && !is_delegation_7702 {
+        if self.is_precompile(&code_address) && !is_delegation_7702 {
             let report = self.execute_precompile()?;
             self.handle_return(&report)?;
         } else {

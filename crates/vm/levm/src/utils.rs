@@ -473,9 +473,6 @@ impl<'a> VM<'a> {
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
-
-            // If delegation was successful insert target of delegation into "delegate contracts" set
-            self.delegate_contracts_in_tx.insert(auth_tuple.address);
         }
 
         self.substate.refunded_gas = refunded_gas;
@@ -608,11 +605,8 @@ impl<'a> VM<'a> {
         Ok(min_gas_used)
     }
 
-    pub fn is_precompile(&self) -> Result<bool, VMError> {
-        Ok(is_precompile(
-            &self.current_call_frame()?.code_address,
-            self.env.config.fork,
-        ))
+    pub fn is_precompile(&self, address: &Address) -> bool {
+        is_precompile(address, self.env.config.fork)
     }
 
     /// Backup of Substate, a copy of the current substate to restore if sub-context is reverted
