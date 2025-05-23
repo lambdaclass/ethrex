@@ -82,39 +82,38 @@ fn create_access_list_inner(
     state: &mut EvmState,
     spec_id: SpecId,
 ) -> Result<(ExecutionResult, RevmAccessList), EvmError> {
-    todo!();
-    // let mut access_list_inspector = access_list_inspector(&tx_env)?;
-    // #[allow(unused_mut)]
-    // let mut evm_builder = Evm::builder()
-    //     .with_block_env(block_env)
-    //     .with_tx_env(tx_env)
-    //     .with_spec_id(spec_id)
-    //     .modify_cfg_env(|env| {
-    //         env.disable_base_fee = true;
-    //         env.disable_block_gas_limit = true
-    //     })
-    //     .with_external_context(&mut access_list_inspector);
-    // let tx_result = {
-    //     match state {
-    //         EvmState::Store(db) => {
-    //             let mut evm = evm_builder
-    //                 .with_db(db)
-    //                 .append_handler_register(inspector_handle_register)
-    //                 .build();
-    //             evm.transact().map_err(EvmError::from)?
-    //         }
-    //         EvmState::Execution(db) => {
-    //             let mut evm = evm_builder
-    //                 .with_db(db)
-    //                 .append_handler_register(inspector_handle_register)
-    //                 .build();
-    //             evm.transact().map_err(EvmError::from)?
-    //         }
-    //     }
-    // };
+    let mut access_list_inspector = access_list_inspector(&tx_env)?;
+    #[allow(unused_mut)]
+    let mut evm_builder = Evm::builder()
+        .with_block_env(block_env)
+        .with_tx_env(tx_env)
+        .with_spec_id(spec_id)
+        .modify_cfg_env(|env| {
+            env.disable_base_fee = true;
+            env.disable_block_gas_limit = true
+        })
+        .with_external_context(&mut access_list_inspector);
+    let tx_result = {
+        match state {
+            EvmState::Store(db) => {
+                let mut evm = evm_builder
+                    .with_db(db)
+                    .append_handler_register(inspector_handle_register)
+                    .build();
+                evm.transact().map_err(EvmError::from)?
+            }
+            EvmState::Execution(db) => {
+                let mut evm = evm_builder
+                    .with_db(db)
+                    .append_handler_register(inspector_handle_register)
+                    .build();
+                evm.transact().map_err(EvmError::from)?
+            }
+        }
+    };
 
-    // let access_list = access_list_inspector.into_access_list();
-    // Ok((tx_result.result.into(), access_list))
+    let access_list = access_list_inspector.into_access_list();
+    Ok((tx_result.result.into(), access_list))
 }
 
 pub(crate) fn map_call_trace(revm_trace: CallTraceArena) -> CallTrace {
@@ -168,11 +167,11 @@ fn map_call_type(revm_call_type: CallKind) -> CallType {
     match revm_call_type {
         CallKind::Call => CallType::Call,
         CallKind::StaticCall => CallType::StaticCall,
-        CallKind::CallCode => CallType::Call, /*TODO: check this*/,
+        CallKind::CallCode => CallType::Call, //TODO: check this
         CallKind::DelegateCall => CallType::DelegateCall,
-        CallKind::AuthCall => CallType::Call, /*TODO: check this*/,
+        CallKind::AuthCall => CallType::Call, //TODO: check this
         CallKind::Create => CallType::Create,
         CallKind::Create2 => CallType::Create2,
-        CallKind::EOFCreate => CallType::Create, /*TODO: check this*/,
+        CallKind::EOFCreate => CallType::Create, //TODO: check this
     }
 }
