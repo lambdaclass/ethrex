@@ -41,7 +41,7 @@ use super::{
 };
 
 const COMMIT_FUNCTION_SIGNATURE: &str =
-    "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,string[])";
+    "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
 
 pub struct Committer {
     eth_client: EthClient,
@@ -192,8 +192,17 @@ impl Committer {
     async fn prepare_batch_from_block(
         &self,
         mut last_added_block_number: BlockNumber,
-    ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber, Vec<String>), CommitterError>
-    {
+    ) -> Result<
+        (
+            BlobsBundle,
+            H256,
+            Vec<H256>,
+            H256,
+            BlockNumber,
+            Vec<Vec<u8>>,
+        ),
+        CommitterError,
+    > {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
 
@@ -263,7 +272,7 @@ impl Committer {
             };
 
             // Accumulate block data with the rest of the batch.
-            encoded_blocks.push(hex::encode(block_to_commit.encode_to_vec()));
+            encoded_blocks.push(block_to_commit.encode_to_vec());
             acc_withdrawals.extend(withdrawals.clone());
             acc_deposits.extend(deposits.clone());
             for account in account_updates {
@@ -483,7 +492,7 @@ impl Committer {
         withdrawal_logs_merkle_root: H256,
         deposit_logs_hash: H256,
         blobs_bundle: BlobsBundle,
-        encoded_blocks: Vec<String>,
+        encoded_blocks: Vec<Vec<u8>>,
     ) -> Result<H256, CommitterError> {
         let state_diff_kzg_versioned_hash = if !self.validium {
             let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
@@ -502,7 +511,12 @@ impl Committer {
             Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
             Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
             Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
-            Value::Array(encoded_blocks.into_iter().map(Value::String).collect()),
+            Value::Array(
+                encoded_blocks
+                    .into_iter()
+                    .map(|b| Value::Bytes(b.into()))
+                    .collect(),
+            ),
         ];
 
         let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;

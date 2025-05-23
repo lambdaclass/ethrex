@@ -160,6 +160,7 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--bridge-address ${BRIDGE_ADDRESS} \
 	--on-chain-proposer-address ${ON_CHAIN_PROPOSER_ADDRESS} \
 	--proof-coordinator-listen-ip ${PROOF_COORDINATOR_ADDRESS} \
+	--commit-time-ms 10000 \
 	--based \
 	--state-updater.sequencer-registry ${SEQUENCER_REGISTRY_ADDRESS}
 

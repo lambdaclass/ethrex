@@ -2,10 +2,10 @@ use std::{cmp::min, ops::Deref, sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{types::Block, Address, U256};
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::BlockExecutionResult;
 use keccak_hash::keccak;
 use tokio::{sync::Mutex, time::sleep};
 use tracing::{error, info};
@@ -195,12 +195,20 @@ impl BlockFetcher {
             for batch_committed_log in missing_batches_logs {
                 let tx = self
                     .eth_client
-                    .get_transaction_receipt(batch_committed_log.transaction_hash)
+                    .get_transaction_by_hash(batch_committed_log.transaction_hash)
                     .await?
                     .ok_or(BlockFetcherError::InternalError(format!(
                         "Failed to get transaction receipt for transaction {:x}",
                         batch_committed_log.transaction_hash
                     )))?;
+                // dbg!(tx.data.len());
+                // dbg!(hex::encode(&tx.data));
+                // dbg!(hex::encode(tx.data.clone()));
+                // let a = tx.data.strip_prefix(b"0x").unwrap_or(&tx.data);
+
+                // let (block, _) = BlockBody::decode_unfinished(a).unwrap();
+                // dbg!(block);
+                decode(&tx.data);
 
                 // TODO: Get from calldata
                 let batch_withdrawal_hashes = Vec::new();
@@ -251,4 +259,97 @@ impl BlockFetcher {
             .await
             .map_err(BlockFetcherError::StoreError)
     }
+
+    // async fn yyy(&self) -> Result<(), BlockFetcherError> {
+    // let last_block_number_known = self.store.get_latest_block_number().await?;
+
+    // let version = 3;
+
+    // let head_hash = self
+    //     .store
+    //     .get_block_header(last_block_number_known)?
+    //     .ok_or(BlockFetcherError::InternalError(
+    //         "Failed to get last block known header".to_string(),
+    //     ))?
+    //     .compute_block_hash();
+
+    // // Assumed to be the Sequencer that committed the block.
+    // // The fee recipient is the sender of the transaction that committed the block.
+    // // To get the transaction that committed the block in L1, we need to watch for
+    // // BatchCommitted events.
+    // let fee_recipient
+
+    // let args = BuildPayloadArgs {
+    //     parent: head_hash,
+    //     timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+    //     fee_recipient: self.coinbase_address,
+    //     random: H256::zero(),
+    //     withdrawals: Default::default(),
+    //     beacon_root: Some(H256::zero()),
+    //     version,
+    //     elasticity_multiplier: ELASTICITY_MULTIPLIER,
+    // };
+
+    //     Ok(())
+    // }
 }
+
+// Necesitamos block, withdrawal hash y los batches
+#[allow(clippy::indexing_slicing)]
+#[allow(clippy::unwrap_used)]
+#[allow(clippy::as_conversions)]
+fn decode(data: &[u8]) {
+    // function commitBatch(
+    //     uint256 batchNumber,
+    //     bytes32 newStateRoot,
+    //     bytes32 stateDiffKZGVersionedHash,
+    //     bytes32 withdrawalsLogsMerkleRoot,
+    //     bytes32 processedDepositLogsRollingHash,
+    //     bytes[] calldata _hexEncodedBlocks
+    // ) external;
+
+    // data =   4 bytes (function selector) 0..4
+    //          || 8 bytes (batch number)   4..36
+    //          || 32 bytes (new state root) 36..68
+    //          || 32 bytes (state diff KZG versioned hash) 68..100
+    //          || 32 bytes (withdrawals logs merkle root) 100..132
+    //          || 32 bytes (processed deposit logs rolling hash) 132..164
+    // println!("offset array: {:?}", hex::encode(&data[164..196])); // offset array
+    // println!("length array: {:?}", hex::encode(&data[196..228])); // length array
+    let a = U256::from_big_endian(&data[196..228]).as_u64();
+    let base = 228;
+    for i in 0..a {
+        let b: usize = base + i as usize * 32;
+        let string_offset = U256::from_big_endian(&data[b..b + 32]).as_usize();
+        // println!("string offset: {:?}", hex::encode(&data[b..b + 32])); // string offset
+        let string_len =
+            U256::from_big_endian(&data[base + string_offset..base + string_offset + 32])
+                .as_usize();
+        // dbg!(string_len);
+        // println!(
+        //     "string len: {:?}",
+        //     hex::encode(&data[base + string_offset..base + string_offset + 32])
+        // ); // string len
+        // println!(
+        //     "string: {:?}",
+        //     hex::encode(&data[base + string_offset + 32..base + string_offset + 32 + string_len])
+        // ); // string
+        let (block, _) = Block::decode_unfinished(
+            &data[base + string_offset + 32..base + string_offset + 32 + string_len],
+        )
+        .unwrap();
+        // dbg!(block);
+    }
+}
+
+/*
+
+..  || offset array || length_array (n)
+    --
+    || bytes_offset_0 || bytes_offset_1 || ... || bytes_offset_n ||
+    || bytes_length_0 || bytes_0
+    || bytes_length_1 || bytes_1
+    ...
+    || bytes_length_n || bytes_n ||
+
+*/

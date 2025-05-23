@@ -46,7 +46,7 @@ interface IOnChainProposer {
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash,
-        string[] calldata _hexEncodedBlocks
+        bytes[] calldata _hexEncodedBlocks
     ) external;
 
     /// @notice Method used to verify a batch of L2 blocks.
