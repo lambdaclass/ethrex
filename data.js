@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748038740300,
+  "lastUpdate": 1748040211994,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10764,6 +10764,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00740480029440628,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e06b19b01c1d3567de38c9f2d382741c9d33e42d",
+          "message": "ci(l2): always run TDX lints (#2912)\n\n**Motivation**\n\nIn #2867 a change broke TDX, but this wasn't caught by the CI because\nthe TDX workflow isn't executed on PRs that do not change TDX-related\nfiles.\n\n**Description**\n\nThis moves the lint task with the other prover lints, so that it runs on\nevery PR.\n\nThe TDX test is still only executed selectively.",
+          "timestamp": "2025-05-23T17:27:20Z",
+          "tree_id": "68a069302cf8ad107fc8033e1cb9f832f369bbe8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e06b19b01c1d3567de38c9f2d382741c9d33e42d"
+        },
+        "date": 1748040208914,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007332839164237123,
             "unit": "Mgas/s"
           }
         ]
