@@ -78,7 +78,7 @@ impl<'a> VM<'a> {
             (account.is_empty(), address_was_cold)
         };
 
-        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
+        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, callee)?;
 
         let gas_left = self
@@ -123,7 +123,7 @@ impl<'a> VM<'a> {
             return_data_start_offset,
             return_data_size,
             bytecode,
-            is_delegation,
+            is_delegation_7702,
         )
     }
 
@@ -179,7 +179,7 @@ impl<'a> VM<'a> {
         let (_account_info, address_was_cold) =
             self.db.access_account(&mut self.substate, code_address)?;
 
-        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
+        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, code_address)?;
 
         let gas_left = self
@@ -223,7 +223,7 @@ impl<'a> VM<'a> {
             return_data_start_offset,
             return_data_size,
             bytecode,
-            is_delegation,
+            is_delegation_7702,
         )
     }
 
@@ -303,7 +303,7 @@ impl<'a> VM<'a> {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
+        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, code_address)?;
 
         let gas_left = self
@@ -347,7 +347,7 @@ impl<'a> VM<'a> {
             return_data_start_offset,
             return_data_size,
             bytecode,
-            is_delegation,
+            is_delegation_7702,
         )
     }
 
@@ -399,7 +399,7 @@ impl<'a> VM<'a> {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (is_delegation, eip7702_gas_consumed, _, bytecode) =
+        let (is_delegation_7702, eip7702_gas_consumed, _, bytecode) =
             eip7702_get_code(self.db, &mut self.substate, code_address)?;
 
         let gas_left = self
@@ -440,7 +440,7 @@ impl<'a> VM<'a> {
             return_data_start_offset,
             return_data_size,
             bytecode,
-            is_delegation,
+            is_delegation_7702,
         )
     }
 
@@ -754,7 +754,7 @@ impl<'a> VM<'a> {
         ret_offset: U256,
         ret_size: usize,
         bytecode: Bytes,
-        is_delegation: bool,
+        is_delegation_7702: bool,
     ) -> Result<OpcodeResult, VMError> {
         let sender_balance = self
             .db
@@ -806,7 +806,7 @@ impl<'a> VM<'a> {
             self.increase_account_balance(to, value)?;
         }
 
-        if bytecode.is_empty() && is_delegation {
+        if bytecode.is_empty() && is_delegation_7702 {
             self.current_call_frame_mut()?.gas_used = self
                 .current_call_frame()?
                 .gas_used
@@ -835,7 +835,7 @@ impl<'a> VM<'a> {
         );
         self.call_frames.push(new_call_frame);
 
-        if self.is_precompile()? && !self.delegate_contracts_in_tx.contains(&code_address) {
+        if self.is_precompile()? && !is_delegation_7702 {
             let report = self.execute_precompile()?;
             self.handle_return(&report)?;
         } else {
