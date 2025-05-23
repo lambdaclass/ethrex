@@ -1,3 +1,5 @@
+// Inspired by https://github.com/ethereum/go-ethereum/blob/f21adaf245e320a809f9bb6ec96c330726c9078f/core/state/snapshot/disklayer.go
+
 use core::fmt;
 use std::{
     collections::HashMap,

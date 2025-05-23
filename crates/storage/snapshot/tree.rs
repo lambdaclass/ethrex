@@ -1,3 +1,5 @@
+// Inspired by https://github.com/ethereum/go-ethereum/blob/f21adaf245e320a809f9bb6ec96c330726c9078f/core/state/snapshot/snapshot.go
+
 use std::{
     collections::{HashMap, HashSet},
     sync::{atomic::AtomicBool, Arc, RwLock},
@@ -210,7 +212,11 @@ impl SnapshotTree {
 
         let mut to_remove: HashSet<H256> = HashSet::new();
 
-        fn remove(block_hash: H256, children: &HashMap<H256, Vec<H256>>, to_remove: &mut HashSet<H256>) {
+        fn remove(
+            block_hash: H256,
+            children: &HashMap<H256, Vec<H256>>,
+            to_remove: &mut HashSet<H256>,
+        ) {
             if !to_remove.contains(&block_hash) {
                 to_remove.insert(block_hash);
                 if let Some(childs) = children.get(&block_hash) {

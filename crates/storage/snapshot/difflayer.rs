@@ -1,3 +1,5 @@
+// Inspired by https://github.com/ethereum/go-ethereum/blob/f21adaf245e320a809f9bb6ec96c330726c9078f/core/state/snapshot/difflayer.go
+
 use std::collections::HashMap;
 
 use ethrex_common::{
@@ -13,7 +15,7 @@ use super::{
 #[derive(Clone, Debug)]
 pub struct DiffLayer {
     // Origin (disk layer) block hash
-    pub(crate)  origin: H256,
+    pub(crate) origin: H256,
     /// parent block hash
     parent: H256,
     block_hash: BlockHash,
