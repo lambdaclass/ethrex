@@ -1506,7 +1506,7 @@ mod canonic_encoding {
 // Serialization
 // This is used for RPC messaging and passing data into a RISC-V zkVM
 
-mod serde_impl {
+pub mod serde_impl {
     use serde::Deserialize;
     use serde::{de::Error, Deserializer};
     use serde_json::Value;

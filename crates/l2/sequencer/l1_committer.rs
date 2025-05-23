@@ -7,6 +7,7 @@ use crate::{
     CommitterConfig, EthConfig, SequencerConfig,
 };
 
+use bytes::Bytes;
 use ethrex_common::{
     types::{
         blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, BlobsBundleError,
@@ -19,6 +20,7 @@ use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
     merkle_tree::merkelize,
 };
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
     clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
     utils::get_withdrawal_hash,
@@ -29,15 +31,18 @@ use ethrex_vm::{Evm, EvmEngine, StoreVmDatabase};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use super::{
     errors::{BlobEstimationError, SequencerError},
     execution_cache::ExecutionCache,
     utils::sleep_random,
+    SequencerState,
 };
 
-const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str =
+    "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
 
 pub struct Committer {
     eth_client: EthClient,
@@ -57,6 +62,7 @@ pub async fn start_l1_committer(
     rollup_store: StoreRollup,
     execution_cache: Arc<ExecutionCache>,
     cfg: SequencerConfig,
+    sequencer_state: Arc<Mutex<SequencerState>>,
 ) -> Result<(), SequencerError> {
     let mut committer = Committer::new_from_config(
         &cfg.l1_committer,
@@ -65,7 +71,7 @@ pub async fn start_l1_committer(
         rollup_store,
         execution_cache,
     )?;
-    committer.run().await;
+    committer.run(sequencer_state).await;
     Ok(())
 }
 
@@ -99,9 +105,9 @@ impl Committer {
         })
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self, sequencer_state: Arc<Mutex<SequencerState>>) {
         loop {
-            if let Err(err) = self.main_logic().await {
+            if let Err(err) = self.main_logic(sequencer_state.clone()).await {
                 error!("L1 Committer Error: {}", err);
             }
 
@@ -109,7 +115,18 @@ impl Committer {
         }
     }
 
-    async fn main_logic(&mut self) -> Result<(), CommitterError> {
+    async fn main_logic(
+        &mut self,
+        sequencer_state: Arc<Mutex<SequencerState>>,
+    ) -> Result<(), CommitterError> {
+        let state = sequencer_state.lock().await;
+        match *state {
+            SequencerState::Sequencing => self.commit().await,
+            SequencerState::Following => Ok(()),
+        }
+    }
+
+    pub(crate) async fn commit(&mut self) -> Result<(), CommitterError> {
         // Get the batch to commit
         let last_committed_batch_number = self
             .eth_client
@@ -134,6 +151,7 @@ impl Committer {
             withdrawal_hashes,
             deposit_logs_hash,
             last_block_of_batch,
+            encoded_blocks,
         ) = self
             .prepare_batch_from_block(last_committed_block_number)
             .await?;
@@ -155,6 +173,7 @@ impl Committer {
                 withdrawal_logs_merkle_root,
                 deposit_logs_hash,
                 blobs_bundle,
+                encoded_blocks,
             )
             .await
         {
@@ -162,7 +181,7 @@ impl Committer {
                 info!(
                     "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}.",
                 );
-                self.rollup_store.store_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes).await?;
+                self.rollup_store.seal_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes).await?;
                 Ok(())
             }
             Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
@@ -174,7 +193,7 @@ impl Committer {
     async fn prepare_batch_from_block(
         &self,
         mut last_added_block_number: BlockNumber,
-    ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
+    ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber, Vec<Bytes>), CommitterError> {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
 
@@ -184,6 +203,7 @@ impl Committer {
         let mut withdrawal_hashes = vec![];
         let mut deposit_logs_hashes = vec![];
         let mut new_state_root = H256::default();
+        let mut encoded_blocks = vec![];
 
         info!("Preparing state diff from block {first_block_of_batch}");
 
@@ -243,6 +263,7 @@ impl Committer {
             };
 
             // Accumulate block data with the rest of the batch.
+            encoded_blocks.push(block_to_commit.encode_to_vec().into());
             acc_withdrawals.extend(withdrawals.clone());
             acc_deposits.extend(deposits.clone());
             for account in account_updates {
@@ -312,6 +333,7 @@ impl Committer {
             withdrawal_hashes,
             deposit_logs_hash,
             last_added_block_number,
+            encoded_blocks,
         ))
     }
 
@@ -461,6 +483,7 @@ impl Committer {
         withdrawal_logs_merkle_root: H256,
         deposit_logs_hash: H256,
         blobs_bundle: BlobsBundle,
+        encoded_blocks: Vec<Bytes>,
     ) -> Result<H256, CommitterError> {
         let state_diff_kzg_versioned_hash = if !self.validium {
             let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
@@ -479,6 +502,7 @@ impl Committer {
             Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
             Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
             Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
+            Value::Array(encoded_blocks.into_iter().map(Value::Bytes).collect()), // bytes[] = T[] con T = bytes
         ];
 
         let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;

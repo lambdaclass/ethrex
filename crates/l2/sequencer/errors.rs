@@ -5,6 +5,7 @@ use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_sdk::merkle_tree::MerkleError;
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_storage::error::StoreError;
@@ -28,6 +29,10 @@ pub enum SequencerError {
     MetricsGathererError(#[from] MetricsGathererError),
     #[error("Sequencer error: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("Failed to start StateUpdater: {0}")]
+    StateUpdaterError(#[from] StateUpdaterError),
+    #[error("Failed to start BlockFetcher: {0}")]
+    BlockFetcherError(#[from] BlockFetcherError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -224,4 +229,36 @@ pub enum ExecutionCacheError {
     Io(#[from] std::io::Error),
     #[error("Failed (de)serializing result: {0}")]
     Bincode(#[from] bincode::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StateUpdaterError {
+    #[error("{0}")]
+    EthClientError(#[from] EthClientError),
+    #[error("{0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("{0}")]
+    CalldataParsingError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BlockFetcherError {
+    #[error("{0}")]
+    EthClientError(#[from] EthClientError),
+    #[error("{0}")]
+    StoreError(#[from] StoreError),
+    #[error("Internal Error: {0}")]
+    InternalError(String),
+    #[error("Failed to store fetched block: {0}")]
+    ChainError(#[from] ChainError),
+    #[error("Failed apply forkchoice for fetched block: {0}")]
+    InvalidForkChoice(#[from] InvalidForkChoice),
+    #[error("Failed to push fetched block to execution cache: {0}")]
+    ExecutionCacheError(#[from] ExecutionCacheError),
+    #[error("Failed to RLP decode fetched block: {0}")]
+    RLPDecodeError(#[from] RLPDecodeError),
+    #[error("{0}")]
+    UtilsError(#[from] UtilsError),
+    #[error("Missing bytes from calldata: {0}")]
+    WrongBatchCalldata(String),
 }

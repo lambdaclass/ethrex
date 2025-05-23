@@ -1275,8 +1275,8 @@ pub struct GetTransactionByHashTransaction {
     pub to: Address,
     #[serde(default)]
     pub value: U256,
-    #[serde(default)]
-    pub data: Vec<u8>,
+    #[serde(default, with = "ethrex_common::serde_utils::bytes", alias = "input")]
+    pub data: Bytes,
     #[serde(default)]
     pub access_list: Vec<(Address, Vec<H256>)>,
     #[serde(default)]

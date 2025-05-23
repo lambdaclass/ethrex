@@ -28,7 +28,7 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,bytes32,address[])";
+    "initialize(bool,address,address,address,address,address,bytes32,bytes32,address)";
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
@@ -61,6 +61,7 @@ async fn main() -> Result<(), DeployerError> {
         pico_verifier_address,
         risc0_verifier_address,
         tdx_verifier_address,
+        sequencer_registry_address,
     ) = deploy_contracts(&eth_client, &opts).await?;
 
     initialize_contracts(
@@ -70,6 +71,7 @@ async fn main() -> Result<(), DeployerError> {
         sp1_verifier_address,
         pico_verifier_address,
         tdx_verifier_address,
+        sequencer_registry_address,
         &eth_client,
         &opts,
     )
@@ -86,6 +88,7 @@ async fn main() -> Result<(), DeployerError> {
         pico_verifier_address,
         risc0_verifier_address,
         tdx_verifier_address,
+        sequencer_registry_address,
         opts.env_file_path,
     )?;
     trace!("Deployer binary finished successfully");
@@ -166,6 +169,11 @@ fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
     compile_contract(&opts.contracts_path, "src/l1/CommonBridge.sol", false)?;
     compile_contract(
         &opts.contracts_path,
+        "src/l1/based/SequencerRegistry.sol",
+        false,
+    )?;
+    compile_contract(
+        &opts.contracts_path,
         "lib/sp1-contracts/contracts/src/v4.0.0-rc.3/SP1VerifierGroth16.sol",
         false,
     )?;
@@ -185,7 +193,18 @@ lazy_static::lazy_static! {
 async fn deploy_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
-) -> Result<(Address, Address, Address, Address, Address, Address), DeployerError> {
+) -> Result<
+    (
+        Address,
+        Address,
+        Address,
+        Address,
+        Address,
+        Address,
+        Address,
+    ),
+    DeployerError,
+> {
     trace!("Deploying contracts");
 
     info!("Deploying OnChainProposer");
@@ -234,6 +253,25 @@ async fn deploy_contracts(
         bridge_deployment.proxy_tx_hash,
         bridge_deployment.implementation_address,
         bridge_deployment.implementation_tx_hash,
+    );
+
+    info!("Deploying SequencerRegistry");
+
+    let sequencer_registry_deployment = deploy_with_proxy(
+        opts.private_key,
+        eth_client,
+        &opts.contracts_path.join("solc_out"),
+        "SequencerRegistry.bin",
+        &salt,
+    )
+    .await?;
+
+    info!(
+        "SequencerRegistry deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
+        sequencer_registry_deployment.proxy_address,
+        sequencer_registry_deployment.proxy_tx_hash,
+        sequencer_registry_deployment.implementation_address,
+        sequencer_registry_deployment.implementation_tx_hash,
     );
 
     let sp1_verifier_address = if opts.sp1_deploy_verifier {
@@ -316,6 +354,7 @@ async fn deploy_contracts(
         pico_verifier_address,
         risc0_verifier_address,
         tdx_verifier_address,
+        sequencer_registry_deployment.proxy_address,
     ))
 }
 
@@ -356,6 +395,7 @@ async fn initialize_contracts(
     sp1_verifier_address: Address,
     pico_verifier_address: Address,
     tdx_verifier_address: Address,
+    sequencer_registry_address: Address,
     eth_client: &EthClient,
     opts: &DeployerOptions,
 ) -> Result<(), DeployerError> {
@@ -393,10 +433,7 @@ async fn initialize_contracts(
             Value::Address(tdx_verifier_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
-            Value::Array(vec![
-                Value::Address(opts.committer_l1_address),
-                Value::Address(opts.proof_sender_l1_address),
-            ]),
+            Value::Address(sequencer_registry_address),
         ];
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
         let on_chain_proposer_initialization_calldata =
@@ -471,8 +508,27 @@ async fn initialize_contracts(
         )
         .await?
     };
-
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
+
+    info!("Initializing SequencerRegistry");
+    let initialize_tx_hash = {
+        let calldata_values = vec![
+            Value::Address(opts.sequencer_registry_owner),
+            Value::Address(on_chain_proposer_address),
+        ];
+        let sequencer_registry_initialization_calldata =
+            encode_calldata("initialize(address,address)", &calldata_values)?;
+
+        initialize_contract(
+            sequencer_registry_address,
+            sequencer_registry_initialization_calldata,
+            &opts.private_key,
+            eth_client,
+        )
+        .await?
+    };
+    info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "SequencerRegistry initialized");
+
     trace!("Contracts initialized");
     Ok(())
 }
@@ -553,6 +609,8 @@ async fn make_deposits(
     Ok(())
 }
 
+// TODO: Add a data struct for this.
+#[allow(clippy::too_many_arguments)]
 fn write_contract_addresses_to_env(
     on_chain_proposer_address: Address,
     bridge_address: Address,
@@ -560,6 +618,7 @@ fn write_contract_addresses_to_env(
     pico_verifier_address: Address,
     risc0_verifier_address: Address,
     tdx_verifier_address: Address,
+    sequencer_registry_address: Address,
     env_file_path: Option<PathBuf>,
 ) -> Result<(), DeployerError> {
     trace!("Writing contract addresses to .env file");
@@ -622,6 +681,10 @@ fn write_contract_addresses_to_env(
         writer,
         "PCS_DAO={:#x}",
         read_tdx_deployment_address("AutomataPcsDao")
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS={sequencer_registry_address:#x}"
     )?;
     trace!(?env_file_path, "Contract addresses written to .env");
     Ok(())

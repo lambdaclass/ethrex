@@ -11,7 +11,7 @@ import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
 import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
-
+import {ISequencerRegistry} from "./interfaces/ISequencerRegistry.sol";
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
@@ -57,15 +57,12 @@ contract OnChainProposer is
     /// @dev This is crucial for ensuring that only subsequents batches are committed in the contract.
     uint256 public lastCommittedBatch;
 
-    /// @dev The sequencer addresses that are authorized to commit and verify batches.
-    mapping(address _authorizedAddress => bool)
-        public authorizedSequencerAddresses;
-
     address public BRIDGE;
     address public PICOVERIFIER;
     address public R0VERIFIER;
     address public SP1VERIFIER;
     address public TDXVERIFIER;
+    address public SEQUENCER_REGISTRY;
 
     bytes32 public SP1_VERIFICATION_KEY;
 
@@ -79,10 +76,11 @@ contract OnChainProposer is
     /// @dev This value is immutable and can only be set during contract deployment.
     bool public VALIDIUM;
 
-    modifier onlySequencer() {
+    modifier onlyLeaderSequencer() {
         require(
-            authorizedSequencerAddresses[msg.sender],
-            "OnChainProposer: caller is not the sequencer"
+            msg.sender ==
+                ISequencerRegistry(SEQUENCER_REGISTRY).leaderSequencer(),
+            "OnChainProposer: caller has no sequencing rights"
         );
         _;
     }
@@ -103,7 +101,7 @@ contract OnChainProposer is
         address tdxverifier,
         bytes32 sp1Vk,
         bytes32 genesisStateRoot,
-        address[] calldata sequencerAddresses
+        address sequencer_registry
     ) public initializer {
         VALIDIUM = _validium;
 
@@ -166,14 +164,14 @@ contract OnChainProposer is
             "OnChainProposer: tdxverifier is the contract address"
         );
         TDXVERIFIER = tdxverifier;
-        
+
         // Set the SP1 program verification key
         require(
             SP1_VERIFICATION_KEY == bytes32(0),
             "OnChainProposer: contract already initialized"
         );
         SP1_VERIFICATION_KEY = sp1Vk;
-        
+
         batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
             bytes32(0),
@@ -181,9 +179,20 @@ contract OnChainProposer is
             bytes32(0)
         );
 
-        for (uint256 i = 0; i < sequencerAddresses.length; i++) {
-            authorizedSequencerAddresses[sequencerAddresses[i]] = true;
-        }
+        // Set the SequencerRegistry address
+        require(
+            SEQUENCER_REGISTRY == address(0),
+            "OnChainProposer: contract already initialized"
+        );
+        require(
+            sequencer_registry != address(0),
+            "OnChainProposer: sequencer_registry is the zero address"
+        );
+        require(
+            sequencer_registry != address(this),
+            "OnChainProposer: sequencer_registry is the contract address"
+        );
+        SEQUENCER_REGISTRY = sequencer_registry;
 
         OwnableUpgradeable.__Ownable_init(owner);
     }
@@ -211,8 +220,9 @@ contract OnChainProposer is
         bytes32 newStateRoot,
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 processedDepositLogsRollingHash
-    ) external override onlySequencer {
+        bytes32 processedDepositLogsRollingHash,
+        bytes[] calldata //hexEncodedBlocks
+    ) external override onlyLeaderSequencer {
         // TODO: Refactor validation
         require(
             batchNumber == lastCommittedBatch + 1,
@@ -247,7 +257,7 @@ contract OnChainProposer is
             processedDepositLogsRollingHash,
             withdrawalsLogsMerkleRoot
         );
-        emit BatchCommitted(newStateRoot);
+        emit BatchCommitted(batchNumber, newStateRoot);
 
         lastCommittedBatch = batchNumber;
     }
@@ -274,14 +284,10 @@ contract OnChainProposer is
         //tdx
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
-    ) external override onlySequencer {
+    ) external override {
         // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
-        require(
-            batchNumber == lastVerifiedBatch + 1,
-            "OnChainProposer: batch already verified"
-        );
         require(
             batchCommitments[batchNumber].newStateRoot != bytes32(0),
             "OnChainProposer: cannot verify an uncommitted batch"
@@ -320,10 +326,7 @@ contract OnChainProposer is
         if (TDXVERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, tdxPublicValues);
-            ITDXVerifier(TDXVERIFIER).verify(
-                tdxPublicValues,
-                tdxSignature
-            );
+            ITDXVerifier(TDXVERIFIER).verify(tdxPublicValues, tdxSignature);
         }
 
         lastVerifiedBatch = batchNumber;
@@ -347,7 +350,10 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view {
-        require(publicData.length == 128, "OnChainProposer: invaid public data length");
+        require(
+            publicData.length == 128,
+            "OnChainProposer: invaid public data length"
+        );
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         require(
             batchCommitments[lastVerifiedBatch].newStateRoot ==

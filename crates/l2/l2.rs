@@ -4,6 +4,6 @@ pub mod utils;
 
 pub use sequencer::configs::{
     BlockProducerConfig, CommitterConfig, EthConfig, L1WatcherConfig, ProofCoordinatorConfig,
-    SequencerConfig,
+    SequencerConfig, StateUpdaterConfig,
 };
 pub use sequencer::start_l2;
