@@ -248,4 +248,8 @@ pub enum BlockFetcherError {
     StoreError(#[from] StoreError),
     #[error("Internal Error: {0}")]
     InternalError(String),
+    #[error("Failed to store fetchedblock: {0}")]
+    ChainError(#[from] ChainError),
+    #[error("Failed to push fetched block to execution cache: {0}")]
+    ExecutionCacheError(#[from] ExecutionCacheError),
 }

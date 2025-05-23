@@ -1,10 +1,11 @@
-use std::{cmp::min, sync::Arc, time::Duration};
+use std::{cmp::min, ops::Deref, sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::{Address, U256};
+use ethrex_common::{types::Block, Address, U256};
 use ethrex_rpc::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
+use ethrex_vm::BlockExecutionResult;
 use keccak_hash::keccak;
 use tokio::{sync::Mutex, time::sleep};
 use tracing::{error, info};
@@ -23,6 +24,9 @@ pub struct BlockFetcher {
     bridge_address: Address,
     store: Store,
     rollup_store: StoreRollup,
+    blockchain: Arc<Blockchain>,
+    execution_cache: Arc<ExecutionCache>,
+    sequencer_state: Arc<Mutex<SequencerState>>,
     fetch_interval_ms: u64,
     last_l1_block_fetched: U256,
     max_block_step: U256,
@@ -36,10 +40,15 @@ pub async fn start_block_fetcher(
     rollup_store: StoreRollup,
     cfg: SequencerConfig,
 ) -> Result<(), SequencerError> {
-    let mut block_fetcher = BlockFetcher::new(&cfg, store.clone(), rollup_store)?;
-    block_fetcher
-        .run(store, blockchain, execution_cache, sequencer_state)
-        .await;
+    let mut block_fetcher = BlockFetcher::new(
+        &cfg,
+        store.clone(),
+        rollup_store,
+        blockchain,
+        execution_cache,
+        sequencer_state,
+    )?;
+    block_fetcher.run().await;
     Ok(())
 }
 
@@ -48,6 +57,9 @@ impl BlockFetcher {
         cfg: &SequencerConfig,
         store: Store,
         rollup_store: StoreRollup,
+        blockchain: Arc<Blockchain>,
+        execution_cache: Arc<ExecutionCache>,
+        sequencer_state: Arc<Mutex<SequencerState>>,
     ) -> Result<Self, BlockFetcherError> {
         Ok(Self {
             eth_client: EthClient::new_with_multiple_urls(cfg.eth.rpc_url.clone())?,
@@ -55,29 +67,18 @@ impl BlockFetcher {
             bridge_address: cfg.l1_watcher.bridge_address,
             store,
             rollup_store,
+            blockchain,
+            execution_cache,
+            sequencer_state,
             fetch_interval_ms: cfg.block_producer.block_time_ms,
             last_l1_block_fetched: U256::zero(),
             max_block_step: cfg.l1_watcher.max_block_step, // TODO: block fetcher config
         })
     }
 
-    pub async fn run(
-        &mut self,
-        store: Store,
-        blockchain: Arc<Blockchain>,
-        execution_cache: Arc<ExecutionCache>,
-        sequencer_state: Arc<Mutex<SequencerState>>,
-    ) {
+    pub async fn run(&mut self) {
         loop {
-            if let Err(err) = self
-                .main_logic(
-                    store.clone(),
-                    blockchain.clone(),
-                    execution_cache.clone(),
-                    sequencer_state.clone(),
-                )
-                .await
-            {
+            if let Err(err) = self.main_logic().await {
                 error!("Block Producer Error: {}", err);
             }
 
@@ -85,14 +86,10 @@ impl BlockFetcher {
         }
     }
 
-    pub async fn main_logic(
-        &mut self,
-        store: Store,
-        blockchain: Arc<Blockchain>,
-        execution_cache: Arc<ExecutionCache>,
-        sequencer_state: Arc<Mutex<SequencerState>>,
-    ) -> Result<(), BlockFetcherError> {
-        match *sequencer_state.lock().await {
+    pub async fn main_logic(&mut self) -> Result<(), BlockFetcherError> {
+        let sequencer_state_clone = self.sequencer_state.clone();
+        let sequencer_state_mutex_guard = sequencer_state_clone.lock().await;
+        match sequencer_state_mutex_guard.deref() {
             SequencerState::Sequencing => Ok(()),
             SequencerState::Following => self.fetch().await,
         }
@@ -205,9 +202,36 @@ impl BlockFetcher {
                         batch_committed_log.transaction_hash
                     )))?;
 
+                // TODO: Get from calldata
+                let batch_withdrawal_hashes = Vec::new();
+                // TODO: Get from calldata or log
+                let batch_number = u64::default();
+                // TODO: Get from calldata
+                let batch = Vec::new();
+
+                for block in batch.iter() {
+                    self.blockchain.add_block(block).await?;
+
+                    info!(
+                        "Fetched new block {:#x} from transaction {:#x}",
+                        block.hash(),
+                        batch_committed_log.transaction_hash
+                    );
+                }
+
+                self.rollup_store
+                    .store_batch(
+                        batch_number,
+                        batch.first().unwrap().header.number,
+                        batch.last().unwrap().header.number,
+                        batch_withdrawal_hashes,
+                    )
+                    .await
+                    .map_err(BlockFetcherError::StoreError)?;
+
                 info!(
-                    "Fetched batch committed log for transaction {:x}",
-                    batch_committed_log.transaction_hash,
+                    "Stored batch {} from transaction {:#x}",
+                    batch_number, batch_committed_log.transaction_hash
                 );
             }
 
