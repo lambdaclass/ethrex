@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748015026434,
+  "lastUpdate": 1748016001162,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8905,6 +8905,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 213326752388,
             "range": "± 1281629110",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "00999f5774d72bf1803e085450e355d7f8cc4ecf",
+          "message": "fix(l2): fix conversion factor in benchmark (#2907)\n\n**Motivation**\n\nThe factor used to convert from gas to Mgas is incorrect.\n\n**Description**\n\nChanges to the correct factor (1e6 = 1 million).",
+          "timestamp": "2025-05-23T15:06:09Z",
+          "tree_id": "ffe758426400f2a63be6a183b690a9fe0ec1b9c2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/00999f5774d72bf1803e085450e355d7f8cc4ecf"
+        },
+        "date": 1748015997686,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212592699348,
+            "range": "± 788043133",
             "unit": "ns/iter"
           }
         ]
