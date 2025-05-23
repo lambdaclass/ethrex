@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748016001162,
+  "lastUpdate": 1748018383476,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10499,6 +10499,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007311522771317829,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "06d4695d5ef64ed8483c2e5fb1818bc2753b003c",
+          "message": "docs(levm): add docs explaining types of errors in the EVM (#2884)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- Add docs about errors in the vm because maybe it isn't completely\nclear which are propagated and which are not.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nNote: I was thinking that maybe we should be more clear with our errors\nstruct. Maybe we should have a struct `LEVMError` that has inside 4\ntypes of errors: `Internal`, `Database`, `TxValidation`, `EVM`. That way\nit's easier to understand I think. (We should also do some clearing up\nbecause it's quite messy and sometimes we don't even use the appropriate\nerrors I've seen)\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #1537\n\nI opened [this issue](https://github.com/lambdaclass/ethrex/issues/2886)\nfor refactoring errors because they are quite messy",
+          "timestamp": "2025-05-23T14:33:30Z",
+          "tree_id": "7f81f65d6ca86ba9c6e5c3cf2baaa2728cfd6897",
+          "url": "https://github.com/lambdaclass/ethrex/commit/06d4695d5ef64ed8483c2e5fb1818bc2753b003c"
+        },
+        "date": 1748018380632,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007325719902912622,
             "unit": "Mgas/s"
           }
         ]
