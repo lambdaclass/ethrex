@@ -2,9 +2,11 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::{code_hash, AccountInfo, AccountState, BlockHeader, BlockNumber};
+use ethrex_common::types::{
+    code_hash, AccountInfo, AccountState, AccountUpdate, BlockHeader, BlockNumber,
+};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_storage::{error::StoreError, hash_address, AccountUpdate, Store};
+use ethrex_storage::{error::StoreError, hash_address, Store};
 use ethrex_trie::Trie;
 
 use super::errors::StateDiffError;
