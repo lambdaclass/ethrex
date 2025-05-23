@@ -38,110 +38,15 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub fn execute_opcode(&mut self, opcode: Opcode) -> Result<OpcodeResult, VMError> {
-        match opcode {
-            Opcode::STOP => Ok(OpcodeResult::Halt),
-            Opcode::ADD => self.op_add(),
-            Opcode::MUL => self.op_mul(),
-            Opcode::SUB => self.op_sub(),
-            Opcode::DIV => self.op_div(),
-            Opcode::SDIV => self.op_sdiv(),
-            Opcode::MOD => self.op_mod(),
-            Opcode::SMOD => self.op_smod(),
-            Opcode::ADDMOD => self.op_addmod(),
-            Opcode::MULMOD => self.op_mulmod(),
-            Opcode::EXP => self.op_exp(),
-            Opcode::SIGNEXTEND => self.op_signextend(),
-            Opcode::LT => self.op_lt(),
-            Opcode::GT => self.op_gt(),
-            Opcode::SLT => self.op_slt(),
-            Opcode::SGT => self.op_sgt(),
-            Opcode::EQ => self.op_eq(),
-            Opcode::ISZERO => self.op_iszero(),
-            Opcode::KECCAK256 => self.op_keccak256(),
-            Opcode::CALLDATALOAD => self.op_calldataload(),
-            Opcode::CALLDATASIZE => self.op_calldatasize(),
-            Opcode::CALLDATACOPY => self.op_calldatacopy(),
-            Opcode::RETURNDATASIZE => self.op_returndatasize(),
-            Opcode::RETURNDATACOPY => self.op_returndatacopy(),
-            Opcode::JUMP => self.op_jump(),
-            Opcode::JUMPI => self.op_jumpi(),
-            Opcode::JUMPDEST => self.op_jumpdest(),
-            Opcode::PC => self.op_pc(),
-            Opcode::BLOCKHASH => self.op_blockhash(),
-            Opcode::COINBASE => self.op_coinbase(),
-            Opcode::TIMESTAMP => self.op_timestamp(),
-            Opcode::NUMBER => self.op_number(),
-            Opcode::PREVRANDAO => self.op_prevrandao(),
-            Opcode::GASLIMIT => self.op_gaslimit(),
-            Opcode::CHAINID => self.op_chainid(),
-            Opcode::BASEFEE => self.op_basefee(),
-            Opcode::BLOBHASH => self.op_blobhash(),
-            Opcode::BLOBBASEFEE => self.op_blobbasefee(),
-            Opcode::PUSH0 => self.op_push0(),
-            // PUSHn
-            op if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op) => {
-                let n_bytes = get_n_value(op, Opcode::PUSH1)?;
-                self.op_push(n_bytes)
-            }
-            Opcode::AND => self.op_and(),
-            Opcode::OR => self.op_or(),
-            Opcode::XOR => self.op_xor(),
-            Opcode::NOT => self.op_not(),
-            Opcode::BYTE => self.op_byte(),
-            Opcode::SHL => self.op_shl(),
-            Opcode::SHR => self.op_shr(),
-            Opcode::SAR => self.op_sar(),
-            // DUPn
-            op if (Opcode::DUP1..=Opcode::DUP16).contains(&op) => {
-                let depth = get_n_value(op, Opcode::DUP1)?;
-                self.op_dup(depth)
-            }
-            // SWAPn
-            op if (Opcode::SWAP1..=Opcode::SWAP16).contains(&op) => {
-                let depth = get_n_value(op, Opcode::SWAP1)?;
-                self.op_swap(depth)
-            }
-            Opcode::POP => self.op_pop(),
-            op if (Opcode::LOG0..=Opcode::LOG4).contains(&op) => {
-                let number_of_topics = get_number_of_topics(op)?;
-                self.op_log(number_of_topics)
-            }
-            Opcode::MLOAD => self.op_mload(),
-            Opcode::MSTORE => self.op_mstore(),
-            Opcode::MSTORE8 => self.op_mstore8(),
-            Opcode::SLOAD => self.op_sload(),
-            Opcode::SSTORE => self.op_sstore(),
-            Opcode::MSIZE => self.op_msize(),
-            Opcode::GAS => self.op_gas(),
-            Opcode::MCOPY => self.op_mcopy(),
-            Opcode::CALL => self.op_call(),
-            Opcode::CALLCODE => self.op_callcode(),
-            Opcode::RETURN => self.op_return(),
-            Opcode::DELEGATECALL => self.op_delegatecall(),
-            Opcode::STATICCALL => self.op_staticcall(),
-            Opcode::CREATE => self.op_create(),
-            Opcode::CREATE2 => self.op_create2(),
-            Opcode::TLOAD => self.op_tload(),
-            Opcode::TSTORE => self.op_tstore(),
-            Opcode::SELFBALANCE => self.op_selfbalance(),
-            Opcode::ADDRESS => self.op_address(),
-            Opcode::ORIGIN => self.op_origin(),
-            Opcode::BALANCE => self.op_balance(),
-            Opcode::CALLER => self.op_caller(),
-            Opcode::CALLVALUE => self.op_callvalue(),
-            Opcode::CODECOPY => self.op_codecopy(),
-            Opcode::CODESIZE => self.op_codesize(),
-            Opcode::GASPRICE => self.op_gasprice(),
-            Opcode::EXTCODESIZE => self.op_extcodesize(),
-            Opcode::EXTCODECOPY => self.op_extcodecopy(),
-            Opcode::EXTCODEHASH => self.op_extcodehash(),
-            Opcode::REVERT => self.op_revert(),
-            Opcode::INVALID => self.op_invalid(),
-            Opcode::SELFDESTRUCT => self.op_selfdestruct(),
+    pub fn execute_next_instruction(&mut self) -> Result<OpcodeResult, VMError> {
+        // Fetches the bytecode for the next instruction
+        let instruction_number: u8 = self.current_call_frame()?.fetch_next_instruction_number();
 
-            _ => Err(VMError::OpcodeNotFound),
-        }
+        // Intruction map maps the operation's bytecode to the function that handles said operation
+        let instruction_handler = self.instruction_map[instruction_number as usize];
+
+        // Operation handler is called
+        instruction_handler(self, instruction_number)
     }
 
     pub fn handle_opcode_result(&mut self) -> Result<ExecutionReport, VMError> {

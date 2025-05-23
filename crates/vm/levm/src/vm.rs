@@ -125,15 +125,7 @@ impl<'a> VM<'a> {
         }
 
         loop {
-            let current_call_frame = self.current_call_frame()?;
-            let instruction_number: u8 = current_call_frame
-                .bytecode
-                .get(current_call_frame.pc)
-                .copied()
-                .unwrap_or(0);
-            let instruction = self.instruction_map[instruction_number as usize];
-
-            let op_result = instruction(self, instruction_number);
+            let op_result = self.execute_next_instruction();
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {

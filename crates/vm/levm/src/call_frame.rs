@@ -154,11 +154,8 @@ impl CallFrame {
         }
     }
 
-    pub fn next_opcode(&self) -> Opcode {
-        match self.bytecode.get(self.pc).copied().map(Opcode::from) {
-            Some(opcode) => opcode,
-            None => Opcode::STOP,
-        }
+    pub fn fetch_next_instruction_number(&self) -> u8 {
+        self.bytecode.get(self.pc).copied().unwrap_or(0)
     }
 
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
