@@ -104,7 +104,9 @@ pub fn calculate_create2_address(
 /// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
 /// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
 pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
-    let mut valid_jump_destinations = HashSet::new();
+    // We do lot of inserts, so with capacity is useful here, since it's a usize
+    // we can use a sizeable number without much memory cost.
+    let mut valid_jump_destinations = HashSet::with_capacity(8096);
     let mut pc = 0;
 
     while let Some(&opcode_number) = code.get(pc) {
