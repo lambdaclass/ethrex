@@ -1,7 +1,7 @@
 use crate::utils::prover::errors::SaveStateError;
 use crate::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use directories::ProjectDirs;
-use ethrex_storage::AccountUpdate;
+use ethrex_common::types::AccountUpdate;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::fs::{create_dir, read_dir, File};
@@ -78,6 +78,7 @@ impl From<&StateType> for StateFileType {
 fn get_proof_file_name_from_prover_type(prover_type: &ProverType, batch_number: u64) -> String {
     match prover_type {
         ProverType::Exec => format!("proof_exec_{batch_number}.json"),
+        ProverType::TDX => format!("proof_tdx_{batch_number}.json"),
         ProverType::RISC0 => format!("proof_risc0_{batch_number}.json"),
         ProverType::SP1 => format!("proof_sp1_{batch_number}.json").to_owned(),
         ProverType::Pico => format!("proof_pico_{batch_number}.json").to_owned(),

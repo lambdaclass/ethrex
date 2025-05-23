@@ -11,8 +11,8 @@ use ethrex_common::{
         calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
         compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
         requests::{compute_requests_hash, EncodedRequests},
-        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-        MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
+        AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
         DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
@@ -21,7 +21,7 @@ use ethrex_common::{
 use ethrex_vm::{Evm, EvmEngine, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, AccountUpdate, Store};
+use ethrex_storage::{error::StoreError, Store};
 
 use sha3::{Digest, Keccak256};
 
@@ -457,7 +457,7 @@ impl Blockchain {
 
     /// Executes the transaction, updates gas-related context values & return the receipt
     /// The payload build context should have enough remaining gas to cover the transaction's gas_limit
-    pub fn apply_transaction(
+    fn apply_transaction(
         &self,
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
@@ -570,7 +570,7 @@ pub struct TransactionQueue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeadTransaction {
     pub tx: MempoolTransaction,
-    tip: u64,
+    pub tip: u64,
 }
 
 impl std::ops::Deref for HeadTransaction {

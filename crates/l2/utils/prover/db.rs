@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use ethrex_blockchain::vm::StoreVmDatabase;
-use ethrex_common::types::Block;
+use ethrex_common::types::{AccountUpdate, Block};
 use ethrex_common::{Address, H256};
 use ethrex_levm::db::error::DatabaseError;
-use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
+use ethrex_storage::{hash_address, hash_key, Store};
 use ethrex_trie::{Node, PathRLP};
 use ethrex_trie::{NodeRLP, Trie, TrieError};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
