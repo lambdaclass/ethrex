@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748024438917,
+  "lastUpdate": 1748024563781,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -8965,6 +8965,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 212592892495,
             "range": "± 917018352",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e06b19b01c1d3567de38c9f2d382741c9d33e42d",
+          "message": "ci(l2): always run TDX lints (#2912)\n\n**Motivation**\n\nIn #2867 a change broke TDX, but this wasn't caught by the CI because\nthe TDX workflow isn't executed on PRs that do not change TDX-related\nfiles.\n\n**Description**\n\nThis moves the lint task with the other prover lints, so that it runs on\nevery PR.\n\nThe TDX test is still only executed selectively.",
+          "timestamp": "2025-05-23T17:27:20Z",
+          "tree_id": "68a069302cf8ad107fc8033e1cb9f832f369bbe8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e06b19b01c1d3567de38c9f2d382741c9d33e42d"
+        },
+        "date": 1748024560316,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212468107754,
+            "range": "± 1002460939",
             "unit": "ns/iter"
           }
         ]
