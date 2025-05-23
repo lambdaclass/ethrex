@@ -210,7 +210,7 @@ jobs:
             simulation: ethereum/engine
             test_pattern: "engine-cancun/Invalid Missing Ancestor Syncing ReOrg"
             ethrex_flags: ""
-            sim_parallelism: 1
+            sim_parallelism: 8
           - name: "Paris Engine tests"
             simulation: ethereum/engine
             test_pattern: "engine-api/RPC|
