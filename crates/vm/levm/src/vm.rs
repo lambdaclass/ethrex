@@ -125,12 +125,12 @@ impl<'a> VM<'a> {
         }
 
         loop {
-            let instruction_number = *self
-                .current_call_frame()?
+            let current_call_frame = self.current_call_frame()?;
+            let instruction_number = current_call_frame
                 .bytecode
-                .get(self.current_call_frame()?.pc)
-                .ok_or(0)
-                .unwrap();
+                .get(current_call_frame.pc)
+                .copied()
+                .unwrap_or(0);
             let instruction = self.instruction_map[instruction_number as usize];
 
             let op_result = instruction(self, instruction_number);
