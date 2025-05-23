@@ -1,9 +1,0 @@
-[Unit]
-After=network-online.target
-
-[Service]
-ExecStart=/payload
-StandardOutput=journal+console
-
-[Install]
-WantedBy=multi-user.target

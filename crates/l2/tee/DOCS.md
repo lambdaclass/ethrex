@@ -2,10 +2,9 @@
 
 ## Usage
 
-On a machine with TDX support [with the required setup](https://github.com/canonical/tdx) run
+On a machine with TDX support [with the required setup](https://github.com/canonical/tdx) go to quote-gen and run
 ```
-mkosi build
-mkosi vm
+make run
 ```
 
 ## What is TDX?
@@ -35,26 +34,19 @@ It's easy to silently overlook non-verified areas such as accidentally leaving l
 
 ## Image build components
 
-To build images we use [mkosi](https://github.com/systemd/mkosi)
+For reproducibility of images and hypervisor runtime we use [Nix](https://en.wikipedia.org/wiki/Nix_(package_manager)).
 
-### Tooling image
+### hypervisor.nix
 
-`mkosi.tools.conf` defines the tool configuration, and `mkosi.tools.skeleton` imports the kobuk-team PPA (used by [canonical/tdx](https://github.com/canonical/tdx)) with the modified qemu build
+This builds the modified (with patches for TDX support) qemu, and TDX-specific VBIOS (OVMF) and exports a script to run a given image (the parameters, specifically added devices, affect the measurements).
 
-This allows the build process to not depend on the host's tooling
+### service.nix
 
-### Image preparation
+This contains the quote-gen service. It's hash changes every time a non-gitignored file changes.
 
-Runs `mkosi.prepare.chroot`, which has network access, to download crate dependencies.
+### image.nix
 
-### Image building
-
-Runs `mkosi.build.chroot` to produce the output
-
-## Debug suggestions
-
-- Adding `bash` to mkosi scripts to drop an interactive shell that lets you explore the build process
-- Adding a root password in `mkosi.conf` to allow logging in to the container
+Exports an image that uses [UKI](https://uapi-group.org/specifications/specs/unified_kernel_image/) and [dm-verity](https://source.android.com/docs/security/features/verifiedboot/dm-verity?hl=en) to generate an image where changing any component changes the hash of the bootloader (the UKI image), which is measured by the BIOS.
 
 ## Running
 
@@ -68,8 +60,8 @@ To run in production mode, ensure the proof coordinator is listening on 0.0.0.0 
 make init-l1
 ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true make deploy-l1
 ETHREX_PROOF_COORDINATOR_DEV_MODE=false PROOF_COORDINATOR_ADDRESS=0.0.0.0 make init-l2
-cd tee
-mkosi vm -f
+cd tee/quote-gen
+make run
 ```
 
 ## Troubleshooting
@@ -101,4 +93,13 @@ For example, the file `quote.example` contains a quote, which can be turned into
 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 # RTMR3
 
 39618efd10b14136ab416d6acfff8e36b23533a90000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+```
+
+### # write failed /proc/self/uid_map: Operation not permitted
+
+If you get the error `unshare: write failed /proc/self/uid_map: Operation not permitted` when building the image, it's probably because your OS has unprivileged userns restricted by default. You can undo this by running the following commands as root, or running the build as root while disabling sandboxing.
+
+```
+sysctl kernel.unprivileged_userns_apparmor_policy=0
+sysctl kernel.apparmor_restrict_unprivileged_userns=0
 ```
