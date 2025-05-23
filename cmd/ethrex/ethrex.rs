@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
-#[cfg(any(feature = "l2", feature = "based"))]
+#[cfg(feature = "l2")]
 use ethrex::l2::L2Options;
 #[cfg(feature = "l2")]
 use ethrex_storage_rollup::StoreRollup;
@@ -56,7 +56,7 @@ async fn main() -> eyre::Result<()> {
     init_rpc_api(
         &opts,
         &data_dir,
-        #[cfg(any(feature = "l2", feature = "based"))]
+        #[cfg(feature = "l2")]
         &L2Options::default(),
         peer_table.clone(),
         local_p2p_node.clone(),

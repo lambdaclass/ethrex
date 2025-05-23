@@ -111,7 +111,7 @@ pub fn encode_calldata(signature: &str, values: &[Value]) -> Result<Vec<u8>, Cal
 // The dynamic part always follows at the end of the static one.
 // Arguments are encoded in order. If the argument is static, it is encoded in place, i.e, there's no dynamic part.
 // If the argument is dynamic, only its offset to the dynamic part is recorded on the static sector.
-fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
+pub fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
     let mut current_offset = 0;
     let mut current_dynamic_offset = 0;
     for value in values {
@@ -191,9 +191,9 @@ fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
                 }
             }
             Value::FixedBytes(bytes) => {
-                let mut to_copy = [0; 32];
-                to_copy.copy_from_slice(bytes);
-                copy_into(&mut ret, &to_copy, current_offset, 32)?;
+                let mut bytes = bytes.to_vec();
+                bytes.resize(32, 0);
+                copy_into(&mut ret, &bytes, current_offset, 32)?;
             }
         }
 

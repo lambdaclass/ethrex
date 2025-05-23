@@ -1,10 +1,9 @@
 use bytes::Bytes;
 use ethereum_types::H160;
 use ethrex_common::{
-    types::{AccountInfo, ChainConfig},
+    types::{AccountInfo, AccountUpdate, ChainConfig},
     Address, H256, U256,
 };
-use ethrex_storage::AccountUpdate;
 use ethrex_trie::{NodeRLP, Trie, TrieError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
