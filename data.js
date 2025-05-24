@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748040211994,
+  "lastUpdate": 1748049385410,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10793,6 +10793,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007332839164237123,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "90105443+DiegoCivi@users.noreply.github.com",
+            "name": "DiegoC",
+            "username": "DiegoCivi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6b053bdbfcb3045c8e2b9bf98f716a7cae529dc3",
+          "message": "fix(l1): ignore error on hive makefile targets (#2914)\n\n**Motivation**\n\nWhen running `make run-hive SIMULATION=...` and any of the tests failed,\nthe hiveview would not open and we could not visualize the tests on the\nbrowser\n\n**Description**\n\nThe error is ignored when running the hive simulation so the hiveview\ncan be built and executed.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-05-23T21:25:09Z",
+          "tree_id": "aaaf22b4c3bd378cadde9f584e78ec0d7e03a3c9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6b053bdbfcb3045c8e2b9bf98f716a7cae529dc3"
+        },
+        "date": 1748049385041,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007279779546550892,
             "unit": "Mgas/s"
           }
         ]
