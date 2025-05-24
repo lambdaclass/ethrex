@@ -15,6 +15,8 @@ pub enum RLPDecodeError {
     UnexpectedString,
     #[error("InvalidCompression")]
     InvalidCompression(#[from] snap::Error),
+    #[error("IncompatibleProtocol")]
+    IncompatibleProtocol,
     #[error("{0}")]
     Custom(String),
 }
