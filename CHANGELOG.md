@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-05-23
+
+- Add with_capacity on valid_jump_destinations in get_valid_jump_destinations [2902](https://github.com/lambdaclass/ethrex/pull/2902)
+
 ### 2025-05-20
 
 - Reduce account clone overhead when account data is retrieved [2684](https://github.com/lambdaclass/ethrex/pull/2684)
