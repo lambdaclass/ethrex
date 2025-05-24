@@ -408,4 +408,5 @@ pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -
         .await
         .unwrap()
         .unwrap()
+        .0
 }
