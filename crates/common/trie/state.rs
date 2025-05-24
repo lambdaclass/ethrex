@@ -9,9 +9,47 @@ use super::db::TrieDB;
 /// It contains a table mapping node hashes to rlp encoded nodes
 /// All nodes are stored in the DB and no node is ever removed
 use super::{node::Node, node_hash::NodeHash};
+
+// Struct that wraps around a mutable
+// hashmap to be used as a cache for the Trie.
+//
+// I'not a fan of get/set methods, but the alternative
+// is to make the TrieState struct mutable in a lot of places
+// where not needed, potentially exposing the implementation
+// to bugs. Thus, the alternative is to use a RefCell.
+// Since RefCells can panic at runtime, I find it safer to
+// use get/set methods to properly drop the borrow of
+// the RefCell after accessing or modifying the map.
+//
+// Furthermore, if we ever want to have an eviction
+// policy, this struct can be useful for it.
+struct TrieStateCache {
+    inner: std::cell::RefCell<HashMap<NodeHash, Option<Node>>>,
+}
+
+impl TrieStateCache {
+    pub fn new_empty() -> Self {
+        Self {
+            inner: Default::default(),
+        }
+    }
+    pub fn insert(&self, key: NodeHash, value: Option<Node>) {
+        self.inner.borrow_mut().insert(key, value);
+    }
+    pub fn get(&self, key: &NodeHash) -> Option<Option<Node>> {
+        self.inner.borrow().get(key).cloned()
+    }
+    pub fn clear(&self) {
+        self.inner.borrow_mut().clear();
+    }
+    pub fn remove(&self, key: &NodeHash) -> Option<Node> {
+        self.inner.borrow_mut().remove(key).flatten()
+    }
+}
+
 pub struct TrieState {
     db: Box<dyn TrieDB>,
-    cache: HashMap<NodeHash, Node>,
+    cache: TrieStateCache,
 }
 
 impl TrieState {
@@ -19,7 +57,7 @@ impl TrieState {
     pub fn new(db: Box<dyn TrieDB>) -> TrieState {
         TrieState {
             db,
-            cache: Default::default(),
+            cache: TrieStateCache::new_empty(),
         }
     }
 
@@ -29,20 +67,25 @@ impl TrieState {
         if let NodeHash::Inline(_) = hash {
             return Ok(Some(Node::decode_raw(hash.as_ref())?));
         }
-        if let Some(node) = self.cache.get(&hash) {
-            return Ok(Some(node.clone()));
-        };
-        self.db
-            .get(hash)?
-            .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
-            .transpose()
+        match self.cache.get(&hash) {
+            Some(node) => Ok(node),
+            None => {
+                let db_result = self
+                    .db
+                    .get(hash)?
+                    .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+                    .transpose()?;
+                self.cache.insert(hash, db_result.clone());
+                Ok(db_result)
+            }
+        }
     }
 
     /// Inserts a node
     pub fn insert_node(&mut self, node: Node, hash: NodeHash) {
         // Don't insert the node if it is already inlined on the parent
         if matches!(hash, NodeHash::Hashed(_)) {
-            self.cache.insert(hash, node);
+            self.cache.insert(hash, Some(node));
         }
     }
 
