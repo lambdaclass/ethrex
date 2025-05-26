@@ -9,8 +9,6 @@ use ethrex_common::U256;
 // Comparison and Bitwise Logic Operations (14)
 // Opcodes: LT, GT, SLT, SGT, EQ, ISZERO, AND, OR, XOR, NOT, BYTE, SHL, SHR, SAR
 
-const MOST_SIGNIFICANT_BIT_MASK: u16 = 128;
-
 impl<'a> VM<'a> {
     // LT operation
     pub fn op_lt(&mut self) -> Result<OpcodeResult, VMError> {
@@ -226,7 +224,7 @@ impl<'a> VM<'a> {
             if !is_negative {
                 value >> shift
             } else {
-                (value >> shift) | (U256::from(0b1) >> shift)
+                (value >> shift) | ((U256::from(0b1) >> shift) << (U256::from(256) - shift))
             }
         } else if is_negative {
             U256::MAX
