@@ -30,6 +30,7 @@ pub async fn start_l2(
     rollup_store: StoreRollup,
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
+    #[cfg(feature = "metrics")] l2_url: String,
 ) {
     info!("Starting Proposer");
 
@@ -60,7 +61,7 @@ pub async fn start_l2(
         cfg.clone(),
     ));
     #[cfg(feature = "metrics")]
-    task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store));
+    task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
 
     while let Some(res) = task_set.join_next().await {
         match res {
