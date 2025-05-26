@@ -174,6 +174,11 @@ fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
     )?;
     compile_contract(
         &opts.contracts_path,
+        "src/l1/based/OnChainProposerBased.sol",
+        false,
+    )?;
+    compile_contract(
+        &opts.contracts_path,
         "lib/sp1-contracts/contracts/src/v4.0.0-rc.3/SP1VerifierGroth16.sol",
         false,
     )?;
@@ -207,8 +212,6 @@ async fn deploy_contracts(
 > {
     trace!("Deploying contracts");
 
-    info!("Deploying OnChainProposer");
-
     let salt = if opts.randomize_contract_deployment {
         H256::random().as_bytes().to_vec()
     } else {
@@ -219,11 +222,18 @@ async fn deploy_contracts(
     };
 
     trace!("Attempting to deploy OnChainProposer contract");
+    let on_chain_proposer_name = if opts.deploy_based_contracts {
+        info!("Deploying based OnChainProposer contract");
+        "OnChainProposerBased.bin"
+    } else {
+        info!("Deploying non-based OnChainProposer contract");
+        "OnChainProposer.bin"
+    };
     let on_chain_proposer_deployment = deploy_with_proxy(
         opts.private_key,
         eth_client,
         &opts.contracts_path.join("solc_out"),
-        "OnChainProposer.bin",
+        on_chain_proposer_name,
         &salt,
     )
     .await?;
@@ -255,24 +265,29 @@ async fn deploy_contracts(
         bridge_deployment.implementation_tx_hash,
     );
 
-    info!("Deploying SequencerRegistry");
+    let sequencer_registry_deployment = if opts.deploy_based_contracts {
+        info!("Deploying SequencerRegistry");
 
-    let sequencer_registry_deployment = deploy_with_proxy(
-        opts.private_key,
-        eth_client,
-        &opts.contracts_path.join("solc_out"),
-        "SequencerRegistry.bin",
-        &salt,
-    )
-    .await?;
+        let sequencer_registry_deployment = deploy_with_proxy(
+            opts.private_key,
+            eth_client,
+            &opts.contracts_path.join("solc_out"),
+            "SequencerRegistry.bin",
+            &salt,
+        )
+        .await?;
 
-    info!(
-        "SequencerRegistry deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
-        sequencer_registry_deployment.proxy_address,
-        sequencer_registry_deployment.proxy_tx_hash,
-        sequencer_registry_deployment.implementation_address,
-        sequencer_registry_deployment.implementation_tx_hash,
-    );
+        info!(
+            "SequencerRegistry deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
+            sequencer_registry_deployment.proxy_address,
+            sequencer_registry_deployment.proxy_tx_hash,
+            sequencer_registry_deployment.implementation_address,
+            sequencer_registry_deployment.implementation_tx_hash,
+        );
+        sequencer_registry_deployment
+    } else {
+        Default::default()
+    };
 
     let sp1_verifier_address = if opts.sp1_deploy_verifier {
         info!("Deploying SP1Verifier (if sp1_deploy_verifier is true)");
@@ -510,24 +525,26 @@ async fn initialize_contracts(
     };
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
 
-    info!("Initializing SequencerRegistry");
-    let initialize_tx_hash = {
-        let calldata_values = vec![
-            Value::Address(opts.sequencer_registry_owner),
-            Value::Address(on_chain_proposer_address),
-        ];
-        let sequencer_registry_initialization_calldata =
-            encode_calldata("initialize(address,address)", &calldata_values)?;
+    if opts.deploy_based_contracts {
+        info!("Initializing SequencerRegistry");
+        let initialize_tx_hash = {
+            let calldata_values = vec![
+                Value::Address(opts.sequencer_registry_owner),
+                Value::Address(on_chain_proposer_address),
+            ];
+            let sequencer_registry_initialization_calldata =
+                encode_calldata("initialize(address,address)", &calldata_values)?;
 
-        initialize_contract(
-            sequencer_registry_address,
-            sequencer_registry_initialization_calldata,
-            &opts.private_key,
-            eth_client,
-        )
-        .await?
-    };
-    info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "SequencerRegistry initialized");
+            initialize_contract(
+                sequencer_registry_address,
+                sequencer_registry_initialization_calldata,
+                &opts.private_key,
+                eth_client,
+            )
+            .await?
+        };
+        info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "SequencerRegistry initialized");
+    }
 
     trace!("Contracts initialized");
     Ok(())

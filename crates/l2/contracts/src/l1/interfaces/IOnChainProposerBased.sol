@@ -5,7 +5,7 @@ pragma solidity =0.8.29;
 /// @author LambdaClass
 /// @notice A OnChainProposer contract ensures the advancement of the L2. It is used
 /// by the proposer to commit batches of l2 blocks and verify proofs.
-interface IOnChainProposer {
+interface IOnChainProposerBased {
     /// @notice The latest committed batch number.
     /// @return The latest committed batch number as a uint256.
     function lastCommittedBatch() external view returns (uint256);
@@ -17,7 +17,7 @@ interface IOnChainProposer {
     /// @notice A batch has been committed.
     /// @dev Event emitted when a batch is committed.
     /// @param newStateRoot The new state root of the batch that was committed.
-    event BatchCommitted(bytes32 indexed newStateRoot);
+    event BatchCommitted(uint256 indexed number, bytes32 indexed newStateRoot);
 
     /// @notice A batch has been verified.
     /// @dev Event emitted when a batch is verified.
@@ -45,7 +45,8 @@ interface IOnChainProposer {
         bytes32 newStateRoot,
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 processedDepositLogsRollingHash
+        bytes32 processedDepositLogsRollingHash,
+        bytes[] calldata _hexEncodedBlocks
     ) external;
 
     /// @notice Method used to verify a batch of L2 blocks.

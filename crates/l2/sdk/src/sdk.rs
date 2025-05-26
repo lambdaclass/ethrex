@@ -361,6 +361,7 @@ const DETERMINISTIC_CREATE2_ADDRESS: Address = H160([
     0xc0, 0xb4, 0x95, 0x6c,
 ]);
 
+#[derive(Default)]
 pub struct ProxyDeployment {
     pub proxy_address: Address,
     pub proxy_tx_hash: H256,
