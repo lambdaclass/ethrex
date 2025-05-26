@@ -1,7 +1,6 @@
 use std::{env::temp_dir, fs::File, path::PathBuf};
 
-use ethrex_common::types::BlockHash;
-use ethrex_storage::AccountUpdate;
+use ethrex_common::types::{AccountUpdate, BlockHash};
 use tracing::warn;
 
 use super::errors::ExecutionCacheError;

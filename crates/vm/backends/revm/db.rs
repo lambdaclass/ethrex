@@ -1,5 +1,4 @@
 use ethrex_common::{types::ChainConfig, Address as CoreAddress, H256 as CoreH256};
-use ethrex_trie::{Node, NodeRLP, PathRLP, Trie};
 use revm::{
     primitives::{
         AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
@@ -10,8 +9,8 @@ use revm::{
 
 use crate::{db::DynVmDatabase, prover_db::ProverDB};
 use crate::{
-    db::VmDatabase,
     errors::{EvmError, ProverDBError},
+    VmDatabase,
 };
 
 /// State used when running the EVM. The state can be represented with a [VmDbWrapper] database, or
@@ -205,47 +204,5 @@ impl revm::DatabaseRef for DynVmDatabase {
         <dyn VmDatabase>::get_block_hash(self.as_ref(), number)?
             .map(|hash| RevmB256::from_slice(&hash.0))
             .ok_or_else(|| EvmError::DB(format!("Block {number} not found")))
-    }
-}
-
-/// Get all potential child nodes of a node whose value was deleted.
-///
-/// After deleting a value from a (partial) trie it's possible that the node containing the value gets
-/// replaced by its child, whose prefix is possibly modified by appending some nibbles to it.
-/// If we don't have this child node (because we're modifying a partial trie), then we can't
-/// perform the deletion. If we have the final proof of exclusion of the deleted value, we can
-/// calculate all posible child nodes.
-pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Node>> {
-    // TODO: Perhaps it's possible to calculate the child nodes instead of storing all possible ones.
-    let trie = Trie::from_nodes(
-        proof.first(),
-        &proof.iter().skip(1).cloned().collect::<Vec<_>>(),
-    )
-    .unwrap();
-
-    // return some only if this is a proof of exclusion
-    if trie.get(key).unwrap().is_none() {
-        let final_node = Node::decode_raw(proof.last().unwrap()).unwrap();
-        match final_node {
-            Node::Extension(mut node) => {
-                let mut variants = Vec::with_capacity(node.prefix.len());
-                while {
-                    variants.push(Node::from(node.clone()));
-                    node.prefix.next().is_some()
-                } {}
-                Some(variants)
-            }
-            Node::Leaf(mut node) => {
-                let mut variants = Vec::with_capacity(node.partial.len());
-                while {
-                    variants.push(Node::from(node.clone()));
-                    node.partial.next().is_some()
-                } {}
-                Some(variants)
-            }
-            _ => None,
-        }
-    } else {
-        None
     }
 }

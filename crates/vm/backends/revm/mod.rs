@@ -10,10 +10,10 @@ use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::spec_id;
 use db::EvmState;
-use ethrex_common::types::AccountInfo;
+use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
-use ethrex_storage::AccountUpdate;
+
 use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;
 use revm::Database;
@@ -216,7 +216,9 @@ impl REVM {
         let account_info =
             Self::system_contract_account_info(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, state)?;
         if account_info.is_empty_code_hash() {
-            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
+            return Err(EvmError::SystemContractEmpty(
+                "WITHDRAWAL_REQUEST_PREDEPLOY".to_string(),
+            ));
         }
 
         match tx_result {
@@ -229,11 +231,11 @@ impl REVM {
             // EIP-7002 specifies that a failed system call invalidates the entire block.
             ExecutionResult::Halt { reason, gas_used } => {
                 let err_str = format!("Transaction HALT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
-                Err(EvmError::Custom(err_str))
+                Err(EvmError::SystemContractCallFailed(err_str))
             }
             ExecutionResult::Revert { gas_used, output } => {
                 let err_str = format!("Transaction REVERT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
-                Err(EvmError::Custom(err_str))
+                Err(EvmError::SystemContractCallFailed(err_str))
             }
         }
     }
@@ -255,7 +257,9 @@ impl REVM {
         let account_info =
             Self::system_contract_account_info(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, state)?;
         if account_info.is_empty_code_hash() {
-            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
+            return Err(EvmError::SystemContractEmpty(
+                "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS".to_string(),
+            ));
         }
 
         match tx_result {
@@ -268,11 +272,11 @@ impl REVM {
             // EIP-7251 specifies that a failed system call invalidates the entire block.
             ExecutionResult::Halt { reason, gas_used } => {
                 let err_str = format!("Transaction HALT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
-                Err(EvmError::Custom(err_str))
+                Err(EvmError::SystemContractCallFailed(err_str))
             }
             ExecutionResult::Revert { gas_used, output } => {
                 let err_str = format!("Transaction REVERT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
-                Err(EvmError::Custom(err_str))
+                Err(EvmError::SystemContractCallFailed(err_str))
             }
         }
     }
@@ -280,7 +284,7 @@ impl REVM {
     /// Gets the state_transitions == [AccountUpdate] from the [EvmState].
     pub fn get_state_transitions(
         initial_state: &mut EvmState,
-    ) -> Vec<ethrex_storage::AccountUpdate> {
+    ) -> Vec<ethrex_common::types::AccountUpdate> {
         match initial_state {
             EvmState::Store(db) => {
                 db.merge_transitions(BundleRetention::PlainState);
