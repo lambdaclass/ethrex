@@ -18,7 +18,7 @@ use eth_sender::Overrides;
 use ethrex_common::{
     types::{
         signer::Signer, BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
-        PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction,
+        PrivilegedL2Transaction, TxKind, TxType, WrappedEIP4844Transaction,
     },
     Address, Signature, H160, H256, U256,
 };
@@ -249,9 +249,10 @@ impl EthClient {
         tx: &EIP1559Transaction,
         signer: &Signer,
     ) -> Result<H256, EthClientError> {
-        let signed_tx = tx.sign(signer).await?;
+        let mut tx = tx.clone();
+        signer.sign_eip1559_transaction(&mut tx).await?;
 
-        let mut encoded_tx = signed_tx.encode_to_vec();
+        let mut encoded_tx = tx.encode_to_vec();
         encoded_tx.insert(0, TxType::EIP1559.into());
 
         self.send_raw_transaction(encoded_tx.as_slice()).await
@@ -263,7 +264,7 @@ impl EthClient {
         signer: &Signer,
     ) -> Result<H256, EthClientError> {
         let mut wrapped_tx = wrapped_tx.clone();
-        wrapped_tx.tx.sign_inplace(signer).await?;
+        signer.sign_eip4844_transaction(&mut wrapped_tx.tx).await?;
 
         let mut encoded_tx = wrapped_tx.encode_to_vec();
         encoded_tx.insert(0, TxType::EIP4844.into());

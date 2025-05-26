@@ -8,8 +8,8 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{
     types::{
-        signer::LocalSigner, AuthorizationList, EIP1559Transaction, EIP7702Transaction,
-        GenericTransaction, Signable, TxKind,
+        signer::{LocalSigner, Signer},
+        AuthorizationList, EIP1559Transaction, EIP7702Transaction, GenericTransaction, TxKind,
     },
     Address, U256,
 };
@@ -207,7 +207,7 @@ impl RpcHandler for SponsoredTx {
             ));
         }
 
-        let signer = LocalSigner::new(context.sponsor_pk).into();
+        let signer: Signer = LocalSigner::new(context.sponsor_pk).into();
 
         match tx {
             SendRawTransactionRequest::EIP7702(ref mut tx) => {
@@ -215,7 +215,8 @@ impl RpcHandler for SponsoredTx {
                 tx.max_fee_per_gas = max_fee_per_gas;
                 tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
                 tx.nonce = nonce;
-                tx.sign_inplace(&signer)
+                signer
+                    .sign_eip7702_transaction(tx)
                     .await
                     .map_err(|_| RpcErr::SignerError)?;
             }
@@ -224,7 +225,8 @@ impl RpcHandler for SponsoredTx {
                 tx.max_fee_per_gas = max_fee_per_gas;
                 tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
                 tx.nonce = nonce;
-                tx.sign_inplace(&signer)
+                signer
+                    .sign_eip1559_transaction(tx)
                     .await
                     .map_err(|_| RpcErr::SignerError)?;
             }
