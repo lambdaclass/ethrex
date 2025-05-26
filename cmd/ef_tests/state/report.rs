@@ -1,4 +1,3 @@
-use crate::runner::revm_runner::convert_revm_address_to_levm;
 use crate::runner::{EFTestRunnerError, InternalError};
 use alloy_rlp::Encodable;
 use colored::Colorize;
@@ -434,7 +433,7 @@ impl Display for EFTestsReport {
                             {
                                 writeln!(
                                     f,
-                                    "\t\t\tLogs mismatch: LEVM: {:?}, REVM: {:?} with diff {:?}",
+                                    "\t\t\tLogs mismatch: LEVM: {:?}, REVM: {:?} \n\t\t\t with diff: {:?}",
                                     levm_logs, revm_logs, logs_diff
                                 )?;
                             }
@@ -906,17 +905,17 @@ impl TestReRunReport {
             revm_log.encode(&mut revm_log_rlp);
 
             if levm_log_rlp != revm_log_rlp {
-                let mut diff = format!("{i} logs don't match");
-                if convert_revm_address_to_levm(levm_log.address) != revm_log.address {
+                let mut diff = format!("\n\t\t\t\t {i} logs don't match:");
+                if levm_log.address != Address::from_slice(&revm_log.address[..]) {
                     diff += &format!(
-                        "Address missmatch: Levm log address: {} - Revm log address: {}",
-                        convert_revm_address_to_levm(levm_log.address),
-                        revm_log.address
+                        "'\n\t\t\t\t' Address missmatch: \n\t\t\t\t\t Levm log address: {:x}  \n\t\t\t\t\t Revm log address: {:x}",
+                        levm_log.address,
+                        Address::from_slice(&revm_log.address[..])
                     );
                 }
                 if levm_logs[i].data != *revm_logs[i].data.data {
                     diff += &format!(
-                        "Data missmatch: Levm log data: {:?} - Revm log data: {:?}",
+                        "\n\t\t\t\t Data missmatch: \n\t\t\t\t\t Levm log data: {:x} \n\t\t\t\t\t Revm log data: {:x}",
                         levm_log.data, *revm_log.data.data
                     );
                 }
@@ -928,7 +927,7 @@ impl TestReRunReport {
                         .collect::<Vec<H256>>()
                 {
                     diff += &format!(
-                        "Topics missmatch: Levm log topic: {:?} - Revm log topic: {:?}",
+                        "\n\t\t\t\t Topics missmatch: \n\t\t\t\t\t Levm log topic: {:?} \n\t\t\t\t\t Revm log topic: {:?}",
                         levm_log.topics,
                         revm_log.data.topics()
                     );
@@ -936,7 +935,7 @@ impl TestReRunReport {
 
                 logs_diff.push(diff);
             } else {
-                logs_diff.push(format!("{i} logs match"));
+                logs_diff.push(format!("\n\t\t\t\t{i} logs match."));
             }
         }
 

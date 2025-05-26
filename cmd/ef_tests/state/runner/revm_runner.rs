@@ -32,14 +32,6 @@ use revm::{
 };
 use std::collections::{HashMap, HashSet};
 
-pub fn convert_revm_address_to_levm(address: ethrex_common::Address) -> revm::primitives::Address {
-    let mut u160_address = 0;
-    for i in 19..0 {
-        u160_address += (address[i] as u32) * 10_u32.pow(i as u32);
-    }
-    revm::primitives::Address::from(U160::from(u160_address))
-}
-
 fn levm_and_revm_logs_match(
     levm_logs: &Vec<ethrex_common::types::Log>,
     revm_logs: &Vec<revm::primitives::Log>,
