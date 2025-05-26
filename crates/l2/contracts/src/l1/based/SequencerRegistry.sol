@@ -15,6 +15,8 @@ contract SequencerRegistry is
 {
     uint256 public constant MIN_COLLATERAL = 1 ether;
 
+    uint256 public constant BATCHES_PER_SEQUENCER = 32;
+
     address public ON_CHAIN_PROPOSER;
 
     mapping(address => uint256) public collateral;
@@ -83,7 +85,9 @@ contract SequencerRegistry is
 
         uint256 _targetBatch = _currentBatch + nBatchesInTheFuture;
 
-        address _leader = sequencers[_targetBatch % _sequencers];
+        uint256 _id = _targetBatch / BATCHES_PER_SEQUENCER;
+
+        address _leader = sequencers[_id % _sequencers];
 
         return _leader;
     }
