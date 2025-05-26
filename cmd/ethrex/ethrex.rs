@@ -35,9 +35,9 @@ async fn main() -> eyre::Result<()> {
 
     let data_dir = get_datadir(&opts.datadir, network);
 
-    let network = &get_network(network.clone());
+    let network = get_network(network.clone());
 
-    let store = init_store(&data_dir, network).await;
+    let store = init_store(&data_dir, &network).await;
 
     let blockchain = init_blockchain(opts.evm, store.clone());
 
