@@ -1,5 +1,5 @@
 [package]
-name = "ethrex-prover-bench"
+name = "ethrex-replay"
 version = "0.1.0"
 edition = "2021"
 
@@ -11,13 +11,17 @@ ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
 ethrex-levm.workspace = true
 
-zkvm_interface = { path = "../zkvm/interface", default-features = false }
-ethrex-prover = { path = "../", default-features = false }
+zkvm_interface = { path = "../../crates/l2/prover/zkvm/interface", default-features = false }
+ethrex-prover = { path = "../../crates/l2/prover", default-features = false }
 
 serde.workspace = true
 hex.workspace = true
 serde_json.workspace = true
 bytes.workspace = true
+
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tracing.workspace = true
+eyre.workspace = true
 
 tokio = { version = "1.21", default-features = false, features = ["full"] }
 reqwest = { version = "0.12.9", features = [

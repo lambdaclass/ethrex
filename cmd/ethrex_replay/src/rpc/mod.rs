@@ -12,6 +12,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::hash_address;
 use ethrex_trie::Trie;
 
+use eyre::Context;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
@@ -57,7 +58,7 @@ impl Account {
     }
 }
 
-pub async fn get_latest_block_number(rpc_url: &str) -> Result<usize, String> {
+pub async fn get_latest_block_number(rpc_url: &str) -> eyre::Result<usize> {
     let request = &json!({
         "id": 1,
         "jsonrpc": "2.0",
@@ -65,30 +66,20 @@ pub async fn get_latest_block_number(rpc_url: &str) -> Result<usize, String> {
         "params": []
     });
 
-    let response = CLIENT
-        .post(rpc_url)
-        .json(request)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
+    let response = CLIENT.post(rpc_url).json(request).send().await?;
 
-    response
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|err| err.to_string())
-        .and_then(get_result)
-        .and_then(decode_hex)
-        .and_then(|mut bytes| {
-            bytes.reverse();
-            bytes.resize(8, 0);
-            bytes
-                .try_into()
-                .map_err(|_| "failed to deserialize block number".to_string())
-                .map(usize::from_le_bytes)
-        })
+    let res = response.json::<serde_json::Value>().await?;
+    let mut bytes = decode_hex(get_result(res)?)?;
+    bytes.reverse();
+    bytes.resize(8, 0);
+    let latest_bytes: [u8; 8] = bytes
+        .try_into()
+        .map_err(|_| eyre::Error::msg("decode error".to_string()))?;
+
+    Ok(usize::from_le_bytes(latest_bytes))
 }
 
-pub async fn get_block(rpc_url: &str, block_number: usize) -> Result<Block, String> {
+pub async fn get_block(rpc_url: &str, block_number: usize) -> eyre::Result<Block> {
     let block_number = format!("0x{block_number:x}");
     let request = &json!({
         "id": 1,
@@ -97,24 +88,12 @@ pub async fn get_block(rpc_url: &str, block_number: usize) -> Result<Block, Stri
         "params": [block_number]
     });
 
-    let response = CLIENT
-        .post(rpc_url)
-        .json(request)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
+    let response = CLIENT.post(rpc_url).json(request).send().await?;
 
-    response
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|err| err.to_string())
-        .and_then(get_result)
-        .and_then(decode_hex)
-        .and_then(|encoded_block| {
-            Block::decode_unfinished(&encoded_block)
-                .map_err(|err| err.to_string())
-                .map(|decoded| decoded.0)
-        })
+    let res = response.json::<serde_json::Value>().await?;
+    let encoded_block = decode_hex(get_result(res)?)?;
+    let block = Block::decode_unfinished(&encoded_block)?;
+    Ok(block.0)
 }
 
 pub async fn get_account(
@@ -122,7 +101,7 @@ pub async fn get_account(
     block_number: usize,
     address: &Address,
     storage_keys: &[H256],
-) -> Result<Account, String> {
+) -> eyre::Result<Account> {
     let block_number_str = format!("0x{block_number:x}");
     let address_str = format!("0x{address:x}");
     let storage_keys = storage_keys
@@ -138,12 +117,8 @@ pub async fn get_account(
                "params":[address_str, storage_keys, block_number_str]
            }
     );
-    let response = CLIENT
-        .post(rpc_url)
-        .json(request)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
+
+    let response = CLIENT.post(rpc_url).json(request).send().await?;
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -170,48 +145,33 @@ pub async fn get_account(
         storage_hash,
         storage_proof,
         account_proof,
-    } = response
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|err| err.to_string())
-        .and_then(get_result)?;
+    } = get_result(response.json::<serde_json::Value>().await?)?;
 
     let account_proof = account_proof
         .into_iter()
         .map(decode_hex)
-        .collect::<Result<Vec<_>, String>>()?;
+        .collect::<eyre::Result<Vec<_>>>()?;
 
     let (storage, storage_proofs) = storage_proof
         .into_iter()
-        .map(|proof| -> Result<_, String> {
-            let key: H256 = proof
-                .key
-                .parse()
-                .map_err(|_| "failed to parse storage key".to_string())?;
-            let value: U256 = proof
-                .value
-                .parse()
-                .map_err(|_| "failed to parse storage value".to_string())?;
+        .map(|proof| -> eyre::Result<_> {
+            let key: H256 = proof.key.parse()?;
+            let value: U256 = proof.value.parse()?;
             let proofs = proof
                 .proof
                 .into_iter()
                 .map(decode_hex)
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect::<eyre::Result<Vec<_>, _>>()?;
             Ok(((key, value), (key, proofs)))
         })
-        .collect::<Result<(HashMap<_, _>, HashMap<_, _>), _>>()?;
+        .collect::<eyre::Result<(HashMap<_, _>, HashMap<_, _>)>>()?;
 
     let root = account_proof
         .first()
-        .ok_or("account proof is empty".to_string())?;
+        .ok_or(eyre::Error::msg("account proof is empty".to_string()))?;
     let other: Vec<_> = account_proof.iter().skip(1).cloned().collect();
-    let trie = Trie::from_nodes(Some(root), &other)
-        .map_err(|err| format!("failed to build account proof trie: {err}"))?;
-    if trie
-        .get(&hash_address(address))
-        .map_err(|err| format!("failed get account from proof trie: {err}"))?
-        .is_none()
-    {
+    let trie = Trie::from_nodes(Some(root), &other)?;
+    if trie.get(&hash_address(address))?.is_none() {
         return Ok(Account::NonExisting {
             account_proof,
             storage_proofs,
@@ -219,17 +179,10 @@ pub async fn get_account(
     }
 
     let account_state = AccountState {
-        nonce: u64::from_str_radix(nonce.trim_start_matches("0x"), 16)
-            .map_err(|_| "failed to parse nonce".to_string())?,
-        balance: balance
-            .parse()
-            .map_err(|_| "failed to parse balance".to_string())?,
-        storage_root: storage_hash
-            .parse()
-            .map_err(|_| "failed to parse storage root".to_string())?,
-        code_hash: code_hash
-            .parse()
-            .map_err(|_| "failed to parse code hash".to_string())?,
+        nonce: u64::from_str_radix(nonce.trim_start_matches("0x"), 16)?,
+        balance: balance.parse()?,
+        storage_root: storage_hash.parse()?,
+        code_hash: code_hash.parse()?,
     };
 
     let code = if account_state.code_hash != *EMPTY_KECCACK_HASH {
@@ -252,7 +205,7 @@ pub async fn get_storage(
     block_number: usize,
     address: &Address,
     storage_key: H256,
-) -> Result<U256, String> {
+) -> eyre::Result<U256> {
     let block_number_str = format!("0x{block_number:x}");
     let address_str = format!("0x{address:x}");
     let storage_key = format!("0x{storage_key:x}");
@@ -265,29 +218,22 @@ pub async fn get_storage(
                "params":[address_str, storage_key, block_number_str]
            }
     );
-    let response = CLIENT
-        .post(rpc_url)
-        .json(request)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
 
-    response
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|err| err.to_string())
-        .and_then(get_result)
+    let response = CLIENT.post(rpc_url).json(request).send().await?;
+
+    let res = response.json::<serde_json::Value>().await?;
+    get_result(res)
 }
 
-pub async fn retry<F, I>(mut fut: F) -> Result<I, String>
+pub async fn retry<F, I>(mut fut: F) -> eyre::Result<I>
 where
-    F: Task<Item = I, Error = String>,
+    F: Task<Item = I, Error = eyre::Report>,
 {
     let policy = RetryPolicy::exponential(Duration::from_secs(1)).with_jitter(true);
     policy.retry(|| fut.call()).await
 }
 
-async fn get_code(rpc_url: &str, block_number: usize, address: &Address) -> Result<Bytes, String> {
+async fn get_code(rpc_url: &str, block_number: usize, address: &Address) -> eyre::Result<Bytes> {
     let block_number = format!("0x{block_number:x}");
     let address = format!("0x{address:x}");
     let request = &json!({
@@ -297,35 +243,28 @@ async fn get_code(rpc_url: &str, block_number: usize, address: &Address) -> Resu
         "params": [address, block_number]
     });
 
-    let response = CLIENT
-        .post(rpc_url)
-        .json(request)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
+    let response = CLIENT.post(rpc_url).json(request).send().await?;
 
-    response
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|err| err.to_string())
-        .and_then(get_result)
-        .and_then(decode_hex)
-        .map(Bytes::from_owner)
+    let res = response.json::<serde_json::Value>().await?;
+    let owner_bytes = decode_hex(get_result(res)?)?;
+    Ok(Bytes::from_owner(owner_bytes))
 }
 
-fn get_result<T: DeserializeOwned>(response: serde_json::Value) -> Result<T, String> {
+fn get_result<T: DeserializeOwned>(response: serde_json::Value) -> eyre::Result<T> {
     match response.get("result") {
-        Some(result) => serde_json::from_value(result.clone()).map_err(|err| err.to_string()),
-        None => Err(format!("result not found, response is: {response}")),
+        Some(result) => Ok(serde_json::from_value(result.clone())?),
+        None => Err(eyre::Error::msg(format!(
+            "result not found, response is: {response}"
+        ))),
     }
 }
 
-fn decode_hex(hex: String) -> Result<Vec<u8>, String> {
+fn decode_hex(hex: String) -> eyre::Result<Vec<u8>> {
     let mut trimmed = hex.trim_start_matches("0x").to_string();
     if trimmed.len() % 2 != 0 {
         trimmed = "0".to_string() + &trimmed;
     }
-    hex::decode(trimmed).map_err(|err| format!("failed to decode hex string: {err}"))
+    Ok(hex::decode(trimmed)?)
 }
 
 #[cfg(test)]

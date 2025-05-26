@@ -34,7 +34,7 @@ pub static ref CANCUN_CONFIG: ChainConfig = ChainConfig {
     terminal_total_difficulty: Some(0),
     shanghai_time: Some(0),
     cancun_time: Some(0),
-    prague_time: None,
+    prague_time: Some(0),
     terminal_total_difficulty_passed: false,
     verkle_time: None,
     blob_schedule: BlobSchedule::default(),
@@ -43,7 +43,7 @@ pub static ref CANCUN_CONFIG: ChainConfig = ChainConfig {
 };
 }
 pub const MAINNET_CHAIN_ID: u64 = 0x1;
-pub const MAINNET_SPEC_ID: SpecId = SpecId::CANCUN;
+pub const MAINNET_SPEC_ID: SpecId = SpecId::PRAGUE;
 
 // RPC related constants
 

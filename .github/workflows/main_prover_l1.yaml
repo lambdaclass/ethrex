@@ -41,7 +41,7 @@ jobs:
 
       - name: Build
         run: |
-          cd crates/l2/prover/bench
+          cd cmd/ethrex_replay
           cargo b -r --features "sp1,gpu"
 
       - name: Run
@@ -50,16 +50,16 @@ jobs:
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
           RPC_URL: "dummy"
         run: |
-          cp test_data/rpc_prover/cache_22240087.json crates/l2/prover/bench
-          cd crates/l2/prover/bench
-          make prove-sp1-gpu-ci BLOCK_NUMBER=22240087
+          cp test_data/rpc_prover/cache_22240087.json cmd/ethrex_replay
+          cd cmd/ethrex_replay
+          cargo run --features=gpu -- prove block 22240087
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         with:
           name: "L1 block proving benchmark"
           tool: "customBiggerIsBetter"
-          output-file-path: crates/l2/prover/bench/bench_latest.json
+          output-file-path: cmd/ethrex_replay/bench_latest.json
           benchmark-data-dir-path: "."
           # Access token to deploy GitHub Pages branch
           github-token: ${{ secrets.GITHUB_TOKEN }}
