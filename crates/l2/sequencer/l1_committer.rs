@@ -206,6 +206,8 @@ impl Committer {
 
         #[cfg(feature = "metrics")]
         let mut tx_count = 0_u64;
+        let mut _blob_size = 0_usize;
+
         info!("Preparing state diff from block {first_block_of_batch}");
 
         loop {
@@ -296,13 +298,14 @@ impl Committer {
                     .await?;
                 self.generate_blobs_bundle(&state_diff)
             } else {
-                Ok(BlobsBundle::default())
+                Ok((BlobsBundle::default(), 0_usize))
             };
 
             match result {
-                Ok(bundle) => {
+                Ok((bundle, latest_blob_size)) => {
                     // Save current blobs_bundle and continue to add more blocks.
                     blobs_bundle = bundle;
+                    _blob_size = latest_blob_size;
                     for (_, tx) in &withdrawals {
                         let hash = get_withdrawal_hash(tx)
                             .ok_or(CommitterError::InvalidWithdrawalTransaction)?;
@@ -335,17 +338,21 @@ impl Committer {
         }
 
         metrics!(if let (Ok(deposits_count), Ok(withdrawals_count)) = (
-            deposit_logs_hashes.len().try_into(),
-            withdrawal_hashes.len().try_into()
-        ) {
-            let _ = self
-                .rollup_store
-                .update_operations_count(tx_count, deposits_count, withdrawals_count)
-                .await
-                .inspect_err(|e| {
-                    tracing::error!("Failed to update operations metric: {}", e.to_string())
-                });
-        });
+                deposit_logs_hashes.len().try_into(),
+                withdrawal_hashes.len().try_into()
+            ) {
+                let _ = self
+                    .rollup_store
+                    .update_operations_count(tx_count, deposits_count, withdrawals_count)
+                    .await
+                    .inspect_err(|e| {
+                        tracing::error!("Failed to update operations metric: {}", e.to_string())
+                    });
+            }
+            #[allow(clippy::as_conversions)]
+            METRICS_L2
+                .set_blob_usage_percentage((_blob_size as f64 / BYTES_PER_BLOB as f64) * 100_f64);
+        );
 
         let deposit_logs_hash = self.get_deposit_hash(deposit_logs_hashes)?;
         Ok((
@@ -488,19 +495,20 @@ impl Committer {
     }
 
     /// Generate the blob bundle necessary for the EIP-4844 transaction.
-    fn generate_blobs_bundle(&self, state_diff: &StateDiff) -> Result<BlobsBundle, CommitterError> {
+    fn generate_blobs_bundle(
+        &self,
+        state_diff: &StateDiff,
+    ) -> Result<(BlobsBundle, usize), CommitterError> {
         let blob_data = state_diff.encode().map_err(CommitterError::from)?;
-        #[cfg(feature = "metrics")]
+
         let blob_size = blob_data.len();
 
         let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
 
-        metrics!(
-            #[allow(clippy::as_conversions)]
-            METRICS_L2.set_blob_usage_percentage((blob_size as f64 / BYTES_PER_BLOB as f64 ) * 100_f64);
-        );
-
-        BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)
+        Ok((
+            BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)?,
+            blob_size,
+        ))
     }
 
     async fn send_commitment(
