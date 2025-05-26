@@ -46,9 +46,6 @@ jobs:
           workdir: "crates/l2"
           files: "crates/l2/docker-compose-l2.yaml"
           load: true
-          set: |
-            *.cache-to=type=gha,mode=max
-            *.cache-from=type=gha
 
       - name: Build prover
         if: ${{ always() }}
