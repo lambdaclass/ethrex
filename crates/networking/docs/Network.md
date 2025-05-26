@@ -21,7 +21,7 @@ Before starting these tasks, we run a [startup](#startup) process to connect to 
 
 Before diving into what each task does, first, we need to understand how we are storing our nodes. Nodes are stored in an in-memory matrix which we call a [Kademlia table](https://github.com/lambdaclass/ethrex/blob/main/crates/networking/p2p/kademlia.rs#L25-L28), though it isn't really a Kademlia table as we don't thoroughly follow the spec but we take it as a reference, you can read more [here](https://en.wikipedia.org/wiki/Kademlia). This table holds:
 
--   Our `node_id`: `node_id`s are derived from the public key. They are the 64 bytes starting from index 1 of the encoded pub key.
+-   Our `node_id`: The node's unique identifier computed by obtaining the keccak hash of the 64 bytes starting from index 1 of the encoded pub key.
 -   A vector of 256 `bucket`s which holds:
     -   `peers`: a vector of 16 elements of type `PeersData` where we save the node record and other related data that we'll see later.
     -   `replacements`: a vector of 16 elements of `PeersData` that are not connected to us, but we consider them as potential replacements for those nodes that have disconnected from us.
@@ -30,9 +30,7 @@ Peers are not assigned to any bucket but they are assigned based on its $0 \le \
 
 ```rust
 pub fn distance(node_id_1: H512, node_id_2: H512) -> usize {
-    let hash_1 = Keccak256::digest(node_id_1);
-    let hash_2 = Keccak256::digest(node_id_2);
-    let xor = H256(hash_1.into()) ^ H256(hash_2.into());
+    let xor = node_id_1 ^ node_id_2;
     let distance = U256::from_big_endian(xor.as_bytes());
     distance.bits().saturating_sub(1)
 }
@@ -103,28 +101,43 @@ Finally, here is an example of how you could build a network and see how they co
 We'll have three nodes: `a`, `b`, and `c`, we'll start `a`, then `b` setting `a` as a bootnode, and finally we'll start `c` with `b` as bootnode we should see that `c` connects to both `a` and `b` and so all the network should be connected.
 
 **node a**:
-`cargo run --bin ethrex --network test_data/kurtosis.json`
+```bash
+cargo run --bin ethrex -- --network test_data/genesis-kurtosis.json
+```
 
-We get the `enode` by querying the node_info:
-`curl http://localhost:8545 \
-  -X POST \
-  -H "Content-Type: application/json" \
-  --data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}'`
+We get the `enode` by querying the node_info and using jq:
+```bash
+curl -s http://localhost:8545 \
+-X POST \
+-H "Content-Type: application/json" \
+--data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}' \
+| jq '.result.enode'
+```
 
 **node b**
-We start a new server passing the `node_a` `enode` as bootnodes
+
+We start a new server passing the enode from node `a` as an argument. Also changing the database dir and the ports is needed to avoid conflicts.
 
 ```bash
-cargo run --bin ethrex --network ./test_data/kurtosis.json --bootnodes=`NODE_A_ENODE` \
---authrpc.port=8552 --http.port=8546 --p2p.port=30305 --discovery.port=3036
+cargo run --bin ethrex -- --network ./test_data/genesis-kurtosis.json --bootnodes=`NODE_A_ENODE` \
+--datadir=ethrex_b --authrpc.port=8552 --http.port=8546 --p2p.port=30305 --discovery.port=30306
 ```
 
 **node c**
 Finally, with `node_c` we connect to `node_b`. When the lookup runs, `node_c` should end up connecting to `node_a`:
 
 ```bash
- cargo run --bin ethrex --network ./test_data/kurtosis.json --bootnodes=`NODE_B_ENODE`" \
---authrpc.port=8553 --http.port=8547 --p2p.port=30308 --discovery.port=30310
+cargo run --bin ethrex -- --network ./test_data/genesis-kurtosis.json --bootnodes=`NODE_B_ENODE` \
+--datadir=ethrex_c --authrpc.port=8553 --http.port=8547 --p2p.port=30308 --discovery.port=30310
+```
+
+We get the `enode` by querying the node_info and using jq:
+```bash
+curl -s http://localhost:8546 \
+-X POST \
+-H "Content-Type: application/json" \
+--data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}' \
+| jq '.result.enode'
 ```
 
 You could also spawn nodes from other clients and it should work as well.

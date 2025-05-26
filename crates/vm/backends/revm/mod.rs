@@ -10,12 +10,13 @@ use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::spec_id;
 use db::EvmState;
-use ethrex_common::types::AccountInfo;
+use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::{BigEndianHash, H256, U256};
-use ethrex_storage::{error::StoreError, AccountUpdate};
+use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 
 use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;
+use revm::Database;
 use revm::{
     db::AccountState as RevmAccountState,
     inspectors::TracerEip3155,
@@ -113,7 +114,7 @@ impl REVM {
     pub fn process_withdrawals(
         initial_state: &mut EvmState,
         withdrawals: &[Withdrawal],
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), EvmError> {
         //balance_increments is a vector of tuples (Address, increment as u128)
         let balance_increments = withdrawals
             .iter()
@@ -135,9 +136,7 @@ impl REVM {
                         continue;
                     }
 
-                    let account = db
-                        .load_account(address)
-                        .map_err(|err| StoreError::Custom(format!("revm CacheDB error: {err}")))?;
+                    let account = db.load_account(address)?;
 
                     account.info.balance += RevmU256::from(balance);
                     if account.account_state == RevmAccountState::None {
@@ -185,49 +184,107 @@ impl REVM {
         )?;
         Ok(())
     }
+    fn system_contract_account_info(
+        addr: Address,
+        state: &mut EvmState,
+    ) -> Result<revm_primitives::AccountInfo, EvmError> {
+        let revm_addr = RevmAddress::from_slice(addr.as_bytes());
+        let account_info = match state {
+            EvmState::Store(db) => db.basic(revm_addr)?,
+            EvmState::Execution(cache_db) => cache_db.basic(revm_addr)?,
+        }
+        .ok_or(EvmError::DB(
+            "System contract address was not found after deployment".to_string(),
+        ))?;
+        Ok(account_info)
+    }
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
         state: &mut EvmState,
-    ) -> Option<Vec<u8>> {
+    ) -> Result<Vec<u8>, EvmError> {
         let tx_result = generic_system_contract_revm(
             block_header,
             Bytes::new(),
             state,
             *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
-        )
-        .ok()?;
+        )?;
 
-        if tx_result.is_success() {
-            Some(tx_result.output().into())
-        } else {
-            None
+        // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
+        // has any code after being deployed. If not, the whole block becomes invalid.
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
+        let account_info =
+            Self::system_contract_account_info(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, state)?;
+        if account_info.is_empty_code_hash() {
+            return Err(EvmError::SystemContractEmpty(
+                "WITHDRAWAL_REQUEST_PREDEPLOY".to_string(),
+            ));
+        }
+
+        match tx_result {
+            ExecutionResult::Success {
+                gas_used: _,
+                gas_refunded: _,
+                logs: _,
+                output,
+            } => Ok(output.into()),
+            // EIP-7002 specifies that a failed system call invalidates the entire block.
+            ExecutionResult::Halt { reason, gas_used } => {
+                let err_str = format!("Transaction HALT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
+                Err(EvmError::SystemContractCallFailed(err_str))
+            }
+            ExecutionResult::Revert { gas_used, output } => {
+                let err_str = format!("Transaction REVERT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
+                Err(EvmError::SystemContractCallFailed(err_str))
+            }
         }
     }
     pub(crate) fn dequeue_consolidation_requests(
         block_header: &BlockHeader,
         state: &mut EvmState,
-    ) -> Option<Vec<u8>> {
+    ) -> Result<Vec<u8>, EvmError> {
         let tx_result = generic_system_contract_revm(
             block_header,
             Bytes::new(),
             state,
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
-        )
-        .ok()?;
+        )?;
 
-        if tx_result.is_success() {
-            Some(tx_result.output().into())
-        } else {
-            None
+        // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
+        // has any code after being deployed. If not, the whole block becomes invalid.
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
+        let account_info =
+            Self::system_contract_account_info(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, state)?;
+        if account_info.is_empty_code_hash() {
+            return Err(EvmError::SystemContractEmpty(
+                "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS".to_string(),
+            ));
+        }
+
+        match tx_result {
+            ExecutionResult::Success {
+                gas_used: _,
+                gas_refunded: _,
+                logs: _,
+                output,
+            } => Ok(output.into()),
+            // EIP-7251 specifies that a failed system call invalidates the entire block.
+            ExecutionResult::Halt { reason, gas_used } => {
+                let err_str = format!("Transaction HALT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
+                Err(EvmError::SystemContractCallFailed(err_str))
+            }
+            ExecutionResult::Revert { gas_used, output } => {
+                let err_str = format!("Transaction REVERT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
+                Err(EvmError::SystemContractCallFailed(err_str))
+            }
         }
     }
 
     /// Gets the state_transitions == [AccountUpdate] from the [EvmState].
     pub fn get_state_transitions(
         initial_state: &mut EvmState,
-    ) -> Vec<ethrex_storage::AccountUpdate> {
+    ) -> Vec<ethrex_common::types::AccountUpdate> {
         match initial_state {
             EvmState::Store(db) => {
                 db.merge_transitions(BundleRetention::PlainState);
@@ -464,11 +521,11 @@ pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
         chain_id: tx.chain_id(),
         access_list: tx
             .access_list()
-            .into_iter()
+            .iter()
             .map(|(addr, list)| {
                 let (address, storage_keys) = (
                     RevmAddress(addr.0.into()),
-                    list.into_iter()
+                    list.iter()
                         .map(|a| FixedBytes::from_slice(a.as_bytes()))
                         .collect(),
                 );
@@ -492,7 +549,7 @@ pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
         // - rust 1.82.X is needed
         // - rust-toolchain 1.82.X is needed (this can be found in ethrex/crates/vm/levm/rust-toolchain.toml)
         authorization_list: tx.authorization_list().map(|list| {
-            list.into_iter()
+            list.iter()
                 .map(|auth_t| {
                     SignedAuthorization::new_unchecked(
                         RevmAuthorization {
@@ -626,13 +683,15 @@ pub(crate) fn generic_system_contract_revm(
     let tx_env = TxEnv {
         caller: RevmAddress::from_slice(system_address.as_bytes()),
         transact_to: RevmTxKind::Call(RevmAddress::from_slice(contract_address.as_bytes())),
-        gas_limit: 30_000_000,
+        // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
+        // So we add the base cost that will be taken in the execution.
+        gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
         data: calldata,
         ..Default::default()
     };
     let mut block_env = block_env(block_header, spec_id);
     block_env.basefee = RevmU256::ZERO;
-    block_env.gas_limit = RevmU256::from(30_000_000);
+    block_env.gas_limit = RevmU256::from(u64::MAX); // System calls, have no constraint on the block's gas limit.
 
     match state {
         EvmState::Store(db) => {
@@ -692,12 +751,13 @@ pub fn extract_all_requests(
         }
     }
 
-    let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts);
-    let withdrawals_data = REVM::read_withdrawal_requests(header, state);
-    let consolidation_data = REVM::dequeue_consolidation_requests(header, state);
+    let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts)
+        .ok_or(EvmError::InvalidDepositRequest)?;
+    let withdrawals_data = REVM::read_withdrawal_requests(header, state)?;
+    let consolidation_data = REVM::dequeue_consolidation_requests(header, state)?;
 
-    let withdrawals = Requests::from_withdrawals_data(withdrawals_data.unwrap_or_default());
-    let consolidation = Requests::from_consolidation_data(consolidation_data.unwrap_or_default());
+    let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
+    let consolidation = Requests::from_consolidation_data(consolidation_data);
 
     Ok(vec![deposits, withdrawals, consolidation])
 }

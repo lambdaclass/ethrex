@@ -2,16 +2,17 @@ use crate::runner::{EFTestRunnerError, InternalError};
 use alloy_rlp::Encodable;
 use colored::Colorize;
 use ethrex_common::{
-    types::{Account, Fork},
+    types::{Account, AccountUpdate, Fork},
     Address, H256,
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
-use ethrex_rlp::encode::RLPEncode;
-use ethrex_rlp::structs::Encoder;
+use ethrex_rlp::{encode::RLPEncode, structs::Encoder};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use itertools::Itertools;
 use keccak_hash::keccak;
-use revm::primitives::{EVMError, ExecutionResult as RevmExecutionResult, Log, LogData};
+use ethrex_vm::EvmError;
+use itertools::Itertools;
+use revm::primitives::{EVMError as RevmError, ExecutionResult as RevmExecutionResult, Log, LogData};
 use serde::{Deserialize, Serialize};
 use spinoff::{spinners::Dots, Color, Spinner};
 use std::{
@@ -20,7 +21,6 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
-//use revm::alloy_primitives::private::alloy_rlp::encode::Encodable;
 
 pub const LEVM_EF_TESTS_SUMMARY_SLACK_FILE_PATH: &str = "./levm_ef_tests_summary_slack.txt";
 pub const LEVM_EF_TESTS_SUMMARY_GITHUB_FILE_PATH: &str = "./levm_ef_tests_summary_github.txt";
@@ -132,7 +132,7 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
             "type": "section",
             "text": {{
                 "type": "mrkdwn",
-                "text": "*Summary*: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n"
+                "text": "*Summary*: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n"
             }}
         }}
     ]
@@ -140,15 +140,7 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
         fork_summary_for_slack(reports, Fork::Prague),
         fork_summary_for_slack(reports, Fork::Cancun),
         fork_summary_for_slack(reports, Fork::Shanghai),
-        fork_summary_for_slack(reports, Fork::Byzantium),
-        fork_summary_for_slack(reports, Fork::Berlin),
-        fork_summary_for_slack(reports, Fork::Constantinople),
-        fork_summary_for_slack(reports, Fork::Petersburg),
         fork_summary_for_slack(reports, Fork::Paris),
-        fork_summary_for_slack(reports, Fork::Homestead),
-        fork_summary_for_slack(reports, Fork::Istanbul),
-        fork_summary_for_slack(reports, Fork::London),
-        fork_summary_for_slack(reports, Fork::Frontier),
     )
 }
 
@@ -177,19 +169,11 @@ pub fn summary_for_github(reports: &[EFTestReport]) -> String {
     let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
-        r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n"#,
+        r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n"#,
         fork_summary_for_github(reports, Fork::Prague),
         fork_summary_for_github(reports, Fork::Cancun),
         fork_summary_for_github(reports, Fork::Shanghai),
-        fork_summary_for_github(reports, Fork::Byzantium),
-        fork_summary_for_github(reports, Fork::Berlin),
-        fork_summary_for_github(reports, Fork::Constantinople),
-        fork_summary_for_github(reports, Fork::Petersburg),
         fork_summary_for_github(reports, Fork::Paris),
-        fork_summary_for_github(reports, Fork::Homestead),
-        fork_summary_for_github(reports, Fork::Istanbul),
-        fork_summary_for_github(reports, Fork::London),
-        fork_summary_for_github(reports, Fork::Frontier),
     )
 }
 
@@ -218,7 +202,7 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
     let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
-        "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n\n\n{}\n",
+        "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n\n\n{}\n",
         "Summary:".bold(),
         if total_passed == total_run {
             format!("{}", total_passed).green()
@@ -227,7 +211,6 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         } else {
             format!("{}", total_passed).red()
         },
-
         // NOTE: Keep in order, see the Fork Enum to check
         // NOTE: Uncomment the summaries if EF tests for those specific forks exist.
 
@@ -236,22 +219,6 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         fork_summary_shell(reports, Fork::Cancun),
         fork_summary_shell(reports, Fork::Shanghai),
         fork_summary_shell(reports, Fork::Paris),
-        // fork_summary_shell(reports, Fork::GrayGlacier),
-        // fork_summary_shell(reports, Fork::ArrowGlacier),
-        fork_summary_shell(reports, Fork::London),
-        fork_summary_shell(reports, Fork::Berlin),
-        // fork_summary_shell(reports, Fork::MuirGlacier),
-        fork_summary_shell(reports, Fork::Istanbul),
-        fork_summary_shell(reports, Fork::Petersburg),
-        fork_summary_shell(reports, Fork::Constantinople),
-        fork_summary_shell(reports, Fork::Byzantium),
-        fork_summary_shell(reports, Fork::SpuriousDragon),
-        fork_summary_shell(reports, Fork::Tangerine),
-        // fork_summary_shell(reports, Fork::DaoFork),
-        fork_summary_shell(reports, Fork::Homestead),
-        // fork_summary_shell(reports, Fork::FrontierThawing),
-        fork_summary_shell(reports, Fork::Frontier),
-
         test_dir_summary_for_shell(reports),
     )
 }
@@ -365,17 +332,7 @@ impl Display for EFTestsReport {
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Prague))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Cancun))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Shanghai))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Byzantium))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Berlin))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Constantinople))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Petersburg))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Paris))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Homestead))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Istanbul))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::London))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Frontier))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::SpuriousDragon))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Tangerine))?;
         writeln!(f)?;
         writeln!(f, "Failed tests:")?;
         writeln!(f)?;
@@ -964,7 +921,7 @@ impl TestReRunReport {
         &mut self,
         vector: TestVector,
         levm_result: TxResult,
-        revm_error: EVMError<StoreError>,
+        revm_error: RevmError<EvmError>,
         fork: Fork,
     ) {
         let value = Some((levm_result, revm_error.to_string()));

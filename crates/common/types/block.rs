@@ -1,6 +1,6 @@
 use super::{
-    ChainConfig, BASE_FEE_MAX_CHANGE_DENOMINATOR, ELASTICITY_MULTIPLIER,
-    GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
+    ChainConfig, BASE_FEE_MAX_CHANGE_DENOMINATOR, GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM,
+    INITIAL_BASE_FEE,
 };
 use crate::{
     constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS},
@@ -36,21 +36,15 @@ lazy_static! {
 pub struct Block {
     pub header: BlockHeader,
     pub body: BlockBody,
-    #[serde(skip)]
-    hash: OnceCell<BlockHash>,
 }
 
 impl Block {
     pub fn new(header: BlockHeader, body: BlockBody) -> Block {
-        Block {
-            header,
-            body,
-            hash: OnceCell::new(),
-        }
+        Block { header, body }
     }
 
     pub fn hash(&self) -> BlockHash {
-        *self.hash.get_or_init(|| self.header.compute_block_hash())
+        self.header.hash()
     }
 }
 
@@ -87,6 +81,8 @@ impl RLPDecode for Block {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockHeader {
+    #[serde(skip)]
+    pub hash: OnceCell<BlockHash>,
     pub parent_hash: H256,
     #[serde(rename = "sha3Uncles")]
     pub ommers_hash: H256, // ommer = uncle
@@ -188,6 +184,7 @@ impl RLPDecode for BlockHeader {
 
         Ok((
             BlockHeader {
+                hash: OnceCell::new(),
                 parent_hash,
                 ommers_hash,
                 coinbase,
@@ -303,6 +300,10 @@ impl BlockHeader {
         let mut buf = vec![];
         self.encode(&mut buf);
         keccak(buf)
+    }
+
+    fn hash(&self) -> H256 {
+        *self.hash.get_or_init(|| self.compute_block_hash())
     }
 }
 
@@ -432,6 +433,7 @@ pub fn calculate_base_fee_per_gas(
     parent_gas_limit: u64,
     parent_gas_used: u64,
     parent_base_fee_per_gas: u64,
+    elasticity_multiplier: u64,
 ) -> Option<u64> {
     // Check gas limit, if the check passes we can also rest assured that none of the
     // following divisions will have zero as a divider
@@ -439,7 +441,7 @@ pub fn calculate_base_fee_per_gas(
         return None;
     }
 
-    let parent_gas_target = parent_gas_limit / ELASTICITY_MULTIPLIER;
+    let parent_gas_target = parent_gas_limit / elasticity_multiplier;
 
     Some(match parent_gas_used.cmp(&parent_gas_target) {
         Ordering::Equal => parent_base_fee_per_gas,
@@ -513,6 +515,7 @@ pub enum InvalidBlockHeaderError {
 pub fn validate_block_header(
     header: &BlockHeader,
     parent_header: &BlockHeader,
+    elasticity_multiplier: u64,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.gas_used > header.gas_limit {
         return Err(InvalidBlockHeaderError::GasUsedGreaterThanGasLimit);
@@ -523,6 +526,7 @@ pub fn validate_block_header(
         parent_header.gas_limit,
         parent_header.gas_used,
         parent_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
+        elasticity_multiplier,
     ) {
         base_fee
     } else {
@@ -669,7 +673,7 @@ pub fn calc_excess_blob_gas(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::types::EMPTY_KECCACK_HASH;
+    use crate::types::{ELASTICITY_MULTIPLIER, EMPTY_KECCACK_HASH};
     use ethereum_types::H160;
     use hex_literal::hex;
     use std::str::FromStr;
@@ -743,6 +747,7 @@ mod test {
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
+            ..Default::default()
         };
         let block = BlockHeader {
             parent_hash: H256::from_str(
@@ -786,8 +791,9 @@ mod test {
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
+            ..Default::default()
         };
-        assert!(validate_block_header(&block, &parent_block).is_ok())
+        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok())
     }
 
     #[test]

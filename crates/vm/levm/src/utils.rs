@@ -1,17 +1,24 @@
 use crate::{
+    call_frame::CallFrameBackup,
     constants::*,
-    db::gen_db::GeneralizedDatabase,
+    db::{cache, gen_db::GeneralizedDatabase},
     errors::{InternalError, OutOfGasError, TxValidationError, VMError},
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
         BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
+    hooks::hook::Hook,
     opcodes::Opcode,
-    vm::{EVMConfig, Substate, VM},
+    precompiles::{
+        is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
+        SIZE_PRECOMPILES_PRE_CANCUN,
+    },
+    vm::{Substate, VM},
+    EVMConfig,
 };
 use bytes::Bytes;
-use ethrex_common::types::Account;
+use ethrex_common::types::{Account, Transaction, TxKind};
 use ethrex_common::{
     types::{tx_fields::*, Fork},
     Address, H256, U256,
@@ -21,12 +28,20 @@ use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
 use libsecp256k1::{Message, RecoveryId, Signature};
 use sha3::{Digest, Keccak256};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    sync::Arc,
+};
 pub type Storage = HashMap<U256, H256>;
 
+#[cfg(not(feature = "l2"))]
+use crate::hooks::DefaultHook;
+#[cfg(feature = "l2")]
+use {crate::hooks::L2Hook, ethrex_common::types::PrivilegedL2Transaction};
+
 // ================== Address related functions ======================
+/// Converts address (H160) to word (U256)
 pub fn address_to_word(address: Address) -> U256 {
-    // This unwrap can't panic, as Address are 20 bytes long and U256 use 32 bytes
     let mut word = [0u8; 32];
 
     for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
@@ -53,12 +68,11 @@ pub fn calculate_create_address(
     )?))
 }
 
-/// Calculates the address of a new contract using the CREATE2 opcode as follow
+/// Calculates the address of a new contract using the CREATE2 opcode as follows
 ///
 /// initialization_code = memory[offset:offset+size]
 ///
-/// address = keccak256(0xff + sender_address + salt + keccak256(initialization_code))[12:]
-///
+/// address = keccak256(0xff || sender_address || salt || keccak256(initialization_code))[12:]
 pub fn calculate_create2_address(
     sender_address: Address,
     initialization_code: &Bytes,
@@ -85,6 +99,10 @@ pub fn calculate_create2_address(
     Ok(generated_address)
 }
 
+/// Calculates valid jump destinations given some bytecode.
+/// This is a necessary calculation because of PUSH opcodes.
+/// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
+/// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
 pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
     let mut valid_jump_destinations = HashSet::new();
     let mut pc = 0;
@@ -117,6 +135,36 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
     }
 
     Ok(valid_jump_destinations)
+}
+
+// ================== Backup related functions =======================
+
+/// Restore the state of the cache to the state it in the callframe backup.
+pub fn restore_cache_state(
+    db: &mut GeneralizedDatabase,
+    callframe_backup: CallFrameBackup,
+) -> Result<(), VMError> {
+    for (address, account) in callframe_backup.original_accounts_info {
+        if let Some(current_account) = cache::get_account_mut(&mut db.cache, &address) {
+            current_account.info = account.info;
+            current_account.code = account.code;
+        }
+    }
+
+    for (address, storage) in callframe_backup.original_account_storage_slots {
+        // This call to `get_account_mut` should never return None, because we are looking up accounts
+        // that had their storage modified, which means they should be in the cache. That's why
+        // we return an internal error in case we haven't found it.
+        let account = cache::get_account_mut(&mut db.cache, &address).ok_or(VMError::Internal(
+            crate::errors::InternalError::AccountNotFound,
+        ))?;
+
+        for (key, value) in storage {
+            account.storage.insert(key, value);
+        }
+    }
+
+    Ok(())
 }
 
 // ================= Blob hash related functions =====================
@@ -307,26 +355,15 @@ pub fn eip7702_recover_address(
     Ok(Some(Address::from_slice(&authority_address_bytes)))
 }
 
-/// Used for the opcodes
-/// The following reading instructions are impacted:
-///      EXTCODESIZE, EXTCODECOPY, EXTCODEHASH
-/// and the following executing instructions are impacted:
-///      CALL, CALLCODE, STATICCALL, DELEGATECALL
-/// In case a delegation designator points to another designator,
-/// creating a potential chain or loop of designators, clients must
-/// retrieve only the first code and then stop following the
-/// designator chain.
+/// Gets code of an account, returning early if it's not a delegated account, otherwise
+/// Returns tuple (is_delegated, eip7702_cost, code_address, code).
+/// Notice that it also inserts the delegated account to the "touched accounts" set.
 ///
-/// For example,
-/// EXTCODESIZE would return 2 (the size of 0xef01) instead of 23
-/// which would represent the delegation designation, EXTCODEHASH
-/// would return
-/// 0xeadcdba66a79ab5dce91622d1d75c8cff5cff0b96944c3bf1072cd08ce018329
-/// (keccak256(0xef01)), and CALL would load the code from address and
-/// execute it in the context of authority.
-///
-/// The idea of this function comes from ethereum/execution-specs:
-/// https://github.com/ethereum/execution-specs/blob/951fc43a709b493f27418a8e57d2d6f3608cef84/src/ethereum/prague/vm/eoa_delegation.py#L115
+/// Where:
+/// - `is_delegated`: True if account is a delegated account.
+/// - `eip7702_cost`: Cost of accessing the delegated account (if any)
+/// - `code_address`: Code address (if delegated, returns the delegated address)
+/// - `code`: Bytecode of the code_address, what the EVM will execute.
 pub fn eip7702_get_code(
     db: &mut GeneralizedDatabase,
     accrued_substate: &mut Substate,
@@ -340,13 +377,13 @@ pub fn eip7702_get_code(
     // return false meaning that is not a delegation
     // return the same address given
     // return the bytecode of the given address
-    if !has_delegation(&account)? {
+    if !has_delegation(account)? {
         return Ok((false, 0, address, bytecode));
     }
 
     // Here the address has a delegation code
     // The delegation code has the authorized address
-    let auth_address = get_authorized_address(&account)?;
+    let auth_address = get_authorized_address(account)?;
 
     let access_cost = if accrued_substate.touched_accounts.contains(&auth_address) {
         WARM_ADDRESS_ACCESS_COST
@@ -355,7 +392,7 @@ pub fn eip7702_get_code(
         COLD_ADDRESS_ACCESS_COST
     };
 
-    let authorized_bytecode = db.get_account(auth_address)?.code;
+    let authorized_bytecode = db.get_account(auth_address)?.code.clone();
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }
@@ -367,7 +404,7 @@ impl<'a> VM<'a> {
         // IMPORTANT:
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
         // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
-        for auth_tuple in self.authorization_list.clone().unwrap_or_default() {
+        for auth_tuple in self.tx.authorization_list().cloned().unwrap_or_default() {
             let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id;
             let chain_id_not_zero = !auth_tuple.chain_id.is_zero();
 
@@ -391,11 +428,11 @@ impl<'a> VM<'a> {
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
             let (authority_account, _address_was_cold) = self
                 .db
-                .access_account(&mut self.accrued_substate, authority_address)?;
+                .access_account(&mut self.substate, authority_address)?;
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated =
-                authority_account.code.is_empty() || has_delegation(&authority_account)?;
+                authority_account.code.is_empty() || has_delegation(authority_account)?;
             if !empty_or_delegated {
                 continue;
             }
@@ -438,28 +475,7 @@ impl<'a> VM<'a> {
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
         }
 
-        let code_address = self.current_call_frame()?.code_address;
-        let (code_address_info, _) = self
-            .db
-            .access_account(&mut self.accrued_substate, code_address)?;
-
-        if has_delegation(&code_address_info)? {
-            self.current_call_frame_mut()?.code_address =
-                get_authorized_address(&code_address_info)?;
-            let code_address = self.current_call_frame()?.code_address;
-            let (auth_address_info, _) = self
-                .db
-                .access_account(&mut self.accrued_substate, code_address)?;
-
-            self.current_call_frame_mut()?.bytecode = auth_address_info.code.clone();
-        } else {
-            self.current_call_frame_mut()?.bytecode = code_address_info.code.clone();
-        }
-
-        self.current_call_frame_mut()?.valid_jump_destinations =
-            get_valid_jump_destinations(&self.current_call_frame()?.bytecode).unwrap_or_default();
-
-        self.env.refunded_gas = refunded_gas;
+        self.substate.refunded_gas = refunded_gas;
 
         Ok(())
     }
@@ -483,9 +499,8 @@ impl<'a> VM<'a> {
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost =
-            gas_cost::tx_calldata(&self.current_call_frame()?.calldata, self.env.config.fork)
-                .map_err(VMError::OutOfGas)?;
+        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame()?.calldata)
+            .map_err(VMError::OutOfGas)?;
 
         intrinsic_gas = intrinsic_gas
             .checked_add(calldata_cost)
@@ -499,11 +514,9 @@ impl<'a> VM<'a> {
         // Create Cost
         if self.is_create() {
             // https://eips.ethereum.org/EIPS/eip-2#specification
-            if self.env.config.fork >= Fork::Homestead {
-                intrinsic_gas = intrinsic_gas
-                    .checked_add(CREATE_BASE_COST)
-                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-            }
+            intrinsic_gas = intrinsic_gas
+                .checked_add(CREATE_BASE_COST)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
             // https://eips.ethereum.org/EIPS/eip-3860
             if self.env.config.fork >= Fork::Shanghai {
@@ -526,7 +539,7 @@ impl<'a> VM<'a> {
 
         // Access List Cost
         let mut access_lists_cost: u64 = 0;
-        for (_, keys) in &self.access_list {
+        for (_, keys) in self.tx.access_list() {
             access_lists_cost = access_lists_cost
                 .checked_add(ACCESS_LIST_ADDRESS_COST)
                 .ok_or(OutOfGasError::ConsumedGasOverflow)?;
@@ -544,13 +557,13 @@ impl<'a> VM<'a> {
         // Authorization List Cost
         // `unwrap_or_default` will return an empty vec when the `authorization_list` field is None.
         // If the vec is empty, the len will be 0, thus the authorization_list_cost is 0.
-        let amount_of_auth_tuples: u64 = self
-            .authorization_list
-            .clone()
-            .unwrap_or_default()
-            .len()
-            .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        let amount_of_auth_tuples = match self.tx.authorization_list() {
+            None => 0,
+            Some(list) => list
+                .len()
+                .try_into()
+                .map_err(|_| VMError::Internal(InternalError::ConversionError))?,
+        };
         let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
             .checked_mul(amount_of_auth_tuples)
             .ok_or(VMError::Internal(InternalError::GasOverflow))?;
@@ -575,7 +588,7 @@ impl<'a> VM<'a> {
         // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
         // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
         // see it in https://eips.ethereum.org/EIPS/eip-7623
-        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.config.fork)
+        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata)
             .map_err(VMError::OutOfGas)?
             .checked_div(STANDARD_TOKEN_COST)
             .ok_or(VMError::Internal(InternalError::DivisionError))?;
@@ -590,5 +603,113 @@ impl<'a> VM<'a> {
             .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
         Ok(min_gas_used)
+    }
+
+    pub fn is_precompile(&self) -> Result<bool, VMError> {
+        Ok(is_precompile(
+            &self.current_call_frame()?.code_address,
+            self.env.config.fork,
+        ))
+    }
+
+    /// Backup of Substate, a copy of the current substate to restore if sub-context is reverted
+    pub fn backup_substate(&mut self) {
+        self.substate_backups.push(self.substate.clone());
+    }
+
+    /// Initializes the VM substate, mainly adding addresses to the "touched_addresses" field and the same with storage slots
+    pub fn initialize_substate(&mut self) -> Result<(), VMError> {
+        // Add sender and recipient to touched accounts [https://www.evm.codes/about#access_list]
+        let mut initial_touched_accounts = HashSet::new();
+        let mut initial_touched_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
+
+        // Add Tx sender to touched accounts
+        initial_touched_accounts.insert(self.env.origin);
+
+        // [EIP-3651] - Add coinbase to touched accounts after Shanghai
+        if self.env.config.fork >= Fork::Shanghai {
+            initial_touched_accounts.insert(self.env.coinbase);
+        }
+
+        // Add precompiled contracts addresses to touched accounts.
+        let max_precompile_address = match self.env.config.fork {
+            spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
+            spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
+            spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
+            _ => return Err(VMError::Internal(InternalError::InvalidSpecId)),
+        };
+        for i in 1..=max_precompile_address {
+            initial_touched_accounts.insert(Address::from_low_u64_be(i));
+        }
+
+        // Add access lists contents to touched accounts and touched storage slots.
+        for (address, keys) in self.tx.access_list().clone() {
+            initial_touched_accounts.insert(address);
+            let mut warm_slots = BTreeSet::new();
+            for slot in keys {
+                warm_slots.insert(slot);
+            }
+            initial_touched_storage_slots.insert(address, warm_slots);
+        }
+
+        self.substate = Substate {
+            selfdestruct_set: HashSet::new(),
+            touched_accounts: initial_touched_accounts,
+            touched_storage_slots: initial_touched_storage_slots,
+            created_accounts: HashSet::new(),
+            refunded_gas: 0,
+            transient_storage: HashMap::new(),
+        };
+
+        Ok(())
+    }
+
+    pub fn get_hooks(tx: &Transaction) -> Vec<Arc<dyn Hook + 'static>> {
+        #[cfg(not(feature = "l2"))]
+        let hooks: Vec<Arc<dyn Hook>> = vec![Arc::new(DefaultHook)];
+        #[cfg(feature = "l2")]
+        let hooks: Vec<Arc<dyn Hook>> = {
+            let recipient = if let Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
+                recipient,
+                ..
+            }) = tx
+            {
+                Some(*recipient)
+            } else {
+                None
+            };
+            vec![Arc::new(L2Hook { recipient })]
+        };
+        hooks
+    }
+
+    /// Gets transaction callee, calculating create address if it's a "Create" transaction.
+    pub fn get_tx_callee(&mut self) -> Result<Address, VMError> {
+        match self.tx.to() {
+            TxKind::Call(address_to) => {
+                self.substate.touched_accounts.insert(address_to);
+
+                Ok(address_to)
+            }
+
+            TxKind::Create => {
+                let sender_nonce = self.db.get_account(self.env.origin)?.info.nonce;
+
+                let created_address = calculate_create_address(self.env.origin, sender_nonce)
+                    .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
+
+                self.substate.touched_accounts.insert(created_address);
+                self.substate.created_accounts.insert(created_address);
+
+                Ok(created_address)
+            }
+        }
+    }
+
+    /// Checks if an address is delegation target in current transaction.
+    pub fn is_delegation_target(&self, address: Address) -> bool {
+        self.tx.authorization_list().as_ref().map_or(false, |list| {
+            list.iter().any(|item| item.address == address)
+        })
     }
 }

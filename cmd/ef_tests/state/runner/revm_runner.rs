@@ -7,7 +7,7 @@ use crate::{
 use alloy_rlp::{BufMut, Decodable, Encodable, Header, RlpDecodable, RlpEncodable};
 use bytes::Bytes;
 use ethrex_common::{
-    types::{Account, Fork, TxKind},
+    types::{Account, AccountUpdate, Fork, TxKind},
     Address, H256,
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult};
@@ -16,7 +16,7 @@ use ethrex_storage::{error::StoreError, AccountUpdate};
 use ethrex_vm::{
     self,
     backends::{self, revm::db::EvmState},
-    fork_to_spec_id, StoreWrapper,
+    fork_to_spec_id, DynVmDatabase, EvmError,
 };
 use keccak_hash::keccak;
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
@@ -105,7 +105,7 @@ pub async fn re_run_failed_ef_test_tx(
     re_run_report: &mut TestReRunReport,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let (mut state, _block_hash) = load_initial_state(test).await;
+    let (mut state, _block_hash, _store) = load_initial_state(test).await;
     let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
     if !test.post.has_vector_for_fork(vector, *fork) {
         return Ok(());
@@ -128,7 +128,7 @@ pub fn prepare_revm_for_tx<'state>(
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
-) -> Result<Revm<'state, RevmTracerEip3155, &'state mut State<StoreWrapper>>, EFTestRunnerError> {
+) -> Result<Revm<'state, RevmTracerEip3155, &'state mut State<DynVmDatabase>>, EFTestRunnerError> {
     let chain_spec = initial_state
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;
@@ -243,7 +243,7 @@ pub fn prepare_revm_for_tx<'state>(
 pub fn compare_levm_revm_execution_results(
     vector: &TestVector,
     levm_execution_report: &ExecutionReport,
-    revm_execution_result: Result<RevmExecutionResult, REVMError<StoreError>>,
+    revm_execution_result: Result<RevmExecutionResult, RevmError<EvmError>>,
     re_run_report: &mut TestReRunReport,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
@@ -355,7 +355,7 @@ pub async fn ensure_post_state(
         None => {
             let mut db = load_initial_state_levm(test).await;
             db.cache = levm_cache;
-            let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db, *fork)
+            let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db)
                 .map_err(|_| {
                     InternalError::Custom("Error at LEVM::get_state_transitions()".to_owned())
                 })?;
@@ -495,7 +495,7 @@ pub async fn _run_ef_test_tx_revm(
     test: &EFTest,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let (mut state, _block_hash) = load_initial_state(test).await;
+    let (mut state, _block_hash, _store) = load_initial_state(test).await;
     let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
     let revm_execution_result = revm.transact_commit();
     drop(revm); // Need to drop the state mutable reference.
@@ -506,7 +506,7 @@ pub async fn _run_ef_test_tx_revm(
 }
 
 pub async fn _ensure_post_state_revm(
-    revm_execution_result: Result<RevmExecutionResult, REVMError<StoreError>>,
+    revm_execution_result: Result<RevmExecutionResult, RevmError<EvmError>>,
     vector: &TestVector,
     test: &EFTest,
     revm_state: &mut EvmState,

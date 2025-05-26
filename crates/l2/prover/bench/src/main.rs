@@ -1,18 +1,14 @@
-use std::{fs::File, io::Write};
+use std::fs::File;
 
 use clap::Parser;
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_prover_bench::{
     cache::{load_cache, write_cache, Cache},
     rpc::{db::RpcDB, get_block, get_latest_block_number},
 };
 use ethrex_prover_lib::execute;
+use serde_json::json;
 use zkvm_interface::io::ProgramInput;
-
-#[cfg(not(any(feature = "sp1", feature = "risc0", feature = "pico")))]
-compile_error!(
-    "Choose prover backends (sp1, risc0, pico).
-- Pass a feature flag to cargo (--feature or -F) with the desired backed. e.g: cargo build --workspace --no-default-features -F sp1. NOTE: Don't forget to pass --no-default-features, if not, the default prover will be used instead."
-);
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -81,12 +77,14 @@ async fn main() {
     };
 
     let now = std::time::Instant::now();
+    let gas_used = block.header.gas_used as f64;
     if prove {
         println!("proving");
         ethrex_prover_lib::prove(ProgramInput {
             blocks: vec![block],
             parent_block_header,
             db,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
         })
         .expect("proving failed");
     } else {
@@ -95,15 +93,47 @@ async fn main() {
             blocks: vec![block],
             parent_block_header,
             db,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
         })
         .expect("proving failed");
     }
     let elapsed = now.elapsed().as_secs();
     println!(
-        "finished in {} minutes for block {}",
+        "finished in {} minutes for block {} with gas {}",
         elapsed / 60,
-        block_number
+        block_number,
+        gas_used
     );
 
-    // TODO: Print total gas from pre-execution (to_exec_db() call)
+    write_benchmark_file(gas_used, elapsed as f64);
+}
+
+fn write_benchmark_file(gas_used: f64, elapsed: f64) {
+    let rate = gas_used / 1e6 / elapsed;
+
+    let backend = if cfg!(feature = "sp1") {
+        "SP1"
+    } else if cfg!(feature = "risc0") {
+        "Risc0"
+    } else if cfg!(feature = "pico") {
+        "Pico"
+    } else {
+        unreachable!();
+    };
+
+    let processor = if cfg!(feature = "ci") {
+        "RTX A6000"
+    } else if cfg!(feature = "gpu") {
+        "GPU"
+    } else {
+        "CPU"
+    };
+
+    let benchmark_json = &json!([{
+        "name": format!("{backend}, {}", processor),
+        "unit": "Mgas/s",
+        "value": rate
+    }]);
+    let file = File::create("bench_latest.json").expect("failed to create bench_latest.json");
+    serde_json::to_writer(file, benchmark_json).expect("failed to write to bench_latest.json");
 }
