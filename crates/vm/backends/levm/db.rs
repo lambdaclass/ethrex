@@ -4,8 +4,8 @@ use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::constants::EMPTY_CODE_HASH;
 use ethrex_levm::db::Database as LevmDatabase;
 
-use crate::db::{DynVmDatabase, VmDatabase};
-use crate::ProverDB;
+use crate::db::DynVmDatabase;
+use crate::{ProverDB, VmDatabase};
 use ethrex_levm::db::error::DatabaseError;
 use std::collections::HashMap;
 use std::result::Result;
