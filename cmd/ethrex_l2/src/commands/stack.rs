@@ -20,7 +20,7 @@ pub const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    #[clap(
+    #[command(
         about = "Initializes the L2 network in the provided L1.",
         long_about = "Initializing an L2 involves deploying and setting up the contracts in the L1 and running an L2 node.",
         visible_alias = "i"
@@ -39,7 +39,7 @@ pub(crate) enum Command {
         )]
         start_prover: bool,
     },
-    #[clap(about = "Shutdown the stack.")]
+    #[command(about = "Shutdown the stack.")]
     Shutdown {
         #[arg(long, help = "Shuts down the local L1 node.", default_value_t = true)]
         l1: bool,
@@ -48,7 +48,7 @@ pub(crate) enum Command {
         #[arg(short = 'y', long, help = "Forces the shutdown without confirmation.")]
         force: bool,
     },
-    #[clap(about = "Starts the stack.")]
+    #[command(about = "Starts the stack.")]
     Start {
         #[arg(long, help = "Starts a local L1 node.", required = false)]
         l1: bool,
@@ -64,12 +64,12 @@ pub(crate) enum Command {
         )]
         start_prover: bool,
     },
-    #[clap(about = "Cleans up the stack. Prompts for confirmation.")]
+    #[command(about = "Cleans up the stack. Prompts for confirmation.")]
     Purge {
         #[arg(short = 'y', long, help = "Forces the purge without confirmation.")]
         force: bool,
     },
-    #[clap(
+    #[command(
         about = "Re-initializes the stack. Prompts for confirmation.",
         long_about = "Re-initializing a stack means to shutdown, cleanup, and initialize the stack again. It uses the `shutdown` and `cleanup` commands under the hood."
     )]
@@ -77,7 +77,7 @@ pub(crate) enum Command {
         #[arg(short = 'y', long, help = "Forces the restart without confirmation.")]
         force: bool,
     },
-    #[clap(about = "Reconstructs the L2 state from L1 blobs.")]
+    #[command(about = "Reconstructs the L2 state from L1 blobs.")]
     Reconstruct {
         #[arg(short = 'g', long, help = "The genesis file for the L2 network.")]
         genesis: PathBuf,
