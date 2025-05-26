@@ -30,16 +30,18 @@ async fn set_sync_block(store: &Store) {
         "false" => false,
         _ => true,
     };
-    let block_number = env::var("SYNC-BLOCK-NUM")
-        .expect("Failed to retrieve sync block number from environment")
-        .parse()
-        .expect("Error converting block number environmental variable to int");
-    let block_hash = store
-        .get_canonical_block_hash(block_number)
-        .await
-        .expect("Could not get hash for block number provided by env variable");
-    store.update_latest_block_number(block_number);
-    store.set_canonical_block(block_number, block_hash);
+    if !get_latest {
+        let block_number = env::var("SYNC-BLOCK-NUM")
+            .expect("Failed to retrieve sync block number from environment")
+            .parse()
+            .expect("Error converting block number environmental variable to int");
+        let block_hash = store
+            .get_canonical_block_hash(block_number)
+            .await
+            .expect("Could not get hash for block number provided by env variable");
+        store.update_latest_block_number(block_number);
+        store.set_canonical_block(block_number, block_hash);
+    }
 }
 
 #[tokio::main]
