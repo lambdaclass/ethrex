@@ -65,7 +65,7 @@ impl MetricsGatherer {
                 .get_last_verified_batch(self.on_chain_proposer_address)
                 .await?;
 
-            let gas_price = self.eth_client.get_gas_price().await?;
+            let l1_gas_price = self.eth_client.get_gas_price().await?;
 
             if let Ok(Some(last_verified_batch_blocks)) = self
                 .rollup_store
@@ -100,8 +100,8 @@ impl MetricsGatherer {
                 MetricsL2BlockType::LastVerifiedBatch,
                 last_verified_batch,
             )?;
-            METRICS_L2.set_gas_price(
-                gas_price
+            METRICS_L2.set_l1_gas_price(
+                l1_gas_price
                     .try_into()
                     .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,
             );

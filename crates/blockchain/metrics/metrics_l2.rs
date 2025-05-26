@@ -8,7 +8,8 @@ pub static METRICS_L2: LazyLock<MetricsL2> = LazyLock::new(MetricsL2::default);
 pub struct MetricsL2 {
     status_tracker: IntGaugeVec,
     operations_tracker: IntGaugeVec,
-    gas_price: IntGauge,
+    l1_gas_price: IntGauge,
+    l2_gas_price: IntGauge,
     blob_usage: Gauge,
 }
 
@@ -37,7 +38,8 @@ impl MetricsL2 {
                 &["operations_type"],
             )
             .unwrap(),
-            gas_price: IntGauge::new("l2_gas_price", "Keeps track of the l2 gas price").unwrap(),
+            l1_gas_price: IntGauge::new("l1_gas_price", "Keeps track of the l1 gas price").unwrap(),
+            l2_gas_price: IntGauge::new("l2_gas_price", "Keeps track of the l2 gas price").unwrap(),
             blob_usage: Gauge::new(
                 "l2_blob_usage",
                 "Keeps track of the percentage of blob usage for a batch commitment",
@@ -46,8 +48,12 @@ impl MetricsL2 {
         }
     }
 
-    pub fn set_gas_price(&self, gas_price: i64) {
-        self.gas_price.set(gas_price);
+    pub fn set_l1_gas_price(&self, gas_price: i64) {
+        self.l1_gas_price.set(gas_price);
+    }
+
+    pub fn set_l2_gas_price(&self, gas_price: i64) {
+        self.l2_gas_price.set(gas_price);
     }
 
     pub fn set_block_type_and_block_number(
@@ -90,7 +96,9 @@ impl MetricsL2 {
 
         r.register(Box::new(self.status_tracker.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(self.gas_price.clone()))
+        r.register(Box::new(self.l1_gas_price.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.l2_gas_price.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.operations_tracker.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
