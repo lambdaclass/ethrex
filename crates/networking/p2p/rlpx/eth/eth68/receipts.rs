@@ -3,7 +3,7 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
-use ethrex_common::types::{Receipt, Receipt68};
+use ethrex_common::types::{Receipt, ReceiptWithBloom};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -14,7 +14,7 @@ pub(crate) struct Receipts68 {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
     pub id: u64,
-    pub receipts: Vec<Vec<Receipt68>>,
+    pub receipts: Vec<Vec<ReceiptWithBloom>>,
 }
 
 impl Receipts68 {
@@ -27,12 +27,7 @@ impl Receipts68 {
         }
         let mut transformed_receipts = vec![];
         for r in &receipts {
-            transformed_receipts.push(vec![Receipt68::new(
-                r[0].tx_type,
-                r[0].succeeded,
-                r[0].cumulative_gas_used,
-                r[0].logs.clone(),
-            )]);
+            transformed_receipts.push(vec![ReceiptWithBloom::from(&r[0])]);
         }
         Self {
             id,
@@ -46,12 +41,7 @@ impl Receipts68 {
         }
         let mut receipts = vec![];
         for r in &self.receipts {
-            receipts.push(vec![Receipt::new(
-                r[0].tx_type,
-                r[0].succeeded,
-                r[0].cumulative_gas_used,
-                r[0].logs.clone(),
-            )]);
+            receipts.push(vec![Receipt::from(&r[0])]);
         }
         receipts
     }
@@ -76,7 +66,7 @@ impl RLPxMessage for Receipts68 {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let (receipts, _): (Vec<Vec<Receipt68>>, _) = decoder.decode_field("receipts")?;
+        let (receipts, _): (Vec<Vec<ReceiptWithBloom>>, _) = decoder.decode_field("receipts")?;
 
         Ok(Receipts68 { id, receipts })
     }

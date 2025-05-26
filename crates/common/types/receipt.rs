@@ -141,7 +141,7 @@ impl RLPDecode for Log {
 
 /// Result of a transaction
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct Receipt68 {
+pub struct ReceiptWithBloom {
     pub tx_type: TxType,
     pub succeeded: bool,
     pub cumulative_gas_used: u64,
@@ -149,7 +149,7 @@ pub struct Receipt68 {
     pub logs: Vec<Log>,
 }
 
-impl Receipt68 {
+impl ReceiptWithBloom {
     pub fn new(tx_type: TxType, succeeded: bool, cumulative_gas_used: u64, logs: Vec<Log>) -> Self {
         Self {
             tx_type,
@@ -159,6 +159,7 @@ impl Receipt68 {
             logs,
         }
     }
+
     // By reading the typed transactions EIP, and some geth code:
     // - https://eips.ethereum.org/EIPS/eip-2718
     // - https://github.com/ethereum/go-ethereum/blob/330190e476e2a2de4aac712551629a4134f802d5/core/types/receipt.go#L143
@@ -197,7 +198,7 @@ impl Receipt68 {
     /// Decodes Receipts in the following formats:
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: tx_type | rlp(receipt).
-    pub fn decode_inner(rlp: &[u8]) -> Result<Receipt68, RLPDecodeError> {
+    pub fn decode_inner(rlp: &[u8]) -> Result<Self, RLPDecodeError> {
         // Obtain TxType
         let (tx_type, rlp) = match rlp.first() {
             Some(tx_type) if *tx_type < 0x7f => {
@@ -225,7 +226,7 @@ impl Receipt68 {
         let (logs, decoder) = decoder.decode_field("logs")?;
         decoder.finish()?;
 
-        Ok(Receipt68 {
+        Ok(Self {
             tx_type,
             succeeded,
             cumulative_gas_used,
@@ -235,7 +236,7 @@ impl Receipt68 {
     }
 }
 
-impl RLPEncode for Receipt68 {
+impl RLPEncode for ReceiptWithBloom {
     /// Receipts can be encoded in the following formats:
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: rlp(Bytes(tx_type | rlp(receipt))).
@@ -254,7 +255,7 @@ impl RLPEncode for Receipt68 {
     }
 }
 
-impl RLPDecode for Receipt68 {
+impl RLPDecode for ReceiptWithBloom {
     /// Receipts can be encoded in the following formats:
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: rlp(Bytes(tx_type | rlp(receipt))).
@@ -286,7 +287,7 @@ impl RLPDecode for Receipt68 {
         let (logs, decoder) = decoder.decode_field("logs")?;
 
         Ok((
-            Receipt68 {
+            ReceiptWithBloom {
                 tx_type,
                 succeeded,
                 cumulative_gas_used,
@@ -295,6 +296,29 @@ impl RLPDecode for Receipt68 {
             },
             decoder.finish()?,
         ))
+    }
+}
+
+impl From<&Receipt> for ReceiptWithBloom {
+    fn from(receipt: &Receipt) -> Self {
+        Self {
+            tx_type: receipt.tx_type,
+            succeeded: receipt.succeeded,
+            cumulative_gas_used: receipt.cumulative_gas_used,
+            bloom: bloom_from_logs(&receipt.logs),
+            logs: receipt.logs.clone(),
+        }
+    }
+}
+
+impl From<&ReceiptWithBloom> for Receipt {
+    fn from(receipt: &ReceiptWithBloom) -> Self {
+        Self {
+            tx_type: receipt.tx_type,
+            succeeded: receipt.succeeded,
+            cumulative_gas_used: receipt.cumulative_gas_used,
+            logs: receipt.logs.clone(),
+        }
     }
 }
 
@@ -335,7 +359,7 @@ mod test {
     }
     #[test]
     fn test_encode_decode_inner_receipt_legacy() {
-        let receipt = Receipt68 {
+        let receipt = ReceiptWithBloom {
             tx_type: TxType::Legacy,
             succeeded: true,
             cumulative_gas_used: 1200,
@@ -347,12 +371,15 @@ mod test {
             }],
         };
         let encoded_receipt = receipt.encode_inner();
-        assert_eq!(receipt, Receipt68::decode_inner(&encoded_receipt).unwrap())
+        assert_eq!(
+            receipt,
+            ReceiptWithBloom::decode_inner(&encoded_receipt).unwrap()
+        )
     }
 
     #[test]
     fn test_encode_decode_receipt_inner_non_legacy() {
-        let receipt = Receipt68 {
+        let receipt = ReceiptWithBloom {
             tx_type: TxType::EIP4844,
             succeeded: true,
             cumulative_gas_used: 1500,
@@ -364,6 +391,9 @@ mod test {
             }],
         };
         let encoded_receipt = receipt.encode_inner();
-        assert_eq!(receipt, Receipt68::decode_inner(&encoded_receipt).unwrap())
+        assert_eq!(
+            receipt,
+            ReceiptWithBloom::decode_inner(&encoded_receipt).unwrap()
+        )
     }
 }
