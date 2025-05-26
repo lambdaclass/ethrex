@@ -27,8 +27,10 @@ use tracing::{debug, error, info, trace, warn, Level};
 mod cli;
 mod error;
 
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str =
     "initialize(bool,address,address,address,address,address,bytes32,bytes32,address)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
+    "initialize(bool,address,address,address,address,address,bytes32,bytes32,address[])";
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
@@ -223,7 +225,7 @@ async fn deploy_contracts(
 
     trace!("Attempting to deploy OnChainProposer contract");
     let on_chain_proposer_name = if opts.deploy_based_contracts {
-        info!("Deploying based OnChainProposer contract");
+        info!("Deploying based 🥊 OnChainProposer contract");
         "OnChainProposerBased.bin"
     } else {
         info!("Deploying non-based OnChainProposer contract");
@@ -439,7 +441,7 @@ async fn initialize_contracts(
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
     let initialize_tx_hash = {
-        let calldata_values = vec![
+        let mut calldata_values = vec![
             Value::Bool(opts.validium),
             Value::Address(deployer_address),
             Value::Address(risc0_verifier_address),
@@ -448,11 +450,24 @@ async fn initialize_contracts(
             Value::Address(tdx_verifier_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
-            Value::Address(sequencer_registry_address),
         ];
+        if opts.deploy_based_contracts {
+            calldata_values.push(Value::Address(sequencer_registry_address))
+        } else {
+            calldata_values.push(Value::Array(vec![
+                Value::Address(opts.committer_l1_address),
+                Value::Address(opts.proof_sender_l1_address),
+            ]))
+        }
+
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
+        let on_chain_proposer_signature = if opts.deploy_based_contracts {
+            INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED
+        } else {
+            INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE
+        };
         let on_chain_proposer_initialization_calldata =
-            encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values)?;
+            encode_calldata(on_chain_proposer_signature, &calldata_values)?;
 
         initialize_contract(
             on_chain_proposer_address,
