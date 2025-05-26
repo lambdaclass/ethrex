@@ -246,24 +246,14 @@ impl RpcHandler for GetProofRequest {
             };
             storage_proofs.push(storage_proof);
         }
-        let (balance, code_hash, nonce, storage_hash) = if let Some(account) = account {
-            (
-                account.balance,
-                account.code_hash,
-                account.nonce,
-                account.storage_root,
-            )
-        } else {
-            (U256::zero(), H256::zero(), 0_u64, H256::zero())
-        };
-
+        let account = account.unwrap_or_default();
         let account_proof = AccountProof {
             account_proof,
             address: self.address,
-            balance,
-            code_hash,
-            nonce,
-            storage_hash,
+            balance: account.balance,
+            code_hash: account.code_hash,
+            nonce: account.nonce,
+            storage_hash: account.storage_root,
             storage_proof: storage_proofs,
         };
         serde_json::to_value(account_proof).map_err(|error| RpcErr::Internal(error.to_string()))
