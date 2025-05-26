@@ -34,7 +34,7 @@ use tracing::{debug, error, info, warn};
 use trie_rebuild::TrieRebuilder;
 
 use crate::peer_handler::{
-    BlockRequestOrder, BodyRequestError, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST,
+    BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST,
 };
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
@@ -389,30 +389,13 @@ impl Syncer {
                     &mut headers_iter,
                 )
                 .await;
-            match block_request_result {
-                Ok(blcks) => {
-                    blocks.extend(blcks);
-                }
-                Err(BodyRequestError::BodiesNotFound) => {
-                    return Err(SyncError::BodiesNotFound);
-                }
-                Err(BodyRequestError::BodiesReturnedEmpty) => {
-                    break;
-                }
-                Err(BodyRequestError::InvalidBlockBody) => {
-                    continue;
-                }
-            }
 
-            let blocks_len = blocks.len();
-
-            let first_block_hash = current_block_hashes_chunk
-                .first()
-                .map_or(H256::default(), |a| *a);
+            let new_blocks = block_request_result.ok_or(SyncError::BodiesNotFound)?;
+            blocks.extend(new_blocks);
 
             debug!(
                 "Received {} Blocks, starting from block hash {:?}",
-                blocks_len, first_block_hash
+                blocks.len(), current_block_hashes_chunk.first().map_or(H256::default(), |a| *a)
             );
 
             if current_block_hashes_chunk.is_empty() {
@@ -425,10 +408,9 @@ impl Syncer {
         }
 
         let blocks_len = blocks.len();
-        debug!(
-            "Starting to execute and validate {} blocks in batch",
-            blocks_len
-        );
+
+        debug!("Starting to execute and validate {} blocks in batch", blocks_len);
+
         let Some(first_block) = blocks.first().cloned() else {
             return Err(SyncError::BodiesNotFound);
         };
@@ -536,7 +518,7 @@ async fn store_block_bodies(
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some((block_bodies, _)) = peers.request_block_bodies(block_hashes.clone()).await {
+        if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_hashes = block_hashes.drain(..block_bodies.len());

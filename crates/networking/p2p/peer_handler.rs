@@ -54,12 +54,6 @@ pub enum BlockRequestOrder {
     NewToOld,
 }
 
-pub enum BodyRequestError {
-    BodiesReturnedEmpty,
-    BodiesNotFound,
-    InvalidBlockBody,
-}
-
 impl PeerHandler {
     pub fn new(peer_table: Arc<Mutex<KademliaTable>>) -> PeerHandler {
         Self { peer_table }
@@ -153,6 +147,55 @@ impl PeerHandler {
         None
     }
 
+    /// Internal method to request block bodies from any suitable peer given their block hashes
+    /// Returns the block bodies or None if:
+    /// - There are no available peers (the node just started up or was rejected by all other nodes)
+    /// - No peer returned a valid response in the given time and retry limits
+    /// This method performs only one request without retry logic
+    async fn request_block_bodies_inner(
+        &self,
+        block_hashes: Vec<H256>,
+    ) -> Option<(Vec<BlockBody>, H256)> {
+        let block_hashes_len = block_hashes.len();
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
+            id: request_id,
+            block_hashes: block_hashes.clone(),
+        });
+        let (peer_id, peer_channel) = self
+            .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
+            .await?;
+        let mut receiver = peer_channel.receiver.lock().await;
+        if let Err(err) = peer_channel.sender.send(request).await {
+            debug!("Failed to send message to peer: {err}");
+            return None;
+        }
+        if let Some(block_bodies) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+            loop {
+                match receiver.recv().await {
+                    Some(RLPxMessage::BlockBodies(BlockBodies { id, block_bodies }))
+                        if id == request_id =>
+                    {
+                        return Some(block_bodies)
+                    }
+                    // Ignore replies that don't match the expected id (such as late responses)
+                    Some(_) => continue,
+                    None => return None, // Retry request
+                }
+            }
+        })
+        .await
+        .ok()
+        .flatten()
+        .and_then(|bodies| {
+            // Check that the response is not empty and does not contain more bodies than the ones requested
+            (!bodies.is_empty() && bodies.len() <= block_hashes_len).then_some(bodies)
+        }) {
+            return Some((block_bodies, peer_id));
+        }
+        None
+    }
+
     /// Requests block bodies from any suitable peer given their block hashes
     /// Returns the block bodies or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
@@ -160,44 +203,10 @@ impl PeerHandler {
     pub async fn request_block_bodies(
         &self,
         block_hashes: Vec<H256>,
-    ) -> Option<(Vec<BlockBody>, H256)> {
-        let block_hashes_len = block_hashes.len();
+    ) -> Option<Vec<BlockBody>> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
-                id: request_id,
-                block_hashes: block_hashes.clone(),
-            });
-            let (peer_id, peer_channel) = self
-                .get_peer_channel_with_retry(&SUPPORTED_ETH_CAPABILITIES)
-                .await?;
-            let mut receiver = peer_channel.receiver.lock().await;
-            if let Err(err) = peer_channel.sender.send(request).await {
-                debug!("Failed to send message to peer: {err}");
-                continue;
-            }
-            if let Some(block_bodies) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::BlockBodies(BlockBodies { id, block_bodies }))
-                            if id == request_id =>
-                        {
-                            return Some(block_bodies)
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None, // Retry request
-                    }
-                }
-            })
-            .await
-            .ok()
-            .flatten()
-            .and_then(|bodies| {
-                // Check that the response is not empty and does not contain more bodies than the ones requested
-                (!bodies.is_empty() && bodies.len() <= block_hashes_len).then_some(bodies)
-            }) {
-                return Some((block_bodies, peer_id));
+            if let Some((block_bodies, _)) = self.request_block_bodies_inner(block_hashes.clone()).await {
+                return Some(block_bodies);
             }
         }
         None
@@ -208,34 +217,51 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     /// - The block bodies are invalid given the block headers
+    /// This method includes retry logic for both network failures and validation failures
     pub async fn request_and_validate_block_bodies<'a>(
         &self,
         block_hashes: &mut Vec<H256>,
         headers_iter: &mut impl Iterator<Item = &BlockHeader>,
-    ) -> Result<Vec<Block>, BodyRequestError> {
-        let Some((block_bodies, peer_id)) = self.request_block_bodies(block_hashes.clone()).await
-        else {
-            return Err(BodyRequestError::BodiesReturnedEmpty);
-        };
-        let mut blocks: Vec<Block> = vec![];
-        let block_bodies_len = block_bodies.len();
-        // Push blocks
-        for (_, body) in block_hashes.drain(..block_bodies_len).zip(block_bodies) {
-            let header = headers_iter
-                .next()
-                .ok_or(BodyRequestError::BodiesNotFound)?;
-            let block = Block::new(header.clone(), body);
-            blocks.push(block);
+    ) -> Option<Vec<Block>> {
+        let original_hashes = block_hashes.clone();
+        let headers_vec: Vec<&BlockHeader> = headers_iter.collect();
+
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            *block_hashes = original_hashes.clone();
+            let mut headers_iter = headers_vec.iter().copied();
+
+            let Some((block_bodies, peer_id)) = self.request_block_bodies_inner(block_hashes.clone()).await
+            else {
+                continue; // Retry on network failure
+            };
+
+            let mut blocks: Vec<Block> = vec![];
+            let block_bodies_len = block_bodies.len();
+
+            // Push blocks
+            for (_, body) in block_hashes.drain(..block_bodies_len).zip(block_bodies) {
+                let Some(header) = headers_iter.next() else {
+                    debug!("[SYNCING] Header not found for the block bodies received, skipping...");
+                    continue; // If we run out of headers, skip this response
+                };
+
+                let block = Block::new(header.clone(), body);
+                blocks.push(block);
+            }
+
+            // Validate blocks
+            if let Some(e) = blocks
+                .iter()
+                .find_map(|block| validate_block_body(block).err())
+            {
+                warn!("Invalid block body error {e}, discarding peer {peer_id} and retrying...");
+                self.remove_peer(peer_id).await;
+                continue; // Retry on validation failure
+            }
+
+            return Some(blocks);
         }
-        if let Some(e) = blocks
-            .iter()
-            .find_map(|block| validate_block_body(block).err())
-        {
-            warn!("Invalid block body error {e}, discarding peer {peer_id}");
-            self.remove_peer(peer_id).await;
-            return Err(BodyRequestError::InvalidBlockBody); // Retry
-        }
-        Ok(blocks)
+        None
     }
 
     /// Requests all receipts in a set of blocks from any suitable peer given their block hashes
