@@ -239,6 +239,12 @@ pub enum StateUpdaterError {
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("{0}")]
     CalldataParsingError(String),
+    #[error("{0}")]
+    StoreError(#[from] StoreError),
+    #[error("Failed apply forkchoice for fetched block: {0}")]
+    InvalidForkChoice(#[from] InvalidForkChoice),
+    #[error("Internal Error: {0}")]
+    InternalError(String),
 }
 
 #[derive(Debug, thiserror::Error)]

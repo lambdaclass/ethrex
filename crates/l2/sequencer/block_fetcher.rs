@@ -311,12 +311,13 @@ impl BlockFetcher {
         for block in batch.iter() {
             self.blockchain.add_block(block).await?;
 
-            apply_fork_choice(&self.store, block.hash(), block.hash(), block.hash()).await?;
+            let block_hash = block.hash();
+
+            apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
             info!(
-                "Added fetched block {} with hash {:#x}",
+                "Added fetched block {} with hash {block_hash:#x}",
                 block.header.number,
-                block.hash()
             );
         }
 
