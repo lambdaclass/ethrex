@@ -169,7 +169,7 @@ pub fn prepare_vm_for_tx<'a>(
         Environment {
             origin: test_tx.sender,
             refunded_gas: 0,
-            gas_limit: 5,
+            gas_limit: test_tx.gas_limit,
             config,
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,
@@ -350,7 +350,7 @@ pub async fn ensure_post_state(
                     let vector_post_value = test.post.vector_post_value(vector, *fork);
 
                     // 1. Compare the post-state root hash with the expected post-state root hash
-                    if vector_post_value.hash != post_state_root(&levm_account_updates, test).await
+                    if vector_post_value.hash == post_state_root(&levm_account_updates, test).await
                     {
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             execution_report.clone(),

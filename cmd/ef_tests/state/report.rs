@@ -434,7 +434,7 @@ impl Display for EFTestsReport {
                             {
                                 writeln!(
                                     f,
-                                    "\t\t\tLogs mismatch: LEVM: {:?}, REVM: {:?}) with diff {:?}",
+                                    "\t\t\tLogs mismatch: LEVM: {:?}, REVM: {:?} with diff {:?}",
                                     levm_logs, revm_logs, logs_diff
                                 )?;
                             }
@@ -898,40 +898,39 @@ impl TestReRunReport {
     ) {
         let mut logs_diff = vec![];
 
-        let mut levm_logs_rlp = Vec::new();
-        levm_logs.encode(&mut levm_logs_rlp);
+        for (i, (levm_log, revm_log)) in levm_logs.iter().zip(revm_logs.iter()).enumerate() {
+            let mut levm_log_rlp = Vec::new();
+            levm_log.encode(&mut levm_log_rlp);
 
-        let mut revm_logs_rlp = Vec::new();
-        revm_logs.encode(&mut revm_logs_rlp);
+            let mut revm_log_rlp = Vec::new();
+            revm_log.encode(&mut revm_log_rlp);
 
-        for (i, (levm_log, revm_log)) in levm_logs_rlp.iter().zip(revm_logs_rlp.iter()).enumerate()
-        {
-            if levm_log != revm_log {
+            if levm_log_rlp != revm_log_rlp {
                 let mut diff = format!("{i} logs don't match");
-                if convert_revm_address_to_levm(levm_logs[i].address) != revm_logs[i].address {
+                if convert_revm_address_to_levm(levm_log.address) != revm_log.address {
                     diff += &format!(
                         "Address missmatch: Levm log address: {} - Revm log address: {}",
-                        convert_revm_address_to_levm(levm_logs[i].address),
-                        revm_logs[i].address
+                        convert_revm_address_to_levm(levm_log.address),
+                        revm_log.address
                     );
                 }
                 if levm_logs[i].data != *revm_logs[i].data.data {
                     diff += &format!(
                         "Data missmatch: Levm log data: {:?} - Revm log data: {:?}",
-                        levm_logs[i].data, *revm_logs[i].data.data
+                        levm_log.data, *revm_log.data.data
                     );
                 }
 
-                if levm_logs[i].topics
-                    != (*revm_logs[i].data.topics().to_vec())
+                if levm_log.topics
+                    != (*revm_log.data.topics().to_vec())
                         .iter()
                         .map(|x| H256::from_slice(&x.to_vec()))
                         .collect::<Vec<H256>>()
                 {
                     diff += &format!(
                         "Topics missmatch: Levm log topic: {:?} - Revm log topic: {:?}",
-                        levm_logs[i].topics,
-                        revm_logs[i].data.topics()
+                        levm_log.topics,
+                        revm_log.data.topics()
                     );
                 }
 
