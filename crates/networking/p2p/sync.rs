@@ -409,12 +409,10 @@ impl Syncer {
         }
 
         let blocks_len = blocks.len();
-
         debug!(
             "Starting to execute and validate {} blocks in batch",
             blocks_len
         );
-
         let Some(first_block) = blocks.first().cloned() else {
             return Err(SyncError::BodiesNotFound);
         };
@@ -458,7 +456,6 @@ impl Syncer {
                     .set_latest_valid_ancestor(sync_head, last_valid_hash)
                     .await?;
             }
-            // NOTE: Do we want to discard the peer if an execution or validation error happens?
 
             return Err(error.into());
         }
