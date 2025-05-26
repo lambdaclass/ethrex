@@ -133,7 +133,7 @@ impl PeerHandler {
             {
                 let block_hashes = block_headers
                     .iter()
-                    .map(|header| header.compute_block_hash())
+                    .map(|header| header.hash())
                     .collect::<Vec<_>>();
 
                 if are_block_headers_chained(&block_headers, &block_hashes) {
@@ -200,12 +200,11 @@ impl PeerHandler {
     /// Returns the block bodies or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    pub async fn request_block_bodies(
-        &self,
-        block_hashes: Vec<H256>,
-    ) -> Option<Vec<BlockBody>> {
+    pub async fn request_block_bodies(&self, block_hashes: Vec<H256>) -> Option<Vec<BlockBody>> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            if let Some((block_bodies, _)) = self.request_block_bodies_inner(block_hashes.clone()).await {
+            if let Some((block_bodies, _)) =
+                self.request_block_bodies_inner(block_hashes.clone()).await
+            {
                 return Some(block_bodies);
             }
         }
@@ -230,7 +229,8 @@ impl PeerHandler {
             *block_hashes = original_hashes.clone();
             let mut headers_iter = headers_vec.iter().copied();
 
-            let Some((block_bodies, peer_id)) = self.request_block_bodies_inner(block_hashes.clone()).await
+            let Some((block_bodies, peer_id)) =
+                self.request_block_bodies_inner(block_hashes.clone()).await
             else {
                 continue; // Retry on network failure
             };

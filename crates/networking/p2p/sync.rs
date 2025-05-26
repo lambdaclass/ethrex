@@ -33,9 +33,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use trie_rebuild::TrieRebuilder;
 
-use crate::peer_handler::{
-    BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST,
-};
+use crate::peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
@@ -395,7 +393,10 @@ impl Syncer {
 
             debug!(
                 "Received {} Blocks, starting from block hash {:?}",
-                blocks.len(), current_block_hashes_chunk.first().map_or(H256::default(), |a| *a)
+                blocks.len(),
+                current_block_hashes_chunk
+                    .first()
+                    .map_or(H256::default(), |a| *a)
             );
 
             if current_block_hashes_chunk.is_empty() {
@@ -409,7 +410,10 @@ impl Syncer {
 
         let blocks_len = blocks.len();
 
-        debug!("Starting to execute and validate {} blocks in batch", blocks_len);
+        debug!(
+            "Starting to execute and validate {} blocks in batch",
+            blocks_len
+        );
 
         let Some(first_block) = blocks.first().cloned() else {
             return Err(SyncError::BodiesNotFound);
