@@ -75,7 +75,6 @@ l2 = [
 ]
 rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
 rollup_storage_redb = ["ethrex-storage-rollup/redb"]
-based = ["l2", "ethrex-rpc/based"]
 sync-test = []
 
 
