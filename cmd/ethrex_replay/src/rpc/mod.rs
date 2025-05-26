@@ -12,7 +12,6 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::hash_address;
 use ethrex_trie::Trie;
 
-use eyre::Context;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
@@ -198,31 +197,6 @@ pub async fn get_account(
         storage_proofs,
         code,
     })
-}
-
-pub async fn get_storage(
-    rpc_url: &str,
-    block_number: usize,
-    address: &Address,
-    storage_key: H256,
-) -> eyre::Result<U256> {
-    let block_number_str = format!("0x{block_number:x}");
-    let address_str = format!("0x{address:x}");
-    let storage_key = format!("0x{storage_key:x}");
-
-    let request = &json!(
-           {
-               "id": 1,
-               "jsonrpc": "2.0",
-               "method": "eth_getStorageAt",
-               "params":[address_str, storage_key, block_number_str]
-           }
-    );
-
-    let response = CLIENT.post(rpc_url).json(request).send().await?;
-
-    let res = response.json::<serde_json::Value>().await?;
-    get_result(res)
 }
 
 pub async fn retry<F, I>(mut fut: F) -> eyre::Result<I>

@@ -1,9 +1,6 @@
-use crate::{
-    cache::{load_cache, write_cache, Cache},
-    rpc::{db::RpcDB, get_block, get_latest_block_number},
-};
+use crate::cache::Cache;
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
-use ethrex_prover_lib::{execute, ProveOutput};
+use ethrex_prover_lib::ProveOutput;
 use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(cache: Cache) -> eyre::Result<ProveOutput> {

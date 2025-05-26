@@ -98,7 +98,7 @@ enum EthrexReplayCommand {
         subcommand,
         about = "Proves blocks, ranges of blocks, or individual transactions."
     )]
-    Prove(SubcommandExecute),
+    Prove(SubcommandProve),
 }
 
 pub async fn start() -> eyre::Result<()> {

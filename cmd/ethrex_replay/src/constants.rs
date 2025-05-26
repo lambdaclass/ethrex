@@ -6,7 +6,6 @@ use ethrex_common::{
     types::{BlobSchedule, ChainConfig},
     H160,
 };
-use revm_primitives::SpecId;
 
 use lazy_static::lazy_static;
 
@@ -42,8 +41,6 @@ pub static ref CANCUN_CONFIG: ChainConfig = ChainConfig {
     deposit_contract_address: H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").expect("Invalid deposit contract address")
 };
 }
-pub const MAINNET_CHAIN_ID: u64 = 0x1;
-pub const MAINNET_SPEC_ID: SpecId = SpecId::PRAGUE;
 
 // RPC related constants
 
