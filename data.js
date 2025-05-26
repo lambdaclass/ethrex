@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748257202066,
+  "lastUpdate": 1748257207851,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9055,6 +9055,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 209488180055,
             "range": "± 213926889",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "944bac6517a38ef033fc70e889880411811ac4f9",
+          "message": "chore(l1): simplify daily reports. (#2882)\n\n**Motivation**\nSince we're at feature parity with LEVM, we don't need to run so many\nreports.\n\n**Description**\n- Removed Hive run for revm\n- Removed Levm EF test report since we're at 100% and also it's buggy\n- Removed flamegraph posting to Slack",
+          "timestamp": "2025-05-26T10:05:32Z",
+          "tree_id": "122df234785c7ca92c0115fbce7c18425a3bdfe5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/944bac6517a38ef033fc70e889880411811ac4f9"
+        },
+        "date": 1748257204328,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212757874992,
+            "range": "± 738567028",
             "unit": "ns/iter"
           }
         ]
