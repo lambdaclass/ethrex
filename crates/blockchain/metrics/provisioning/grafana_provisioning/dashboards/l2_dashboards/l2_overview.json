@@ -156,13 +156,64 @@
                     "disableTextWrap": false,
                     "editorMode": "builder",
                     "exemplar": false,
-                    "expr": "l2_blocks_tracker{block_type!=\"lastFetchedL1Block\"}",
+                    "expr": "l2_blocks_tracker{block_type=\"lastCommittedBatch\"}",
                     "format": "time_series",
                     "fullMetaSearch": false,
                     "includeNullMetadata": true,
-                    "legendFormat": "{{block_type}}",
+                    "legendFormat": "last Commited Batch",
                     "range": true,
                     "refId": "A",
+                    "useBackend": false
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prom-001"
+                    },
+                    "disableTextWrap": false,
+                    "editorMode": "builder",
+                    "expr": "l2_blocks_tracker{block_type=\"lastCommittedBlock\"}",
+                    "fullMetaSearch": false,
+                    "hide": false,
+                    "includeNullMetadata": true,
+                    "instant": false,
+                    "legendFormat": "Last Committed Block",
+                    "range": true,
+                    "refId": "B",
+                    "useBackend": false
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prom-001"
+                    },
+                    "disableTextWrap": false,
+                    "editorMode": "builder",
+                    "expr": "l2_blocks_tracker{block_type=\"lastVerifiedBatch\"}",
+                    "fullMetaSearch": false,
+                    "hide": false,
+                    "includeNullMetadata": true,
+                    "instant": false,
+                    "legendFormat": "Last Verified Batch",
+                    "range": true,
+                    "refId": "C",
+                    "useBackend": false
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prom-001"
+                    },
+                    "disableTextWrap": false,
+                    "editorMode": "builder",
+                    "expr": "l2_blocks_tracker{block_type=\"lastVerifiedBlock\"}",
+                    "fullMetaSearch": false,
+                    "hide": false,
+                    "includeNullMetadata": true,
+                    "instant": false,
+                    "legendFormat": "Last Verified Block",
+                    "range": true,
+                    "refId": "D",
                     "useBackend": false
                 }
             ],
@@ -177,7 +228,7 @@
             "fieldConfig": {
                 "defaults": {
                     "color": {
-                        "fixedColor": "#7b8ce1",
+                        "fixedColor": "semi-dark-red",
                         "mode": "fixed"
                     },
                     "custom": {
@@ -214,7 +265,6 @@
                             "mode": "off"
                         }
                     },
-                    "displayName": "Gas Price",
                     "fieldMinMax": false,
                     "mappings": [],
                     "min": 0,
@@ -226,13 +276,39 @@
                                 "color": "green"
                             }
                         ]
-                    }
+                    },
+                    "unit": "Wei"
                 },
-                "overrides": []
+                "overrides": [
+                    {
+                        "__systemRef": "hideSeriesFrom",
+                        "matcher": {
+                            "id": "byNames",
+                            "options": {
+                                "mode": "exclude",
+                                "names": [
+                                    "L1 Gas Price"
+                                ],
+                                "prefix": "All except:",
+                                "readOnly": true
+                            }
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.hideFrom",
+                                "value": {
+                                    "legend": false,
+                                    "tooltip": false,
+                                    "viz": true
+                                }
+                            }
+                        ]
+                    }
+                ]
             },
             "gridPos": {
                 "h": 8,
-                "w": 12,
+                "w": 6,
                 "x": 12,
                 "y": 1
             },
@@ -253,18 +329,129 @@
             "pluginVersion": "12.0.0",
             "targets": [
                 {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prom-001"
+                    },
+                    "disableTextWrap": false,
+                    "editorMode": "builder",
+                    "expr": "l1_gas_price / 10e9",
+                    "fullMetaSearch": false,
+                    "hide": false,
+                    "includeNullMetadata": true,
+                    "instant": false,
+                    "legendFormat": "L1 Gas Price",
+                    "range": true,
+                    "refId": "B",
+                    "useBackend": false
+                }
+            ],
+            "title": "L1 Gas Price",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prom-001"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "fixedColor": "semi-dark-purple",
+                        "mode": "fixed"
+                    },
+                    "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "axisSoftMax": 50,
+                        "barAlignment": 0,
+                        "barWidthFactor": 0.6,
+                        "drawStyle": "line",
+                        "fillOpacity": 0,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "insertNulls": false,
+                        "lineInterpolation": "linear",
+                        "lineWidth": 1,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "auto",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "displayName": "L2 Gas Price",
+                    "fieldMinMax": false,
+                    "mappings": [],
+                    "min": 0,
+                    "noValue": "0",
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green"
+                            }
+                        ]
+                    },
+                    "unit": "Wei"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 6,
+                "x": 18,
+                "y": 1
+            },
+            "id": 19,
+            "options": {
+                "legend": {
+                    "calcs": [],
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "hideZeros": false,
+                    "mode": "single",
+                    "sort": "none"
+                }
+            },
+            "pluginVersion": "12.0.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prom-001"
+                    },
                     "disableTextWrap": false,
                     "editorMode": "builder",
                     "expr": "l2_gas_price",
                     "fullMetaSearch": false,
+                    "hide": false,
                     "includeNullMetadata": true,
-                    "legendFormat": "__auto",
+                    "instant": false,
+                    "legendFormat": "L1 Gas Price",
                     "range": true,
-                    "refId": "A",
+                    "refId": "B",
                     "useBackend": false
                 }
             ],
-            "title": "Gas Price",
+            "title": "L2 Gas Price",
             "type": "timeseries"
         },
         {
@@ -792,23 +979,14 @@
                     "values": false
                 },
                 "showPercentChange": false,
+                "text": {
+                    "titleSize": 18
+                },
                 "textMode": "auto",
                 "wideLayout": true
             },
             "pluginVersion": "12.0.0",
             "targets": [
-                {
-                    "disableTextWrap": false,
-                    "editorMode": "builder",
-                    "expr": "l2_operations_tracker",
-                    "format": "time_series",
-                    "fullMetaSearch": false,
-                    "includeNullMetadata": true,
-                    "legendFormat": "{{operations_type}}",
-                    "range": true,
-                    "refId": "A",
-                    "useBackend": false
-                },
                 {
                     "datasource": {
                         "type": "prometheus",
@@ -821,9 +999,43 @@
                     "hide": false,
                     "includeNullMetadata": true,
                     "instant": false,
-                    "legendFormat": "transactionsTotal",
+                    "legendFormat": "Transactions Total",
+                    "range": true,
+                    "refId": "A",
+                    "useBackend": false
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prom-001"
+                    },
+                    "disableTextWrap": false,
+                    "editorMode": "builder",
+                    "expr": "l2_operations_tracker{operations_type=\"processedDeposits\"}",
+                    "fullMetaSearch": false,
+                    "hide": false,
+                    "includeNullMetadata": true,
+                    "instant": false,
+                    "legendFormat": "Processed Deposits",
                     "range": true,
                     "refId": "B",
+                    "useBackend": false
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prom-001"
+                    },
+                    "disableTextWrap": false,
+                    "editorMode": "builder",
+                    "expr": "l2_operations_tracker{operations_type=\"processedWithdrawals\"}",
+                    "fullMetaSearch": false,
+                    "hide": false,
+                    "includeNullMetadata": true,
+                    "instant": false,
+                    "legendFormat": "Processed Withdrawals",
+                    "range": true,
+                    "refId": "C",
                     "useBackend": false
                 }
             ],
@@ -1026,6 +1238,7 @@
                     "hide": false,
                     "includeNullMetadata": true,
                     "instant": false,
+                    "interval": "",
                     "legendFormat": "{{tx_type}} || {{status}}",
                     "range": true,
                     "refId": "A",
