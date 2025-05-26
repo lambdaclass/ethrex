@@ -244,27 +244,23 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
     }
 }
 
-pub fn get_network(opts: &Options) -> String {
-    let mut network = opts
-        .network
-        .clone()
-        .expect("--network is required and it was not provided");
-
+pub fn get_network(network: String) -> String {
+    let mut current_network = network.clone();
     // Set preset genesis from known networks
     if network == "holesky" {
-        network = String::from(networks::HOLESKY_GENESIS_PATH);
+        current_network = String::from(networks::HOLESKY_GENESIS_PATH);
     }
     if network == "sepolia" {
-        network = String::from(networks::SEPOLIA_GENESIS_PATH);
+        current_network = String::from(networks::SEPOLIA_GENESIS_PATH);
     }
     if network == "hoodi" {
-        network = String::from(networks::HOODI_GENESIS_PATH);
+        current_network = String::from(networks::HOODI_GENESIS_PATH);
     }
     if network == "mainnet" {
-        network = String::from(networks::MAINNET_GENESIS_PATH);
+        current_network = String::from(networks::MAINNET_GENESIS_PATH);
     }
 
-    network
+    current_network
 }
 
 #[allow(dead_code)]

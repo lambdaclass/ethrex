@@ -113,13 +113,10 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-pub fn set_data_sub_dir(datadir: &str, network: &Option<String>) -> String {
-    let network = network
-        .clone()
-        .expect("--network is required and it was not provided");
-    let network_path = network.replace(".", "_");
+pub fn get_data_sub_dir(datadir: &str, network: &str) -> String {
+    let network_path = network.replace(".json", "");
     let sub_path = if DEFAULT_PUBLIC_NETWORKS.contains(&network_path.to_lowercase().as_str()) {
-        Path::new(&network).to_path_buf()
+        Path::new(&network_path).to_path_buf()
     } else {
         Path::new(DEFAULT_CUSTOM_DIR).join(&network_path)
     };
@@ -128,8 +125,9 @@ pub fn set_data_sub_dir(datadir: &str, network: &Option<String>) -> String {
     final_path.display().to_string()
 }
 
-pub fn set_datadir(datadir: &str) -> String {
-    let project_dir = ProjectDirs::from("", "", datadir).expect("Couldn't find home directory");
+pub fn get_datadir(datadir: &str, network: &str) -> String {
+    let data_path = &get_data_sub_dir(datadir, network);
+    let project_dir = ProjectDirs::from("", "", data_path).expect("Couldn't find home directory");
     project_dir
         .data_local_dir()
         .to_str()
