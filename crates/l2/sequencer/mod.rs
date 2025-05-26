@@ -75,6 +75,8 @@ pub async fn start_l2(
     task_set.spawn(state_updater::start_state_updater(
         cfg.clone(),
         shared_state.clone(),
+        store.clone(),
+        rollup_store.clone(),
     ));
     task_set.spawn(block_fetcher::start_block_fetcher(
         store.clone(),
