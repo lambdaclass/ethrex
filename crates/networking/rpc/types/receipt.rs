@@ -201,48 +201,48 @@ impl RpcReceiptTxInfo {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use ethrex_common::{
-//         types::{Log, TxType},
-//         Bytes,
-//     };
-//     use hex_literal::hex;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::{
+        types::{Log, TxType},
+        Bytes,
+    };
+    use hex_literal::hex;
 
-//     #[test]
-//     fn serialize_receipt() {
-//         let receipt = RpcReceipt::new(
-//             Receipt {
-//                 tx_type: TxType::EIP4844,
-//                 succeeded: true,
-//                 cumulative_gas_used: 147,
-//                 logs: vec![Log {
-//                     address: Address::zero(),
-//                     topics: vec![],
-//                     data: Bytes::from_static(b"strawberry"),
-//                 }],
-//             },
-//             RpcReceiptTxInfo {
-//                 transaction_hash: H256::zero(),
-//                 transaction_index: 1,
-//                 from: Address::zero(),
-//                 to: Some(Address::from(hex!(
-//                     "7435ed30a8b4aeb0877cef0c6e8cffe834eb865f"
-//                 ))),
-//                 contract_address: None,
-//                 gas_used: 147,
-//                 effective_gas_price: 157,
-//                 blob_gas_price: None,
-//                 blob_gas_used: None,
-//             },
-//             RpcReceiptBlockInfo {
-//                 block_hash: BlockHash::zero(),
-//                 block_number: 3,
-//             },
-//             0,
-//         );
-//         let expected = r#"{"type":"0x3","status":"0x1","cumulativeGasUsed":"0x93","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","logs":[{"address":"0x0000000000000000000000000000000000000000","topics":[],"data":"0x73747261776265727279","logIndex":"0x0","removed":false,"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}],"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","from":"0x0000000000000000000000000000000000000000","to":"0x7435ed30a8b4aeb0877cef0c6e8cffe834eb865f","contractAddress":null,"gasUsed":"0x93","effectiveGasPrice":"0x9d","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}"#;
-//         assert_eq!(serde_json::to_string(&receipt).unwrap(), expected);
-//     }
-// }
+    #[test]
+    fn serialize_receipt() {
+        let receipt = RpcReceipt::new(
+            Receipt {
+                tx_type: TxType::EIP4844,
+                succeeded: true,
+                cumulative_gas_used: 147,
+                logs: vec![Log {
+                    address: Address::zero(),
+                    topics: vec![],
+                    data: Bytes::from_static(b"strawberry"),
+                }],
+            },
+            RpcReceiptTxInfo {
+                transaction_hash: H256::zero(),
+                transaction_index: 1,
+                from: Address::zero(),
+                to: Some(Address::from(hex!(
+                    "7435ed30a8b4aeb0877cef0c6e8cffe834eb865f"
+                ))),
+                contract_address: None,
+                gas_used: 147,
+                effective_gas_price: 157,
+                blob_gas_price: None,
+                blob_gas_used: None,
+            },
+            RpcReceiptBlockInfo {
+                block_hash: BlockHash::zero(),
+                block_number: 3,
+            },
+            0,
+        );
+        let expected = r#"{"type":"0x3","status":"0x1","cumulativeGasUsed":"0x93","logsBloom":"0x00000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","logs":[{"address":"0x0000000000000000000000000000000000000000","topics":[],"data":"0x73747261776265727279","logIndex":"0x0","removed":false,"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}],"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","from":"0x0000000000000000000000000000000000000000","to":"0x7435ed30a8b4aeb0877cef0c6e8cffe834eb865f","contractAddress":null,"gasUsed":"0x93","effectiveGasPrice":"0x9d","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}"#;
+        assert_eq!(serde_json::to_string(&receipt).unwrap(), expected);
+    }
+}
