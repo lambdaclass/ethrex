@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748264593675,
+  "lastUpdate": 1748264846801,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9085,6 +9085,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 212757874992,
             "range": "± 738567028",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "03d34377f42e94e6c4a551d44143892598474460",
+          "message": "ci(l1): added sim parallelsim flag to fix flaky tests (#2874)\n\n**Motivation**\n\nThe Invalid Missing Ancestor Syncing ReOrg tests in hive engine cancun\nwere failling erratically. The identified problem was disk io, that\nwould happen when multiple tests ran in parallel. To try to alliviate\nthe problem, we reduce parallelism for those tests specifically.\n\n**Description**\n\n- Adds a sim_parallelism parameter to the CI, default value 16\n- sim_parallelism parameter set to 1 for Invalid Missing Ancestor\nSyncing ReOrg tests\n\nCloses #2565",
+          "timestamp": "2025-05-26T12:13:17Z",
+          "tree_id": "6b9abbbb11ebdcdc9725e20cd2b24adfaa727769",
+          "url": "https://github.com/lambdaclass/ethrex/commit/03d34377f42e94e6c4a551d44143892598474460"
+        },
+        "date": 1748264844217,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212001049757,
+            "range": "± 1451311600",
             "unit": "ns/iter"
           }
         ]
