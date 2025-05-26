@@ -12,7 +12,6 @@ import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
 import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
 
-
 /// @title OnChainProposer contract.
 /// @author LambdaClass
 contract OnChainProposer is
@@ -370,6 +369,9 @@ contract OnChainProposer is
         bytes32 alignedProgramVKey,
         bytes32[] calldata alignedMerkleProof
     ) external override onlySequencer {
+        // If the verification fails, it will revert.
+        _verifyPublicData(batchNumber, alignedPublicInputs[16:]);
+
         bytes memory callData = abi.encodeWithSignature(
             "verifyProofInclusion(bytes32[],bytes32,bytes)",
             alignedMerkleProof,
@@ -392,6 +394,19 @@ contract OnChainProposer is
         );
 
         lastVerifiedBatch = batchNumber;
+
+        // The first 2 bytes are the number of deposits.
+        uint16 deposits_amount = uint16(
+            bytes2(
+                batchCommitments[batchNumber].processedDepositLogsRollingHash
+            )
+        );
+        if (deposits_amount > 0) {
+            ICommonBridge(BRIDGE).removePendingDepositLogs(deposits_amount);
+        }
+
+        // Remove previous batch commitment as it is no longer needed.
+        delete batchCommitments[batchNumber - 1];
 
         emit BatchVerified(lastVerifiedBatch);
     }
