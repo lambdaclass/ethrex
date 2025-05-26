@@ -17,7 +17,6 @@ use crate::{utils::helpers::is_withdrawal_l2, SequencerConfig};
 
 use super::{
     errors::{BlockFetcherError, SequencerError},
-    execution_cache::ExecutionCache,
     SequencerState,
 };
 
@@ -28,7 +27,6 @@ pub struct BlockFetcher {
     store: Store,
     rollup_store: StoreRollup,
     blockchain: Arc<Blockchain>,
-    execution_cache: Arc<ExecutionCache>,
     sequencer_state: Arc<Mutex<SequencerState>>,
     fetch_interval_ms: u64,
     last_l1_block_fetched: U256,
@@ -38,7 +36,6 @@ pub struct BlockFetcher {
 pub async fn start_block_fetcher(
     store: Store,
     blockchain: Arc<Blockchain>,
-    execution_cache: Arc<ExecutionCache>,
     sequencer_state: Arc<Mutex<SequencerState>>,
     rollup_store: StoreRollup,
     cfg: SequencerConfig,
@@ -48,7 +45,6 @@ pub async fn start_block_fetcher(
         store.clone(),
         rollup_store,
         blockchain,
-        execution_cache,
         sequencer_state,
     )?;
     block_fetcher.run().await;
@@ -61,7 +57,6 @@ impl BlockFetcher {
         store: Store,
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
-        execution_cache: Arc<ExecutionCache>,
         sequencer_state: Arc<Mutex<SequencerState>>,
     ) -> Result<Self, BlockFetcherError> {
         Ok(Self {
@@ -71,7 +66,6 @@ impl BlockFetcher {
             store,
             rollup_store,
             blockchain,
-            execution_cache,
             sequencer_state,
             fetch_interval_ms: cfg.block_producer.block_time_ms,
             last_l1_block_fetched: U256::zero(),

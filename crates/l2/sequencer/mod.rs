@@ -79,7 +79,6 @@ pub async fn start_l2(
     task_set.spawn(block_fetcher::start_block_fetcher(
         store.clone(),
         blockchain,
-        execution_cache,
         shared_state.clone(),
         rollup_store,
         cfg.clone(),
