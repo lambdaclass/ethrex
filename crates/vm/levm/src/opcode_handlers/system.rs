@@ -803,18 +803,6 @@ impl<'a> VM<'a> {
             self.increase_account_balance(to, value)?;
         }
 
-        if bytecode.is_empty() && is_delegation_7702 {
-            self.current_call_frame_mut()?.gas_used = self
-                .current_call_frame()?
-                .gas_used
-                .checked_sub(gas_limit)
-                .ok_or(InternalError::GasOverflow)?;
-            self.current_call_frame_mut()?
-                .stack
-                .push(SUCCESS_FOR_CALL)?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
-        }
-
         let new_call_frame = CallFrame::new(
             msg_sender,
             to,
