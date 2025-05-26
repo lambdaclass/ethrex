@@ -2,8 +2,8 @@ use crate::{cli::Options as NodeOptions, utils};
 use clap::Parser;
 use ethrex_common::Address;
 use ethrex_l2::{
-    sequencer::configs::StateUpdaterConfig, BlockProducerConfig, CommitterConfig, EthConfig,
-    L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig,
+    sequencer::configs::StateUpdaterConfig, BasedConfig, BlockProducerConfig, CommitterConfig,
+    EthConfig, L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use ethrex_rpc::clients::eth::get_address_from_secret_key;
 use secp256k1::SecretKey;
@@ -89,6 +89,9 @@ impl From<SequencerOptions> for SequencerConfig {
                 listen_port: opts.proof_coordinator_opts.listen_port,
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
                 dev_mode: opts.proof_coordinator_opts.dev_mode,
+            },
+            based: BasedConfig {
+                based: opts.based_opts.based,
             },
             state_updater: StateUpdaterConfig {
                 sequencer_registry: opts.based_opts.state_updater_opts.sequencer_registry,
