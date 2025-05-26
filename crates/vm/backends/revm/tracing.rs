@@ -1,17 +1,17 @@
 use std::collections::HashSet;
 
-use ethrex_common::{types::Block, Address, U256};
+use ethrex_common::{types::Block, Address, H256, U256};
 use revm::Evm;
 use revm_inspectors::tracing::{
-    types::{CallKind, CallTraceNode},
-    CallTraceArena,
+    types::{CallKind, CallLog as RevmCallLog, CallTraceNode},
+    CallTraceArena, TracingInspectorConfig,
 };
 use revm_primitives::{BlockEnv, ExecutionResult as RevmExecutionResult, SpecId, TxEnv};
 
 use crate::{
     backends::revm::run_evm,
     helpers::spec_id,
-    tracing::{Call, CallTrace, CallType},
+    tracing::{Call, CallLog, CallTrace, CallType},
     EvmError,
 };
 
@@ -23,6 +23,8 @@ impl REVM {
         block: &Block,
         tx_index: usize,
         state: &mut EvmState,
+        only_top_call: bool,
+        with_log: bool,
     ) -> Result<CallTrace, EvmError> {
         let spec_id: SpecId = spec_id(&state.chain_config()?, block.header.timestamp);
         let block_env = block_env(&block.header, spec_id);
@@ -49,7 +51,14 @@ impl REVM {
             let tx_env = tx_env(tx, sender);
             if index == tx_index {
                 // Trace the transaction
-                call_trace = run_evm_with_call_tracer(tx_env, block_env, state, spec_id)?;
+                call_trace = run_evm_with_call_tracer(
+                    tx_env,
+                    block_env,
+                    state,
+                    spec_id,
+                    only_top_call,
+                    with_log,
+                )?;
                 break;
             }
             run_evm(tx_env, block_env.clone(), state, spec_id)?;
@@ -92,16 +101,21 @@ fn run_evm_with_call_tracer(
     block_env: BlockEnv,
     state: &mut EvmState,
     spec_id: SpecId,
+    only_top_call: bool,
+    with_log: bool,
 ) -> Result<CallTrace, EvmError> {
     let (call_trace, result) = {
         let chain_spec = state.chain_config()?;
-        #[allow(unused_mut)]
-        let mut evm_builder = Evm::builder()
+        let config = TracingInspectorConfig {
+            record_logs: with_log,
+            ..Default::default()
+        };
+        let evm_builder = Evm::builder()
             .with_block_env(block_env)
             .with_tx_env(tx_env)
             .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
             .with_spec_id(spec_id)
-            .with_external_context(revm_inspectors::tracing::TracingInspector::default());
+            .with_external_context(revm_inspectors::tracing::TracingInspector::new(config));
 
         match state {
             EvmState::Store(db) => {
@@ -119,7 +133,11 @@ fn run_evm_with_call_tracer(
         }
     };
     let revert_reason_or_error = result_to_err_or_revert_string(result);
-    Ok(map_call_trace(call_trace, &revert_reason_or_error))
+    Ok(map_call_trace(
+        call_trace,
+        &revert_reason_or_error,
+        only_top_call,
+    ))
 }
 
 fn result_to_err_or_revert_string(result: RevmExecutionResult) -> String {
@@ -142,7 +160,11 @@ fn result_to_err_or_revert_string(result: RevmExecutionResult) -> String {
     }
 }
 
-fn map_call_trace(revm_trace: CallTraceArena, revert_reason_or_error: &String) -> CallTrace {
+fn map_call_trace(
+    revm_trace: CallTraceArena,
+    revert_reason_or_error: &String,
+    only_top_call: bool,
+) -> CallTrace {
     let mut call_trace = CallTrace::new();
     // Idxs of child calls already included in the parent call
     let mut used_idxs = HashSet::new();
@@ -156,6 +178,10 @@ fn map_call_trace(revm_trace: CallTraceArena, revert_reason_or_error: &String) -
                 &mut used_idxs,
                 revert_reason_or_error,
             ));
+        }
+        if only_top_call {
+            // Keep only the first call + subcalls
+            break;
         }
     }
     call_trace
@@ -197,6 +223,7 @@ fn map_call(
             .is_revert()
             .then(|| revert_reason_or_error.clone()),
         calls: Box::new(vec![]),
+        logs: revm_call.logs.into_iter().map(|log| map_log(log)).collect(),
     }
 }
 
@@ -210,5 +237,18 @@ fn map_call_type(revm_call_type: CallKind) -> CallType {
         CallKind::Create => CallType::Create,
         CallKind::Create2 => CallType::Create2,
         CallKind::EOFCreate => CallType::Create, //TODO: check this
+    }
+}
+
+fn map_log(revm_log: RevmCallLog) -> CallLog {
+    CallLog {
+        topics: revm_log
+            .raw_log
+            .topics()
+            .into_iter()
+            .map(|t| H256(t.0))
+            .collect(),
+        data: revm_log.raw_log.data.0,
+        position: revm_log.position,
     }
 }

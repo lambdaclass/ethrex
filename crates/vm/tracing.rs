@@ -12,6 +12,7 @@ pub type CallTrace = Vec<Call>;
 /// Trace of each call frame as defined in geth's `callTracer` output
 /// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Call {
     /// Type of the Call
     pub r#type: CallType,
@@ -39,6 +40,9 @@ pub struct Call {
     pub revert_reason: Option<String>,
     /// List of nested sub-calls
     pub calls: Box<Vec<Call>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    /// Logs (if enabled)
+    pub logs: Vec<CallLog>,
 }
 
 #[derive(Serialize, Debug)]
@@ -52,6 +56,16 @@ pub enum CallType {
     SelfDestruct,
 }
 
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CallLog {
+    // pub address: Address, Not found in revm log
+    pub topics: Vec<H256>,
+    #[serde(with = "serde_utils::bytes")]
+    pub data: Bytes,
+    pub position: u64,
+}
+
 impl Evm {
     /// Executes the block until a given tx is reached, then generates the call trace for the tx
     /// Wraps [REVM::trace_tx_calls], does not currenlty have levm support.
@@ -59,9 +73,13 @@ impl Evm {
         &mut self,
         block: &Block,
         tx_index: usize,
+        only_top_call: bool,
+        with_log: bool,
     ) -> Result<CallTrace, EvmError> {
         match self {
-            Evm::REVM { state } => REVM::trace_tx_calls(block, tx_index, state),
+            Evm::REVM { state } => {
+                REVM::trace_tx_calls(block, tx_index, state, only_top_call, with_log)
+            }
             Evm::LEVM { db: _ } => {
                 // Tracing is not implemented for levm
                 return Err(EvmError::Custom(

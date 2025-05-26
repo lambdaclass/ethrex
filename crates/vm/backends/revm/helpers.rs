@@ -1,26 +1,17 @@
-use std::collections::HashSet;
-
 use ethrex_common::{
     types::{tx_fields::AccessList, BlockHeader, GenericTransaction, INITIAL_BASE_FEE},
-    Address, H256, U256,
+    Address, H256,
 };
 use revm::{
     inspector_handle_register,
     primitives::{BlockEnv, TxEnv},
     Evm,
 };
-use revm_inspectors::tracing::{
-    types::{CallKind, CallTraceNode},
-    CallTraceArena,
-};
+
 // Rename imported types for clarity
 use revm_primitives::{AccessList as RevmAccessList, SpecId};
 
-use crate::{
-    errors::EvmError,
-    execution_result::ExecutionResult,
-    tracing::{Call, CallTrace, CallType},
-};
+use crate::{errors::EvmError, execution_result::ExecutionResult};
 
 use super::{
     access_list_inspector, block_env, db::EvmState, run_without_commit, tx_env_from_generic,
