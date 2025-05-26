@@ -34,7 +34,11 @@ pub async fn start_l2(
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
 ) {
-    let initial_state = SequencerState::default();
+    let initial_state = if cfg.based.based {
+        SequencerState::default()
+    } else {
+        SequencerState::Sequencing
+    };
 
     info!("Starting Sequencer in {initial_state} mode");
 
@@ -72,19 +76,22 @@ pub async fn start_l2(
         cfg.clone(),
         shared_state.clone(),
     ));
-    task_set.spawn(state_updater::start_state_updater(
-        cfg.clone(),
-        shared_state.clone(),
-        store.clone(),
-        rollup_store.clone(),
-    ));
-    task_set.spawn(block_fetcher::start_block_fetcher(
-        store.clone(),
-        blockchain,
-        shared_state.clone(),
-        rollup_store,
-        cfg.clone(),
-    ));
+    if cfg.based.based {
+        task_set.spawn(state_updater::start_state_updater(
+            cfg.clone(),
+            shared_state.clone(),
+            store.clone(),
+            rollup_store.clone(),
+        ));
+
+        task_set.spawn(block_fetcher::start_block_fetcher(
+            store.clone(),
+            blockchain,
+            shared_state.clone(),
+            rollup_store,
+            cfg.clone(),
+        ));
+    }
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer(cfg));
 
