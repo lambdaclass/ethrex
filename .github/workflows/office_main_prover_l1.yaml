@@ -1,4 +1,4 @@
-name: RPC Prover (SP1 Backend)
+name: RPC Prover (SP1 Backend) (Office GPU)
 on:
   push:
     branches: ["**"]
