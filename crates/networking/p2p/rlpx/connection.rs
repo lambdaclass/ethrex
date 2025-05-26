@@ -56,7 +56,7 @@ const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_se
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL: std::time::Duration =
-    std::time::Duration::from_secs(384);
+    std::time::Duration::from_secs(60);
 pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
@@ -89,6 +89,7 @@ pub(crate) struct RLPxConnection<S> {
     next_periodic_ping: Instant,
     next_tx_broadcast: Instant,
     next_block_range_update: Instant,
+    last_block_range_update_block: u64,
     broadcasted_txs: HashSet<H256>,
     client_version: String,
     /// Send end of the channel used to broadcast messages
@@ -126,6 +127,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
             next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
             next_block_range_update: Instant::now() + PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL,
+            last_block_range_update_block: 0,
             broadcasted_txs: HashSet::new(),
             client_version,
             connection_broadcast_send: connection_broadcast,
@@ -409,11 +411,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         if Instant::now() >= self.next_tx_broadcast {
             self.send_new_pooled_tx_hashes().await?;
             self.next_tx_broadcast = Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL;
-        }
+        };
         if Instant::now() >= self.next_block_range_update {
-            self.send_block_range_update().await?;
             self.next_block_range_update = Instant::now() + PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL;
-        }
+            if self.should_send_block_range_update().await? {
+                self.send_block_range_update().await?;
+            }
+        };
         Ok(())
     }
 
@@ -456,10 +460,22 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             if eth.version >= 69 {
                 log_peer_debug(&self.node, "Sending BlockRangeUpdate");
                 let update = BlockRangeUpdate::new(&self.storage).await?;
+                let lastet_block = update.lastest_block;
                 self.send(Message::BlockRangeUpdate(update)).await?;
+                self.last_block_range_update_block = lastet_block - (lastet_block % 32);
             }
         }
         Ok(())
+    }
+
+    async fn should_send_block_range_update(&mut self) -> Result<bool, RLPxError> {
+        let latest_block = self.storage.get_latest_block_number().await?;
+        if latest_block < self.last_block_range_update_block
+            || latest_block - self.last_block_range_update_block >= 32
+        {
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     async fn handle_message(
