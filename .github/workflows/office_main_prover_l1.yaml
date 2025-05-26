@@ -20,7 +20,7 @@ permissions:
 jobs:
   test:
     name: L1 block proving test
-    runs-on: gpu
+    runs-on: gpu-test
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
