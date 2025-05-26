@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748276927943,
+  "lastUpdate": 1748281476884,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11059,6 +11059,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007350698002922552,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "fb888ef357c709f529b68a8994c40eb434c4140f",
+          "message": "perf(l1,levm): add immutable cache for speeding up getting account updates (#2829)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- get_state_transitions is executed after every block and it fetches\nstorage for every account we modified. This could be stored in memory\nbecause it was already fetched in the VM itself, so there's no need to\nfetch storage again after executing the whole block.\n\n**Description**\n\n- Add to GeneralizedDatabase in LEVM an `immutable_cache` that basically\neverytime we fetch the DB we store what was fetched into that `HashMap`.\n\nNote: I am here assuming that the client could have an empty account in\nthe trie. It is a very weird scenario and it might not ever happen but I\nwanted to be cautious with this\n\nAdditional Change:\n- Remove `DatabaseError` from gen_db. We actually want to leave\nDatabaseError for the errors with the actual database (external to\nLEVM). For errors that have to do with our Cache and things like that I\nprefer using Internal Errors. These have to be refactored though, so I\ncreated [an issue](https://github.com/lambdaclass/ethrex/issues/2886)\n\nBenchmarks:\nTerminal 1: `sudo cargo flamegraph --root --bin ethrex --release\n--features dev -- --network test_data/genesis-load-test.json --dev`\nTerminal 2: `load-test-erc20`\n\nIn main branch: 136 seconds\n<img width=\"369\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/9063f587-7c5c-4dbf-bab5-11e6aebb01e9\"\n/>\n\n[View main\nFlamegraph](https://github.com/user-attachments/assets/b8d494a5-3184-4341-bd1b-82c1645377f1)\n\nIn this branch: 121 seconds\n<img width=\"738\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/5a324041-fe5e-4f5d-a19d-c047350906da\"\n/>\n[View immutable_cache\nFlamegraph](https://github.com/user-attachments/assets/ab6336d5-acc2-43e8-98e9-df5c08cb74b8)\n\nNow `get_state_transitions` is blazingly fast, the downside of it is\nthat everything that we fetched from the database ends up stored in\nmemory. This solution was used because it's 100% accurate for\ncalculating `AccountUpdates`.\nAlternative solutions involve having a flag per account info and storage\nslot that's set to true when these structures are modified; the problem\nwith this approach is that if a storage slot changes from 1 -> 2 -> 1\nwe'll say that it has changed when it hasn't, so that's why we currently\nsave the original value in memory rather than just saying \"it has\nchanged\".\n\n\n\nCloses #2505\nFollow up https://github.com/lambdaclass/ethrex/issues/2917",
+          "timestamp": "2025-05-26T15:28:06Z",
+          "tree_id": "d8be94521b493ce93de8edbc87fdcb8039ca6ff1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/fb888ef357c709f529b68a8994c40eb434c4140f"
+        },
+        "date": 1748281474247,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007474483902922238,
             "unit": "Mgas/s"
           }
         ]
