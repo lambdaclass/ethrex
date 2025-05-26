@@ -57,6 +57,8 @@ impl Account {
     }
 }
 
+// This function is used in the ignored manual tests, it's not dead.
+#[allow(dead_code)]
 pub async fn get_latest_block_number(rpc_url: &str) -> eyre::Result<usize> {
     let request = &json!({
         "id": 1,
