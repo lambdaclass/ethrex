@@ -106,39 +106,6 @@ impl RLPDecode for Receipt {
     }
 }
 
-/// Data record produced during the execution of a transaction.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Log {
-    pub address: Address,
-    pub topics: Vec<H256>,
-    pub data: Bytes,
-}
-
-impl RLPEncode for Log {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.address)
-            .encode_field(&self.topics)
-            .encode_field(&self.data)
-            .finish();
-    }
-}
-
-impl RLPDecode for Log {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let decoder = Decoder::new(rlp)?;
-        let (address, decoder) = decoder.decode_field("address")?;
-        let (topics, decoder) = decoder.decode_field("topics")?;
-        let (data, decoder) = decoder.decode_field("data")?;
-        let log = Log {
-            address,
-            topics,
-            data,
-        };
-        Ok((log, decoder.finish()?))
-    }
-}
-
 /// Result of a transaction
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ReceiptWithBloom {
@@ -319,6 +286,39 @@ impl From<&ReceiptWithBloom> for Receipt {
             cumulative_gas_used: receipt.cumulative_gas_used,
             logs: receipt.logs.clone(),
         }
+    }
+}
+
+/// Data record produced during the execution of a transaction.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Log {
+    pub address: Address,
+    pub topics: Vec<H256>,
+    pub data: Bytes,
+}
+
+impl RLPEncode for Log {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.address)
+            .encode_field(&self.topics)
+            .encode_field(&self.data)
+            .finish();
+    }
+}
+
+impl RLPDecode for Log {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (address, decoder) = decoder.decode_field("address")?;
+        let (topics, decoder) = decoder.decode_field("topics")?;
+        let (data, decoder) = decoder.decode_field("data")?;
+        let log = Log {
+            address,
+            topics,
+            data,
+        };
+        Ok((log, decoder.finish()?))
     }
 }
 
