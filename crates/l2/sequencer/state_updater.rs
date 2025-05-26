@@ -7,7 +7,7 @@ use ethrex_rpc::{clients::Overrides, EthClient};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use tokio::{sync::Mutex, time::sleep};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use crate::{utils::parse::hash_to_address, SequencerConfig};
 
@@ -168,6 +168,9 @@ impl StateUpdater {
                 "No blocks found for the last committed batch".to_string(),
             ));
         };
+        self.store
+            .update_latest_block_number(*last_l2_committed_batch_block_number)
+            .await?;
 
         info!("Last committed batch block number: {last_l2_committed_batch_block_number}");
 
