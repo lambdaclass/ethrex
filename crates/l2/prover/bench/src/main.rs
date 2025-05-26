@@ -10,12 +10,6 @@ use ethrex_prover_lib::execute;
 use serde_json::json;
 use zkvm_interface::io::ProgramInput;
 
-#[cfg(not(any(feature = "sp1", feature = "risc0", feature = "pico")))]
-compile_error!(
-    "Choose prover backends (sp1, risc0, pico).
-- Pass a feature flag to cargo (--feature or -F) with the desired backed. e.g: cargo build --workspace --no-default-features -F sp1. NOTE: Don't forget to pass --no-default-features, if not, the default prover will be used instead."
-);
-
 #[derive(Parser, Debug)]
 struct Args {
     #[arg(short, long)]
@@ -115,7 +109,7 @@ async fn main() {
 }
 
 fn write_benchmark_file(gas_used: f64, elapsed: f64) {
-    let rate = gas_used / 10e6 / elapsed;
+    let rate = gas_used / 1e6 / elapsed;
 
     let backend = if cfg!(feature = "sp1") {
         "SP1"

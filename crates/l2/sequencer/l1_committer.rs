@@ -7,10 +7,11 @@ use crate::{
     CommitterConfig, EthConfig, SequencerConfig,
 };
 
+use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     types::{
-        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block, BlockHeader,
-        BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
+        blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, BlobsBundleError,
+        Block, BlockHeader, BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
         BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
@@ -23,9 +24,9 @@ use ethrex_rpc::{
     clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
     utils::get_withdrawal_hash,
 };
-use ethrex_storage::{AccountUpdate, Store};
+use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::Evm;
+use ethrex_vm::{Evm, EvmEngine};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
@@ -64,7 +65,7 @@ pub async fn start_l1_committer(
         store,
         rollup_store,
         execution_cache,
-    );
+    )?;
     committer.run().await;
     Ok(())
 }
@@ -76,17 +77,17 @@ impl Committer {
         store: Store,
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, CommitterError> {
+        Ok(Self {
             eth_client: EthClient::new_with_config(
-                &eth_config.rpc_url,
+                eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
                 eth_config.max_number_of_retries,
                 eth_config.backoff_factor,
                 eth_config.min_retry_delay,
                 eth_config.max_retry_delay,
                 Some(eth_config.maximum_allowed_max_fee_per_gas),
                 Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
-            ),
+            )?,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             store,
             rollup_store,
@@ -96,7 +97,7 @@ impl Committer {
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
             validium: committer_config.validium,
-        }
+        })
     }
 
     pub async fn run(&mut self) {
@@ -231,8 +232,12 @@ impl Committer {
                     warn!(
                             "Could not find execution cache result for block {}, falling back to re-execution", last_added_block_number + 1
                         );
-                    let mut vm =
-                        Evm::default(self.store.clone(), block_to_commit.header.parent_hash);
+
+                    let vm_db = StoreVmDatabase::new(
+                        self.store.clone(),
+                        block_to_commit.header.parent_hash,
+                    );
+                    let mut vm = Evm::new(EvmEngine::default(), vm_db);
                     vm.execute_block(&block_to_commit)?;
                     vm.get_state_transitions()?
                 }
