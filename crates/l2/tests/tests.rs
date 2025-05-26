@@ -260,6 +260,17 @@ async fn test_deposit(
         .get_balance(depositor, BlockByNumber::Latest)
         .await?;
 
+    println!("Depositor L1 initial balance: {depositor_l1_initial_balance}");
+    println!("Depositor L1 balance after deposit: {depositor_l1_balance_after_deposit}");
+    println!(
+        "Deposit value: {deposit_value}, gas used: {}",
+        deposit_tx_receipt.tx_info.gas_used
+    );
+    println!(
+        "Effective gas price: {}",
+        deposit_tx_receipt.tx_info.effective_gas_price
+    );
+
     assert_eq!(
         depositor_l1_balance_after_deposit,
         depositor_l1_initial_balance
