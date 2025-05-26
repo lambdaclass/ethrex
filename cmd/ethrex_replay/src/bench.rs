@@ -11,7 +11,7 @@ pub fn write_benchmark_file(gas_used: f64, elapsed: f64) {
     } else if cfg!(feature = "pico") {
         "Pico"
     } else {
-        unreachable!();
+        "Exec"
     };
 
     let processor = if cfg!(feature = "ci") {
