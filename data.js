@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748281476884,
+  "lastUpdate": 1748283875288,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11088,6 +11088,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007474483902922238,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ab55846196eb77c3df37dfe2045307a3b6ee2d60",
+          "message": "chore(l1, l2): move `StoreVmDatabase` to `blockchain` (#2854)\n\n**Motivation**\nDecouple `vm` from `storage` crates. This is a follow up from\nhttps://github.com/lambdaclass/ethrex/pull/2801\n\n**Description**\n- Moved `StoreVmDatabase` to the blockchain crate\n- Moved `to_prover_db ` function to the l2 crate since it uses a `Store`\n\nNext steps:\n- Move ProverDB to the l2 crate.\n\n---------\n\nCo-authored-by: Diego Civini <diego.civini@lambdaclass.com>",
+          "timestamp": "2025-05-26T15:36:21Z",
+          "tree_id": "a17727d87509394a0e239cc12f39e375f5d29362",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ab55846196eb77c3df37dfe2045307a3b6ee2d60"
+        },
+        "date": 1748283874858,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0074597048937221945,
             "unit": "Mgas/s"
           }
         ]
