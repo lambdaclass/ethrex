@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748264846801,
+  "lastUpdate": 1748275474537,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10940,6 +10940,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007354280214424951,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ea5a6d7093a6778635a3a59506586253154853c0",
+          "message": "refactor(l1): system contract errors (#2844)\n\n**Motivation**\nAdd specific error variants for system contract errors\n`SystemContractEmpty` & `SystemContractCallFailed`.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add error variants `SystemContractEmpty` & `SystemContractCallFailed`\n* (Misc) minor change to error message\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nAllows us to better map errors on execution-spec-tests",
+          "timestamp": "2025-05-26T15:15:01Z",
+          "tree_id": "ea5e6f825a773bec52224aa681304287766173e3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ea5a6d7093a6778635a3a59506586253154853c0"
+        },
+        "date": 1748275471636,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007350698002922552,
             "unit": "Mgas/s"
           }
         ]
