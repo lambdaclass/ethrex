@@ -133,7 +133,7 @@ impl PeerHandler {
             {
                 let block_hashes = block_headers
                     .iter()
-                    .map(|header| header.hash())
+                    .map(|header| header.compute_block_hash())
                     .collect::<Vec<_>>();
 
                 if are_block_headers_chained(&block_headers, &block_hashes) {
@@ -151,7 +151,6 @@ impl PeerHandler {
     /// Returns the block bodies or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    /// This method performs only one request without retry logic
     async fn request_block_bodies_inner(
         &self,
         block_hashes: Vec<H256>,
@@ -216,7 +215,6 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     /// - The block bodies are invalid given the block headers
-    /// This method includes retry logic for both network failures and validation failures
     pub async fn request_and_validate_block_bodies<'a>(
         &self,
         block_hashes: &mut Vec<H256>,
