@@ -17,19 +17,18 @@ use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
-#[cfg(feature = "l2")]
+#[cfg(any(feature = "l2", feature = "based"))]
 use ethrex::l2::L2Options;
 #[cfg(feature = "l2")]
 use ethrex_storage_rollup::StoreRollup;
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
-    let get_latest = match env::var("SYNC-LATEST")
-        .expect("Failed to get sync configuration from environment")
-        .as_str()
-    {
-        "false" => false,
-        _ => true,
-    };
+    let get_latest = !matches!(
+        env::var("SYNC-LATEST")
+            .expect("Failed to get sync configuration from environment")
+            .as_str(),
+        "false"
+    );
     if !get_latest {
         let block_number = env::var("SYNC-BLOCK-NUM")
             .expect("Failed to retrieve sync block number from environment")
@@ -38,9 +37,16 @@ async fn set_sync_block(store: &Store) {
         let block_hash = store
             .get_canonical_block_hash(block_number)
             .await
+            .expect("Could not get hash for block number provided by env variable")
             .expect("Could not get hash for block number provided by env variable");
-        store.update_latest_block_number(block_number);
-        store.set_canonical_block(block_number, block_hash);
+        store
+            .update_latest_block_number(block_number)
+            .await
+            .expect("Failed to update latest block number");
+        store
+            .set_canonical_block(block_number, block_hash)
+            .await
+            .expect("Failed to set latest canonical block");
     }
 }
 
@@ -84,7 +90,7 @@ async fn main() -> eyre::Result<()> {
 
     init_rpc_api(
         &opts,
-        #[cfg(feature = "l2")]
+        #[cfg(any(feature = "l2", feature = "based"))]
         &L2Options::default(),
         peer_table.clone(),
         local_p2p_node.clone(),
