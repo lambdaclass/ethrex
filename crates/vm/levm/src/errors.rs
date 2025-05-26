@@ -94,7 +94,7 @@ pub enum TxValidationError {
     NonceMismatch { expected: u64, actual: u64 },
     #[error("Initcode size exceeded")]
     InitcodeSizeExceeded,
-    #[error("Priority fee greater than max fee per gas")]
+    #[error("Priority fee is greater than max fee per gas")]
     PriorityGreaterThanMaxFeePerGas,
     #[error("Intrinsic gas too low")]
     IntrinsicGasTooLow,
@@ -196,6 +196,9 @@ pub enum InternalError {
     AccountNotDelegated,
     #[error("No recipient found for privilege transaction")]
     RecipientNotFoundForPrivilegeTransaction,
+    //TODO: Refactor all errors. https://github.com/lambdaclass/ethrex/issues/2886
+    #[error("Custom error: {0}")]
+    Custom(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

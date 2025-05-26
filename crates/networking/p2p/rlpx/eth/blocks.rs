@@ -138,7 +138,7 @@ impl GetBlockHeaders {
 }
 
 impl RLPxMessage for GetBlockHeaders {
-    const CODE: u8 = 0x13;
+    const CODE: u8 = 0x03;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         let limit = self.limit;
@@ -179,7 +179,7 @@ impl BlockHeaders {
 }
 
 impl RLPxMessage for BlockHeaders {
-    const CODE: u8 = 0x14;
+    const CODE: u8 = 0x04;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         // Each message is encoded with its own
@@ -247,7 +247,7 @@ impl GetBlockBodies {
 }
 
 impl RLPxMessage for GetBlockBodies {
-    const CODE: u8 = 0x15;
+    const CODE: u8 = 0x05;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -286,7 +286,7 @@ impl BlockBodies {
 }
 
 impl RLPxMessage for BlockBodies {
-    const CODE: u8 = 0x16;
+    const CODE: u8 = 0x06;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
