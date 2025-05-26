@@ -230,7 +230,7 @@ impl PeerHandler {
             let Some((block_bodies, peer_id)) =
                 self.request_block_bodies_inner(block_hashes.clone()).await
             else {
-                continue; // Retry on network failure
+                continue; // Retry on empty response
             };
 
             let mut blocks: Vec<Block> = vec![];
