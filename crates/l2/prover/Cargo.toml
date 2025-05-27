@@ -15,6 +15,7 @@ tracing.workspace = true
 hex.workspace = true
 thiserror.workspace = true
 clap.workspace = true
+kzg-rs = "0.2.6"
 
 # ethrex
 ethrex-common.workspace = true

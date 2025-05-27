@@ -1,9 +1,9 @@
 use std::{env::temp_dir, fs::File, path::PathBuf};
 
-use ethrex_common::types::BlobsBundle;
-use tracing::warn;
 use bincode;
+use ethrex_common::types::BlobsBundle;
 use thiserror::Error;
+use tracing::warn;
 
 #[derive(Error, Debug)]
 pub enum BlobsBundleCacheError {
@@ -41,10 +41,7 @@ impl BlobsBundleCache {
         bincode::serialize_into(file, &blobs_bundle).map_err(BlobsBundleCacheError::from)
     }
 
-    pub fn get(
-        &self,
-        batch_number: u64,
-    ) -> Result<Option<BlobsBundle>, BlobsBundleCacheError> {
+    pub fn get(&self, batch_number: u64) -> Result<Option<BlobsBundle>, BlobsBundleCacheError> {
         let filename = format!("blobs_bundle_batch_{batch_number}.ethrex");
         File::open(self.tempdir.join(filename))
             .inspect_err(|err| warn!("{err}"))

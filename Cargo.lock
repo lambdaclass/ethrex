@@ -3280,6 +3280,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-vm",
  "hex",
+ "kzg-rs",
  "pico-sdk 1.0.1",
  "risc0-ethereum-contracts",
  "risc0-zkvm",

@@ -3,7 +3,7 @@
 
 use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_storage::{ Store};
+use ethrex_storage::Store;
 use tracing::info;
 
 use std::{

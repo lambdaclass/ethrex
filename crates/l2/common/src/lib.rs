@@ -1,10 +1,14 @@
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{BTreeMap, HashMap};
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::{types::{
-    code_hash, AccountInfo, AccountState, AccountUpdate, Block, BlockHeader, BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind
-}, H160};
+use ethrex_common::{
+    types::{
+        code_hash, AccountInfo, AccountState, AccountUpdate, Block, BlockHeader, BlockNumber,
+        PrivilegedL2Transaction, Receipt, Transaction, TxKind,
+    },
+    H160,
+};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{error::StoreError, hash_address, Store};
 use ethrex_trie::{Trie, TrieError};

@@ -28,7 +28,8 @@ use crate::{
     utils::helpers::{is_deposit_l2, is_withdrawal_l2},
 };
 use ethrex_l2_common::{
-    AccountStateDiff, StateDiffError, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN, SIMPLE_TX_STATE_DIFF_SIZE, WITHDRAWAL_LOG_LEN
+    AccountStateDiff, StateDiffError, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN,
+    SIMPLE_TX_STATE_DIFF_SIZE, WITHDRAWAL_LOG_LEN,
 };
 
 /// L2 payload builder

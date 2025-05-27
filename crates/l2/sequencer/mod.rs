@@ -2,12 +2,12 @@ pub mod blobs_bundle_cache;
 use std::sync::Arc;
 
 use crate::SequencerConfig;
+use blobs_bundle_cache::BlobsBundleCache;
 use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use execution_cache::ExecutionCache;
-use blobs_bundle_cache::BlobsBundleCache;
 use l1_watcher::L1Watcher;
 use tokio::task::JoinSet;
 use tracing::{error, info};
@@ -56,11 +56,7 @@ pub async fn start_l2(
         blobs_bundle_cache.clone(),
     ));
     task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
-    task_set.spawn(start_block_producer(
-        store.clone(),
-        blockchain,
-        cfg.clone(),
-    ));
+    task_set.spawn(start_block_producer(store.clone(), blockchain, cfg.clone()));
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
 

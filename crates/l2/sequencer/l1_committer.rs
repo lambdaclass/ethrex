@@ -1,7 +1,4 @@
-use crate::{
-    sequencer::errors::CommitterError, CommitterConfig,
-    EthConfig, SequencerConfig,
-};
+use crate::{sequencer::errors::CommitterError, CommitterConfig, EthConfig, SequencerConfig};
 
 use ethrex_blockchain::vm::StoreVmDatabase;
 #[cfg(feature = "metrics")]
@@ -9,15 +6,11 @@ use ethrex_common::types::BYTES_PER_BLOB;
 use ethrex_common::{
     types::{
         blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, BlobsBundleError,
-        BlockNumber,
-        BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS, Block,
+        Block, BlockNumber, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
 };
-use ethrex_l2_common::{
-    get_block_deposits, get_block_withdrawals, prepare_state_diff,
-    StateDiff,
-};
+use ethrex_l2_common::{get_block_deposits, get_block_withdrawals, prepare_state_diff, StateDiff};
 use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
     merkle_tree::merkelize,
@@ -344,7 +337,8 @@ impl Committer {
             }
         }
 
-        self.blobs_bundle_cache.push(batch_number_for_cache, blobs_bundle.clone())?;
+        self.blobs_bundle_cache
+            .push(batch_number_for_cache, blobs_bundle.clone())?;
 
         metrics!(if let (Ok(deposits_count), Ok(withdrawals_count)) = (
                 deposit_logs_hashes.len().try_into(),
