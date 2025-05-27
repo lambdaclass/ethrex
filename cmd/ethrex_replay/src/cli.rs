@@ -19,10 +19,17 @@ pub struct EthrexReplayCLI {
 enum SubcommandExecute {
     #[clap(about = "Execute a single block.")]
     Block {
+        #[arg(help = "Block to use. Uses the latest if not specified.")]
         block: Option<usize>,
         #[arg(long, env = "RPC_URL", required = true)]
         rpc_url: String,
-        #[arg(long, default_value = "mainnet", env = "NETWORK", required = false)]
+        #[arg(
+            long,
+            default_value = "mainnet",
+            env = "NETWORK",
+            required = false,
+            help = "Name or ChainID of the network to use"
+        )]
         network: String,
         #[arg(long, required = false)]
         bench: bool,
@@ -58,10 +65,17 @@ impl SubcommandExecute {
 enum SubcommandProve {
     #[clap(about = "Proves a single block.")]
     Block {
+        #[arg(help = "Block to use. Uses the latest if not specified.")]
         block: Option<usize>,
         #[arg(long, env = "RPC_URL", required = true)]
         rpc_url: String,
-        #[arg(long, default_value = "mainnet", env = "NETWORK", required = false)]
+        #[arg(
+            long,
+            default_value = "mainnet",
+            env = "NETWORK",
+            required = false,
+            help = "Name or ChainID of the network to use"
+        )]
         network: String,
         #[arg(long, required = false)]
         bench: bool,
