@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748381057403,
+  "lastUpdate": 1748382158606,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9535,6 +9535,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 204649583492,
             "range": "± 695700802",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "43799596+JulianVentura@users.noreply.github.com",
+            "name": "Julian Ventura",
+            "username": "JulianVentura"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "84509b69343181c447065c70c057c8488b606bac",
+          "message": "fix(l1): validate received blocks from peers (#2658)\n\n**Motivation**\n\nWhile syncing on Holesky, we noticed that some peers were providing us\nwith empty block bodies. This made the syncing loop fail in different\noccasions, which ultimately lead to a stop in the syncing process.\nInstead of failing, we want to validate the received headers and bodies\nand discard the peer and retry if they are not valid.\n\n**Description**\n\nThis PR makes the following changes:\n\n* Add a new validation `validate_block_body` to check if a body is\nvalid, agains the corresponding header\n* Add a simple header validation to the peer handler request headers, to\nmake sure that the received headers conform a chain from the current\nhead\n* Call the `validate_block_body` function from the peer handle validat\nand request block bodies, to check that the received block bodies are\nvalid.\n* Modify the `PeerChannel` API to return the `peer_id` on the\n`request_block_headers` and `request_block_bodies` functions.\n* Modify the `PeerChannel` API to add a function `remove_peer` to remove\na peer by its `peer_id`.\n* Remove the peer that provided us with the headers or bodies on the\nsyncing loop if they are invalid\n\nCloses #2766\n\n---------\n\nCo-authored-by: Julian Ventura <julian.ventura@lambdaclass.com>\nCo-authored-by: Rodrigo Oliveri <rodrigooliveri10@gmail.com>\nCo-authored-by: SDartayet <sofiadartayet@gmail.com>\nCo-authored-by: SDartayet <44068466+SDartayet@users.noreply.github.com>",
+          "timestamp": "2025-05-27T20:46:15Z",
+          "tree_id": "23224e4be4e25ec46671a9c6fe87c9477a3dda32",
+          "url": "https://github.com/lambdaclass/ethrex/commit/84509b69343181c447065c70c057c8488b606bac"
+        },
+        "date": 1748382155264,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 221010690257,
+            "range": "± 817316031",
             "unit": "ns/iter"
           }
         ]
