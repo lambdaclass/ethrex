@@ -605,11 +605,8 @@ impl<'a> VM<'a> {
         Ok(min_gas_used)
     }
 
-    pub fn is_precompile(&self) -> Result<bool, VMError> {
-        Ok(is_precompile(
-            &self.current_call_frame()?.code_address,
-            self.env.config.fork,
-        ))
+    pub fn is_precompile(&self, address: &Address) -> bool {
+        is_precompile(address, self.env.config.fork)
     }
 
     /// Backup of Substate, a copy of the current substate to restore if sub-context is reverted
@@ -704,12 +701,5 @@ impl<'a> VM<'a> {
                 Ok(created_address)
             }
         }
-    }
-
-    /// Checks if an address is delegation target in current transaction.
-    pub fn is_delegation_target(&self, address: Address) -> bool {
-        self.tx.authorization_list().as_ref().map_or(false, |list| {
-            list.iter().any(|item| item.address == address)
-        })
     }
 }
