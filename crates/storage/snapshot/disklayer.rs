@@ -7,7 +7,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Instant,
 };
 
 use crate::api::StoreEngine;
@@ -15,8 +14,6 @@ use ethrex_common::{
     types::{AccountState, BlockHash},
     H256, U256,
 };
-use ethrex_rlp::decode::RLPDecode;
-use tracing::info;
 
 use super::{cache::DiskCache, difflayer::DiffLayer, error::SnapshotError};
 
@@ -31,7 +28,6 @@ pub struct DiskLayer {
     pub(super) block_hash: BlockHash,
     pub(super) state_root: H256,
     pub(super) stale: Arc<AtomicBool>,
-    pub(super) generating: Arc<AtomicBool>,
 }
 
 impl fmt::Debug for DiskLayer {
@@ -54,7 +50,6 @@ impl DiskLayer {
             db,
             cache: DiskCache::new(20000, 40000),
             stale: Arc::new(AtomicBool::new(false)),
-            generating: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -131,103 +126,5 @@ impl DiskLayer {
 
     pub fn mark_stale(&self) -> bool {
         self.stale.swap(true, Ordering::SeqCst)
-    }
-
-    // Starts in a blocking task the disk layer generation.
-    pub fn start_generating(self: &Arc<Self>) {
-        let layer = (*self).clone();
-        tokio::task::spawn_blocking(move || layer.generate());
-    }
-
-    fn generate(self: Arc<Self>) {
-        // Note: this method can call blocking methods because it's run outside the main thread.
-
-        // todo: we should be able to stop mid generation in case disk layer changes?
-        self.generating.store(true, Ordering::SeqCst);
-        info!("Disk layer generating");
-        let start = Instant::now();
-
-        let state_trie = self.db.open_state_trie(self.state_root);
-
-        let account_iter = state_trie.into_iter().content().map_while(|(path, value)| {
-            Some((H256::from_slice(&path), AccountState::decode(&value).ok()?))
-        });
-
-        let mut account_hashes = Vec::with_capacity(1024);
-        let mut account_states = Vec::with_capacity(1024);
-        let mut storage_keys: Vec<Vec<H256>> = Vec::with_capacity(64);
-        let mut storage_values: Vec<Vec<U256>> = Vec::with_capacity(64);
-
-        // buffers
-        let mut keys = Vec::with_capacity(32);
-        let mut values = Vec::with_capacity(32);
-
-        // TODO: figure out optimal
-        // Write to db every ACCOUNT_BATCH's accounts processed.
-        const ACCOUNT_BATCH: usize = 100;
-
-        for (hash, state) in account_iter {
-            keys.clear();
-            values.clear();
-
-            account_hashes.push(hash);
-            let storage_root = state.storage_root;
-            account_states.push(state);
-
-            let storage_trie = self.db.open_storage_trie(hash, storage_root);
-            let storage_iter = storage_trie.into_iter().content();
-
-            for (storage_hash, value) in storage_iter {
-                keys.push(H256::from_slice(&storage_hash));
-                values.push(U256::from_big_endian(&value));
-            }
-
-            storage_keys.push(keys.clone());
-            storage_values.push(values.clone());
-
-            if account_hashes.len() >= ACCOUNT_BATCH {
-                self.db
-                    .write_snapshot_account_batch_blocking(
-                        account_hashes.clone(),
-                        account_states.clone(),
-                    )
-                    .expect("convert into a error");
-                self.db
-                    .write_snapshot_storage_batches_blocking(
-                        account_hashes.clone(),
-                        storage_keys.clone(),
-                        storage_values.clone(),
-                    )
-                    .expect("convert into a error");
-                account_hashes.clear();
-                storage_keys.clear();
-                storage_values.clear();
-            }
-        }
-
-        if !account_hashes.is_empty() {
-            self.db
-                .write_snapshot_account_batch_blocking(
-                    account_hashes.clone(),
-                    account_states.clone(),
-                )
-                .expect("convert into a error");
-            self.db
-                .write_snapshot_storage_batches_blocking(
-                    account_hashes.clone(),
-                    storage_keys.clone(),
-                    storage_values.clone(),
-                )
-                .expect("convert into a error");
-            account_hashes.clear();
-            storage_keys.clear();
-            storage_values.clear();
-        }
-
-        self.generating.store(false, Ordering::SeqCst);
-        info!(
-            "Disk layer generation complete, done in {:?}",
-            start.elapsed()
-        );
     }
 }

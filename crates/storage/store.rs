@@ -525,7 +525,7 @@ impl Store {
             .await?;
 
         self.snapshots
-            .rebuild(genesis_hash, genesis_state_root, false)
+            .rebuild(genesis_hash, genesis_state_root)
             .unwrap();
 
         // Set chain config
@@ -1184,61 +1184,50 @@ impl Store {
             hash, state_root
         );
 
-        // TODO: len acquires briefly a lock, maybe we can track emptiness in another way.
-        if store.snapshots.len() == 0 {
-            // There are no snapshots yet, use this block as root
-            // TODO: find if there is a better place to create the initial "disk layer".
-            store.snapshots.rebuild(hash, state_root, true)?;
-            info!(
-                "Snapshot (disk layer) created for {} with parent {}",
-                hash, parent_hash
-            );
-        } else {
-            // Create the accounts and storage maps for the diff layer.
-            let mut accounts = HashMap::new();
-            let state_trie = store.open_state_trie(state_root);
+        // Create the accounts and storage maps for the diff layer.
+        let mut accounts = HashMap::new();
+        let state_trie = store.open_state_trie(state_root);
 
-            let mut storage: HashMap<H256, HashMap<H256, Option<U256>>> = HashMap::new();
+        let mut storage: HashMap<H256, HashMap<H256, Option<U256>>> = HashMap::new();
 
-            for update in account_updates.iter() {
-                let hashed_address = hash_address_fixed(&update.address);
+        for update in account_updates.iter() {
+            let hashed_address = hash_address_fixed(&update.address);
 
-                if !update.removed {
-                    let account_state = match state_trie.get(hashed_address).unwrap() {
-                        Some(encoded_state) => AccountState::decode(&encoded_state).unwrap(),
-                        None => AccountState::default(),
-                    };
-                    accounts.insert(hashed_address, Some(account_state.clone()));
+            if !update.removed {
+                let account_state = match state_trie.get(hashed_address).unwrap() {
+                    Some(encoded_state) => AccountState::decode(&encoded_state).unwrap(),
+                    None => AccountState::default(),
+                };
+                accounts.insert(hashed_address, Some(account_state.clone()));
 
-                    for (storage_key, storage_value) in &update.added_storage {
-                        let slots = storage.entry(hashed_address).or_default();
-                        if !storage_value.is_zero() {
-                            slots.insert(*storage_key, Some(*storage_value));
-                        } else {
-                            slots.insert(*storage_key, None);
-                        }
+                for (storage_key, storage_value) in &update.added_storage {
+                    let slots = storage.entry(hashed_address).or_default();
+                    if !storage_value.is_zero() {
+                        slots.insert(*storage_key, Some(*storage_value));
+                    } else {
+                        slots.insert(*storage_key, None);
                     }
-                } else {
-                    accounts.insert(hashed_address, None);
                 }
+            } else {
+                accounts.insert(hashed_address, None);
             }
+        }
 
-            store
-                .snapshots
-                .update(hash, state_root, parent_hash, accounts, storage)?;
-            info!(
-                "Snapshot (diff layer) created for {} with parent {}",
-                hash, parent_hash
+        store
+            .snapshots
+            .update(hash, state_root, parent_hash, accounts, storage)?;
+        info!(
+            "Snapshot (diff layer) created for {} with parent {}",
+            hash, parent_hash
+        );
+
+        // Use this point to cap the amount of layers if needs be
+        if let Err(error) = store.snapshots.cap(hash, 128) {
+            warn!(
+                "Couldn't apply cap to snapshots: {} (current layers {})",
+                error,
+                store.snapshots.len()
             );
-
-            // Use this point to cap the amount of layers if needs be
-            if let Err(error) = store.snapshots.cap(hash, 128) {
-                warn!(
-                    "Couldn't apply cap to snapshots: {} (current layers {})",
-                    error,
-                    store.snapshots.len()
-                );
-            }
         }
 
         Ok(())

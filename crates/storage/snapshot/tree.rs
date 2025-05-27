@@ -63,37 +63,25 @@ impl SnapshotTree {
     }
 
     /// Rebuilds the tree, marking all current layers stale, creating a new base disk layer from the given root.
-    pub fn rebuild(
-        &self,
-        block_hash: BlockHash,
-        state_root: H256,
-        generate: bool,
-    ) -> Result<(), SnapshotError> {
-        let disk = {
-            let mut layers = self
-                .layers
-                .write()
-                .map_err(|error| SnapshotError::LockError(error.to_string()))?;
+    pub fn rebuild(&self, block_hash: BlockHash, state_root: H256) -> Result<(), SnapshotError> {
+        let mut layers = self
+            .layers
+            .write()
+            .map_err(|error| SnapshotError::LockError(error.to_string()))?;
 
-            for layer in layers.values() {
-                match layer {
-                    Layer::DiskLayer(disk_layer) => disk_layer.mark_stale(),
-                    Layer::DiffLayer(diff_layer) => diff_layer
-                        .write()
-                        .map_err(|error| SnapshotError::LockError(error.to_string()))?
-                        .mark_stale(),
-                };
-            }
-
-            layers.clear();
-            let disk = Arc::new(DiskLayer::new(self.db.clone(), block_hash, state_root));
-            layers.insert(block_hash, Layer::DiskLayer(disk.clone()));
-            disk
-        };
-
-        if generate {
-            disk.start_generating();
+        for layer in layers.values() {
+            match layer {
+                Layer::DiskLayer(disk_layer) => disk_layer.mark_stale(),
+                Layer::DiffLayer(diff_layer) => diff_layer
+                    .write()
+                    .map_err(|error| SnapshotError::LockError(error.to_string()))?
+                    .mark_stale(),
+            };
         }
+
+        layers.clear();
+        let disk = Arc::new(DiskLayer::new(self.db.clone(), block_hash, state_root));
+        layers.insert(block_hash, Layer::DiskLayer(disk.clone()));
 
         Ok(())
     }
@@ -458,7 +446,6 @@ impl SnapshotTree {
             block_hash: diff_value.block_hash(),
             state_root: diff_value.root(),
             stale: Arc::new(AtomicBool::new(false)),
-            generating: prev_disk.generating.clone(),
         };
         Ok(Arc::new(disk))
     }
@@ -622,7 +609,7 @@ mod tests {
         };
 
         // Add a disklayer to the tree
-        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
 
         // Add a single account in a single difflayer
         tree.update(
@@ -642,7 +629,7 @@ mod tests {
     #[test]
     fn test_add_two_accounts_in_different_difflayers() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
 
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
@@ -696,7 +683,7 @@ mod tests {
     #[test]
     fn test_override_account_in_second_difflayer() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
         let address = Address::from_low_u64_be(1);
@@ -748,7 +735,7 @@ mod tests {
     #[test]
     fn test_override_account_storage_flattening() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
 
@@ -824,7 +811,7 @@ mod tests {
     #[test]
     fn test_override_account_storage_in_second_difflayer() {
         let tree = create_mock_tree();
-        tree.rebuild(H256::zero(), H256::zero(), false).unwrap();
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
 
