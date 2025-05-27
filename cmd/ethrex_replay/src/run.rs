@@ -1,6 +1,5 @@
 use crate::cache::Cache;
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
-use ethrex_prover_lib::ProveOutput;
 use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(cache: Cache) -> eyre::Result<String> {
@@ -9,7 +8,8 @@ pub async fn exec(cache: Cache) -> eyre::Result<String> {
         parent_block_header,
         db,
     } = cache;
-    if cfg!(feature = "sp1") || cfg!(feature = "risc0") || cfg!(feature = "pico") {
+    #[cfg(any(feature = "sp1", feature = "risc0", feature = "pico"))]
+    {
         ethrex_prover_lib::execute(ProgramInput {
             blocks: vec![block],
             parent_block_header,
@@ -18,7 +18,9 @@ pub async fn exec(cache: Cache) -> eyre::Result<String> {
         })
         .map_err(|e| eyre::Error::msg(e.to_string()))?;
         Ok("".to_string())
-    } else {
+    }
+    #[cfg(not(any(feature = "sp1", feature = "risc0", feature = "pico")))]
+    {
         let out = ethrex_prover_lib::execution_program(ProgramInput {
             blocks: vec![block],
             parent_block_header,
@@ -43,13 +45,8 @@ pub async fn prove(cache: Cache) -> eyre::Result<String> {
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
     })
     .map_err(|e| eyre::Error::msg(e.to_string()))?;
-    if cfg!(feature = "sp1") {
-        Ok(format!("{out:#?}"))
-    } else if cfg!(feature = "risc0") {
-        todo!()
-    } else if cfg!(feature = "pico") {
-        todo!()
-    } else {
-        Err(eyre::Error::msg("Exec can't prove."))
-    }
+    #[cfg(feature = "sp1")]
+    return Ok(format!("{out:#?}"));
+    #[cfg(not(feature = "sp1"))]
+    Ok(serde_json::to_string(&out.0)?)
 }
