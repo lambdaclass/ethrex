@@ -2082,6 +2082,7 @@ dependencies = [
  "ciborium",
  "clap 4.5.36",
  "criterion-plot",
+ "futures",
  "is-terminal",
  "itertools 0.10.5",
  "num-traits",
@@ -2094,6 +2095,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "tinytemplate",
+ "tokio",
  "walkdir",
 ]
 
@@ -3060,6 +3062,7 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+ "tempdir",
  "tokio",
  "tokio-util",
  "tracing",
