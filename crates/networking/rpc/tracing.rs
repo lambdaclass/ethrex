@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use ethrex_common::serde_utils;
 use keccak_hash::H256;
 use serde::{de::Error, Deserialize};
 use serde_json::Value;
@@ -21,6 +22,7 @@ struct TracerConfig {
     tracer: TracerType,
     // This differs for each different tracer so we will parse it afterwards when we know the type
     tracer_config: Option<Value>,
+    #[serde(with = "serde_utils::duration::opt")]
     timeout: Option<Duration>,
     reexec: Option<usize>,
 }

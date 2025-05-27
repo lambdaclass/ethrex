@@ -384,6 +384,23 @@ pub mod duration {
         parse_duration(value.clone())
             .ok_or_else(|| D::Error::custom(format!("Failed to parse Duration: {}", value)))
     }
+
+    pub mod opt {
+        use super::*;
+
+        pub fn deserialize<'de, D>(d: D) -> Result<Option<Duration>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            if let Some(value) = Option::<String>::deserialize(d)? {
+                Ok(Some(parse_duration(value.clone()).ok_or_else(|| {
+                    D::Error::custom(format!("Failed to parse Duration: {}", value))
+                })?))
+            } else {
+                Ok(None)
+            }
+        }
+    }
 }
 
 /// Parses a Duration in string format
