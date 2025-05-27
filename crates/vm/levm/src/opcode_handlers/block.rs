@@ -31,13 +31,10 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
-        if let Some(block_hash) = self.db.store.get_block_hash(block_number)? {
-            self.current_call_frame_mut()?
-                .stack
-                .push(U256::from_big_endian(block_hash.as_bytes()))?;
-        } else {
-            self.current_call_frame_mut()?.stack.push(U256::zero())?;
-        }
+        let block_hash = self.db.store.get_block_hash(block_number)?;
+        self.current_call_frame_mut()?
+            .stack
+            .push(U256::from_big_endian(block_hash.as_bytes()))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
