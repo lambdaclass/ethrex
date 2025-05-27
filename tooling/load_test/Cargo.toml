@@ -4,8 +4,7 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
-clap = { workspace = true, features = ["derive", "env"] }
-futures = "0.3"
+clap.workspace = true
 hex.workspace = true
 secp256k1.workspace = true
 ethereum-types.workspace = true
@@ -16,3 +15,4 @@ ethrex-common.workspace = true
 eyre.workspace = true
 keccak-hash.workspace = true
 tokio.workspace = true
+futures = "0.3"
