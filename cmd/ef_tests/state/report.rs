@@ -849,7 +849,7 @@ impl TestReRunReport {
         revm_logs: Vec<revm::primitives::Log>,
         fork: Fork,
     ) {
-        let mut diff = format!("");
+        let mut diff = String::new();
 
         for (i, (levm_log, revm_log)) in levm_logs.iter().zip(revm_logs.iter()).enumerate() {
             let mut levm_log_rlp = Vec::new();
@@ -886,7 +886,7 @@ impl TestReRunReport {
                 if levm_log.topics
                     != (*revm_log.data.topics().to_vec())
                         .iter()
-                        .map(|x| H256::from_slice(&x.as_ref()))
+                        .map(|x| H256::from_slice(x.as_ref()))
                         .collect::<Vec<H256>>()
                 {
                     diff += &format!(
