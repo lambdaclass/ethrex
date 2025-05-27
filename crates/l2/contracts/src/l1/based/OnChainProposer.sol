@@ -4,7 +4,7 @@ pragma solidity =0.8.29;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "../interfaces/IOnChainProposerBased.sol";
+import "./interfaces/IOnChainProposer.sol";
 import {CommonBridge} from "../CommonBridge.sol";
 import {ICommonBridge} from "../interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "../interfaces/IRiscZeroVerifier.sol";
@@ -13,10 +13,10 @@ import {IPicoVerifier} from "../interfaces/IPicoVerifier.sol";
 import {ITDXVerifier} from "../interfaces/ITDXVerifier.sol";
 import {ISequencerRegistry} from "../interfaces/ISequencerRegistry.sol";
 
-/// @title OnChainProposerBased contract.
+/// @title OnChainProposer contract.
 /// @author LambdaClass
-contract OnChainProposerBased is
-    IOnChainProposerBased,
+contract OnChainProposer is
+    IOnChainProposer,
     Initializable,
     UUPSUpgradeable,
     OwnableUpgradeable
@@ -197,7 +197,7 @@ contract OnChainProposerBased is
         OwnableUpgradeable.__Ownable_init(owner);
     }
 
-    /// @inheritdoc IOnChainProposerBased
+    /// @inheritdoc IOnChainProposer
     function initializeBridgeAddress(address bridge) public onlyOwner {
         require(
             BRIDGE == address(0),
@@ -214,7 +214,7 @@ contract OnChainProposerBased is
         BRIDGE = bridge;
     }
 
-    /// @inheritdoc IOnChainProposerBased
+    /// @inheritdoc IOnChainProposer
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
@@ -262,7 +262,7 @@ contract OnChainProposerBased is
         lastCommittedBatch = batchNumber;
     }
 
-    /// @inheritdoc IOnChainProposerBased
+    /// @inheritdoc IOnChainProposer
     /// @notice The first `require` checks that the batch number is the subsequent block.
     /// @notice The second `require` checks if the batch has been committed.
     /// @notice The order of these `require` statements is important.

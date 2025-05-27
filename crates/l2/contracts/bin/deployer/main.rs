@@ -167,18 +167,24 @@ pub fn git_clone(
 fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
     trace!("Compiling contracts");
     compile_contract(&opts.contracts_path, "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol", false)?;
-    compile_contract(&opts.contracts_path, "src/l1/OnChainProposer.sol", false)?;
+    if opts.deploy_based_contracts {
+        info!("Compiling based 🥊 contracts");
+        compile_contract(
+            &opts.contracts_path,
+            "src/l1/based/SequencerRegistry.sol",
+            false,
+        )?;
+        compile_contract(
+            &opts.contracts_path,
+            "src/l1/based/OnChainProposer.sol",
+            false,
+        )?;
+    } else {
+        info!("Deploying non-based OnChainProposer contract");
+        compile_contract(&opts.contracts_path, "src/l1/OnChainProposer.sol", false)?;
+    }
     compile_contract(&opts.contracts_path, "src/l1/CommonBridge.sol", false)?;
-    compile_contract(
-        &opts.contracts_path,
-        "src/l1/based/SequencerRegistry.sol",
-        false,
-    )?;
-    compile_contract(
-        &opts.contracts_path,
-        "src/l1/based/OnChainProposerBased.sol",
-        false,
-    )?;
+
     compile_contract(
         &opts.contracts_path,
         "lib/sp1-contracts/contracts/src/v4.0.0-rc.3/SP1VerifierGroth16.sol",
@@ -224,18 +230,11 @@ async fn deploy_contracts(
     };
 
     trace!("Attempting to deploy OnChainProposer contract");
-    let on_chain_proposer_name = if opts.deploy_based_contracts {
-        info!("Deploying based 🥊 OnChainProposer contract");
-        "OnChainProposerBased.bin"
-    } else {
-        info!("Deploying non-based OnChainProposer contract");
-        "OnChainProposer.bin"
-    };
     let on_chain_proposer_deployment = deploy_with_proxy(
         opts.private_key,
         eth_client,
         &opts.contracts_path.join("solc_out"),
-        on_chain_proposer_name,
+        "OnChainProposer.bin",
         &salt,
     )
     .await?;

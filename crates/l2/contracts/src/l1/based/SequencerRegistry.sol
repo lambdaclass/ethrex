@@ -5,7 +5,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "../interfaces/ISequencerRegistry.sol";
-import "../interfaces/IOnChainProposerBased.sol";
+import "./interfaces/IOnChainProposer.sol";
 
 contract SequencerRegistry is
     ISequencerRegistry,
@@ -80,7 +80,7 @@ contract SequencerRegistry is
             return address(0);
         }
 
-        uint256 _currentBatch = IOnChainProposerBased(ON_CHAIN_PROPOSER)
+        uint256 _currentBatch = IOnChainProposer(ON_CHAIN_PROPOSER)
             .lastCommittedBatch() + 1;
 
         uint256 _targetBatch = _currentBatch + nBatchesInTheFuture;
