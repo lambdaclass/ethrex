@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748360206822,
+  "lastUpdate": 1748360881388,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9325,6 +9325,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 202172760858,
             "range": "± 355360193",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4a49b5b88f05c36c0ffdf64df9d29cd67d80b7b1",
+          "message": "chore(core): update README.md (#2937)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-27T14:55:17Z",
+          "tree_id": "1de50d079d14c639007cbc74cd46cbae938125c5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4a49b5b88f05c36c0ffdf64df9d29cd67d80b7b1"
+        },
+        "date": 1748360878063,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 203990303425,
+            "range": "± 651386296",
             "unit": "ns/iter"
           }
         ]
