@@ -898,7 +898,7 @@ impl TestReRunReport {
                         revm_log.data.topics()
                     );
                 }
-                diff += &r#"
+                diff += r#"
                 "#;
             } else {
                 diff += &format!(
