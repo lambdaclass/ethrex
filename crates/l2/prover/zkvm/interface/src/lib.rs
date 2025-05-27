@@ -15,7 +15,6 @@ pub mod methods {
 
 pub mod io {
     use ethrex_common::{
-        serde_utils,
         types::{blobs_bundle, Block, BlockHeader},
         H256,
     };

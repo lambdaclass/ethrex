@@ -13,6 +13,7 @@ bytes.workspace = true
 thiserror.workspace = true
 keccak-hash.workspace = true
 serde.workspace = true
+lazy_static.workspace = true
 
 [lints.clippy]
 unwrap_used = "deny"

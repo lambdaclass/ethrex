@@ -2,15 +2,14 @@ use std::collections::{HashMap, BTreeMap};
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::{
-    code_hash, AccountInfo, AccountState, AccountUpdate, BlockHeader, BlockNumber,
-};
+use ethrex_common::{types::{
+    code_hash, AccountInfo, AccountState, AccountUpdate, Block, BlockHeader, BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind
+}, H160};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{error::StoreError, hash_address, Store};
-use ethrex_trie::Trie;
+use ethrex_trie::{Trie, TrieError};
+use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
-
-use super::errors::StateDiffError;
 
 use lazy_static::lazy_static;
 
@@ -55,7 +54,7 @@ pub enum StateDiffError {
     InternalError(String),
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AccountStateDiff {
     pub new_balance: Option<U256>,
     pub nonce_diff: u16,
@@ -64,7 +63,7 @@ pub struct AccountStateDiff {
     pub bytecode_hash: Option<H256>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum AccountStateDiffType {
     NewBalance = 1,
     NonceDiff = 2,
@@ -73,7 +72,7 @@ pub enum AccountStateDiffType {
     BytecodeHash = 16,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WithdrawalLog {
     pub address: Address,
     pub amount: U256,
@@ -90,7 +89,7 @@ impl WithdrawalLog {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DepositLog {
     pub address: Address,
     pub amount: U256,
@@ -106,7 +105,7 @@ impl DepositLog {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateDiff {
     pub version: u8,
     pub last_header: BlockHeader,

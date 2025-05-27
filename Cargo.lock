@@ -3185,6 +3185,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "keccak-hash",
+ "lazy_static",
  "serde",
  "thiserror 2.0.12",
 ]

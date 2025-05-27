@@ -10,18 +10,17 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    types::{Block, BlockHeader, blobs_bundle, bytes_from_blob},
+    types::{blobs_bundle, bytes_from_blob, Block, BlockHeader},
     Address,
 };
-use ethrex_l2_common::{get_block_deposits, get_block_withdrawals, get_tx_and_receipts, StateDiff};
+use ethrex_l2_common::StateDiff;
 use ethrex_rpc::clients::eth::EthClient;
-use ethrex_storage::{AccountUpdate, Store};
+use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{EvmError, ProverDB};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::{fmt::Debug, net::IpAddr};
 use tokio::{
@@ -33,7 +32,6 @@ use tracing::{debug, error, info, warn};
 
 use super::blobs_bundle_cache::BlobsBundleCache;
 use super::errors::SequencerError;
-use super::execution_cache::ExecutionCache;
 use super::utils::sleep_random;
 
 #[serde_as]
@@ -62,7 +60,6 @@ struct ProofCoordinator {
     on_chain_proposer_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
-    execution_cache: Arc<ExecutionCache>,
     blobs_bundle_cache: Arc<BlobsBundleCache>,
     rpc_url: String,
     l1_private_key: SecretKey,
@@ -162,7 +159,6 @@ pub async fn start_proof_coordinator(
     store: Store,
     rollup_store: StoreRollup,
     cfg: SequencerConfig,
-    execution_cache: Arc<ExecutionCache>,
     blobs_bundle_cache: Arc<BlobsBundleCache>,
 ) -> Result<(), SequencerError> {
     let proof_coordinator = ProofCoordinator::new_from_config(
@@ -172,7 +168,6 @@ pub async fn start_proof_coordinator(
         &cfg.block_producer,
         store,
         rollup_store,
-        execution_cache,
         blobs_bundle_cache,
     )
     .await?;
@@ -182,6 +177,7 @@ pub async fn start_proof_coordinator(
 }
 
 impl ProofCoordinator {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new_from_config(
         config: &ProofCoordinatorConfig,
         committer_config: &CommitterConfig,
@@ -189,7 +185,6 @@ impl ProofCoordinator {
         proposer_config: &BlockProducerConfig,
         store: Store,
         rollup_store: StoreRollup,
-        execution_cache: Arc<ExecutionCache>,
         blobs_bundle_cache: Arc<BlobsBundleCache>,
     ) -> Result<Self, SequencerError> {
         let eth_client = EthClient::new_with_config(
@@ -219,7 +214,6 @@ impl ProofCoordinator {
             on_chain_proposer_address,
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             rollup_store,
-            execution_cache,
             blobs_bundle_cache,
             rpc_url,
             l1_private_key: config.l1_private_key,
@@ -452,41 +446,8 @@ impl ProofCoordinator {
             .get_block_header_by_hash(first_block.header.parent_hash)?
             .ok_or(ProverServerError::StorageDataIsNone)?;
 
-        // Get all withdrawals and deposits
-        let mut all_withdrawals = Vec::new();
-        let mut all_deposits = Vec::new();
-        let mut all_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
-        for block in &blocks {
-            let txs_and_receipts = get_tx_and_receipts(&block, self.store.clone()).await?;
-            let withdrawals = get_block_withdrawals(&txs_and_receipts)?;
-            let deposits = get_block_deposits(&txs_and_receipts);
-
-            let account_updates = match self.execution_cache.get(block.hash())? {
-                Some(account_updates) => account_updates,
-                None => {
-                    warn!(
-                            "Could not find execution cache result for block {}, falling back to re-execution", block.header.number
-                        );
-                    let mut vm = Evm::default(self.store.clone(), block.header.parent_hash);
-                    vm.execute_block(&block)?;
-                    vm.get_state_transitions()?
-                }
-            };
-
-            all_withdrawals.extend(withdrawals);
-            all_deposits.extend(deposits);
-            for account in account_updates {
-                let address = account.address;
-                if let Some(existing) = all_account_updates.get_mut(&address) {
-                    existing.merge(account);
-                } else {
-                    all_account_updates.insert(address, account);
-                }
-            }
-        }
-
+        // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
         let cached_blobs_bundle = self.blobs_bundle_cache.get(batch_number)?;
-
         let (state_diff, blob_commitment, blob_proof) = match cached_blobs_bundle {
             Some(mut bundle) => {
                 let (Some(blob), Some(commitment), Some(proof)) = (

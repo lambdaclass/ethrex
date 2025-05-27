@@ -4,7 +4,7 @@ use ethrex_common::{
     types::{bytes_from_blob, BlockHeader, BYTES_PER_BLOB},
     Address,
 };
-use ethrex_l2_common::state_diff::StateDiff;
+use ethrex_l2_common::StateDiff;
 use ethrex_storage::{EngineType, Store};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::ContextCompat;
@@ -243,7 +243,7 @@ impl Command {
                     // Apply all account updates to trie
                     let account_updates = state_diff.to_account_updates(&new_trie)?;
                     new_trie = store
-                        .apply_account_updates_from_trie(new_trie, &account_updates)
+                        .apply_account_updates_from_trie(new_trie, account_updates.values())
                         .await
                         .expect("Error applying account updates");
 

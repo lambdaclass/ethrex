@@ -1,20 +1,16 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
-use ethrex_blockchain::Blockchain;
-use ethrex_common::types::{Block, Genesis, ELASTICITY_MULTIPLIER};
+use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{ Store};
 use tracing::info;
-use zkvm_interface::io::ProgramInput;
 
 use std::{
     fs::File,
     io::{BufReader, Read as _, Write},
     path::PathBuf,
 };
-
-use super::{error::ProverInputError, prover::db::to_prover_db};
 
 // From cmd/ethrex
 pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {

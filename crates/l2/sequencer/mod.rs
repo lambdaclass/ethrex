@@ -53,14 +53,12 @@ pub async fn start_l2(
         store.clone(),
         rollup_store.clone(),
         cfg.clone(),
-        execution_cache.clone(),
         blobs_bundle_cache.clone(),
     ));
     task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
     task_set.spawn(start_block_producer(
         store.clone(),
         blockchain,
-        execution_cache,
         cfg.clone(),
     ));
     #[cfg(feature = "metrics")]

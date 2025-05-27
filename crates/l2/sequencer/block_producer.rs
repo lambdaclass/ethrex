@@ -21,7 +21,6 @@ use crate::{BlockProducerConfig, SequencerConfig};
 
 use super::{
     errors::{BlockProducerError, SequencerError},
-    execution_cache::ExecutionCache,
 };
 
 use ethrex_metrics::metrics;
@@ -39,12 +38,11 @@ pub struct BlockProducer {
 pub async fn start_block_producer(
     store: Store,
     blockchain: Arc<Blockchain>,
-    execution_cache: Arc<ExecutionCache>,
     cfg: SequencerConfig,
 ) -> Result<(), SequencerError> {
     let proposer = BlockProducer::new_from_config(&cfg.block_producer);
     proposer
-        .run(store.clone(), blockchain, execution_cache)
+        .run(store.clone(), blockchain)
         .await;
     Ok(())
 }
@@ -67,11 +65,10 @@ impl BlockProducer {
         &self,
         store: Store,
         blockchain: Arc<Blockchain>,
-        execution_cache: Arc<ExecutionCache>,
     ) {
         loop {
             if let Err(err) = self
-                .main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
+                .main_logic(store.clone(), blockchain.clone())
                 .await
             {
                 error!("Block Producer Error: {}", err);
@@ -85,7 +82,6 @@ impl BlockProducer {
         &self,
         store: Store,
         blockchain: Arc<Blockchain>,
-        execution_cache: Arc<ExecutionCache>,
     ) -> Result<(), BlockProducerError> {
         let version = 3;
         let head_header = {
@@ -145,10 +141,7 @@ impl BlockProducer {
             .await?;
         info!("Stored new block {:x}", block.hash());
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
-
-        // Cache execution result
-        execution_cache.push(block.hash(), account_updates)?;
-
+    
         // Make the new head be part of the canonical chain
         apply_fork_choice(&store, block.hash(), block.hash(), block.hash()).await?;
 

@@ -1,5 +1,5 @@
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::{Address, H256, AccountUpdate};
+use ethrex_common::{Address, H256, types::AccountUpdate};
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_vm::Evm;
@@ -160,7 +160,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     // Check state diffs are valid
     #[cfg(feature = "l2")]
     if state_diff_updates != acc_account_updates {
-        panic!("invalid state diffs")
+        return Err("invalid state diffs".to_string().into());
     }
 
     Ok(ProgramOutput {

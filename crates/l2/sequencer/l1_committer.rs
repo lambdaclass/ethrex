@@ -1,5 +1,5 @@
 use crate::{
-    sequencer::errors::CommitterError, utils::helpers::is_withdrawal_l2, CommitterConfig,
+    sequencer::errors::CommitterError, CommitterConfig,
     EthConfig, SequencerConfig,
 };
 
@@ -9,14 +9,14 @@ use ethrex_common::types::BYTES_PER_BLOB;
 use ethrex_common::{
     types::{
         blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, BlobsBundleError,
-        Block, BlockHeader, BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
-        BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
+        BlockNumber,
+        BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS, Block,
     },
     Address, H256, U256,
 };
 use ethrex_l2_common::{
-    get_block_deposits, get_block_withdrawals, get_nonce_diff, prepare_state_diff,
-    AccountStateDiff, DepositLog, StateDiff, WithdrawalLog,
+    get_block_deposits, get_block_withdrawals, prepare_state_diff,
+    StateDiff,
 };
 use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
