@@ -491,8 +491,8 @@ impl LevmDatabase for RpcDB {
         Ok(Some(hash))
     }
 
-    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
-        *CANCUN_CONFIG
+    fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
+        Ok(*CANCUN_CONFIG)
     }
 }
 
