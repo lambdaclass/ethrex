@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
@@ -62,7 +62,7 @@ pub enum StateDiffError {
 pub struct AccountStateDiff {
     pub new_balance: Option<U256>,
     pub nonce_diff: u16,
-    pub storage: HashMap<H256, U256>,
+    pub storage: BTreeMap<H256, U256>,
     pub bytecode: Option<Bytes>,
     pub bytecode_hash: Option<H256>,
 }
@@ -94,7 +94,7 @@ pub struct DepositLog {
 pub struct StateDiff {
     pub version: u8,
     pub last_header: BlockHeader,
-    pub modified_accounts: HashMap<Address, AccountStateDiff>,
+    pub modified_accounts: BTreeMap<Address, AccountStateDiff>,
     pub withdrawal_logs: Vec<WithdrawalLog>,
     pub deposit_logs: Vec<DepositLog>,
 }
@@ -138,7 +138,7 @@ impl Default for StateDiff {
         StateDiff {
             version: 1,
             last_header: BlockHeader::default(),
-            modified_accounts: HashMap::new(),
+            modified_accounts: BTreeMap::new(),
             withdrawal_logs: Vec::new(),
             deposit_logs: Vec::new(),
         }
@@ -220,7 +220,7 @@ impl StateDiff {
         // Accounts diff
         let modified_accounts_len = decoder.get_u16()?;
 
-        let mut modified_accounts = HashMap::with_capacity(modified_accounts_len.into());
+        let mut modified_accounts = BTreeMap::new();
         for _ in 0..modified_accounts_len {
             let next_bytes = bytes.get(decoder.consumed()..).ok_or(
                 StateDiffError::FailedToSerializeStateDiff("Not enough bytes".to_string()),
@@ -311,7 +311,7 @@ impl StateDiff {
                     removed: false,
                     info: account_info,
                     code: diff.bytecode.clone(),
-                    added_storage: diff.storage.clone(),
+                    added_storage: diff.storage.clone().into_iter().collect(),
                 },
             );
         }
@@ -398,10 +398,9 @@ impl AccountStateDiff {
             None
         };
 
-        let mut storage_diff = HashMap::new();
+        let mut storage_diff = BTreeMap::new();
         if AccountStateDiffType::Storage.is_in(update_type) {
             let storage_slots_updated = decoder.get_u16()?;
-            storage_diff.reserve(storage_slots_updated.into());
 
             for _ in 0..storage_slots_updated {
                 let key = decoder.get_h256()?;
@@ -621,7 +620,7 @@ pub async fn prepare_state_diff(
     deposits: &[PrivilegedL2Transaction],
     account_updates: Vec<AccountUpdate>,
 ) -> Result<StateDiff, StateDiffError> {
-    let mut modified_accounts = HashMap::new();
+    let mut modified_accounts = BTreeMap::new();
     for account_update in account_updates {
         // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
         // and we may have to keep track of the latestCommittedBlock (last block of the batch),
