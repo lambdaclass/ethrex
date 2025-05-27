@@ -45,14 +45,14 @@ impl StateUpdater {
     ) -> Result<Self, StateUpdaterError> {
         Ok(Self {
             on_chain_proposer_address: sequencer_cfg.l1_committer.on_chain_proposer_address,
-            sequencer_registry_address: sequencer_cfg.state_updater.sequencer_registry,
+            sequencer_registry_address: sequencer_cfg.based.state_updater.sequencer_registry,
             sequencer_address: sequencer_cfg.l1_committer.l1_address,
             eth_client: Arc::new(EthClient::new_with_multiple_urls(
                 sequencer_cfg.eth.rpc_url.clone(),
             )?),
             store,
             rollup_store,
-            check_interval_ms: sequencer_cfg.state_updater.check_interval_ms,
+            check_interval_ms: sequencer_cfg.based.state_updater.check_interval_ms,
         })
     }
 

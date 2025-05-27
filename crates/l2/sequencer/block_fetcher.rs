@@ -29,7 +29,7 @@ pub struct BlockFetcher {
     sequencer_state: Arc<Mutex<SequencerState>>,
     fetch_interval_ms: u64,
     last_l1_block_fetched: U256,
-    max_block_step: U256,
+    fetch_block_step: U256,
 }
 
 pub async fn start_block_fetcher(
@@ -71,9 +71,9 @@ impl BlockFetcher {
             rollup_store,
             blockchain,
             sequencer_state,
-            fetch_interval_ms: cfg.block_producer.block_time_ms,
+            fetch_interval_ms: cfg.based.block_fetcher.fetch_interval_ms,
             last_l1_block_fetched,
-            max_block_step: cfg.l1_watcher.max_block_step, // TODO: block fetcher config
+            fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
         })
     }
 
@@ -173,7 +173,7 @@ impl BlockFetcher {
         let mut batch_committed_logs = Vec::new();
         while self.last_l1_block_fetched < last_l1_block_number {
             let new_last_l1_fetched_block = min(
-                self.last_l1_block_fetched + self.max_block_step,
+                self.last_l1_block_fetched + self.fetch_block_step,
                 last_l1_block_number,
             );
 

@@ -10,8 +10,6 @@ pub struct SequencerConfig {
     pub l1_watcher: L1WatcherConfig,
     pub proof_coordinator: ProofCoordinatorConfig,
     pub based: BasedConfig,
-    pub state_updater: StateUpdaterConfig,
-    pub block_fetcher: BlockFetcherConfig,
 }
 
 // TODO: Move to blockchain/dev
@@ -65,6 +63,8 @@ pub struct ProofCoordinatorConfig {
 #[derive(Clone, Debug)]
 pub struct BasedConfig {
     pub based: bool,
+    pub state_updater: StateUpdaterConfig,
+    pub block_fetcher: BlockFetcherConfig,
 }
 
 #[derive(Clone, Debug)]

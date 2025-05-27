@@ -40,8 +40,6 @@ pub struct SequencerOptions {
     pub proof_coordinator_opts: ProofCoordinatorOptions,
     #[command(flatten)]
     pub based_opts: BasedOptions,
-    #[command(flatten)]
-    pub block_fetcher: BlockFetcherOptions,
 }
 
 impl From<SequencerOptions> for SequencerConfig {
@@ -94,14 +92,14 @@ impl From<SequencerOptions> for SequencerConfig {
             },
             based: BasedConfig {
                 based: opts.based_opts.based,
-            },
-            state_updater: StateUpdaterConfig {
-                sequencer_registry: opts.based_opts.state_updater_opts.sequencer_registry,
-                check_interval_ms: opts.based_opts.state_updater_opts.check_interval_ms,
-            },
-            block_fetcher: BlockFetcherConfig {
-                fetch_interval_ms: opts.block_fetcher.fetch_interval_ms,
-                max_block_step: opts.block_fetcher.max_block_step.into(),
+                state_updater: StateUpdaterConfig {
+                    sequencer_registry: opts.based_opts.state_updater_opts.sequencer_registry,
+                    check_interval_ms: opts.based_opts.state_updater_opts.check_interval_ms,
+                },
+                block_fetcher: BlockFetcherConfig {
+                    fetch_interval_ms: opts.based_opts.block_fetcher.fetch_interval_ms,
+                    fetch_block_step: opts.based_opts.block_fetcher.fetch_block_step.into(),
+                },
             },
         }
     }
@@ -397,6 +395,8 @@ pub struct BasedOptions {
     pub based: bool,
     #[clap(flatten)]
     pub state_updater_opts: StateUpdaterOptions,
+    #[clap(flatten)]
+    pub block_fetcher: BlockFetcherOptions,
 }
 
 #[derive(Parser, Default)]
@@ -422,18 +422,18 @@ pub struct StateUpdaterOptions {
 pub struct BlockFetcherOptions {
     #[arg(
         long = "block-fetcher.fetch_interval_ms",
-        value_name = "UINT64",
         default_value = "5000",
+        value_name = "UINT64",
         env = "ETHREX_BLOCK_FETCHER_FETCH_INTERVAL_MS",
         help_heading = "Block Fetcher options"
     )]
     pub fetch_interval_ms: u64,
     #[arg(
-        long = "block-fetcher.max_block_step",
+        long,
         default_value = "5000",
         value_name = "UINT64",
-        env = "ETHREX_BLOCK_FETCHER_MAX_BLOCK_STEP",
+        env = "ETHREX_BLOCK_FETCHER_FETCH_BLOCK_STEP",
         help_heading = "Block Fetcher options"
     )]
-    pub max_block_step: u64,
+    pub fetch_block_step: u64,
 }
