@@ -54,18 +54,18 @@ jobs:
           cd crates/l2/prover/bench
           make prove-sp1-gpu-ci BLOCK_NUMBER=22240087
 
-      - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          name: "L1 block proving benchmark"
-          tool: "customBiggerIsBetter"
-          output-file-path: crates/l2/prover/bench/bench_latest.json
-          benchmark-data-dir-path: "."
-          # Access token to deploy GitHub Pages branch
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          # Push and deploy GitHub pages branch automatically
-          auto-push: true
-          comment-on-alert: true
+      # - name: Store benchmark result
+      #   uses: benchmark-action/github-action-benchmark@v1
+      #   with:
+      #     name: "L1 block proving benchmark"
+      #     tool: "customBiggerIsBetter"
+      #     output-file-path: crates/l2/prover/bench/bench_latest.json
+      #     benchmark-data-dir-path: "."
+      #     # Access token to deploy GitHub Pages branch
+      #     github-token: ${{ secrets.GITHUB_TOKEN }}
+      #     # Push and deploy GitHub pages branch automatically
+      #     auto-push: true
+      #     comment-on-alert: true
 
       - name: Ensure admin permissions in _work
         if: always()
