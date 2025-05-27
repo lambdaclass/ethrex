@@ -11,6 +11,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_storage::Store;
+#[cfg(feature = "sync-test")]
 use std::env;
 use tracing::error;
 
