@@ -240,7 +240,7 @@ impl PeerHandler {
             // Push blocks
             for (_, body) in block_hashes.drain(..block_bodies_len).zip(block_bodies) {
                 let Some(header) = headers_iter.next() else {
-                    warn!("[SYNCING] Header not found for the block bodies received, skipping...");
+                    debug!("[SYNCING] Header not found for the block bodies received, skipping...");
                     break; // Break out of block creation and retry with different peer
                 };
 
@@ -257,10 +257,7 @@ impl PeerHandler {
                 self.remove_peer(peer_id).await;
                 continue; // Retry on validation failure
             }
-            info!(
-                "[SYNCING] Received {} block bodies from peer {peer_id}",
-                blocks.len()
-            );
+
             return Some(blocks);
         }
         None

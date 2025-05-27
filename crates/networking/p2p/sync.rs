@@ -391,9 +391,9 @@ impl Syncer {
 
             let new_blocks = block_request_result.ok_or(SyncError::BodiesNotFound)?;
             let new_blocks_len = new_blocks.len();
+
             headers_consumed += new_blocks_len;
             blocks.extend(new_blocks);
-            
 
             debug!(
                 "Accumulated {} Blocks, with {} blocks added starting from block hash {:?}",
