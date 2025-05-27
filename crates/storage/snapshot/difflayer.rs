@@ -47,9 +47,7 @@ impl DiffLayer {
             diffed: Bloom::default(),
         }
     }
-}
 
-impl DiffLayer {
     /// Recreates the bloom filter of this layer, either using the parent diff filter as base or a new one.
     pub fn rebloom(&mut self, origin: H256, parent_diffed: Option<Bloom>) {
         // Set the new origin that triggered a rebloom.
