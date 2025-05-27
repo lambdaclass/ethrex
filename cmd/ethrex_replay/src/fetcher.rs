@@ -5,7 +5,7 @@ use eyre::WrapErr;
 pub async fn or_latest(maybe_number: Option<usize>, rpc_url: &str) -> eyre::Result<usize> {
     Ok(match maybe_number {
         Some(v) => v,
-        None => get_latest_block_number(rpc_url).await?
+        None => get_latest_block_number(rpc_url).await?,
     })
 }
 
