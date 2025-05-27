@@ -35,8 +35,7 @@ impl VmDatabase for StoreVmDatabase {
         match self.store.get_block_header(block_number) {
             Ok(Some(header)) => Ok(H256::from(header.compute_block_hash().0)),
             Ok(None) => Err(EvmError::DB(format!(
-                "Block header not found for block number {}",
-                block_number
+                "Block header not found for block number {block_number}"
             ))),
             Err(e) => Err(EvmError::DB(e.to_string())),
         }

@@ -182,8 +182,7 @@ impl LevmDatabase for ProverDB {
             .cloned()
             .ok_or_else(|| {
                 DatabaseError::Custom(format!(
-                    "Block hash not found for block number {}",
-                    block_number
+                    "Block hash not found for block number {block_number}"
                 ))
             })
     }
