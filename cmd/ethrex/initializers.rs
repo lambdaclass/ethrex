@@ -41,17 +41,6 @@ use ::{
     secp256k1::SecretKey,
 };
 
-#[cfg(feature = "based")]
-use crate::l2::BasedOptions;
-#[cfg(feature = "based")]
-use ethrex_common::Public;
-#[cfg(feature = "based")]
-use ethrex_rpc::clients::eth::errors::EthClientError;
-#[cfg(feature = "based")]
-use ethrex_rpc::{EngineClient, EthClient};
-#[cfg(feature = "based")]
-use std::str::FromStr;
-
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
@@ -160,12 +149,6 @@ pub async fn init_rpc_api(
         syncer,
         peer_handler,
         get_client_version(),
-        #[cfg(feature = "based")]
-        get_gateway_http_client(&l2_opts.based_opts).expect("Failed to get gateway http client"),
-        #[cfg(feature = "based")]
-        get_gateway_auth_client(&l2_opts.based_opts),
-        #[cfg(feature = "based")]
-        get_gateway_public_key(&l2_opts.based_opts),
         #[cfg(feature = "l2")]
         get_valid_delegation_addresses(l2_opts),
         #[cfg(feature = "l2")]
@@ -176,30 +159,6 @@ pub async fn init_rpc_api(
     .into_future();
 
     tracker.spawn(rpc_api);
-}
-
-#[cfg(feature = "based")]
-fn get_gateway_http_client(opts: &BasedOptions) -> Result<EthClient, EthClientError> {
-    let gateway_http_socket_addr = parse_socket_addr(&opts.gateway_addr, &opts.gateway_eth_port)
-        .expect("Failed to parse gateway http address and port");
-
-    EthClient::new(&gateway_http_socket_addr.to_string())
-}
-
-#[cfg(feature = "based")]
-fn get_gateway_auth_client(opts: &BasedOptions) -> EngineClient {
-    let gateway_authrpc_socket_addr =
-        parse_socket_addr(&opts.gateway_addr, &opts.gateway_auth_port)
-            .expect("Failed to parse gateway authrpc address and port");
-
-    let gateway_jwtsecret = read_jwtsecret_file(&opts.gateway_jwtsecret);
-
-    EngineClient::new(&gateway_authrpc_socket_addr.to_string(), gateway_jwtsecret)
-}
-
-#[cfg(feature = "based")]
-fn get_gateway_public_key(based_opts: &BasedOptions) -> Public {
-    Public::from_str(&based_opts.gateway_pubkey).expect("Failed to parse gateway pubkey")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -235,6 +194,8 @@ pub async fn init_network(
         blockchain,
         get_client_version(),
     );
+
+    context.set_fork_id().await.expect("Set fork id");
 
     ethrex_p2p::start_network(context, bootnodes)
         .await

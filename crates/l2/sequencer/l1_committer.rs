@@ -7,10 +7,13 @@ use crate::{
     CommitterConfig, EthConfig, SequencerConfig,
 };
 
+use ethrex_blockchain::vm::StoreVmDatabase;
+#[cfg(feature = "metrics")]
+use ethrex_common::types::BYTES_PER_BLOB;
 use ethrex_common::{
     types::{
-        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block, BlockHeader,
-        BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
+        blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, BlobsBundleError,
+        Block, BlockHeader, BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
         BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
@@ -19,13 +22,16 @@ use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
     merkle_tree::merkelize,
 };
+use ethrex_metrics::metrics;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};
 use ethrex_rpc::{
     clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
     utils::get_withdrawal_hash,
 };
-use ethrex_storage::{AccountUpdate, Store};
+use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::Evm;
+use ethrex_vm::{Evm, EvmEngine};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
@@ -159,6 +165,20 @@ impl Committer {
             .await
         {
             Ok(commit_tx_hash) => {
+                metrics!(
+                let _ = METRICS_L2
+                    .set_block_type_and_block_number(
+                        MetricsL2BlockType::LastCommittedBlock,
+                        last_block_of_batch,
+                    )
+                    .inspect_err(|e| {
+                        tracing::error!(
+                            "Failed to set metric: last committed block {}",
+                            e.to_string()
+                        )
+                    });
+                );
+
                 info!(
                     "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}.",
                 );
@@ -184,6 +204,10 @@ impl Committer {
         let mut withdrawal_hashes = vec![];
         let mut deposit_logs_hashes = vec![];
         let mut new_state_root = H256::default();
+
+        #[cfg(feature = "metrics")]
+        let mut tx_count = 0_u64;
+        let mut _blob_size = 0_usize;
 
         info!("Preparing state diff from block {first_block_of_batch}");
 
@@ -219,6 +243,13 @@ impl Committer {
                 txs_and_receipts.push((tx.clone(), receipt));
             }
 
+            metrics!(
+                tx_count += txs_and_receipts
+                    .len()
+                    .try_into()
+                    .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
+                    .unwrap_or(0)
+            );
             // Get block withdrawals and deposits
             let withdrawals = self.get_block_withdrawals(&txs_and_receipts)?;
             let deposits = self.get_block_deposits(&txs_and_receipts);
@@ -231,8 +262,12 @@ impl Committer {
                     warn!(
                             "Could not find execution cache result for block {}, falling back to re-execution", last_added_block_number + 1
                         );
-                    let mut vm =
-                        Evm::default(self.store.clone(), block_to_commit.header.parent_hash);
+
+                    let vm_db = StoreVmDatabase::new(
+                        self.store.clone(),
+                        block_to_commit.header.parent_hash,
+                    );
+                    let mut vm = Evm::new(EvmEngine::default(), vm_db);
                     vm.execute_block(&block_to_commit)?;
                     vm.get_state_transitions()?
                 }
@@ -264,13 +299,14 @@ impl Committer {
                     .await?;
                 self.generate_blobs_bundle(&state_diff)
             } else {
-                Ok(BlobsBundle::default())
+                Ok((BlobsBundle::default(), 0_usize))
             };
 
             match result {
-                Ok(bundle) => {
+                Ok((bundle, latest_blob_size)) => {
                     // Save current blobs_bundle and continue to add more blocks.
                     blobs_bundle = bundle;
+                    _blob_size = latest_blob_size;
                     for (_, tx) in &withdrawals {
                         let hash = get_withdrawal_hash(tx)
                             .ok_or(CommitterError::InvalidWithdrawalTransaction)?;
@@ -301,6 +337,24 @@ impl Committer {
                 }
             }
         }
+
+        metrics!(if let (Ok(deposits_count), Ok(withdrawals_count)) = (
+                deposit_logs_hashes.len().try_into(),
+                withdrawal_hashes.len().try_into()
+            ) {
+                let _ = self
+                    .rollup_store
+                    .update_operations_count(tx_count, deposits_count, withdrawals_count)
+                    .await
+                    .inspect_err(|e| {
+                        tracing::error!("Failed to update operations metric: {}", e.to_string())
+                    });
+            }
+            #[allow(clippy::as_conversions)]
+            METRICS_L2
+                .set_blob_usage_percentage((_blob_size as f64 / BYTES_PER_BLOB as f64) * 100_f64);
+        );
+
         let deposit_logs_hash = self.get_deposit_hash(deposit_logs_hashes)?;
         Ok((
             blobs_bundle,
@@ -442,12 +496,20 @@ impl Committer {
     }
 
     /// Generate the blob bundle necessary for the EIP-4844 transaction.
-    fn generate_blobs_bundle(&self, state_diff: &StateDiff) -> Result<BlobsBundle, CommitterError> {
+    fn generate_blobs_bundle(
+        &self,
+        state_diff: &StateDiff,
+    ) -> Result<(BlobsBundle, usize), CommitterError> {
         let blob_data = state_diff.encode().map_err(CommitterError::from)?;
+
+        let blob_size = blob_data.len();
 
         let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
 
-        BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)
+        Ok((
+            BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)?,
+            blob_size,
+        ))
     }
 
     async fn send_commitment(
