@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748374009503,
+  "lastUpdate": 1748374785347,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11563,6 +11563,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0073866779246206556,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c205014b0e7d475d6908a6bb76c42face14161fa",
+          "message": "feat(l2): improve grafana dashboards (#2892)\n\n**Motivation**\n\nImprove our metrics collection and add those new metrics to the L2\noverview dashboard\n\n**Description**\n- Fixed issues related to feature flags that were preventing the metrics\nfrom being recorded\n\n##### Metrics\n- Processed deposits amount\n- Processed withdrawals amount\n- Mempool tx count\n- TPS -> related issue #2878 \n- Amount of committed batches\n- Amount of verified batches\n- Last committed block\n- Last verified block\n- L2 gas price\n- Percentage amount of blob size used\n- Percentage amount of gas_limit used\n\n**How to try it**\n\n```shell\nmake restart\n```\n\ngo to [localhost:3802](http://localhost:3802)\n\nuser: admin\npassword:admin\n\n**Dashboard**\n\n<img width=\"1552\" alt=\"Screenshot 2025-05-22 at 2 26 24 PM\"\nsrc=\"https://github.com/user-attachments/assets/d30894a8-138a-434d-9c37-532c05186a0a\"\n/>\n\n<img width=\"1552\" alt=\"Screenshot 2025-05-22 at 2 27 34 PM\"\nsrc=\"https://github.com/user-attachments/assets/f1568151-2191-431a-8b9d-2fd5428ebaaf\"\n/>",
+          "timestamp": "2025-05-27T14:56:57Z",
+          "tree_id": "70dbc454d0ebadb45f767c7f1d2640d3b626b5fd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c205014b0e7d475d6908a6bb76c42face14161fa"
+        },
+        "date": 1748374782414,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0074084354442808045,
             "unit": "Mgas/s"
           }
         ]
