@@ -89,7 +89,7 @@ pub async fn start_l2(
             store.clone(),
             blockchain,
             shared_state.clone(),
-            rollup_store,
+            rollup_store.clone(),
             cfg.clone(),
         ));
     }

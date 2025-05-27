@@ -168,7 +168,7 @@ fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
     trace!("Compiling contracts");
     compile_contract(&opts.contracts_path, "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol", false)?;
     if opts.deploy_based_contracts {
-        info!("Compiling based 🥊 contracts");
+        info!("Compiling based contracts");
         compile_contract(
             &opts.contracts_path,
             "src/l1/based/SequencerRegistry.sol",
