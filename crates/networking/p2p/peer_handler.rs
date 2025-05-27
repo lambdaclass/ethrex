@@ -211,8 +211,8 @@ impl PeerHandler {
         None
     }
 
-    /// Requests full blocks from any suitable peer given their block hashes and validates them
-    /// Returns the blocks or None if:
+    /// Requests block bodies from any suitable peer given their block hashes and validates them
+    /// Returns the full block or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     /// - The block bodies are invalid given the block headers
@@ -246,11 +246,6 @@ impl PeerHandler {
 
                 let block = Block::new(header.clone(), body);
                 blocks.push(block);
-            }
-
-            // Only validate if we successfully created blocks for all received bodies
-            if blocks.len() != block_bodies_len {
-                continue; // Retry. We could remove the peer if we found this repeatedly.
             }
 
             // Validate blocks
