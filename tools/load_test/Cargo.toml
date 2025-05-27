@@ -1,10 +1,11 @@
 [package]
 name = "load_test"
-edition = "2021"
+edition.workspace = true
 version.workspace = true
 
 [dependencies]
 clap = { workspace = true, features = ["derive", "env"] }
+futures = "0.3"
 hex.workspace = true
 secp256k1.workspace = true
 ethereum-types.workspace = true
@@ -12,7 +13,6 @@ ethrex-rpc.workspace = true
 ethrex-sdk.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
-futures.workspace = true
 eyre.workspace = true
 keccak-hash.workspace = true
 tokio.workspace = true
