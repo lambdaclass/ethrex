@@ -70,12 +70,10 @@ impl BlockProducer {
         execution_cache: Arc<ExecutionCache>,
     ) {
         loop {
-            if let Err(err) = self
+            let _ = self
                 .main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
                 .await
-            {
-                error!("Block Producer Error: {}", err);
-            }
+                .inspect_err(|e| error!("Block Producer Error: {}", e));
 
             sleep(Duration::from_millis(self.block_time_ms)).await;
         }
