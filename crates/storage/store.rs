@@ -5,14 +5,13 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
-use crate::AccountUpdate;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{
-    code_hash, payload::PayloadBundle, AccountInfo, AccountState, Block, BlockBody, BlockHash,
-    BlockHeader, BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, Receipt, Transaction,
-    EMPTY_TRIE_HASH,
+    code_hash, payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody,
+    BlockHash, BlockHeader, BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index,
+    Receipt, Transaction, EMPTY_TRIE_HASH,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -211,6 +210,24 @@ impl Store {
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
         self.engine.get_block_number(block_hash).await
+    }
+
+    pub async fn get_fork_id(&self) -> Result<ForkId, StoreError> {
+        let chain_config = self.get_chain_config()?;
+        let genesis_header = self
+            .get_block_header(0)?
+            .ok_or(StoreError::MissingEarliestBlockNumber)?;
+        let block_number = self.get_latest_block_number().await?;
+        let block_header = self
+            .get_block_header(block_number)?
+            .ok_or(StoreError::MissingLatestBlockNumber)?;
+
+        Ok(ForkId::new(
+            chain_config,
+            genesis_header,
+            block_header.timestamp,
+            block_number,
+        ))
     }
 
     pub async fn add_transaction_location(
