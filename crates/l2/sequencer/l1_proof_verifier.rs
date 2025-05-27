@@ -58,8 +58,8 @@ impl L1ProofVerifier {
     }
 
     async fn run(&self) {
+        info!("Running L1 Proof Verifier");
         loop {
-            info!("Running L1 Proof Verifier");
             if let Err(err) = self.main_logic().await {
                 error!("L1 Proof Verifier Error: {}", err);
             }
