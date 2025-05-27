@@ -47,7 +47,10 @@ impl SnapshotTree {
         }
     }
 
-    pub fn add_data(
+    /// Used to add snapshot data to the database.
+    ///
+    /// Mainly called when initializing from the genesis.
+    pub fn add_snapshot_data_to_db(
         &self,
         account_hashes: Vec<H256>,
         account_states: Vec<AccountState>,
@@ -86,12 +89,12 @@ impl SnapshotTree {
         Ok(())
     }
 
-    fn snapshot(&self, block_hash: H256) -> Option<Layer> {
+    fn get_snapshot(&self, block_hash: H256) -> Option<Layer> {
         self.layers.read().unwrap().get(&block_hash).cloned()
     }
 
     /// Adds a new snapshot into the tree.
-    pub fn update(
+    pub fn add_snapshot(
         &self,
         block_hash: H256,
         block_state_root: H256,
@@ -104,7 +107,7 @@ impl SnapshotTree {
             return Err(SnapshotError::SnapshotCycle);
         }
 
-        if let Some(parent) = self.snapshot(parent_block_hash) {
+        if let Some(parent) = self.get_snapshot(parent_block_hash) {
             let snap = match parent {
                 Layer::DiskLayer(parent) => {
                     parent.update(block_hash, block_state_root, accounts, storage)
@@ -142,7 +145,7 @@ impl SnapshotTree {
     ///
     /// It's used to flatten the layers.
     pub fn cap(&self, head_block_hash: H256, layers_n: usize) -> Result<(), SnapshotError> {
-        let diff = if let Some(diff) = self.snapshot(head_block_hash) {
+        let diff = if let Some(diff) = self.get_snapshot(head_block_hash) {
             match diff {
                 Layer::DiskLayer(_) => {
                     return Err(SnapshotError::SnapshotIsdiskLayer(head_block_hash))
@@ -459,7 +462,7 @@ impl SnapshotTree {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, SnapshotError> {
-        if let Some(snapshot) = self.snapshot(block_hash) {
+        if let Some(snapshot) = self.get_snapshot(block_hash) {
             let layers = self
                 .layers
                 .read()
@@ -488,7 +491,7 @@ impl SnapshotTree {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, SnapshotError> {
-        if let Some(snapshot) = self.snapshot(block_hash) {
+        if let Some(snapshot) = self.get_snapshot(block_hash) {
             let layers = self
                 .layers
                 .read()
@@ -612,7 +615,7 @@ mod tests {
         tree.rebuild(H256::zero(), H256::zero()).unwrap();
 
         // Add a single account in a single difflayer
-        tree.update(
+        tree.add_snapshot(
             root,
             root,
             H256::zero(),
@@ -653,7 +656,7 @@ mod tests {
         };
 
         // Add the first account in the first difflayer
-        tree.update(
+        tree.add_snapshot(
             root1,
             root1,
             H256::zero(),
@@ -663,7 +666,7 @@ mod tests {
         .unwrap();
 
         // Add the second account in the second difflayer
-        tree.update(
+        tree.add_snapshot(
             root2,
             root2,
             root1,
@@ -704,7 +707,7 @@ mod tests {
         };
 
         // Add the account in the first difflayer
-        tree.update(
+        tree.add_snapshot(
             root1,
             root1,
             H256::zero(),
@@ -714,7 +717,7 @@ mod tests {
         .unwrap();
 
         // Override the account in the second difflayer
-        tree.update(
+        tree.add_snapshot(
             root2,
             root2,
             root1,
@@ -760,7 +763,7 @@ mod tests {
         };
 
         // Add the account in the first difflayer
-        tree.update(
+        tree.add_snapshot(
             root1,
             root1,
             H256::zero(),
@@ -773,7 +776,7 @@ mod tests {
         )
         .unwrap();
 
-        tree.update(
+        tree.add_snapshot(
             root2,
             root2,
             root1,
@@ -836,7 +839,7 @@ mod tests {
         };
 
         // Add the account in the first difflayer
-        tree.update(
+        tree.add_snapshot(
             root1,
             root1,
             H256::zero(),
@@ -850,7 +853,7 @@ mod tests {
         .unwrap();
 
         // Override the account in the second difflayer
-        tree.update(
+        tree.add_snapshot(
             root2,
             root2,
             root1,

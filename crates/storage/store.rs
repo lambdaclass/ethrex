@@ -439,7 +439,7 @@ impl Store {
 
         // Add the initial genesis data to the snapshot db.
         self.snapshots
-            .add_data(account_hashes, account_states, storage_keys, storage_values);
+            .add_snapshot_data_to_db(account_hashes, account_states, storage_keys, storage_values);
 
         genesis_state_trie.hash().map_err(StoreError::Trie)
     }
@@ -1215,7 +1215,7 @@ impl Store {
 
         store
             .snapshots
-            .update(hash, state_root, parent_hash, accounts, storage)?;
+            .add_snapshot(hash, state_root, parent_hash, accounts, storage)?;
         info!(
             "Snapshot (diff layer) created for {} with parent {}",
             hash, parent_hash
