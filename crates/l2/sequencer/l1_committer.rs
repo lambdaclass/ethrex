@@ -100,11 +100,12 @@ impl Committer {
     }
 
     pub async fn run(&mut self) {
+        sleep_random(self.commit_time_ms * 2).await;
         loop {
-            sleep_random(self.commit_time_ms).await;
             if let Err(err) = self.main_logic().await {
                 warn!("L1 Committer Error: {}", err);
             }
+            sleep_random(self.commit_time_ms / 2).await;
         }
     }
 
