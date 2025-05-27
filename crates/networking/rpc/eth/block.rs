@@ -51,6 +51,10 @@ pub struct GetRawReceipts {
 pub struct BlockNumberRequest;
 pub struct GetBlobBaseFee;
 
+pub struct ExecutionWitness {
+    pub block: BlockIdentifier,
+}
+
 impl RpcHandler for GetBlockByNumberRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<GetBlockByNumberRequest, RpcErr> {
         let params = params
@@ -327,6 +331,26 @@ impl RpcHandler for GetBlobBaseFee {
 
         serde_json::to_value(format!("{:#x}", blob_base_fee))
             .map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+impl RpcHandler for ExecutionWitness {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        };
+
+        Ok(ExecutionWitness {
+            block: BlockIdentifier::parse(params[0].clone(), 0)?,
+        })
+    }
+
+    async fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
+        info!("Requested execution witness for block: {}", self.block);
+        Err(RpcErr::Internal("Not implemented".to_string()))
     }
 }
 
