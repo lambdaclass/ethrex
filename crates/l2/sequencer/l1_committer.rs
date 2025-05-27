@@ -34,12 +34,15 @@ use tracing::{debug, error, info, warn};
 use super::{
     errors::{BlobEstimationError, SequencerError},
     execution_cache::ExecutionCache,
-    utils::sleep_random,
+    utils::random_duration,
 };
+use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
+use spawned_rt::mpsc::Sender;
 
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
 
-pub struct Committer {
+#[derive(Clone)]
+pub struct CommitterState {
     eth_client: EthClient,
     on_chain_proposer_address: Address,
     store: Store,
@@ -52,24 +55,7 @@ pub struct Committer {
     validium: bool,
 }
 
-pub async fn start_l1_committer(
-    store: Store,
-    rollup_store: StoreRollup,
-    execution_cache: Arc<ExecutionCache>,
-    cfg: SequencerConfig,
-) -> Result<(), SequencerError> {
-    let mut committer = Committer::new_from_config(
-        &cfg.l1_committer,
-        &cfg.eth,
-        store,
-        rollup_store,
-        execution_cache,
-    )?;
-    committer.run().await;
-    Ok(())
-}
-
-impl Committer {
+impl CommitterState {
     pub fn new_from_config(
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
@@ -98,18 +84,81 @@ impl Committer {
             validium: committer_config.validium,
         })
     }
+}
 
-    pub async fn run(&mut self) {
-        loop {
-            if let Err(err) = self.main_logic().await {
-                error!("L1 Committer Error: {}", err);
-            }
+// TODO: these are copy pasted from l1_watcher.rs, consider merging them
+#[derive(Clone)]
+pub enum InMessage {
+    Watch,
+}
 
-            sleep_random(self.commit_time_ms).await;
-        }
+#[allow(dead_code)]
+#[derive(Clone, PartialEq)]
+pub enum OutMessage {
+    Done,
+    Error,
+}
+
+pub struct L1Committer;
+
+impl L1Committer {
+    pub async fn spawn(
+    store: Store,
+    rollup_store: StoreRollup,
+    execution_cache: Arc<ExecutionCache>,
+    cfg: SequencerConfig) -> Result<(), SequencerError> {
+        let state = CommitterState::new_from_config(
+            &cfg.l1_committer, 
+            &cfg.eth, 
+            store.clone(), 
+            rollup_store.clone(), 
+            execution_cache.clone()
+        )?;
+        let mut l1_committer = L1Committer::start(state);
+        let _ = l1_committer.cast(InMessage::Watch).await;
+        Ok(())
+    }
+}
+
+impl GenServer for L1Committer {
+    type InMsg = InMessage;
+    type OutMsg = OutMessage;
+    type State = CommitterState;
+
+    type Error = CommitterError;
+
+    fn new() -> Self {
+        Self{}
     }
 
-    async fn main_logic(&mut self) -> Result<(), CommitterError> {
+    async fn handle_call(
+        &mut self,
+        _message: Self::InMsg,
+        _tx: &Sender<GenServerInMsg<Self>>,
+        _state: &mut Self::State,
+    ) -> CallResponse<Self::OutMsg> {
+        CallResponse::Reply(OutMessage::Done)
+    }
+
+    async fn handle_cast(
+        &mut self,
+        _message: Self::InMsg,  
+        tx: &Sender<GenServerInMsg<Self>>,
+        state: &mut Self::State,
+    ) -> CastResponse {
+        // Right now we only have the watch message, so we ignore the message
+        let check_interval = random_duration(state.commit_time_ms);
+        send_after(check_interval, tx.clone(), Self::InMsg::Watch);
+        if let Err(err) = state.main_logic().await {
+            error!("L1 Committer Error: {}", err);
+        }
+        CastResponse::NoReply
+    }
+}
+
+
+impl CommitterState {
+    async fn main_logic(self: &mut CommitterState) -> Result<(), CommitterError> {
         // Get the batch to commit
         let last_committed_batch_number = self
             .eth_client
