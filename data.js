@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748377305126,
+  "lastUpdate": 1748381057403,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11621,6 +11621,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007393916217540421,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estebandh@gmail.com",
+            "name": "ElFantasma",
+            "username": "ElFantasma"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6bdf0c0af0711d23ca737951276665b8c58100b5",
+          "message": "refactor(l2): implement l1_watcher using spawned library (#2891)\n\n**Motivation**\n\n[spawned](https://github.com/lambdaclass/spawned) goal is to simplify\nconcurrency implementations and decouple any runtime implementation from\nthe code.\nOn this PR we aim to replace one of the tasks with a `spawned`\nimplementation to learn if this approach is beneficial.\n\n**Description**\n\nReplaces l1_watcher task spawn with a `spawned` gen_server\nimplementation.",
+          "timestamp": "2025-05-27T16:15:46Z",
+          "tree_id": "0e4a03f285500b6efec7548c333652cfa61e2eb0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6bdf0c0af0711d23ca737951276665b8c58100b5"
+        },
+        "date": 1748381054346,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007383064090019569,
             "unit": "Mgas/s"
           }
         ]
