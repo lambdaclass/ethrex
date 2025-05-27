@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use ethrex_common::{
-    types::{AccountState, BlockHash},
+    types::{AccountInfo, AccountState, BlockHash},
     Bloom, BloomInput, H256, U256,
 };
 
@@ -21,7 +21,7 @@ pub struct DiffLayer {
     block_hash: BlockHash,
     state_root: H256,
     stale: bool,
-    accounts: HashMap<H256, Option<AccountState>>, // None if deleted
+    accounts: HashMap<H256, Option<AccountInfo>>, // None if deleted
     storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     /// tracks all diffed items up to disk layer
     pub(crate) diffed: Bloom,
@@ -33,7 +33,7 @@ impl DiffLayer {
         origin: H256,
         block_hash: BlockHash,
         state_root: H256,
-        accounts: HashMap<H256, Option<AccountState>>,
+        accounts: HashMap<H256, Option<AccountInfo>>,
         storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     ) -> Self {
         DiffLayer {
@@ -88,7 +88,7 @@ impl DiffLayer {
         &self,
         hash: H256,
         layers: &Layers,
-    ) -> Result<Option<AccountState>, SnapshotError> {
+    ) -> Result<Option<AccountInfo>, SnapshotError> {
         if self.stale {
             return Err(SnapshotError::StaleSnapshot);
         }
@@ -162,7 +162,7 @@ impl DiffLayer {
         &self,
         block: BlockHash,
         state_root: H256,
-        accounts: HashMap<H256, Option<AccountState>>,
+        accounts: HashMap<H256, Option<AccountInfo>>,
         storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     ) -> DiffLayer {
         let mut layer = DiffLayer::new(
@@ -192,7 +192,7 @@ impl DiffLayer {
         &self,
         hash: H256,
         layers: &Layers,
-    ) -> Result<Option<AccountState>, SnapshotError> {
+    ) -> Result<Option<AccountInfo>, SnapshotError> {
         if self.stale {
             return Err(SnapshotError::StaleSnapshot);
         }
@@ -241,7 +241,7 @@ impl DiffLayer {
         }
     }
 
-    pub fn add_accounts(&mut self, accounts: HashMap<H256, Option<AccountState>>) {
+    pub fn add_accounts(&mut self, accounts: HashMap<H256, Option<AccountInfo>>) {
         self.accounts.extend(accounts);
     }
 
@@ -252,7 +252,7 @@ impl DiffLayer {
         }
     }
 
-    pub fn accounts(&self) -> HashMap<H256, Option<AccountState>> {
+    pub fn accounts(&self) -> HashMap<H256, Option<AccountInfo>> {
         self.accounts.clone()
     }
 

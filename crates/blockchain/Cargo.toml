@@ -21,6 +21,9 @@ k256 = { version = "0.13.3", features = ["ecdh"] }
 
 ethrex-metrics = { path = "./metrics", default-features = false }
 
+# in memory concurrent cache (used in snapshot)
+quick_cache = { version = "0.6.14", optional = true, default-features = false, features = ["parking_lot"]}
+
 [dev-dependencies]
 serde_json.workspace = true
 hex = "0.4.3"
@@ -30,7 +33,8 @@ tokio.workspace = true
 path = "./blockchain.rs"
 
 [features]
-default = []
+default = ["snapshots"]
+snapshots = ["dep:quick_cache"]
 l2 = []
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]

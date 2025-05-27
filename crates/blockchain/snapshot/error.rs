@@ -1,7 +1,6 @@
 use ethrex_common::H256;
 use ethrex_rlp::error::RLPDecodeError;
-
-use crate::error::StoreError;
+use ethrex_storage::error::StoreError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SnapshotError {

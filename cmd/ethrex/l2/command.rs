@@ -65,10 +65,10 @@ impl Command {
 
                 let network = get_network(&opts.node_opts);
 
-                let store = init_store(&data_dir, &network).await;
+                let store = init_store(&data_dir).await;
                 let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-                let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
+                let blockchain = init_blockchain(opts.node_opts.evm, store.clone(), &network);
 
                 let signer = get_signer(&data_dir);
 

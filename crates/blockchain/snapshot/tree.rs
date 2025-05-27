@@ -6,12 +6,11 @@ use std::{
 };
 
 use ethrex_common::{
-    types::{AccountState, BlockHash},
+    types::{code_hash, AccountInfo, AccountState, BlockHash, Genesis, EMPTY_TRIE_HASH},
     Address, Bloom, H256, U256,
 };
+use ethrex_storage::{hash_address_fixed, StoreEngine};
 use tracing::{error, info};
-
-use crate::{api::StoreEngine, hash_address_fixed};
 
 use super::{difflayer::DiffLayer, disklayer::DiskLayer, error::SnapshotError};
 
@@ -47,6 +46,39 @@ impl SnapshotTree {
         }
     }
 
+    pub fn add_genesis_state(&self, genesis: Genesis) {
+        // For snapshots
+        let mut account_hashes = Vec::with_capacity(1024);
+        let mut account_states = Vec::with_capacity(1024);
+        let mut storage_keys: Vec<Vec<H256>> = Vec::with_capacity(64);
+        let mut storage_values: Vec<Vec<U256>> = Vec::with_capacity(64);
+
+        for (address, account) in genesis.alloc.iter() {
+            let hash = hash_address_fixed(address);
+            account_hashes.push(hash);
+            account_states.push(AccountInfo {
+                balance: account.balance,
+                nonce: account.nonce,
+                code_hash: code_hash(&account.code),
+            });
+
+            let mut keys = Vec::new();
+            let mut values = Vec::new();
+
+            for (key, value) in account.storage.iter() {
+                keys.push(H256(key.to_big_endian()));
+                values.push(*value);
+            }
+
+            storage_keys.push(keys);
+            storage_values.push(values);
+        }
+
+        // Add the initial genesis data to the snapshot db.
+        self
+            .add_data(account_hashes, account_states, storage_keys, storage_values);
+    }
+
     pub fn add_data(
         &self,
         account_hashes: Vec<H256>,
@@ -67,9 +99,8 @@ impl SnapshotTree {
         &self,
         block_hash: BlockHash,
         state_root: H256,
-        generate: bool,
     ) -> Result<(), SnapshotError> {
-        let disk = {
+
             let mut layers = self
                 .layers
                 .write()
@@ -88,12 +119,7 @@ impl SnapshotTree {
             layers.clear();
             let disk = Arc::new(DiskLayer::new(self.db.clone(), block_hash, state_root));
             layers.insert(block_hash, Layer::DiskLayer(disk.clone()));
-            disk
-        };
 
-        if generate {
-            disk.start_generating();
-        }
 
         Ok(())
     }
@@ -467,11 +493,11 @@ impl SnapshotTree {
     ///
     /// Note: The result is valid if no Err is returned, this means Ok(None) means it doesn't really exist at all
     /// and no further checking is needed.
-    pub fn get_account_state(
+    pub fn get_account_info(
         &self,
         block_hash: BlockHash,
         address: Address,
-    ) -> Result<Option<AccountState>, SnapshotError> {
+    ) -> Result<Option<AccountInfo>, SnapshotError> {
         if let Some(snapshot) = self.snapshot(block_hash) {
             let layers = self
                 .layers
@@ -635,7 +661,7 @@ mod tests {
         .unwrap();
 
         // Retrieve the account and check it's there
-        let retrieved_account = tree.get_account_state(root, address).unwrap();
+        let retrieved_account = tree.get_account_info(root, address).unwrap();
         assert_eq!(retrieved_account, Some(account_state));
     }
 
@@ -686,8 +712,8 @@ mod tests {
         .unwrap();
 
         // Retrieve both accounts and check their values
-        let retrieved_account1 = tree.get_account_state(root2, address1).unwrap();
-        let retrieved_account2 = tree.get_account_state(root2, address2).unwrap();
+        let retrieved_account1 = tree.get_account_info(root2, address1).unwrap();
+        let retrieved_account2 = tree.get_account_info(root2, address2).unwrap();
 
         assert_eq!(retrieved_account1, Some(account1_state));
         assert_eq!(retrieved_account2, Some(account2_state));
@@ -737,11 +763,11 @@ mod tests {
         .unwrap();
 
         // Retrieve the account and check it returns the second value
-        let retrieved_account = tree.get_account_state(root2, address).unwrap();
+        let retrieved_account = tree.get_account_info(root2, address).unwrap();
         assert_eq!(retrieved_account, Some(account_state2));
 
         // Retrieve it from the first hash and check it returns the first value
-        let retrieved_account = tree.get_account_state(root1, address).unwrap();
+        let retrieved_account = tree.get_account_info(root1, address).unwrap();
         assert_eq!(retrieved_account, Some(account_state1));
     }
 
@@ -803,7 +829,7 @@ mod tests {
         assert_eq!(tree.layers.read().unwrap().len(), 2);
 
         // Retrieve the account and check it returns the second value
-        let retrieved_account = tree.get_account_state(root2, address).unwrap();
+        let retrieved_account = tree.get_account_info(root2, address).unwrap();
         assert_eq!(retrieved_account, Some(account_state2));
 
         let value = tree
@@ -812,7 +838,7 @@ mod tests {
         assert_eq!(value, Some(U256::zero()));
 
         // Retrieve it from the first hash and check it returns the first value
-        let retrieved_account = tree.get_account_state(root1, address).unwrap();
+        let retrieved_account = tree.get_account_info(root1, address).unwrap();
         assert_eq!(retrieved_account, Some(account_state1));
 
         let value = tree
@@ -877,7 +903,7 @@ mod tests {
         .unwrap();
 
         // Retrieve the account and check it returns the second value
-        let retrieved_account = tree.get_account_state(root2, address).unwrap();
+        let retrieved_account = tree.get_account_info(root2, address).unwrap();
         assert_eq!(retrieved_account, Some(account_state2));
 
         let value = tree
@@ -886,7 +912,7 @@ mod tests {
         assert_eq!(value, Some(U256::zero()));
 
         // Retrieve it from the first hash and check it returns the first value
-        let retrieved_account = tree.get_account_state(root1, address).unwrap();
+        let retrieved_account = tree.get_account_info(root1, address).unwrap();
         assert_eq!(retrieved_account, Some(account_state1));
 
         let value = tree

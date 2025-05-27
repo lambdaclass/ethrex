@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use ethrex_common::{types::AccountState, H256, U256};
+use ethrex_common::{types::{AccountInfo}, H256, U256};
 use quick_cache::sync::Cache;
 
 /// In-memory cache.
@@ -10,7 +10,7 @@ use quick_cache::sync::Cache;
 /// Can be cloned freely.
 #[derive(Debug, Clone)]
 pub struct DiskCache {
-    pub accounts: Arc<Cache<H256, Option<AccountState>>>,
+    pub accounts: Arc<Cache<H256, Option<AccountInfo>>>,
     pub storages: Arc<Cache<(H256, H256), Option<U256>>>,
 }
 

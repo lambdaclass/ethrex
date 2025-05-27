@@ -64,7 +64,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub async fn init_store(data_dir: &str, network: &str) -> Store {
+pub async fn init_store(data_dir: &str) -> Store {
     let path = PathBuf::from(data_dir);
     let store = if path.ends_with("memory") {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
@@ -81,11 +81,6 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
         }
         Store::new(data_dir, engine_type).expect("Failed to create Store")
     };
-    let genesis = read_genesis_file(network);
-    store
-        .add_initial_state(genesis.clone())
-        .await
-        .expect("Failed to create genesis block");
     store
 }
 
@@ -109,8 +104,11 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
     rollup_store
 }
 
-pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
-    Blockchain::new(evm_engine, store).into()
+pub fn init_blockchain(evm_engine: EvmEngine, store: Store, network: &str) -> Arc<Blockchain> {
+    let blockchain = Blockchain::new(evm_engine, store);
+    let genesis = read_genesis_file(network);
+    blockchain.add_initial_state(genesis);
+    blockchain.into()
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -4,6 +4,8 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 mod smoke_test;
+#[cfg(feature = "snapshots")]
+mod snapshot;
 pub mod vm;
 
 use constants::MAX_INITCODE_SIZE;
@@ -23,6 +25,7 @@ use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
 use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use mempool::Mempool;
+use snapshot::SnapshotTree;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
@@ -36,6 +39,7 @@ use vm::StoreVmDatabase;
 pub struct Blockchain {
     pub evm_engine: EvmEngine,
     storage: Store,
+    snapshots: SnapshotTree,
     pub mempool: Mempool,
     /// Whether the node's chain is in or out of sync with the current chain
     /// This will be set to true once the initial sync has taken place and wont be set to false after
@@ -53,6 +57,8 @@ impl Blockchain {
     pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
         Self {
             evm_engine,
+            #[cfg(feature = "snapshots")]
+            snapshots: SnapshotTree::new(store.get_engine()),
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
@@ -62,9 +68,20 @@ impl Blockchain {
     pub fn default_with_store(store: Store) -> Self {
         Self {
             evm_engine: EvmEngine::default(),
+            #[cfg(feature = "snapshots")]
+            snapshots: SnapshotTree::new(store.get_engine()),
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
+        }
+    }
+
+    pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), ChainError> {
+        self.storage.add_initial_state(genesis);
+        #[cfg(feature = "snapshots")]
+        {
+            let genesis_block = genesis.get_block();
+            self.snapshots.rebuild(genesis_block.hash(), genesis_block.header.state_root);
         }
     }
 
@@ -94,7 +111,14 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
+        #[cfg(not(feature = "snapshots"))]
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        #[cfg(feature = "snapshots")]
+        let vm_db = StoreVmDatabase::new(
+            self.storage.clone(),
+            block.header.parent_hash,
+            self.snapshots.clone(),
+        );
         let mut vm = Evm::new(self.evm_engine, vm_db);
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
@@ -227,7 +251,14 @@ impl Blockchain {
             .get_chain_config()
             .map_err(|e| (e.into(), None))?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), first_block_header.parent_hash);
+        #[cfg(not(feature = "snapshots"))]
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        #[cfg(feature = "snapshots")]
+        let vm_db = StoreVmDatabase::new(
+            self.storage.clone(),
+            first_block_header.parent_hash,
+            self.snapshots.clone(),
+        );
         let mut vm = Evm::new(self.evm_engine, vm_db);
 
         let blocks_len = blocks.len();
@@ -497,6 +528,74 @@ impl Blockchain {
     /// The node should accept incoming p2p transactions if this method returns true
     pub fn is_synced(&self) -> bool {
         self.is_synced.load(Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "snapshots")]
+    /// Creates a snapshot of the block adding a diff (or disk) layer.
+    pub async fn add_block_snapshot(
+        &self,
+        block: Block,
+        account_updates: Vec<AccountUpdate>,
+    ) -> Result<(), SnapshotError> {
+        use tracing::warn;
+
+        let store = self.clone();
+
+        let hash = block.hash();
+        let parent_hash = block.header.parent_hash;
+        let state_root = block.header.state_root;
+        info!(
+            "Creating snapshot for block {}, state_root {}",
+            hash, state_root
+        );
+
+        // Create the accounts and storage maps for the diff layer.
+        let mut accounts = HashMap::new();
+        let state_trie = store.open_state_trie(state_root);
+
+        let mut storage: HashMap<H256, HashMap<H256, Option<U256>>> = HashMap::new();
+
+        for update in account_updates.iter() {
+            let hashed_address = hash_address_fixed(&update.address);
+
+            if !update.removed {
+                let account_state = match state_trie.get(hashed_address).unwrap() {
+                    Some(encoded_state) => AccountState::decode(&encoded_state).unwrap(),
+                    None => AccountState::default(),
+                };
+                accounts.insert(hashed_address, Some(account_state.clone()));
+
+                for (storage_key, storage_value) in &update.added_storage {
+                    let slots = storage.entry(hashed_address).or_default();
+                    if !storage_value.is_zero() {
+                        slots.insert(*storage_key, Some(*storage_value));
+                    } else {
+                        slots.insert(*storage_key, None);
+                    }
+                }
+            } else {
+                accounts.insert(hashed_address, None);
+            }
+        }
+
+        store
+            .snapshots
+            .update(hash, state_root, parent_hash, accounts, storage)?;
+        info!(
+            "Snapshot (diff layer) created for {} with parent {}",
+            hash, parent_hash
+        );
+
+        // Use this point to cap the amount of layers if needs be
+        if let Err(error) = store.snapshots.cap(hash, 128) {
+            warn!(
+                "Couldn't apply cap to snapshots: {} (current layers {})",
+                error,
+                store.snapshots.len()
+            );
+        }
+
+        Ok(())
     }
 }
 
