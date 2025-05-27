@@ -117,8 +117,10 @@ pub fn get_data_sub_dir(datadir: &str, network: &str) -> String {
     let network_path = network.replace(".json", "");
     let sub_path = if DEFAULT_PUBLIC_NETWORKS.contains(&network_path.to_lowercase().as_str()) {
         Path::new(&network_path).to_path_buf()
-    } else {
+    } else if !network.is_empty() {
         Path::new(DEFAULT_CUSTOM_DIR).join(&network_path)
+    } else {
+        Path::new("").to_path_buf() // If there's no network we default to data dir, get_data_dir is being called during removedb command execution.
     };
 
     let final_path = Path::new(datadir).join(sub_path);
