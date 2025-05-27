@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748367250659,
+  "lastUpdate": 1748367882940,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9445,6 +9445,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 207677378036,
             "range": "± 384216523",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "419805b67c44e462ed19ebc40c795c634d1624fc",
+          "message": "fix(core): fix config file name (#2943)\n\n**Motivation**\n\nI were having some issues with peers note being persisted between runs\n\n**Description**\n\nFixes the name of the config file from where peers are check.",
+          "timestamp": "2025-05-27T16:52:04Z",
+          "tree_id": "b30f0cdccf61d80d18bd403a16fab608b1293900",
+          "url": "https://github.com/lambdaclass/ethrex/commit/419805b67c44e462ed19ebc40c795c634d1624fc"
+        },
+        "date": 1748367879785,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 204644761974,
+            "range": "± 559590108",
             "unit": "ns/iter"
           }
         ]
