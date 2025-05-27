@@ -438,8 +438,12 @@ impl Store {
         }
 
         // Add the initial genesis data to the snapshot db.
-        self.snapshots
-            .add_snapshot_data_to_db(account_hashes, account_states, storage_keys, storage_values);
+        self.snapshots.add_snapshot_data_to_db(
+            account_hashes,
+            account_states,
+            storage_keys,
+            storage_values,
+        );
 
         genesis_state_trie.hash().map_err(StoreError::Trie)
     }

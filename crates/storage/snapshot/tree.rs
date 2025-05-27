@@ -136,6 +136,9 @@ impl SnapshotTree {
         }
     }
 
+    /// Returns how many layers the snapshot tree has.
+    ///
+    /// Mainly used for logging.
     pub fn len(&self) -> usize {
         self.layers.read().unwrap().len()
     }
