@@ -1,6 +1,6 @@
 use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_common::types::{blob_from_bytes, kzg_commitment_to_versioned_hash};
-use ethrex_common::{types::AccountUpdate, Address, H256};
+use ethrex_common::{types::AccountUpdate, Address};
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_vm::Evm;
@@ -173,22 +173,31 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     let blob_versioned_hash = {
         use kzg_rs::{get_kzg_settings, Blob, Bytes48, KzgProof};
 
-        let encoded_state_diff = state_diff.encode().expect("failed to encode state diff");
+        let encoded_state_diff = state_diff
+            .encode()
+            .map_err(|e| format!("failed to encode state diff: {}", e))?;
         let blob_data = blob_from_bytes(encoded_state_diff)
-            .expect("failed to convert encoded state diff into blob data");
-        let blob = Blob::from_slice(&blob_data).expect("failed to convert blob data into Blob");
+            .map_err(|e| format!("failed to convert encoded state diff into blob data: {}", e))?;
+        let blob = Blob::from_slice(&blob_data)
+            .map_err(|_| "failed to convert blob data into Blob".to_string())?;
 
         let blob_proof_valid = KzgProof::verify_blob_kzg_proof(
             blob,
             &Bytes48::from_slice(&blob_commitment)
-                .expect("failed type conversion for blob commitment"),
-            &Bytes48::from_slice(&blob_proof).expect("failed type conversion for blob proof"),
+                .map_err(|_| "failed type conversion for blob commitment".to_string())?,
+            &Bytes48::from_slice(&blob_proof)
+                .map_err(|_| "failed type conversion for blob proof".to_string())?,
             &get_kzg_settings(),
         )
-        .expect("failed to verify blob proof (neither valid or invalid proof)");
+        .map_err(|e| {
+            format!(
+                "failed to verify blob proof (neither valid or invalid proof): {}",
+                e
+            )
+        })?;
 
         if !blob_proof_valid {
-            panic!("invalid blob proof");
+            return Err("invalid blob proof".into());
         }
 
         kzg_commitment_to_versioned_hash(&blob_commitment)
