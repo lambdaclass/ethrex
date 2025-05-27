@@ -3,7 +3,6 @@ use std::time::Duration;
 use ethrex_common::{types::Block, H256};
 use ethrex_storage::Store;
 use ethrex_vm::{tracing::CallTrace, Evm, EvmEngine, EvmError};
-use tracing::info;
 
 use crate::{error::ChainError, Blockchain};
 
@@ -41,18 +40,14 @@ impl Blockchain {
             reexec,
         )
         .await?;
-        info!("Re-executing {} blocks to rebuild state", blocks_to_re_execute.len());
-        for block in blocks_to_re_execute.iter().rev() {
-            info!("Block: {}, hash: {}, state: {}, parent: {}", block.header.number, block.header.compute_block_hash(), block.header.state_root, block.header.parent_hash);
-        }
+        let parent_hash = blocks_to_re_execute
+            .last()
+            .unwrap_or(&block)
+            .header
+            .parent_hash;
         // Run parents to rebuild pre-state
-        let mut vm = Evm::new(
-            self.evm_engine,
-            self.storage.clone(),
-            block.header.parent_hash,
-        );
+        let mut vm = Evm::new(self.evm_engine, self.storage.clone(), parent_hash);
         for block in blocks_to_re_execute.iter().rev() {
-            info!("Reruning block with number: {}", block.header.number);
             vm.rerun_block(block)?;
         }
         // Run the block with the transaction & trace it
