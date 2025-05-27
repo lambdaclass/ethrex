@@ -113,9 +113,9 @@ impl L1ProofSender {
     }
 
     async fn run(&self) {
+        info!("Running L1 Proof Sender");
+        info!("Needed proof systems: {:?}", self.needed_proof_types);
         loop {
-            info!("Running L1 Proof Sender");
-            info!("Needed proof systems: {:?}", self.needed_proof_types);
             if let Err(err) = self.main_logic().await {
                 error!("L1 Proof Sender Error: {}", err);
             }
@@ -193,7 +193,7 @@ impl L1ProofSender {
         // TODO: remove hardcoded chain id
         let wallet = wallet.with_chain_id(31337u64);
 
-        info!("L1 proof sender: Sending proof to Aligned");
+        debug!("Sending proof to Aligned");
 
         submit(
             Network::Devnet, //TODO: remove hardcoded network
@@ -209,7 +209,7 @@ impl L1ProofSender {
             .set_lastest_sent_batch_proof(batch_number)
             .await?;
 
-        info!("L1 proof sender: Proof sent to Aligned");
+        info!("Proof for batch {batch_number} sent to Aligned");
 
         Ok(())
     }

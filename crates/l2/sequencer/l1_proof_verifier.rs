@@ -6,7 +6,7 @@ use ethrex_common::{Address, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::EthClient;
 use secp256k1::SecretKey;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     sequencer::errors::ProofVerifierError,
@@ -75,12 +75,10 @@ impl L1ProofVerifier {
             .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
 
-        info!("Verifying batch {batch_to_verify}");
-
         if !batch_number_has_all_needed_proofs(batch_to_verify, &[ProverType::Aligned])
             .is_ok_and(|has_all_proofs| has_all_proofs)
         {
-            info!("Missing proofs for batch {batch_to_verify}, skipping sending");
+            info!("Missing proofs for batch {batch_to_verify}, skipping verification");
             return Ok(());
         }
 
@@ -90,7 +88,7 @@ impl L1ProofVerifier {
             }
             None => {
                 info!(
-                    "Batch {batch_to_verify} not aggregated yet, waiting for {} seconds",
+                    "Batch {batch_to_verify} has not yet been aggregated by Aligned. Waiting for {} seconds",
                     self.proof_send_interval_ms / 1000
                 );
             }
@@ -102,7 +100,7 @@ impl L1ProofVerifier {
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, ProofVerifierError> {
-        info!("L1 proof verifier: Verifying proof in aggregation mode");
+        debug!("L1 proof verifier: Verifying proof in aggregation mode");
 
         let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
         let public_inputs = proof.public_values();
