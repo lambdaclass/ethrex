@@ -18,7 +18,12 @@ enum SubcommandExecute {
     #[clap(about = "Execute a single block.")]
     Block {
         block: Option<usize>,
-        #[arg(long, default_value = "http://localhost:8545", env = "RPC_URL", required=true)]
+        #[arg(
+            long,
+            default_value = "http://localhost:8545",
+            env = "RPC_URL",
+            required = true
+        )]
         rpc_url: String,
         #[arg(long, required = false)]
         bench: bool,
@@ -53,7 +58,12 @@ enum SubcommandProve {
     #[clap(about = "Proves a single block.")]
     Block {
         block: Option<usize>,
-        #[arg(long, default_value = "http://localhost:8545", env = "RPC_URL", required=true)]
+        #[arg(
+            long,
+            default_value = "http://localhost:8545",
+            env = "RPC_URL",
+            required = true
+        )]
         rpc_url: String,
         #[arg(long, required = false)]
         bench: bool,
