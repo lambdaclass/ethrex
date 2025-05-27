@@ -65,18 +65,16 @@ impl LevmDatabase for DatabaseLogger {
             .get_storage_value(address, key)
     }
 
-    fn get_block_hash(&self, block_number: u64) -> Result<Option<CoreH256>, DatabaseError> {
+    fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
         let block_hash = self
             .store
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
             .get_block_hash(block_number)?;
-        if let Some(hash) = block_hash {
-            self.block_hashes_accessed
-                .lock()
-                .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-                .insert(block_number, hash);
-        }
+        self.block_hashes_accessed
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .insert(block_number, block_hash);
         Ok(block_hash)
     }
 
@@ -133,7 +131,7 @@ impl LevmDatabase for DynVmDatabase {
         )
     }
 
-    fn get_block_hash(&self, block_number: u64) -> Result<Option<CoreH256>, DatabaseError> {
+    fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
         <dyn VmDatabase>::get_block_hash(self.as_ref(), block_number)
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
@@ -178,8 +176,15 @@ impl LevmDatabase for ProverDB {
         self.accounts.contains_key(&address)
     }
 
-    fn get_block_hash(&self, block_number: u64) -> Result<Option<CoreH256>, DatabaseError> {
-        Ok(self.block_hashes.get(&block_number).cloned())
+    fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
+        self.block_hashes
+            .get(&block_number)
+            .cloned()
+            .ok_or_else(|| {
+                DatabaseError::Custom(format!(
+                    "Block hash not found for block number {block_number}"
+                ))
+            })
     }
 
     fn get_storage_value(

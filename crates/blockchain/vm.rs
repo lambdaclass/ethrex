@@ -31,12 +31,14 @@ impl VmDatabase for StoreVmDatabase {
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
-    fn get_block_hash(&self, block_number: u64) -> Result<Option<H256>, EvmError> {
-        Ok(self
-            .store
-            .get_block_header(block_number)
-            .map_err(|e| EvmError::DB(e.to_string()))?
-            .map(|header| H256::from(header.compute_block_hash().0)))
+    fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
+        match self.store.get_block_header(block_number) {
+            Ok(Some(header)) => Ok(H256::from(header.compute_block_hash().0)),
+            Ok(None) => Err(EvmError::DB(format!(
+                "Block header not found for block number {block_number}"
+            ))),
+            Err(e) => Err(EvmError::DB(e.to_string())),
+        }
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
