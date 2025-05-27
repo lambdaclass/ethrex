@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748356198195,
+  "lastUpdate": 1748356287803,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9235,6 +9235,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 205402825794,
             "range": "± 1429860628",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2b4abbefa8089da8517b4005af07c78384c55cea",
+          "message": "fix(levm): fix precompiles problem with eip7702 (#2900)\n\n**Motivation**\n\n- Fix holesky Prague syncing with LEVM\n\n**Description**\n\n- I previously misunderstood the behavior between [EIP\n7702](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7702.md) and\nprecompiles and because of that some edge cases were breaking our VM.\nThe current solution I believe is implemented correctly and is also\nsimpler than what I thought.\n\nBefore we were luckily (unluckily I'd say) passing all EFTests despite\nthis misimplementation.\n\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-27T13:38:09Z",
+          "tree_id": "83a5e613b78179ba3c8681db132e65d574b3a223",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2b4abbefa8089da8517b4005af07c78384c55cea"
+        },
+        "date": 1748356283668,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 207113273587,
+            "range": "± 556901690",
             "unit": "ns/iter"
           }
         ]
