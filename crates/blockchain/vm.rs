@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountInfo, BlockHash, ChainConfig},
+    types::{AccountInfo, BlockHash, ChainConfig, EMPTY_KECCACK_HASH},
     Address, H256, U256,
 };
 use ethrex_storage::Store;
@@ -48,6 +48,9 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(Bytes::new());
+        }
         match self.store.get_account_code(code_hash) {
             Ok(Some(code)) => Ok(code),
             Ok(None) => Err(EvmError::DB(format!(
