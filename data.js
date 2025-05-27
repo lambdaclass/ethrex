@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748359961643,
+  "lastUpdate": 1748360206822,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9295,6 +9295,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 204894914235,
             "range": "± 307322280",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "537d0f47db11fef265c1768c38c0a340b67745a8",
+          "message": "feat(l1): add eth to enr (#2654)\n\n**Motivation**\n\n*Depends on #2679*\n\nThe `eth` pair was not implemented in the current node record struct. \n\nUsing this information allow us to discard incompatible nodes faster\nwhen trying to connect to a new peer\n\n**Description**\n\nThe fork_id struct is updated every time a ENRresquest/ENRresponse msg\nis being received.\n\nThe `eth` pair contains a single element list, which is a ForkId\nelement. It's encoded/decoded using the default RLP procedure.\n\nThe P2P TCP connections starts only when the ENR is validated. The logic\nof this was changed, before when a pong was received (after our ping) a\nnew TCP connection was established. Now, the ENR pairs have to be\nvalidated in order to start a new TCP connection.\n\nWhen exchanging the ENRrequest/ENRresponse messages the `eth` pair is\nnow included\n\nIt can be tested starting a new node with debug level:\n```\ncargo run --bin ethrex -- --network test_data/genesis-kurtosis.json --log.level=debug\n```\n\nAnd connecting a new peer using the following command:\n```\ncargo run --bin ethrex -- \\\n--network ./test_data/genesis-kurtosis.json \\\n--bootnodes=$(curl -s http://localhost:8545 \\\n-X POST \\\n-H \"Content-Type: application/json\" \\\n--data '{\"jsonrpc\":\"2.0\",\"method\":\"admin_nodeInfo\",\"params\":[],\"id\":1}' \\\n| jq -r '.result.enode') \\\n--datadir=ethrex_c \\\n--authrpc.port=8553 \\\n--http.port=8547 \\\n--p2p.port=30388 \\\n--discovery.port=30310\n```\n\nA debug msg can be seen once the `eth` pair is validated\n\nAlso a new test has been done to test this new validation adding a node\nwith a correct forkId and a node with an invalid forkId.\n\nFor running the tests, it was needed to initialize the db so the forkId\nstruct could be built from those values.\n\n[ETH enr\nentry](https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md)\n[EIP-2124](https://eips.ethereum.org/EIPS/eip-2124)\n[Ethrex\nDocs](https://github.com/lambdaclass/ethrex/blob/main/crates/networking/docs/Network.md)\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #1799",
+          "timestamp": "2025-05-27T14:44:34Z",
+          "tree_id": "2e2538c33a3efd3fee262848a27adbef34c07d7c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/537d0f47db11fef265c1768c38c0a340b67745a8"
+        },
+        "date": 1748360202647,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 202172760858,
+            "range": "± 355360193",
             "unit": "ns/iter"
           }
         ]
