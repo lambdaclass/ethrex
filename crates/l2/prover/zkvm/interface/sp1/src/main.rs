@@ -146,11 +146,13 @@ pub fn main() {
         panic!("invalid final state trie");
     }
 
+    // Check state diffs are valid
     #[cfg(feature = "l2")]
     if state_diff_updates != acc_account_updates {
         panic!("invalid state diffs")
     }
 
+    // Verify KZG blob proof
     #[cfg(feature = "l2")]
     let blob_versioned_hash = {
         let encoded_state_diff = state_diff.encode().expect("failed to encode state diff");
