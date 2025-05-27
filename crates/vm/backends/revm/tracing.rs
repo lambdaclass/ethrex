@@ -223,7 +223,7 @@ fn map_call(
             .is_revert()
             .then(|| revert_reason_or_error.clone()),
         calls: Box::new(vec![]),
-        logs: revm_call.logs.into_iter().map(|log| map_log(log)).collect(),
+        logs: revm_call.logs.into_iter().map(map_log).collect(),
     }
 }
 
@@ -245,7 +245,7 @@ fn map_log(revm_log: RevmCallLog) -> CallLog {
         topics: revm_log
             .raw_log
             .topics()
-            .into_iter()
+            .iter()
             .map(|t| H256(t.0))
             .collect(),
         data: revm_log.raw_log.data.0,

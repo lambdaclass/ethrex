@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use ethrex_common::serde_utils;
+use ethrex_common::{serde_utils, H256};
 use ethrex_common::{types::Block, Address, U256};
 use serde::Serialize;
 
@@ -80,11 +80,12 @@ impl Evm {
             Evm::REVM { state } => {
                 REVM::trace_tx_calls(block, tx_index, state, only_top_call, with_log)
             }
-            Evm::LEVM { db: _ } => {
-                // Tracing is not implemented for levm
-                return Err(EvmError::Custom(
+            Evm::LEVM { db: _ } =>
+            // Tracing is not implemented for levm
+            {
+                Err(EvmError::Custom(
                     "Transaction Tracing not supported for LEVM".to_string(),
-                ));
+                ))
             }
         }
     }
@@ -94,11 +95,12 @@ impl Evm {
     pub fn rerun_block(&mut self, block: &Block) -> Result<(), EvmError> {
         match self {
             Evm::REVM { state } => REVM::rerun_block(block, state),
-            Evm::LEVM { db: _ } => {
-                // Tracing is not implemented for levm
-                return Err(EvmError::Custom(
+            Evm::LEVM { db: _ } =>
+            // Tracing is not implemented for levm
+            {
+                Err(EvmError::Custom(
                     "Block Rerun not supported for LEVM".to_string(),
-                ));
+                ))
             }
         }
     }

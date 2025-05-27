@@ -8,6 +8,7 @@ use crate::{rpc::RpcHandler, utils::RpcErr};
 
 /// Default amount of blocks to re-excute if it is not given
 const DEFAULT_REEXEC: usize = 128;
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct TraceTransactionRequest {
     tx_hash: H256,
@@ -86,9 +87,16 @@ impl RpcHandler for TraceTransactionRequest {
                     CallTracerConfig::default()
                 };
                 let reexec = self.tracer_config.reexec.unwrap_or(DEFAULT_REEXEC);
+                let timeout = self.tracer_config.timeout.unwrap_or(DEFAULT_TIMEOUT);
                 let call_trace = context
                     .blockchain
-                    .trace_transaction_calls(self.tx_hash, reexec)
+                    .trace_transaction_calls(
+                        self.tx_hash,
+                        reexec,
+                        timeout,
+                        config.only_top_call,
+                        config.with_log,
+                    )
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 Ok(serde_json::to_value(call_trace)?)
