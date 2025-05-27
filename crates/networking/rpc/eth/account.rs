@@ -218,18 +218,15 @@ impl RpcHandler for GetProofRequest {
             return Ok(Value::Null);
         };
         // Create account proof
-        let Some(account) = storage
-            .get_account_state(block_number, self.address)
-            .await?
-        else {
-            return Ok(Value::Null);
-        };
         let Some(account_proof) = storage
             .get_account_proof(block_number, &self.address)
             .await?
         else {
             return Err(RpcErr::Internal("Could not get account proof".to_owned()));
         };
+        let account = storage
+            .get_account_state(block_number, self.address)
+            .await?;
         // Create storage proofs for all provided storage keys
         let mut storage_proofs = Vec::new();
         for storage_key in self.storage_keys.iter() {
@@ -237,8 +234,11 @@ impl RpcHandler for GetProofRequest {
                 .get_storage_at(block_number, self.address, *storage_key)
                 .await?
                 .unwrap_or_default();
-            let proof =
-                storage.get_storage_proof(self.address, account.storage_root, storage_key)?;
+            let proof = if let Some(account) = &account {
+                storage.get_storage_proof(self.address, account.storage_root, storage_key)?
+            } else {
+                Vec::new()
+            };
             let storage_proof = StorageProof {
                 key: storage_key.into_uint(),
                 proof,
@@ -246,6 +246,7 @@ impl RpcHandler for GetProofRequest {
             };
             storage_proofs.push(storage_proof);
         }
+        let account = account.unwrap_or_default();
         let account_proof = AccountProof {
             account_proof,
             address: self.address,
