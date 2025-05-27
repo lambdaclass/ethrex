@@ -417,7 +417,7 @@ fn calculate_tx_diff_size(
     if is_deposit_l2(head_tx) {
         tx_state_diff_size += deposits_log_len;
     }
-    if is_withdrawal_l2(&head_tx.clone().into(), receipt)? {
+    if is_withdrawal_l2(&head_tx.clone().into(), receipt) {
         tx_state_diff_size += withdrawals_log_len;
     }
 
