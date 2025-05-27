@@ -21,7 +21,7 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Serialize, Deserialize)]
 pub struct NodeConfigFile {
@@ -82,7 +82,16 @@ pub fn read_block_file(block_file_path: &str) -> Block {
 }
 
 pub fn read_genesis_file(genesis_file_path: &str) -> Genesis {
-    let genesis_file = std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
+    warn!("{}",genesis_file_path);
+    let path = match genesis_file_path {
+        "holesky" => "./cmd/ethrex/networks/holesky/genesis.json",
+        "hoodi" => "./cmd/ethrex/networks/hoodi/genesis.json",
+        "mainnet" => "./cmd/ethrex/networks/mainnet/genesis.json",
+        "sepolia" => "./cmd/ethrex/networks/sepolia/genesis.json",
+        p => p, 
+    };
+    warn!("{}",path);
+    let genesis_file = std::fs::File::open(path).expect("Failed to open genesis file");
     decode::genesis_file(genesis_file).expect("Failed to decode genesis file")
 }
 
