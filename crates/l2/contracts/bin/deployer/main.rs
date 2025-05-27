@@ -417,8 +417,6 @@ async fn initialize_contracts(
 ) -> Result<(), DeployerError> {
     trace!("Initializing contracts");
 
-    info!("Initializing OnChainProposer");
-
     trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
 
     let sp1_vk_string = read_to_string(&opts.sp1_vk_path).unwrap_or_else(|_| {
@@ -439,8 +437,11 @@ async fn initialize_contracts(
     let genesis = read_genesis_file(&opts.genesis_l2_path);
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
-    let initialize_tx_hash = {
-        let mut calldata_values = vec![
+    info!("Initializing OnChainProposer");
+
+    if opts.deploy_based_contracts {
+        // Initialize OnChainProposer with Based config and SequencerRegistry
+        let calldata_values = vec![
             Value::Bool(opts.validium),
             Value::Address(deployer_address),
             Value::Address(risc0_verifier_address),
@@ -449,35 +450,72 @@ async fn initialize_contracts(
             Value::Address(tdx_verifier_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
+            Value::Address(sequencer_registry_address),
         ];
-        if opts.deploy_based_contracts {
-            calldata_values.push(Value::Address(sequencer_registry_address))
-        } else {
-            calldata_values.push(Value::Array(vec![
-                Value::Address(opts.committer_l1_address),
-                Value::Address(opts.proof_sender_l1_address),
-            ]))
-        }
 
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
-        let on_chain_proposer_signature = if opts.deploy_based_contracts {
-            INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED
-        } else {
-            INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE
-        };
-        let on_chain_proposer_initialization_calldata =
-            encode_calldata(on_chain_proposer_signature, &calldata_values)?;
+        let on_chain_proposer_initialization_calldata = encode_calldata(
+            INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED,
+            &calldata_values,
+        )?;
 
-        initialize_contract(
+        let initialize_tx_hash = initialize_contract(
             on_chain_proposer_address,
             on_chain_proposer_initialization_calldata,
             &opts.private_key,
             eth_client,
         )
-        .await?
-    };
+        .await?;
 
-    info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
+        info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
+
+        info!("Initializing SequencerRegistry");
+        let initialize_tx_hash = {
+            let calldata_values = vec![
+                Value::Address(opts.sequencer_registry_owner),
+                Value::Address(on_chain_proposer_address),
+            ];
+            let sequencer_registry_initialization_calldata =
+                encode_calldata("initialize(address,address)", &calldata_values)?;
+
+            initialize_contract(
+                sequencer_registry_address,
+                sequencer_registry_initialization_calldata,
+                &opts.private_key,
+                eth_client,
+            )
+            .await?
+        };
+        info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "SequencerRegistry initialized");
+    } else {
+        // Initialize only OnChainProposer without Based config
+        let calldata_values = vec![
+            Value::Bool(opts.validium),
+            Value::Address(deployer_address),
+            Value::Address(risc0_verifier_address),
+            Value::Address(sp1_verifier_address),
+            Value::Address(pico_verifier_address),
+            Value::Address(tdx_verifier_address),
+            Value::FixedBytes(sp1_vk),
+            Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
+            Value::Array(vec![
+                Value::Address(opts.committer_l1_address),
+                Value::Address(opts.proof_sender_l1_address),
+            ]),
+        ];
+        trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
+        let on_chain_proposer_initialization_calldata =
+            encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values)?;
+
+        let initialize_tx_hash = initialize_contract(
+            on_chain_proposer_address,
+            on_chain_proposer_initialization_calldata,
+            &opts.private_key,
+            eth_client,
+        )
+        .await?;
+        info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
+    }
 
     let initialize_bridge_address_tx_hash = {
         let calldata_values = vec![Value::Address(bridge_address)];
@@ -538,27 +576,6 @@ async fn initialize_contracts(
         .await?
     };
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
-
-    if opts.deploy_based_contracts {
-        info!("Initializing SequencerRegistry");
-        let initialize_tx_hash = {
-            let calldata_values = vec![
-                Value::Address(opts.sequencer_registry_owner),
-                Value::Address(on_chain_proposer_address),
-            ];
-            let sequencer_registry_initialization_calldata =
-                encode_calldata("initialize(address,address)", &calldata_values)?;
-
-            initialize_contract(
-                sequencer_registry_address,
-                sequencer_registry_initialization_calldata,
-                &opts.private_key,
-                eth_client,
-            )
-            .await?
-        };
-        info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "SequencerRegistry initialized");
-    }
 
     trace!("Contracts initialized");
     Ok(())
