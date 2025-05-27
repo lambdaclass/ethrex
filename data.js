@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748356287803,
+  "lastUpdate": 1748357370127,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11172,6 +11172,35 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/lambdaclass/ethrex/commit/ab55846196eb77c3df37dfe2045307a3b6ee2d60"
         },
         "date": 1748283874858,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0074597048937221945,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0315a26c86a3c6aa9152af511afc9f1e6d58bac3",
+          "message": "fix(l1): `eth_getProof` was returning null when it should return proof of exculsion (#2924)\n\n**Motivation**\n\nThe endpoint `eth_getProof` was returning null instead of a proof of\nexclusion when the account did not exist in the trie\n\n**Description**\n\n- When the account does not exist create the proof anyway and return\nthat proof + the default values for account.\n- For storage if the account does not exist return an empty array for\nthe storage proofs. If the account exists but the storage doesn't return\nthe exclusion proof and a value of 0x0 for that key\n\n**How to test**\n\nin `crates/l2`\n\n```shell\nmake restart\n```\n\nAccount that exists:\n\n```Shell\ncurl 'http://localhost:8545' --data '{\n  \"id\": 1,\n  \"jsonrpc\": \"2.0\",\n  \"method\": \"eth_getProof\",\n  \"params\": [\n    \"0x04d12759b371c0ac1e3eb9e9593a46343ffac412\",\n    [  \"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\", \"0x0000000000000000000000000000000000000000000000000000000000000001\" ],\n    \"latest\"\n  ]\n}' -H 'accept: application/json'\n```\nThis should return a proof for the account, an exclusion proof for the\nfirst storage slot, and a inclusion proof for the second one with a\nvalue != 0\n\nAccount that does not exist:\n\n```Shell\ncurl 'http://localhost:8545' --data '{\n  \"id\": 1,\n  \"jsonrpc\": \"2.0\",\n  \"method\": \"eth_getProof\",\n  \"params\": [\n    \"0x04d12759b371c0ac1e3eb9e9593a46343ffac413\",\n    [  \"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\", \"0x0000000000000000000000000000000000000000000000000000000000000001\" ],\n    \"latest\"\n  ]\n}' -H 'accept: application/json'\n```\nThis should return an exclusion proof for the account and empty arrays\nfor the storage\n\nCloses #2761",
+          "timestamp": "2025-05-27T13:37:31Z",
+          "tree_id": "b602e8f73103e2555378195d5c6dc7cd5489a4d8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0315a26c86a3c6aa9152af511afc9f1e6d58bac3"
+        },
+        "date": 1748357365810,
         "tool": "customBiggerIsBetter",
         "benches": [
           {
