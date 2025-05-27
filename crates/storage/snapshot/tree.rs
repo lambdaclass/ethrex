@@ -2,7 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{atomic::AtomicBool, Arc, RwLock},
+    sync::{Arc, RwLock},
 };
 
 use ethrex_common::{
@@ -168,8 +168,12 @@ impl SnapshotTree {
                 .layers
                 .write()
                 .map_err(|error| SnapshotError::LockError(error.to_string()))?;
-            let base =
-                self.save_diff(Self::flatten_diff(head_block_hash, &mut layers)?, &layers)?;
+            let base = {
+                Self::flatten_diff(head_block_hash, &mut layers)?
+                    .read()
+                    .unwrap()
+                    .save_to_disk(&layers)?
+            };
             layers.clear();
             layers.insert(head_block_hash, Layer::DiskLayer(base));
             return Ok(());
@@ -339,19 +343,16 @@ impl SnapshotTree {
 
             // flatten parent into grand parent.
             let flattened = Self::flatten_diff(parent_block_hash, layers)?;
-            let flattened_block_hash = match &flattened {
-                Layer::DiskLayer(disk_layer) => disk_layer.block_hash(),
-                Layer::DiffLayer(diff_layer) => diff_layer
-                    .read()
-                    .map_err(|error| SnapshotError::LockError(error.to_string()))?
-                    .block_hash(),
-            };
-            layers.insert(flattened_block_hash, flattened.clone());
+            let flattened_block_hash = flattened
+                .read()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?
+                .block_hash();
+            layers.insert(flattened_block_hash, Layer::DiffLayer(flattened));
             diff_value.set_parent(flattened_block_hash);
         }
 
         // Persist the bottom most layer
-        let base = self.save_diff(Layer::DiffLayer(parent), layers)?;
+        let base = { parent.read().unwrap().save_to_disk(layers)? };
         layers.insert(base.block_hash, Layer::DiskLayer(base.clone()));
         let mut diff_value = diff
             .write()
@@ -360,102 +361,6 @@ impl SnapshotTree {
         //diff_value.origin = base.block_hash();
 
         Ok(Some(base))
-    }
-
-    /// Merges the diff into the disk layer.
-    ///
-    /// Returning a new disk layer whose block hash is the diff block hash.
-    ///
-    /// Returns Err if the current disk layer is already marked stale.
-    fn save_diff(
-        &self,
-        diff: Layer,
-        layers: &HashMap<H256, Layer>,
-    ) -> Result<Arc<DiskLayer>, SnapshotError> {
-        let diff = match diff {
-            Layer::DiskLayer(disk_layer) => {
-                return Err(SnapshotError::SnapshotIsdiskLayer(disk_layer.block_hash))
-            }
-            Layer::DiffLayer(diff) => diff,
-        };
-        let diff_value = diff
-            .read()
-            .map_err(|error| SnapshotError::LockError(error.to_string()))?;
-        let prev_disk = match &layers[&diff_value.origin()] {
-            Layer::DiskLayer(disk_layer) => disk_layer.clone(),
-            Layer::DiffLayer(_) => unreachable!(),
-        };
-
-        if prev_disk.mark_stale() {
-            return Err(SnapshotError::StaleSnapshot);
-        }
-
-        // TODO: here we should save the diff layers to the db (in the future snapshots table) too.
-        let accounts = diff_value.accounts();
-
-        let mut account_hashes = Vec::with_capacity(accounts.len());
-        let mut account_states = Vec::with_capacity(accounts.len());
-
-        for (hash, acc) in accounts.iter() {
-            if let Some(acc) = acc {
-                // TODO: Important, if acc is None it means it comes from a account update
-                // with the removed flag, should we remove it from db too?
-                account_hashes.push(*hash);
-                account_states.push(acc.clone());
-                prev_disk.cache.accounts.insert(*hash, Some(acc.clone()));
-            } else {
-                prev_disk.cache.accounts.remove(hash);
-            }
-        }
-
-        prev_disk
-            .db
-            .write_snapshot_account_batch_blocking(account_hashes, account_states)?;
-
-        let storage = diff_value.storage();
-
-        let mut account_hashes = Vec::with_capacity(storage.len());
-        let mut storage_keys = Vec::with_capacity(storage.len());
-        let mut storage_values = Vec::with_capacity(storage.len());
-
-        for (account_hash, storage) in storage.iter() {
-            account_hashes.push(*account_hash);
-            let mut keys = Vec::new();
-            let mut values = Vec::new();
-            for (storage_hash, value) in storage.iter() {
-                // TODO: Important, if acc is None it means it had a value of zero should we remove it from db too?
-                if let Some(value) = &value {
-                    values.push(*value);
-                    keys.push(*storage_hash);
-                    prev_disk
-                        .cache
-                        .storages
-                        .insert((*account_hash, *storage_hash), Some(*value));
-                } else {
-                    prev_disk
-                        .cache
-                        .storages
-                        .remove(&(*account_hash, *storage_hash));
-                }
-            }
-            storage_values.push(values);
-            storage_keys.push(keys);
-        }
-
-        prev_disk.db.write_snapshot_storage_batches_blocking(
-            account_hashes,
-            storage_keys,
-            storage_values,
-        )?;
-
-        let disk = DiskLayer {
-            db: self.db.clone(),
-            cache: prev_disk.cache.clone(),
-            block_hash: diff_value.block_hash(),
-            state_root: diff_value.root(),
-            stale: Arc::new(AtomicBool::new(false)),
-        };
-        Ok(Arc::new(disk))
     }
 
     /// Get a account state by its hash.
@@ -523,7 +428,7 @@ impl SnapshotTree {
     pub fn flatten_diff(
         diff_block_hash: H256,
         layers: &mut HashMap<H256, Layer>,
-    ) -> Result<Layer, SnapshotError> {
+    ) -> Result<Arc<RwLock<DiffLayer>>, SnapshotError> {
         let layer = match &layers[&diff_block_hash] {
             Layer::DiskLayer(_) => return Err(SnapshotError::DiskLayerFlatten),
             Layer::DiffLayer(diff) => diff.clone(),
@@ -539,21 +444,18 @@ impl SnapshotTree {
 
         // If parent is not a diff layer, layer is first in line, return layer.
         let parent = match parent {
-            Layer::DiskLayer(_) => return Ok(Layer::DiffLayer(layer)),
+            Layer::DiskLayer(_) => return Ok(layer),
             Layer::DiffLayer(diff) => diff,
         };
 
         // Flatten diff parent first.
-        let parent = match Self::flatten_diff(
+        let parent = Self::flatten_diff(
             parent
                 .read()
                 .map_err(|error| SnapshotError::LockError(error.to_string()))?
                 .block_hash(),
             layers,
-        )? {
-            Layer::DiskLayer(_) => unreachable!("only diff can be returned at this point"),
-            Layer::DiffLayer(diff) => diff,
-        };
+        )?;
 
         let mut parent_value = parent
             .write()
@@ -583,7 +485,7 @@ impl SnapshotTree {
 
         layer.diffed = layer_value.diffed();
 
-        Ok(Layer::DiffLayer(Arc::new(RwLock::new(layer))))
+        Ok(Arc::new(RwLock::new(layer)))
     }
 }
 

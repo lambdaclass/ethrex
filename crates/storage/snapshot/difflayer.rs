@@ -1,6 +1,9 @@
 // Inspired by https://github.com/ethereum/go-ethereum/blob/f21adaf245e320a809f9bb6ec96c330726c9078f/core/state/snapshot/difflayer.go
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{atomic::AtomicBool, Arc},
+};
 
 use ethrex_common::{
     types::{AccountState, BlockHash},
@@ -8,6 +11,7 @@ use ethrex_common::{
 };
 
 use super::{
+    disklayer::DiskLayer,
     error::SnapshotError,
     tree::{Layer, Layers},
 };
@@ -175,6 +179,92 @@ impl DiffLayer {
         layer.rebloom(self.origin, Some(self.diffed));
 
         layer
+    }
+
+    /// Merges the diff into the disk layer.
+    ///
+    /// Returning a new disk layer whose block hash is the diff block hash.
+    ///
+    /// Returns Err if the current disk layer is already marked stale.
+    pub fn save_to_disk(
+        &self,
+        layers: &HashMap<H256, Layer>,
+    ) -> Result<Arc<DiskLayer>, SnapshotError> {
+        let prev_disk = match &layers[&self.origin()] {
+            Layer::DiskLayer(disk_layer) => disk_layer.clone(),
+            Layer::DiffLayer(_) => unreachable!(),
+        };
+
+        if prev_disk.mark_stale() {
+            return Err(SnapshotError::StaleSnapshot);
+        }
+
+        // TODO: here we should save the diff layers to the db (in the future snapshots table) too.
+        let accounts = self.accounts();
+
+        let mut account_hashes = Vec::with_capacity(accounts.len());
+        let mut account_states = Vec::with_capacity(accounts.len());
+
+        for (hash, acc) in accounts.iter() {
+            if let Some(acc) = acc {
+                // TODO: Important, if acc is None it means it comes from a account update
+                // with the removed flag, should we remove it from db too?
+                account_hashes.push(*hash);
+                account_states.push(acc.clone());
+                prev_disk.cache.accounts.insert(*hash, Some(acc.clone()));
+            } else {
+                prev_disk.cache.accounts.remove(hash);
+            }
+        }
+
+        prev_disk
+            .db
+            .write_snapshot_account_batch_blocking(account_hashes, account_states)?;
+
+        let storage = self.storage();
+
+        let mut account_hashes = Vec::with_capacity(storage.len());
+        let mut storage_keys = Vec::with_capacity(storage.len());
+        let mut storage_values = Vec::with_capacity(storage.len());
+
+        for (account_hash, storage) in storage.iter() {
+            account_hashes.push(*account_hash);
+            let mut keys = Vec::new();
+            let mut values = Vec::new();
+            for (storage_hash, value) in storage.iter() {
+                // TODO: Important, if acc is None it means it had a value of zero should we remove it from db too?
+                if let Some(value) = &value {
+                    values.push(*value);
+                    keys.push(*storage_hash);
+                    prev_disk
+                        .cache
+                        .storages
+                        .insert((*account_hash, *storage_hash), Some(*value));
+                } else {
+                    prev_disk
+                        .cache
+                        .storages
+                        .remove(&(*account_hash, *storage_hash));
+                }
+            }
+            storage_values.push(values);
+            storage_keys.push(keys);
+        }
+
+        prev_disk.db.write_snapshot_storage_batches_blocking(
+            account_hashes,
+            storage_keys,
+            storage_values,
+        )?;
+
+        let disk = DiskLayer {
+            db: prev_disk.db.clone(),
+            cache: prev_disk.cache.clone(),
+            block_hash: self.block_hash(),
+            state_root: self.root(),
+            stale: Arc::new(AtomicBool::new(false)),
+        };
+        Ok(Arc::new(disk))
     }
 
     pub fn origin(&self) -> H256 {
