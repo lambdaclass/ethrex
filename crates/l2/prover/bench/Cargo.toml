@@ -10,10 +10,10 @@ ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
 ethrex-levm.workspace = true
-ethrex-l2.workspace = true
 
 zkvm_interface = { path = "../zkvm/interface", default-features = false }
 ethrex-prover = { path = "../", default-features = false }
+ethrex-l2 = { workspace = true, default-features = false }
 
 serde.workspace = true
 hex.workspace = true
