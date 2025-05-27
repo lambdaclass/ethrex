@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748385903545,
+  "lastUpdate": 1748388254602,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11709,6 +11709,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007507951741293532,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "67edcaff73624446f2b75c40b385df69aabe4882",
+          "message": "chore(l2): stop L1 dev container faster (#2942)",
+          "timestamp": "2025-05-27T17:35:53Z",
+          "tree_id": "f8d3bf12e07ca2d3ba933d47c951bc515cac7721",
+          "url": "https://github.com/lambdaclass/ethrex/commit/67edcaff73624446f2b75c40b385df69aabe4882"
+        },
+        "date": 1748388254230,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0074930402184707045,
             "unit": "Mgas/s"
           }
         ]
