@@ -200,6 +200,25 @@ impl Mempool {
         Ok(nonce)
     }
 
+    pub fn get_mempool_size(&self) -> Result<(usize, usize), MempoolError> {
+        let txs_size = {
+            let pool_lock = self
+                .transaction_pool
+                .read()
+                .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+            pool_lock.len()
+        };
+        let blobs_size = {
+            let pool_lock = self
+                .blobs_bundle_pool
+                .lock()
+                .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+            pool_lock.len()
+        };
+
+        Ok((txs_size, blobs_size))
+    }
+
     /// Returns all transactions currently in the pool
     pub fn content(&self) -> Result<Vec<Transaction>, MempoolError> {
         let pooled_transactions = self

@@ -14,6 +14,8 @@ use ethrex_common::{
 use ethrex_metrics::metrics;
 
 #[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+#[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
 use ethrex_storage::Store;
 use ethrex_vm::{backends::CallFrameBackup, Evm, EvmError};
@@ -64,6 +66,22 @@ pub async fn build_payload(
             );
         }
     }
+
+    metrics!(
+        #[allow(clippy::as_conversions)]
+        METRICS_BLOCKS.set_latest_block_gas_limit(
+            ((gas_limit - context.remaining_gas) as f64 / gas_limit as f64) * 100_f64
+        );
+        // L2 does not allow for blob transactions so the blob pool can be ignored
+        let (tx_pool_size, _blob_pool_size) = blockchain
+            .mempool
+            .get_mempool_size()
+            .inspect_err(|e| tracing::error!("Failed to get metrics for: mempool size {}", e.to_string()))
+            .unwrap_or((0_usize, 0_usize));
+        let _ = METRICS_TX
+            .set_mempool_tx_count(tx_pool_size, false)
+            .inspect_err(|e| tracing::error!("Failed to set metrics for: blob tx mempool size {}", e.to_string()));
+    );
 
     Ok(context.into())
 }
@@ -148,11 +166,6 @@ pub async fn fill_transactions(
             blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
             continue;
         }
-
-        // Increment the total transaction counter
-        // CHECK: do we want it here to count every processed transaction
-        // or we want it before the return?
-        metrics!(METRICS_TX.inc_tx());
 
         // Execute tx
         let (receipt, transaction_backup) = match apply_transaction_l2(&head_tx, context) {
