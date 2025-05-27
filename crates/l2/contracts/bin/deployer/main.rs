@@ -459,7 +459,9 @@ async fn initialize_contracts(
                     Overrides::default(),
                 )
                 .await?;
-            let accept_tx_hash = eth_client.send_eip1559_transaction(tx, &owner_pk).await?;
+            let accept_tx_hash = eth_client
+                .send_eip1559_transaction(&accept_tx, &owner_pk)
+                .await?;
 
             eth_client
                 .wait_for_transaction_receipt(accept_tx_hash, 100)
