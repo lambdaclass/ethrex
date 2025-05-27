@@ -2,9 +2,13 @@
 
 ## Perf
 
-### 2025-05-22
+### 2025-05-27
 
 - Refactor Patricia Merkle Trie to avoid rehashing the entire path on every insert [2687](https://github.com/lambdaclass/ethrex/pull/2687)
+
+### 2025-05-22
+
+- Add immutable cache to LEVM that stores in memory data read from the Database so that getting account doesn't need to consult the Database again. [2829](https://github.com/lambdaclass/ethrex/pull/2829)
 
 ### 2025-05-20
 
