@@ -898,10 +898,9 @@ impl TestReRunReport {
                         revm_log.data.topics()
                     );
                 }
-                diff += &format!(
-                    r#"
-                        "#
-                );
+                diff += &r#"
+                "#
+                .to_string();
             } else {
                 diff += &format!(
                     r#"
