@@ -139,7 +139,7 @@ impl StateUpdater {
             .get_last_committed_batch(self.on_chain_proposer_address)
             .await?;
 
-        debug!("Last committed batch: {last_l2_committed_batch:#x}");
+        debug!("Last committed batch: {last_l2_committed_batch}");
 
         let Some(last_l2_committed_batch_blocks) = self
             .rollup_store
