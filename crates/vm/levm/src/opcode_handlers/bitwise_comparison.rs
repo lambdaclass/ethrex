@@ -224,7 +224,7 @@ impl<'a> VM<'a> {
             if !is_negative {
                 value >> shift
             } else {
-                (value >> shift) | ((U256::from(0b1) >> shift) << (U256::from(256) - shift))
+                (value >> shift) | ((U256::MAX) << (U256::from(256) - shift))
             }
         } else if is_negative {
             U256::MAX
