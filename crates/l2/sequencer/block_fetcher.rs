@@ -117,7 +117,7 @@ impl BlockFetcher {
                 ),
             )?;
 
-            info!("Node is {l2_batches_behind} batches behind. Last committed batch number: {last_l2_committed_batch_number}, last batch number known: {last_l2_batch_number_known}");
+            info!("Node is {l2_batches_behind} batches behind. Last batch number known: {last_l2_batch_number_known}, last committed batch number: {last_l2_committed_batch_number}");
 
             if self.last_l1_block_fetched.is_zero() {
                 self.last_l1_block_fetched = self
