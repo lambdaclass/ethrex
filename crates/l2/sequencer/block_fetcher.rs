@@ -23,7 +23,6 @@ use super::{
 pub struct BlockFetcher {
     eth_client: EthClient,
     on_chain_proposer_address: Address,
-    bridge_address: Address,
     store: Store,
     rollup_store: StoreRollup,
     blockchain: Arc<Blockchain>,
@@ -46,29 +45,34 @@ pub async fn start_block_fetcher(
         rollup_store,
         blockchain,
         sequencer_state,
-    )?;
+    )
+    .await?;
     block_fetcher.run().await;
     Ok(())
 }
 
 impl BlockFetcher {
-    pub fn new(
+    pub async fn new(
         cfg: &SequencerConfig,
         store: Store,
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
         sequencer_state: Arc<Mutex<SequencerState>>,
     ) -> Result<Self, BlockFetcherError> {
+        let eth_client = EthClient::new_with_multiple_urls(cfg.eth.rpc_url.clone())?;
+        let last_l1_block_fetched = eth_client
+            .get_last_fetched_l1_block(cfg.l1_watcher.bridge_address)
+            .await?
+            .into();
         Ok(Self {
             eth_client: EthClient::new_with_multiple_urls(cfg.eth.rpc_url.clone())?,
             on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
-            bridge_address: cfg.l1_watcher.bridge_address,
             store,
             rollup_store,
             blockchain,
             sequencer_state,
             fetch_interval_ms: cfg.block_producer.block_time_ms,
-            last_l1_block_fetched: U256::zero(),
+            last_l1_block_fetched,
             max_block_step: cfg.l1_watcher.max_block_step, // TODO: block fetcher config
         })
     }
@@ -118,14 +122,6 @@ impl BlockFetcher {
             )?;
 
             info!("Node is {l2_batches_behind} batches behind. Last batch number known: {last_l2_batch_number_known}, last committed batch number: {last_l2_committed_batch_number}");
-
-            if self.last_l1_block_fetched.is_zero() {
-                self.last_l1_block_fetched = self
-                    .eth_client
-                    .get_last_fetched_l1_block(self.bridge_address)
-                    .await?
-                    .into();
-            }
 
             let batch_committed_logs = self.get_logs().await?;
 
