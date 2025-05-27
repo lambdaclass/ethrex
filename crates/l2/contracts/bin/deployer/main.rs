@@ -180,7 +180,7 @@ fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
             false,
         )?;
     } else {
-        info!("Deploying non-based OnChainProposer contract");
+        info!("Compiling OnChainProposer contract");
         compile_contract(&opts.contracts_path, "src/l1/OnChainProposer.sol", false)?;
     }
     compile_contract(&opts.contracts_path, "src/l1/CommonBridge.sol", false)?;
