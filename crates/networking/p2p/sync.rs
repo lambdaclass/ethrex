@@ -374,12 +374,13 @@ impl Syncer {
             Some(res) => res.clone(),
             None => return Ok(None),
         };
-        let mut headers_iter = block_headers.iter();
+        let mut headers_consumed = 0;
         let mut blocks: Vec<Block> = vec![];
 
         let since = Instant::now();
         loop {
             debug!("Requesting Block Bodies");
+            let mut headers_iter = block_headers.iter().skip(headers_consumed);
             let block_request_result = self
                 .peers
                 .request_and_validate_block_bodies(
@@ -389,11 +390,13 @@ impl Syncer {
                 .await;
 
             let new_blocks = block_request_result.ok_or(SyncError::BodiesNotFound)?;
+            headers_consumed += new_blocks.len();
             blocks.extend(new_blocks);
 
             debug!(
-                "Received {} Blocks, starting from block hash {:?}",
+                "Accumulated {} Blocks, with {} blocks added starting from block hash {:?}",
                 blocks.len(),
+                new_blocks.len(),
                 current_block_hashes_chunk
                     .first()
                     .map_or(H256::default(), |a| *a)
