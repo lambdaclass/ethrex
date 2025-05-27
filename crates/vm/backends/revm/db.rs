@@ -49,7 +49,7 @@ impl EvmState {
     /// Gets the stored chain config
     pub fn chain_config(&self) -> Result<ChainConfig, EvmError> {
         match self {
-            EvmState::Store(db) => Ok(db.database.get_chain_config()),
+            EvmState::Store(db) => db.database.get_chain_config(),
             EvmState::Execution(db) => Ok(db.db.get_chain_config()),
         }
     }

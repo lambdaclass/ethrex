@@ -46,7 +46,7 @@ impl LEVM {
     ) -> Result<BlockExecutionResult, EvmError> {
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
-                let chain_config = db.store.get_chain_config();
+                let chain_config = db.store.get_chain_config()?;
                 let block_header = &block.header;
                 let fork = chain_config.fork(block_header.timestamp);
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
@@ -99,7 +99,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
     ) -> Result<Environment, EvmError> {
-        let chain_config = db.store.get_chain_config();
+        let chain_config = db.store.get_chain_config()?;
         let gas_price: U256 = tx
             .effective_gas_price(block_header.base_fee_per_gas)
             .ok_or(VMError::TxValidation(
@@ -436,7 +436,7 @@ pub fn generic_system_contract_levm(
     contract_address: Address,
     system_address: Address,
 ) -> Result<ExecutionReport, EvmError> {
-    let chain_config = db.store.get_chain_config();
+    let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
     let system_account_backup = db.cache.get(&system_address).cloned();
     let coinbase_backup = db.cache.get(&block_header.coinbase).cloned();
@@ -492,7 +492,7 @@ pub fn extract_all_requests_levm(
     db: &mut GeneralizedDatabase,
     header: &BlockHeader,
 ) -> Result<Vec<Requests>, EvmError> {
-    let chain_config = db.store.get_chain_config();
+    let chain_config = db.store.get_chain_config()?;
     let fork = chain_config.fork(header.timestamp);
 
     if fork < Fork::Prague {
@@ -564,7 +564,7 @@ fn env_from_generic(
     header: &BlockHeader,
     db: &GeneralizedDatabase,
 ) -> Result<Environment, VMError> {
-    let chain_config = db.store.get_chain_config();
+    let chain_config = db.store.get_chain_config()?;
     let gas_price = calculate_gas_price(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
     Ok(Environment {

@@ -39,8 +39,10 @@ impl VmDatabase for StoreVmDatabase {
             .map(|header| H256::from(header.compute_block_hash().0)))
     }
 
-    fn get_chain_config(&self) -> ChainConfig {
-        self.store.get_chain_config().unwrap()
+    fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
+        self.store
+            .get_chain_config()
+            .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, EvmError> {

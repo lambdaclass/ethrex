@@ -80,7 +80,7 @@ impl LevmDatabase for DatabaseLogger {
         Ok(block_hash)
     }
 
-    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
+    fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
         self.store.lock().unwrap().get_chain_config()
     }
 
@@ -139,8 +139,9 @@ impl LevmDatabase for DynVmDatabase {
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
 
-    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
+    fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
         <dyn VmDatabase>::get_chain_config(self.as_ref())
+            .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
 
     fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
@@ -193,8 +194,8 @@ impl LevmDatabase for ProverDB {
         Ok(*storage.get(&key).unwrap_or(&CoreU256::default()))
     }
 
-    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
-        self.get_chain_config()
+    fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
+        Ok(self.get_chain_config())
     }
 
     fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
