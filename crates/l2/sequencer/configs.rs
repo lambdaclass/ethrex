@@ -76,5 +76,5 @@ pub struct StateUpdaterConfig {
 #[derive(Clone, Debug)]
 pub struct BlockFetcherConfig {
     pub fetch_interval_ms: u64,
-    pub max_block_step: u64,
+    pub fetch_block_step: u64,
 }

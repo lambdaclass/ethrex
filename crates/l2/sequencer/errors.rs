@@ -235,15 +235,15 @@ pub enum ExecutionCacheError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum StateUpdaterError {
-    #[error("{0}")]
+    #[error("State Updater failed due to an EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
-    #[error("{0}")]
+    #[error("State Updater failed when trying to encode the calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
-    #[error("{0}")]
+    #[error("State Updater failed when trying to parse the calldata: {0}")]
     CalldataParsingError(String),
-    #[error("{0}")]
+    #[error("State Updater failed due to a Store error: {0}")]
     StoreError(#[from] StoreError),
-    #[error("Failed apply forkchoice for fetched block: {0}")]
+    #[error("Failed to apply fork choice for fetched block: {0}")]
     InvalidForkChoice(#[from] InvalidForkChoice),
     #[error("Internal Error: {0}")]
     InternalError(String),
@@ -251,21 +251,21 @@ pub enum StateUpdaterError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum BlockFetcherError {
-    #[error("{0}")]
+    #[error("Block Fetcher failed due to an EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
-    #[error("{0}")]
+    #[error("Block Fetcher failed due to a Store error: {0}")]
     StoreError(#[from] StoreError),
     #[error("Internal Error: {0}")]
     InternalError(String),
     #[error("Failed to store fetched block: {0}")]
     ChainError(#[from] ChainError),
-    #[error("Failed apply forkchoice for fetched block: {0}")]
+    #[error("Failed to apply fork choice for fetched block: {0}")]
     InvalidForkChoice(#[from] InvalidForkChoice),
     #[error("Failed to push fetched block to execution cache: {0}")]
     ExecutionCacheError(#[from] ExecutionCacheError),
     #[error("Failed to RLP decode fetched block: {0}")]
     RLPDecodeError(#[from] RLPDecodeError),
-    #[error("{0}")]
+    #[error("Block Fetcher failed in a helper function: {0}")]
     UtilsError(#[from] UtilsError),
     #[error("Missing bytes from calldata: {0}")]
     WrongBatchCalldata(String),
