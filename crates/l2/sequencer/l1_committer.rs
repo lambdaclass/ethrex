@@ -42,8 +42,9 @@ use super::{
     SequencerState,
 };
 
-const COMMIT_FUNCTION_SIGNATURE: &str =
+const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
     "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
 
 pub struct Committer {
     eth_client: EthClient,
@@ -56,6 +57,7 @@ pub struct Committer {
     arbitrary_base_blob_gas_price: u64,
     execution_cache: Arc<ExecutionCache>,
     validium: bool,
+    based: bool,
 }
 
 pub async fn start_l1_committer(
@@ -71,6 +73,7 @@ pub async fn start_l1_committer(
         store,
         rollup_store,
         execution_cache,
+        cfg.based.based,
     )?;
     committer.run(sequencer_state).await;
     Ok(())
@@ -83,6 +86,7 @@ impl Committer {
         store: Store,
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
+        based: bool,
     ) -> Result<Self, CommitterError> {
         Ok(Self {
             eth_client: EthClient::new_with_config(
@@ -103,6 +107,7 @@ impl Committer {
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
             validium: committer_config.validium,
+            based,
         })
     }
 
@@ -264,7 +269,9 @@ impl Committer {
             };
 
             // Accumulate block data with the rest of the batch.
-            encoded_blocks.push(block_to_commit.encode_to_vec().into());
+            if self.based {
+                encoded_blocks.push(block_to_commit.encode_to_vec().into());
+            }
             acc_withdrawals.extend(withdrawals.clone());
             acc_deposits.extend(deposits.clone());
             for account in account_updates {
@@ -497,16 +504,24 @@ impl Committer {
             [0u8; 32] // Validium doesn't send state_diff_kzg_versioned_hash.
         };
 
-        let calldata_values = vec![
+        let mut calldata_values = vec![
             Value::Uint(U256::from(batch_number)),
             Value::FixedBytes(new_state_root.0.to_vec().into()),
             Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
             Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
             Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
-            Value::Array(encoded_blocks.into_iter().map(Value::Bytes).collect()), // bytes[] = T[] con T = bytes
         ];
 
-        let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;
+        let (commit_function_signature, values) = if self.based {
+            calldata_values.push(Value::Array(
+                encoded_blocks.into_iter().map(Value::Bytes).collect(),
+            ));
+            (COMMIT_FUNCTION_SIGNATURE_BASED, calldata_values)
+        } else {
+            (COMMIT_FUNCTION_SIGNATURE, calldata_values)
+        };
+
+        let calldata = encode_calldata(commit_function_signature, &values)?;
 
         let gas_price = self
             .eth_client
