@@ -1,4 +1,6 @@
-use ethrex_common::types::{BlobsBundleError, BlockHash, InvalidBlockHeaderError};
+use ethrex_common::types::{
+    BlobsBundleError, BlockHash, InvalidBlockBodyError, InvalidBlockHeaderError,
+};
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 
@@ -32,6 +34,8 @@ pub enum InvalidBlockError {
     ReceiptsRootMismatch,
     #[error("Invalid Header, validation failed pre-execution: {0}")]
     InvalidHeader(#[from] InvalidBlockHeaderError),
+    #[error("Invalid Body, validation failed pre-execution: {0}")]
+    InvalidBody(#[from] InvalidBlockBodyError),
     #[error("Exceeded MAX_BLOB_GAS_PER_BLOCK")]
     ExceededMaxBlobGasPerBlock,
     #[error("Exceeded MAX_BLOB_NUMBER_PER_BLOCK")]
