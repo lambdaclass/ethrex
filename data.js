@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748359749083,
+  "lastUpdate": 1748359961643,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9265,6 +9265,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 207113273587,
             "range": "± 556901690",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "47a1d4c5b23a9ae03839556b92bce3c6dd029f17",
+          "message": "ci(l2): fix SP1 integration test (#2921)\n\n**Motivation**\n\nBroken ci :(\n\n**Description**\n\n- After the ci finishes the docker containers remain because this is a\nself hosted action runner. This causes the contract deployment to fail\nbecause the contracts are already deployed\n- The fix is using `docker compose down` to destroy the containers on\nexit",
+          "timestamp": "2025-05-27T14:38:31Z",
+          "tree_id": "eea2c2606a0454e0f121ebc91f0bd28668797408",
+          "url": "https://github.com/lambdaclass/ethrex/commit/47a1d4c5b23a9ae03839556b92bce3c6dd029f17"
+        },
+        "date": 1748359957560,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 204894914235,
+            "range": "± 307322280",
             "unit": "ns/iter"
           }
         ]
