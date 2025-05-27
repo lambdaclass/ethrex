@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748374785347,
+  "lastUpdate": 1748377305126,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11592,6 +11592,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0074084354442808045,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "31270bd1585efd4efeea740cbb4864e06c6d6f10",
+          "message": "fix(levm): return EVM error when block hash isn't found in the database (#2940)\n\n**Motivation**\n\n- Return error when block isn't found in the database in LEVM.\n\n**Description**\n\n- `get_block_hash()` now returns directly the block hash instead of an\nOption. If the block hash wasn't found in the DB, return an error\n(instead of returning a `None` value)\n\n**Extra details**\nBefore we weren't returning an error when the block looked for in the\ndatabase wasn't found. Instead, in LEVM we were just pushing 0 to the\nstack, which is completely wrong, because the block should've been in\nthe database in the first place.\n\nThis was discovered when trying to import blocks from Hoodi testnet.\nPrevious Error Message:\n`WARN ethrex::cli: Failed to add block 1579 with hash\n0x6b910c7ee94818d5b7a6422f981159ccf438aac0f0eed20810b2a783d7c05f4d:\nInvalid Block: Gas used doesn't match value in header`.\nCurrent Error Message:\n`WARN ethrex::cli: Failed to add block 1579 with hash\n0x6b910c7ee94818d5b7a6422f981159ccf438aac0f0eed20810b2a783d7c05f4d: EVM\nerror: Database access error: DB error: Block header not found for block\nnumber 1550.`",
+          "timestamp": "2025-05-27T15:54:47Z",
+          "tree_id": "b2bc8791ef8094707310fbcdd9bf7e15b9090fe3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/31270bd1585efd4efeea740cbb4864e06c6d6f10"
+        },
+        "date": 1748377304669,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007393916217540421,
             "unit": "Mgas/s"
           }
         ]
