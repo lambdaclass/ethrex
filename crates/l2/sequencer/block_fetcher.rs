@@ -98,7 +98,7 @@ impl BlockFetcher {
 
     async fn fetch(&mut self) -> Result<(), BlockFetcherError> {
         while !self.node_is_up_to_date().await? {
-            info!("Node is not up to date, waiting for it to sync...");
+            info!("Node is not up to date. Syncing via L1");
 
             let last_l2_block_number_known = self.store.get_latest_block_number().await?;
 
@@ -135,7 +135,7 @@ impl BlockFetcher {
                     .get_transaction_by_hash(batch_committed_log.transaction_hash)
                     .await?
                     .ok_or(BlockFetcherError::InternalError(format!(
-                        "Failed to get transaction receipt for transaction {:x}",
+                        "Failed to get the receipt for transaction {:x}",
                         batch_committed_log.transaction_hash
                     )))?
                     .data;
