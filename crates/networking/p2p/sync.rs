@@ -26,17 +26,14 @@ use std::{
 };
 use storage_healing::storage_healer;
 use tokio::{
-    sync::{mpsc::error::SendError, Mutex},
+    sync::mpsc::error::SendError,
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use trie_rebuild::TrieRebuilder;
 
-use crate::{
-    kademlia::KademliaTable,
-    peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST},
-};
+use crate::peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
@@ -95,14 +92,14 @@ pub struct Syncer {
 
 impl Syncer {
     pub fn new(
-        peer_table: Arc<Mutex<KademliaTable>>,
+        peers: PeerHandler,
         snap_enabled: Arc<AtomicBool>,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
     ) -> Self {
         Self {
             snap_enabled,
-            peers: PeerHandler::new(peer_table),
+            peers,
             last_snap_pivot: 0,
             trie_rebuilder: None,
             cancel_token,
@@ -113,10 +110,9 @@ impl Syncer {
     /// Creates a dummy Syncer for tests where syncing is not needed
     /// This should only be used in tests as it won't be able to connect to the p2p network
     pub fn dummy() -> Self {
-        let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
         Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
-            peers: PeerHandler::new(dummy_peer_table),
+            peers: PeerHandler::dummy(),
             last_snap_pivot: 0,
             trie_rebuilder: None,
             // This won't be used

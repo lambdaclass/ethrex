@@ -66,7 +66,7 @@ const STORAGE_SNAPSHOT_TABLE: MultimapTableDefinition<AccountHashRLP, ([u8; 32],
 const STORAGE_HEAL_PATHS_TABLE: TableDefinition<AccountHashRLP, TriePathsRLP> =
     TableDefinition::new("StorageHealPaths");
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RedBStore {
     db: Arc<Database>,
 }
@@ -152,21 +152,39 @@ impl RedBStore {
         'k: 'static,
         'v: 'static,
     {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let write_txn = db.begin_write()?;
-            {
-                let mut table = write_txn.open_table(table)?;
-                for (key, value) in key_values {
-                    table.insert(key, value)?;
-                }
-            }
-            write_txn.commit()?;
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.write_batch_sync(table, key_values))
+            .await
+            .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
 
-            Ok(())
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    // Helper method to write into a redb table. Sync version
+    #[inline]
+    fn write_batch_sync<'k, 'v, 'a, K, V>(
+        &self,
+        table: TableDefinition<'a, K, V>,
+        key_values: Vec<(K::SelfType<'k>, V::SelfType<'v>)>,
+    ) -> Result<(), StoreError>
+    where
+        K: Key + Send + 'static,
+        V: Value + Send + 'static,
+        K::SelfType<'k>: Send,
+        V::SelfType<'v>: Send,
+        TableDefinition<'a, K, V>: Send,
+        'a: 'static,
+        'k: 'static,
+        'v: 'static,
+    {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(table)?;
+            for (key, value) in key_values {
+                table.insert(key, value)?;
+            }
+        }
+        write_txn.commit()?;
+
+        Ok(())
     }
 
     // Helper method to write into a redb table
@@ -1018,25 +1036,6 @@ impl StoreEngine for RedBStore {
         Ok(res)
     }
 
-    async fn is_synced(&self) -> Result<bool, StoreError> {
-        match self
-            .read(CHAIN_DATA_TABLE, ChainDataIndex::IsSynced)
-            .await?
-        {
-            None => Err(StoreError::Custom("Sync status not found".to_string())),
-            Some(ref rlp) => RLPDecode::decode(&rlp.value()).map_err(|_| StoreError::DecodeError),
-        }
-    }
-
-    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
-        self.write(
-            CHAIN_DATA_TABLE,
-            ChainDataIndex::IsSynced,
-            is_synced.encode_to_vec(),
-        )
-        .await
-    }
-
     async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
         self.write(
             SNAP_STATE_TABLE,
@@ -1082,6 +1081,25 @@ impl StoreEngine for RedBStore {
         .await
     }
 
+    fn write_snapshot_account_batch_blocking(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<ethrex_common::types::AccountState>,
+    ) -> Result<(), StoreError> {
+        self.write_batch_sync(
+            STATE_SNAPSHOT_TABLE,
+            account_hashes
+                .into_iter()
+                .map(<H256 as Into<AccountHashRLP>>::into)
+                .zip(
+                    account_states
+                        .into_iter()
+                        .map(<AccountState as Into<AccountStateRLP>>::into),
+                )
+                .collect::<Vec<_>>(),
+        )
+    }
+
     async fn write_snapshot_storage_batch(
         &self,
         account_hash: H256,
@@ -1102,6 +1120,15 @@ impl StoreEngine for RedBStore {
         Ok(())
     }
     async fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        self.write_snapshot_storage_batches_blocking(account_hashes, storage_keys, storage_values)
+    }
+
+    fn write_snapshot_storage_batches_blocking(
         &self,
         account_hashes: Vec<H256>,
         storage_keys: Vec<Vec<H256>>,
@@ -1250,6 +1277,33 @@ impl StoreEngine for RedBStore {
             <H256 as Into<BlockHashRLP>>::into(latest_valid),
         )
         .await
+    }
+
+    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError> {
+        let read_tx = self.db.begin_read()?;
+        let table = read_tx.open_table(STATE_SNAPSHOT_TABLE)?;
+        Ok(table
+            .get(&account_hash.into())?
+            .map(|elem| elem.value().to()))
+    }
+
+    fn get_storage_snapshot(
+        &self,
+        account_hash: H256,
+        storage_hash: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let read_tx = self.db.begin_read()?;
+        let table = read_tx.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
+        Ok(table.get(&account_hash.into())?.find_map(|elem| {
+            elem.ok().and_then(|x| {
+                let val = x.value();
+                if H256(val.0) == storage_hash {
+                    Some(U256::from_big_endian(&val.1))
+                } else {
+                    None
+                }
+            })
+        }))
     }
 }
 

@@ -6,12 +6,6 @@ pub mod methods {
     #[cfg(all(not(clippy), feature = "risc0"))]
     include!(concat!(env!("OUT_DIR"), "/methods.rs"));
 
-    #[cfg(all(not(clippy), feature = "sp1"))]
-    pub const ZKVM_SP1_PROGRAM_ELF: &[u8] =
-        include_bytes!("../sp1/elf/riscv32im-succinct-zkvm-elf");
-    #[cfg(any(clippy, not(feature = "sp1")))]
-    pub const ZKVM_SP1_PROGRAM_ELF: &[u8] = &[0];
-
     #[cfg(all(not(clippy), feature = "pico"))]
     pub const ZKVM_PICO_PROGRAM_ELF: &[u8] =
         include_bytes!(concat!(env!("OUT_DIR"), "/riscv32im-pico-zkvm-elf"));
@@ -104,11 +98,11 @@ pub mod trie {
     use std::collections::HashMap;
 
     use ethrex_common::{
-        types::{AccountInfo, AccountState},
+        types::{AccountInfo, AccountState, AccountUpdate},
         H160, U256,
     };
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
-    use ethrex_storage::{hash_address, hash_key, AccountUpdate};
+    use ethrex_storage::{hash_address, hash_key};
     use ethrex_trie::{Trie, TrieError};
     use ethrex_vm::ProverDB;
     use thiserror::Error;

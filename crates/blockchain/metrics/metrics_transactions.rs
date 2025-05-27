@@ -1,14 +1,15 @@
 use ethrex_common::types::TxType;
 use prometheus::{Encoder, IntCounter, IntCounterVec, Opts, Registry, TextEncoder};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::LazyLock;
 
 use crate::MetricsError;
 
 pub static METRICS_TX: LazyLock<MetricsTx> = LazyLock::new(MetricsTx::default);
 
+#[derive(Debug, Clone)]
 pub struct MetricsTx {
-    pub transactions_tracker: Arc<Mutex<IntCounterVec>>,
-    pub transactions_total: Arc<Mutex<IntCounter>>,
+    pub transactions_tracker: IntCounterVec,
+    pub transactions_total: IntCounter,
 }
 
 impl Default for MetricsTx {
@@ -20,35 +21,28 @@ impl Default for MetricsTx {
 impl MetricsTx {
     pub fn new() -> Self {
         MetricsTx {
-            transactions_tracker: Arc::new(Mutex::new(
-                IntCounterVec::new(
-                    Opts::new(
-                        "transactions_tracker",
-                        "Keeps track of all transactions depending on status and tx_type",
-                    ),
-                    &["status", "tx_type"],
-                )
-                .unwrap(),
-            )),
-            transactions_total: Arc::new(Mutex::new(
-                IntCounter::new("transactions_total", "Keeps track of all transactions").unwrap(),
-            )),
+            transactions_tracker: IntCounterVec::new(
+                Opts::new(
+                    "transactions_tracker",
+                    "Keeps track of all transactions depending on status and tx_type",
+                ),
+                &["status", "tx_type"],
+            )
+            .unwrap(),
+
+            transactions_total: IntCounter::new(
+                "transactions_total",
+                "Keeps track of all transactions",
+            )
+            .unwrap(),
         }
     }
 
     pub fn inc_tx_with_status_and_type(&self, status: MetricsTxStatus, tx_type: MetricsTxType) {
         let txs = self.transactions_tracker.clone();
 
-        let txs_lock = match txs.lock() {
-            Ok(lock) => lock,
-            Err(e) => {
-                tracing::error!("Failed to lock mutex: {e}");
-                return;
-            }
-        };
-
         let txs_builder =
-            match txs_lock.get_metric_with_label_values(&[status.to_str(), tx_type.to_str()]) {
+            match txs.get_metric_with_label_values(&[status.to_str(), tx_type.to_str()]) {
                 Ok(builder) => builder,
                 Err(e) => {
                     tracing::error!("Failed to build Metric: {e}");
@@ -60,35 +54,15 @@ impl MetricsTx {
     }
 
     pub fn inc_tx(&self) {
-        let txs = self.transactions_total.clone();
-
-        let txs_lock = match txs.lock() {
-            Ok(lock) => lock,
-            Err(e) => {
-                tracing::error!("Failed to lock mutex: {e}");
-                return;
-            }
-        };
-
-        txs_lock.inc();
+        self.transactions_total.inc();
     }
 
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
-        let txs_tracker = self.transactions_tracker.clone();
-        let txs_tracker_lock = txs_tracker
-            .lock()
-            .map_err(|e| MetricsError::MutexLockError(e.to_string()))?;
-
-        let txs_lock = self.transactions_total.clone();
-        let txs_lock = txs_lock
-            .lock()
-            .map_err(|e| MetricsError::MutexLockError(e.to_string()))?;
-
-        r.register(Box::new(txs_lock.clone()))
+        r.register(Box::new(self.transactions_total.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
-        r.register(Box::new(txs_tracker_lock.clone()))
+        r.register(Box::new(self.transactions_tracker.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();

@@ -1,8 +1,8 @@
 use ethrex_blockchain::{validate_block, validate_gas_used};
+use ethrex_common::types::AccountUpdate;
 use ethrex_common::Address;
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
-use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
 use std::collections::HashMap;
 use tracing::warn;

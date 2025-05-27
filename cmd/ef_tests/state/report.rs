@@ -1,13 +1,13 @@
 use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
 use ethrex_common::{
-    types::{Account, Fork},
+    types::{Account, AccountUpdate, Fork},
     Address, H256,
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
-use ethrex_storage::{error::StoreError, AccountUpdate};
+use ethrex_vm::EvmError;
 use itertools::Itertools;
-use revm::primitives::{EVMError, ExecutionResult as RevmExecutionResult};
+use revm::primitives::{EVMError as RevmError, ExecutionResult as RevmExecutionResult};
 use serde::{Deserialize, Serialize};
 use spinoff::{spinners::Dots, Color, Spinner};
 use std::{
@@ -839,7 +839,7 @@ impl TestReRunReport {
         &mut self,
         vector: TestVector,
         levm_result: TxResult,
-        revm_error: EVMError<StoreError>,
+        revm_error: RevmError<EvmError>,
         fork: Fork,
     ) {
         let value = Some((levm_result, revm_error.to_string()));

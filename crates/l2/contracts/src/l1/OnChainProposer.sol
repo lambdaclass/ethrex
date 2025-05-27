@@ -10,6 +10,8 @@ import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
+import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
+
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
@@ -63,6 +65,9 @@ contract OnChainProposer is
     address public PICOVERIFIER;
     address public R0VERIFIER;
     address public SP1VERIFIER;
+    address public TDXVERIFIER;
+
+    bytes32 public SP1_VERIFICATION_KEY;
 
     /// @notice Address used to avoid the verification process.
     /// @dev If the `R0VERIFIER` or the `SP1VERIFIER` contract address is set to this address,
@@ -95,6 +100,8 @@ contract OnChainProposer is
         address r0verifier,
         address sp1verifier,
         address picoverifier,
+        address tdxverifier,
+        bytes32 sp1Vk,
         bytes32 genesisStateRoot,
         address[] calldata sequencerAddresses
     ) public initializer {
@@ -145,6 +152,28 @@ contract OnChainProposer is
         );
         SP1VERIFIER = sp1verifier;
 
+        // Set the TDXVerifier address
+        require(
+            TDXVERIFIER == address(0),
+            "OnChainProposer: contract already initialized"
+        );
+        require(
+            tdxverifier != address(0),
+            "OnChainProposer: tdxverifier is the zero address"
+        );
+        require(
+            tdxverifier != address(this),
+            "OnChainProposer: tdxverifier is the contract address"
+        );
+        TDXVERIFIER = tdxverifier;
+        
+        // Set the SP1 program verification key
+        require(
+            SP1_VERIFICATION_KEY == bytes32(0),
+            "OnChainProposer: contract already initialized"
+        );
+        SP1_VERIFICATION_KEY = sp1Vk;
+        
         batchCommitments[0] = BatchCommitmentInfo(
             genesisStateRoot,
             bytes32(0),
@@ -232,17 +261,19 @@ contract OnChainProposer is
     function verifyBatch(
         uint256 batchNumber,
         //risc0
-        bytes calldata risc0BlockProof,
+        bytes memory risc0BlockProof,
         bytes32 risc0ImageId,
         bytes calldata risc0Journal,
         //sp1
-        bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,
-        bytes calldata sp1ProofBytes,
+        bytes memory sp1ProofBytes,
         //pico
         bytes32 picoRiscvVkey,
         bytes calldata picoPublicValues,
-        uint256[8] calldata picoProof
+        uint256[8] calldata picoProof,
+        //tdx
+        bytes calldata tdxPublicValues,
+        bytes memory tdxSignature
     ) external override onlySequencer {
         // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
@@ -280,9 +311,18 @@ contract OnChainProposer is
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, sp1PublicValues[16:]);
             ISP1Verifier(SP1VERIFIER).verifyProof(
-                sp1ProgramVKey,
+                SP1_VERIFICATION_KEY,
                 sp1PublicValues,
                 sp1ProofBytes
+            );
+        }
+
+        if (TDXVERIFIER != DEV_MODE) {
+            // If the verification fails, it will revert.
+            _verifyPublicData(batchNumber, tdxPublicValues);
+            ITDXVerifier(TDXVERIFIER).verify(
+                tdxPublicValues,
+                tdxSignature
             );
         }
 
@@ -307,6 +347,7 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view {
+        require(publicData.length == 128, "OnChainProposer: invaid public data length");
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         require(
             batchCommitments[lastVerifiedBatch].newStateRoot ==

@@ -34,6 +34,7 @@ pub struct L1Watcher {
     max_block_step: U256,
     last_block_fetched: U256,
     check_interval: u64,
+    l1_block_delay: u64,
 }
 
 impl L1Watcher {
@@ -41,8 +42,8 @@ impl L1Watcher {
         watcher_config: &L1WatcherConfig,
         eth_config: &EthConfig,
     ) -> Result<Self, L1WatcherError> {
-        let eth_client = EthClient::new(&eth_config.rpc_url);
-        let l2_client = EthClient::new("http://localhost:1729");
+        let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
+        let l2_client = EthClient::new("http://localhost:1729")?;
 
         let last_block_fetched = U256::zero();
         Ok(Self {
@@ -52,6 +53,7 @@ impl L1Watcher {
             max_block_step: watcher_config.max_block_step,
             last_block_fetched,
             check_interval: watcher_config.check_interval_ms,
+            l1_block_delay: watcher_config.watcher_block_delay,
         })
     }
 
@@ -91,14 +93,33 @@ impl L1Watcher {
                 .into();
         }
 
-        let current_block = self.eth_client.get_block_number().await?;
+        let Some(latest_block_to_check) = self
+            .eth_client
+            .get_block_number()
+            .await?
+            .checked_sub(self.l1_block_delay.into())
+        else {
+            warn!("Too close to genesis to request deposits");
+            return Ok(vec![]);
+        };
 
         debug!(
-            "Current block number: {} ({:#x})",
-            current_block, current_block
+            "Latest possible block number with {} blocks of delay: {latest_block_to_check} ({latest_block_to_check:#x})",
+            self.l1_block_delay,
         );
 
-        let new_last_block = min(self.last_block_fetched + self.max_block_step, current_block);
+        // last_block_fetched could be greater than latest_block_to_check:
+        // - Right after deploying the contract as latest_block_fetched is set to the block where the contract is deployed
+        // - If the node is stopped and l1_block_delay is changed
+        if self.last_block_fetched > latest_block_to_check {
+            warn!("Last block fetched is greater than latest safe block");
+            return Ok(vec![]);
+        }
+
+        let new_last_block = min(
+            self.last_block_fetched + self.max_block_step,
+            latest_block_to_check,
+        );
 
         debug!(
             "Looking logs from block {:#x} to {:#x}",

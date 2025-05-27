@@ -4,6 +4,7 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 mod smoke_test;
+pub mod vm;
 
 use constants::MAX_INITCODE_SIZE;
 use error::MempoolError;
@@ -13,20 +14,20 @@ use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Req
 use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::{
     compute_receipts_root, validate_block_header, validate_cancun_header_fields,
-    validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHash,
-    BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
+    validate_prague_header_fields, validate_pre_cancun_header_fields, AccountUpdate, Block,
+    BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
-use ethrex_common::types::{BlobsBundle, Fork, ELASTICITY_MULTIPLIER};
-
+use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
 use ethrex_common::{Address, H256};
+use ethrex_storage::error::StoreError;
+use ethrex_storage::Store;
+use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use mempool::Mempool;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
-
-use ethrex_storage::error::StoreError;
-use ethrex_storage::{AccountUpdate, Store};
-use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use tracing::info;
+use vm::StoreVmDatabase;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -36,6 +37,10 @@ pub struct Blockchain {
     pub evm_engine: EvmEngine,
     storage: Store,
     pub mempool: Mempool,
+    /// Whether the node's chain is in or out of sync with the current chain
+    /// This will be set to true once the initial sync has taken place and wont be set to false after
+    /// This does not reflect whether there is an ongoing sync process
+    is_synced: AtomicBool,
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +55,7 @@ impl Blockchain {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
+            is_synced: AtomicBool::new(false),
         }
     }
 
@@ -58,6 +64,7 @@ impl Blockchain {
             evm_engine: EvmEngine::default(),
             storage: store,
             mempool: Mempool::new(),
+            is_synced: AtomicBool::new(false),
         }
     }
 
@@ -67,21 +74,28 @@ impl Blockchain {
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
-        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-            // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone()).await?;
-            return Err(ChainError::ParentNotFound);
+        // Feda (#2831): We search for the entire block because during full/batch sync
+        // we can have the header without the body indicating it's still syncing.
+        let parent = self
+            .storage
+            .get_block_by_hash(block.header.parent_hash)
+            .await?;
+        let parent_header = match parent {
+            Some(parent_block) => parent_block.header,
+            None => {
+                // If the parent is not present, we store it as pending.
+                self.storage.add_pending_block(block.clone()).await?;
+                return Err(ChainError::ParentNotFound);
+            }
         };
+
         let chain_config = self.storage.get_chain_config()?;
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let mut vm = Evm::new(
-            self.evm_engine,
-            self.storage.clone(),
-            block.header.parent_hash,
-        );
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
+        let mut vm = Evm::new(self.evm_engine, vm_db);
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
 
@@ -139,9 +153,13 @@ impl Blockchain {
             .await
             .map_err(ChainError::StoreError)?;
 
-        self.storage
+        if let Err(error) = self
+            .storage
             .add_block_snapshot(block.clone(), account_updates.to_vec())
-            .await;
+            .await
+        {
+            tracing::error!("Error adding block snapshot: {}", error);
+        }
 
         Ok(())
     }
@@ -208,13 +226,9 @@ impl Blockchain {
             .storage
             .get_chain_config()
             .map_err(|e| (e.into(), None))?;
-        let fork = chain_config.fork(first_block_header.timestamp);
 
-        let mut vm = Evm::new(
-            self.evm_engine,
-            self.storage.clone(),
-            first_block_header.parent_hash,
-        );
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), first_block_header.parent_hash);
+        let mut vm = Evm::new(self.evm_engine, vm_db);
 
         let blocks_len = blocks.len();
         let mut all_receipts: HashMap<BlockHash, Vec<Receipt>> = HashMap::new();
@@ -223,27 +237,20 @@ impl Blockchain {
 
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
-            if is_crossing_spuriousdragon(fork, chain_config.fork(block.header.timestamp)) {
-                return Err((
-                    ChainError::Custom("Crossing fork boundary in bulk mode".into()),
-                    Some(BatchBlockProcessingFailure {
-                        last_valid_hash,
-                        failed_block_hash: block.hash(),
-                    }),
-                ));
-            }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
-                let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-                    return Err((
-                        ChainError::ParentNotFound,
-                        Some(BatchBlockProcessingFailure {
-                            failed_block_hash: block.hash(),
-                            last_valid_hash,
-                        }),
-                    ));
-                };
-                parent_header
+                match find_parent_header(&block.header, &self.storage) {
+                    Ok(parent_header) => parent_header,
+                    Err(error) => {
+                        return Err((
+                            error,
+                            Some(BatchBlockProcessingFailure {
+                                failed_block_hash: block.hash(),
+                                last_valid_hash,
+                            }),
+                        ))
+                    }
+                }
             } else {
                 // for the subsequent ones, the parent is the previous block
                 blocks[i - 1].header.clone()
@@ -478,6 +485,19 @@ impl Blockchain {
 
         Ok(())
     }
+
+    /// Marks the node's chain as up to date with the current chain
+    /// Once the initial sync has taken place, the node will be consireded as sync
+    pub fn set_synced(&self) {
+        self.is_synced.store(true, Ordering::Relaxed);
+    }
+
+    /// Returns whether the node's chain is up to date with the current chain
+    /// This will be true if the initial sync has already taken place and does not reflect whether there is an ongoing sync process
+    /// The node should accept incoming p2p transactions if this method returns true
+    pub fn is_synced(&self) -> bool {
+        self.is_synced.load(Ordering::Relaxed)
+    }
 }
 
 pub fn validate_requests_hash(
@@ -547,8 +567,8 @@ pub async fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainE
     )))
 }
 
-/// Validates if the provided block could be the new head of the chain, and returns the
-/// parent_header in that case. If not found, the new block is saved as pending.
+/// Searchs the header of the parent block header. If the parent header is missing,
+/// Returns a ChainError::ParentNotFound. If the storage has an error it propagates it
 pub fn find_parent_header(
     block_header: &BlockHeader,
     storage: &Store,
@@ -655,16 +675,6 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
 /// Calculates the blob gas required by a transaction
 fn get_total_blob_gas(tx: &EIP4844Transaction) -> u64 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u64
-}
-
-fn is_crossing_spuriousdragon(from: Fork, to: Fork) -> bool {
-    if from >= Fork::SpuriousDragon {
-        return false;
-    }
-    if to < Fork::SpuriousDragon {
-        return false;
-    }
-    from != to
 }
 
 #[cfg(test)]

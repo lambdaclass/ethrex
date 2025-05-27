@@ -33,6 +33,7 @@ use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct Store {
     db: Arc<Database>,
 }
@@ -57,24 +58,34 @@ impl Store {
     }
 
     // Helper method to write into a libmdbx table in batch
+    #[inline]
+    fn write_batch_sync<T: Table>(
+        &self,
+        key_values: Vec<(T::Key, T::Value)>,
+    ) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+
+        let mut cursor = txn.cursor::<T>().map_err(StoreError::LibmdbxError)?;
+        for (key, value) in key_values {
+            cursor
+                .upsert(key, value)
+                .map_err(StoreError::LibmdbxError)?;
+        }
+        txn.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    // Helper method to write into a libmdbx table in batch, async version.
     async fn write_batch<T: Table>(
         &self,
         key_values: Vec<(T::Key, T::Value)>,
     ) -> Result<(), StoreError> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-
-            let mut cursor = txn.cursor::<T>().map_err(StoreError::LibmdbxError)?;
-            for (key, value) in key_values {
-                cursor
-                    .upsert(key, value)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-            txn.commit().map_err(StoreError::LibmdbxError)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+        let db = (*self).clone();
+        tokio::task::spawn_blocking(move || db.write_batch_sync::<T>(key_values))
+            .await
+            .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
     // Helper method to read from a libmdbx table
@@ -761,18 +772,6 @@ impl StoreEngine for Store {
         Ok(res)
     }
 
-    async fn is_synced(&self) -> Result<bool, StoreError> {
-        match self.read::<ChainData>(ChainDataIndex::IsSynced).await? {
-            None => Err(StoreError::Custom("Sync status not found".to_string())),
-            Some(ref rlp) => RLPDecode::decode(rlp).map_err(|_| StoreError::DecodeError),
-        }
-    }
-
-    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
-        self.write::<ChainData>(ChainDataIndex::IsSynced, is_synced.encode_to_vec())
-            .await
-    }
-
     async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
         self.write::<SnapState>(SnapStateIndex::StateHealPaths, paths.encode_to_vec())
             .await
@@ -815,6 +814,20 @@ impl StoreEngine for Store {
         .await
     }
 
+    fn write_snapshot_account_batch_blocking(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<AccountState>,
+    ) -> Result<(), StoreError> {
+        self.write_batch_sync::<StateSnapShot>(
+            account_hashes
+                .into_iter()
+                .map(|h| h.into())
+                .zip(account_states.into_iter().map(|a| a.into()))
+                .collect(),
+        )
+    }
+
     async fn write_snapshot_storage_batch(
         &self,
         account_hash: H256,
@@ -842,22 +855,38 @@ impl StoreEngine for Store {
         storage_keys: Vec<Vec<H256>>,
         storage_values: Vec<Vec<U256>>,
     ) -> Result<(), StoreError> {
-        let db = self.db.clone();
+        let store = self.clone();
         tokio::task::spawn_blocking(move || {
-            let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-            for (account_hash, (storage_keys, storage_values)) in account_hashes
-                .into_iter()
-                .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
-            {
-                for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
-                    txn.upsert::<StorageSnapShot>(account_hash.into(), (key.into(), value.into()))
-                        .map_err(StoreError::LibmdbxError)?;
-                }
-            }
-            txn.commit().map_err(StoreError::LibmdbxError)
+            store.write_snapshot_storage_batches_blocking(
+                account_hashes,
+                storage_keys,
+                storage_values,
+            )
         })
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    fn write_snapshot_storage_batches_blocking(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        for (account_hash, (storage_keys, storage_values)) in account_hashes
+            .into_iter()
+            .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
+        {
+            for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
+                txn.upsert::<StorageSnapShot>(account_hash.into(), (key.into(), value.into()))
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+        }
+        txn.commit().map_err(StoreError::LibmdbxError)
     }
 
     async fn set_state_trie_rebuild_checkpoint(
@@ -973,6 +1002,28 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         self.write::<InvalidAncestors>(bad_block.into(), latest_valid.into())
             .await
+    }
+
+    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError> {
+        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        txn.get::<StateSnapShot>(account_hash.into())
+            .map_err(StoreError::LibmdbxError)
+            .map(|x| x.map(|y| y.to()))
+    }
+
+    fn get_storage_snapshot(
+        &self,
+        account_hash: H256,
+        storage_hash: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let mut cursor = txn
+            .cursor::<StorageSnapShot>()
+            .map_err(StoreError::LibmdbxError)?;
+        Ok(cursor
+            .seek_value(account_hash.into(), storage_hash.into())
+            .map_err(StoreError::LibmdbxError)?
+            .map(|x| U256::from_big_endian(&x.1 .0)))
     }
 }
 
@@ -1166,12 +1217,12 @@ table!(
 );
 
 table!(
-    /// State Snapshot used by an ongoing sync process
+    /// State Snapshot used by sync and disk layer snapshots
     ( StateSnapShot ) AccountHashRLP => AccountStateRLP
 );
 
 dupsort!(
-    /// Storage Snapshot used by an ongoing sync process
+    /// Storage Snapshot used by sync and disk layer snapshots
     ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
 );
 

@@ -1,8 +1,7 @@
+use std::collections::HashMap;
 use std::time::Duration;
-use std::{collections::HashMap, future::Future};
 
 use again::{RetryPolicy, Task};
-use tokio::time::timeout;
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -43,14 +42,14 @@ pub enum Account {
 }
 
 impl Account {
-    pub fn get_account_proof<'a>(&'a self) -> &'a Vec<NodeRLP> {
+    pub fn get_account_proof(&self) -> &Vec<NodeRLP> {
         match self {
             Account::Existing { account_proof, .. } => account_proof,
             Account::NonExisting { account_proof, .. } => account_proof,
         }
     }
 
-    pub fn get_storage_proofs<'a>(&'a self) -> &'a HashMap<H256, Vec<NodeRLP>> {
+    pub fn get_storage_proofs(&self) -> &HashMap<H256, Vec<NodeRLP>> {
         match self {
             Account::Existing { storage_proofs, .. } => storage_proofs,
             Account::NonExisting { storage_proofs, .. } => storage_proofs,
@@ -209,7 +208,7 @@ pub async fn get_account(
     let trie = Trie::from_nodes(Some(root), &other)
         .map_err(|err| format!("failed to build account proof trie: {err}"))?;
     if trie
-        .get(&hash_address(address))
+        .get(hash_address(address))
         .map_err(|err| format!("failed get account from proof trie: {err}"))?
         .is_none()
     {

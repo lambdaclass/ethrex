@@ -1,11 +1,13 @@
 use ethrex_common::H256;
 use ethrex_rlp::error::RLPDecodeError;
 
+use crate::error::StoreError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum SnapshotError {
-    #[error("SnapShot with root {0} not found.")]
+    #[error("Snapshot with block hash {0} not found.")]
     SnapshotNotFound(H256),
-    #[error("SnapShot with root {0} is the disk layer, wrong api usage.")]
+    #[error("Snapshot with block hash {0} is the disk layer, wrong api usage.")]
     SnapshotIsdiskLayer(H256),
     #[error("Tried to create a snapshot cycle")]
     SnapshotCycle,
@@ -17,4 +19,8 @@ pub enum SnapshotError {
     DiskLayerFlatten,
     #[error(transparent)]
     RLPDecodeError(#[from] RLPDecodeError),
+    #[error("Error getting a lock: {0}")]
+    LockError(String),
+    #[error(transparent)]
+    StoreError(#[from] StoreError),
 }

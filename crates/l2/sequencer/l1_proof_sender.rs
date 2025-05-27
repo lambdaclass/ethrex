@@ -26,7 +26,7 @@ const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0xAA,
 ]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatch(uint256,bytes,bytes32,bytes,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
+    "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
 
 pub async fn start_l1_proof_sender(cfg: SequencerConfig) -> Result<(), SequencerError> {
     let proof_sender =
@@ -50,7 +50,7 @@ impl L1ProofSender {
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
     ) -> Result<Self, ProofSenderError> {
-        let eth_client = EthClient::new(&eth_cfg.rpc_url);
+        let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
 
         let mut needed_proof_types = vec![];
         if !cfg.dev_mode {
@@ -67,7 +67,6 @@ impl L1ProofSender {
                         Overrides::default(),
                     )
                     .await?;
-
                 // trim to 20 bytes, also removes 0x prefix
                 let trimmed_response = &response[26..];
 
@@ -154,6 +153,10 @@ impl L1ProofSender {
             proofs
                 .get(&ProverType::Pico)
                 .unwrap_or(&ProverType::Pico.empty_calldata())
+                .as_slice(),
+            proofs
+                .get(&ProverType::TDX)
+                .unwrap_or(&ProverType::TDX.empty_calldata())
                 .as_slice(),
         ]
         .concat();

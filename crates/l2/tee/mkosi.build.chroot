@@ -1,5 +1,5 @@
 #!/bin/bash
 source /.cargo/env
-cd /work/src/proj
+cd /work/src/ethrex/crates/l2/tee/quote-gen
 cargo build --release
 cp target/release/quote-gen /work/dest/payload

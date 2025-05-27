@@ -47,6 +47,7 @@ struct StoreInner {
     state_snapshot: BTreeMap<H256, AccountState>,
     // Stores Storage trie leafs from the last downloaded tries
     storage_snapshot: HashMap<H256, BTreeMap<H256, U256>>,
+    // Snapshot (diff layers)
 }
 
 #[derive(Default, Debug)]
@@ -57,7 +58,6 @@ struct ChainData {
     safe_block_number: Option<BlockNumber>,
     latest_block_number: Option<BlockNumber>,
     pending_block_number: Option<BlockNumber>,
-    is_synced: bool,
 }
 
 // Keeps track of the state left by the latest snap attempt
@@ -553,15 +553,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn is_synced(&self) -> Result<bool, StoreError> {
-        Ok(self.inner().chain_data.is_synced)
-    }
-
-    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
-        self.inner().chain_data.is_synced = is_synced;
-        Ok(())
-    }
-
     async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
         self.inner().snap_state.state_heal_paths = Some(paths);
         Ok(())
@@ -572,6 +563,15 @@ impl StoreEngine for Store {
     }
 
     async fn write_snapshot_account_batch(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<ethrex_common::types::AccountState>,
+    ) -> Result<(), StoreError> {
+        self.write_snapshot_account_batch_blocking(account_hashes, account_states)
+    }
+
+    #[inline]
+    fn write_snapshot_account_batch_blocking(
         &self,
         account_hashes: Vec<H256>,
         account_states: Vec<ethrex_common::types::AccountState>,
@@ -596,6 +596,15 @@ impl StoreEngine for Store {
         Ok(())
     }
     async fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        self.write_snapshot_storage_batches_blocking(account_hashes, storage_keys, storage_values)
+    }
+
+    fn write_snapshot_storage_batches_blocking(
         &self,
         account_hashes: Vec<H256>,
         storage_keys: Vec<Vec<H256>>,
@@ -695,6 +704,23 @@ impl StoreEngine for Store {
             .invalid_ancestors
             .insert(bad_block, latest_valid);
         Ok(())
+    }
+
+    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError> {
+        Ok(self.inner().state_snapshot.get(&account_hash).cloned())
+    }
+
+    fn get_storage_snapshot(
+        &self,
+        account_hash: H256,
+        storage_hash: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        Ok(self
+            .inner()
+            .storage_snapshot
+            .get(&account_hash)
+            .and_then(|x| x.get(&storage_hash))
+            .cloned())
     }
 }
 

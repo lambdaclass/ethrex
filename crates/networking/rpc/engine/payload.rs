@@ -185,45 +185,6 @@ impl RpcHandler for NewPayloadV4Request {
         })
     }
 
-    #[cfg(feature = "based")]
-    async fn relay_to_gateway_or_fallback(
-        req: &RpcRequest,
-        context: RpcApiContext,
-    ) -> Result<Value, RpcErr> {
-        info!("Relaying engine_getPayloadV3 to gateway");
-
-        let request = Self::parse(&req.params)?;
-
-        let gateway_auth_client = context.gateway_auth_client.clone();
-
-        let gateway_request = gateway_auth_client.engine_new_payload_v4(
-            request.payload,
-            request.expected_blob_versioned_hashes,
-            request.parent_beacon_block_root,
-        );
-
-        let client_response = Self::call(req, context).await;
-
-        let gateway_response = gateway_request
-            .await
-            .map_err(|err| {
-                RpcErr::Internal(format!(
-                    "Could not relay engine_newPayloadV3 to gateway: {err}",
-                ))
-            })
-            .and_then(|response| {
-                serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
-            });
-
-        if gateway_response.is_err() {
-            warn!(error = ?gateway_response, "Gateway engine_newPayloadV3 failed, falling back to local node");
-        } else {
-            info!("Successfully relayed engine_newPayloadV3 to gateway");
-        }
-
-        gateway_response.or(client_response)
-    }
-
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         // validate the received requests
         validate_execution_requests(&self.execution_requests)?;
@@ -369,41 +330,6 @@ impl RpcHandler for GetPayloadV4Request {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
-    }
-
-    #[cfg(feature = "based")]
-    async fn relay_to_gateway_or_fallback(
-        req: &RpcRequest,
-        context: RpcApiContext,
-    ) -> Result<Value, RpcErr> {
-        info!("Relaying engine_getPayloadV3 to gateway");
-
-        let request = Self::parse(&req.params)?;
-
-        let gateway_auth_client = context.gateway_auth_client.clone();
-
-        let gateway_request = gateway_auth_client.engine_get_payload_v4(request.payload_id);
-
-        let client_response = Self::call(req, context).await;
-
-        let gateway_response = gateway_request
-            .await
-            .map_err(|err| {
-                RpcErr::Internal(format!(
-                    "Could not relay engine_getPayloadV4 to gateway: {err}",
-                ))
-            })
-            .and_then(|response| {
-                serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
-            });
-
-        if gateway_response.is_err() {
-            warn!(error = ?gateway_response, "Gateway engine_getPayloadV4 failed, falling back to local node");
-        } else {
-            info!("Successfully relayed engine_getPayloadV4 to gateway");
-        }
-
-        gateway_response.or(client_response)
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -717,11 +643,6 @@ async fn try_execute_payload(
     match context.blockchain.add_block(block).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
-            context
-                .storage
-                .update_sync_status(false)
-                .await
-                .map_err(|e| RpcErr::Internal(e.to_string()))?;
             context.syncer.sync_to_head(block_hash);
             Ok(PayloadStatus::syncing())
         }
@@ -761,6 +682,10 @@ async fn try_execute_payload(
             Err(RpcErr::Internal(error.to_string()))
         }
         Err(ChainError::Custom(e)) => {
+            error!("{e} for block {block_hash}");
+            Err(RpcErr::Internal(e.to_string()))
+        }
+        Err(ChainError::InvalidTransaction(e)) => {
             error!("{e} for block {block_hash}");
             Err(RpcErr::Internal(e.to_string()))
         }

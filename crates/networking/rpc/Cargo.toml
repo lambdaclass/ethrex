@@ -40,12 +40,6 @@ keccak-hash.workspace = true
 
 cfg-if.workspace = true
 
-# Based
-ssz_types = { version = "0.10", optional = true}
-tree_hash = { version = "0.9.1", optional = true}
-tree_hash_derive = { version = "0.9.1", optional = true}
-strum_macros = { version = "0.24", optional = true }
-
 [dev-dependencies]
 hex-literal = "0.4.1"
 
@@ -53,5 +47,4 @@ hex-literal = "0.4.1"
 path = "./lib.rs"
 
 [features]
-based = ["l2", "dep:ssz_types", "dep:tree_hash", "dep:tree_hash_derive", "dep:strum_macros"]
 l2 = ["ethrex-storage-rollup"]

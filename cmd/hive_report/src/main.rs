@@ -6,6 +6,7 @@ use std::io::BufReader;
 #[serde(rename_all = "camelCase")]
 struct TestCase {
     summary_result: SummaryResult,
+    name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,7 +31,7 @@ struct HiveResult {
 }
 
 impl HiveResult {
-    fn new(suite: String, passed_tests: usize, total_tests: usize) -> Self {
+    fn new(suite: String, fork: String, passed_tests: usize, total_tests: usize) -> Self {
         let success_percentage = (passed_tests as f64 / total_tests as f64) * 100.0;
 
         let (category, display_name) = match suite.as_str() {
@@ -44,6 +45,8 @@ impl HiveResult {
             "snap" => ("P2P", "Snap capability"),
             "rpc-compat" => ("RPC", "RPC API Compatibility"),
             "sync" => ("Sync", "Node Syncing"),
+            "eest/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
+            "eest/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
             other => {
                 eprintln!("Warn: Unknown suite: {}. Skipping", other);
                 ("", "")
@@ -74,6 +77,27 @@ impl std::fmt::Display for HiveResult {
     }
 }
 
+fn create_fork_result(json_data: &JsonFile, fork: &str, test_pattern: &str) -> HiveResult {
+    let total_tests = json_data
+        .test_cases
+        .iter()
+        .filter(|(_, test_case)| test_case.name.starts_with(test_pattern))
+        .count();
+    let passed_tests = json_data
+        .test_cases
+        .iter()
+        .filter(|(_, test_case)| {
+            test_case.name.starts_with(test_pattern) && test_case.summary_result.pass
+        })
+        .count();
+    HiveResult::new(
+        json_data.name.clone(),
+        fork.to_string(),
+        passed_tests,
+        total_tests,
+    )
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut results = Vec::new();
 
@@ -100,16 +124,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let total_tests = json_data.test_cases.len();
-            let passed_tests = json_data
-                .test_cases
-                .values()
-                .filter(|test_case| test_case.summary_result.pass)
-                .count();
+            // Both of these simulators have only 1 suite where we can find tests for 3 different forks.
+            // To get the total tests and the passed tests a filtes is done each time so we do not clone the test cases each time.
+            if json_data.name.as_str() == "eest/consume-rlp"
+                || json_data.name.as_str() == "eest/consume-engine"
+            {
+                // Cancun
+                let result_cancun = create_fork_result(&json_data, "Cancun", "tests/cancun");
+                // Shanghai
+                let result_shanghai = create_fork_result(&json_data, "Shanghai", "tests/shanghai");
+                // Prague
+                let result_prague = create_fork_result(&json_data, "Prague", "tests/prague");
 
-            let result = HiveResult::new(json_data.name, passed_tests, total_tests);
-            if !result.should_skip() {
-                results.push(result);
+                results.push(result_cancun);
+                results.push(result_shanghai);
+                results.push(result_prague);
+            } else {
+                let total_tests = json_data.test_cases.len();
+                let passed_tests = json_data
+                    .test_cases
+                    .values()
+                    .filter(|test_case| test_case.summary_result.pass)
+                    .count();
+
+                let result =
+                    HiveResult::new(json_data.name, String::new(), passed_tests, total_tests);
+                if !result.should_skip() {
+                    results.push(result);
+                }
             }
         }
     }

@@ -132,6 +132,7 @@ impl ExecutionPayload {
             parent_beacon_block_root,
             // TODO: set the value properly
             requests_hash,
+            ..Default::default()
         };
 
         Ok(Block::new(header, body))

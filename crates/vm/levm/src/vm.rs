@@ -1,12 +1,15 @@
+#[cfg(feature = "l2")]
+use crate::call_frame::CallFrameBackup;
 use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
-    errors::{ExecutionReport, OpcodeResult, VMError},
+    errors::{ExecutionReport, OpcodeResult, PrecompileError, VMError},
     hooks::hook::Hook,
     precompiles::execute_precompile,
     TransientStorage,
 };
+use bytes::Bytes;
 use ethrex_common::{
     types::{Transaction, TxKind},
     Address, H256, U256,
@@ -62,13 +65,13 @@ impl<'a> VM<'a> {
     pub fn setup_vm(&mut self) -> Result<(), VMError> {
         self.initialize_substate()?;
 
-        let (callee, bytecode) = self.get_callee_and_code()?;
+        let callee = self.get_tx_callee()?;
 
         let initial_call_frame = CallFrame::new(
             self.env.origin,
             callee,
-            callee,
-            bytecode,
+            Address::default(), // Will be assigned at the end of prepare_execution
+            Bytes::new(),       // Will be assigned at the end of prepare_execution
             self.tx.value(),
             self.tx.data().clone(),
             false,
@@ -95,6 +98,11 @@ impl<'a> VM<'a> {
             return Err(e);
         }
 
+        // Here we need to backup the callframe because in the L2 we want to undo a transaction if it exceeds blob size
+        // even if the transaction succeeds.
+        #[cfg(feature = "l2")]
+        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
+
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame_mut()?.call_frame_backup.clear();
@@ -111,6 +119,20 @@ impl<'a> VM<'a> {
         let mut report = self.run_execution()?;
 
         self.finalize_execution(&mut report)?;
+
+        // We want to restore to the initial state, this includes reverting the changes made by the prepare execution
+        // and the changes made by the execution itself.
+        #[cfg(feature = "l2")]
+        {
+            let current_backup: &mut CallFrameBackup =
+                &mut self.current_call_frame_mut()?.call_frame_backup;
+            current_backup
+                .original_accounts_info
+                .extend(callframe_backup.original_accounts_info);
+            current_backup
+                .original_account_storage_slots
+                .extend(callframe_backup.original_account_storage_slots);
+        }
         Ok(report)
     }
 
@@ -145,15 +167,30 @@ impl<'a> VM<'a> {
     }
 
     pub fn execute_precompile(&mut self) -> Result<ExecutionReport, VMError> {
-        let callframe = self.current_call_frame_mut()?;
+        let precompile_address = self.current_call_frame()?.code_address;
 
-        let precompile_address = callframe.code_address;
-        let calldata = &callframe.calldata;
-        let gas_used = &mut callframe.gas_used;
-        let gas_limit = callframe.gas_limit;
-
-        let precompile_result =
-            execute_precompile(precompile_address, calldata, gas_used, gas_limit);
+        let precompile_result = match self.is_delegation_target(precompile_address) {
+            // Avoid executing precompile if it is target of a delegation in EIP-7702 transaction.
+            true => {
+                let gas_limit = self.current_call_frame()?.gas_limit;
+                if gas_limit == 0 {
+                    // `pointer_to_precompile.json` tests that it should fail in a call with zero gas limit.
+                    Err(VMError::PrecompileError(PrecompileError::NotEnoughGas))
+                } else {
+                    Ok(Bytes::new())
+                }
+            }
+            // Otherwise, execute precompile
+            false => {
+                let callframe = self.current_call_frame_mut()?;
+                execute_precompile(
+                    precompile_address,
+                    &callframe.calldata,
+                    &mut callframe.gas_used,
+                    callframe.gas_limit,
+                )
+            }
+        };
 
         let report = self.handle_precompile_result(precompile_result)?;
 

@@ -312,7 +312,7 @@ impl RpcHandler for GetBlobBaseFee {
             _ => return Err(RpcErr::Internal("Could not get block header".to_owned())),
         };
         let parent_header = match find_parent_header(&header, &context.storage) {
-            Ok(header) => header,
+            Ok(option_header) => option_header,
             Err(error) => return Err(RpcErr::Internal(error.to_string())),
         };
 

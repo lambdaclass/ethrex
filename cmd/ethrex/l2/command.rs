@@ -1,11 +1,11 @@
 use crate::{
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
-        get_local_p2p_node, get_network, get_signer, init_blockchain, init_metrics, init_network,
-        init_rollup_store, init_rpc_api, init_store,
+        get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
+        init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
     },
     l2::options::Options,
-    utils::{set_datadir, store_known_peers},
+    utils::{set_datadir, store_node_config_file, NodeConfigFile},
     DEFAULT_L2_DATADIR,
 };
 use clap::Subcommand;
@@ -19,7 +19,8 @@ use ethrex_rpc::{
 use eyre::OptionExt;
 use keccak_hash::keccak;
 use reqwest::Url;
-use std::{fs::create_dir_all, future::IntoFuture, path::PathBuf, time::Duration};
+use std::{fs::create_dir_all, future::IntoFuture, path::PathBuf, sync::Arc, time::Duration};
+use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
@@ -73,6 +74,12 @@ impl Command {
 
                 let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
 
+                let local_node_record = Arc::new(Mutex::new(get_local_node_record(
+                    &data_dir,
+                    &local_p2p_node,
+                    &signer,
+                )));
+
                 let peer_table = peer_table(local_p2p_node.node_id());
 
                 // TODO: Check every module starts properly.
@@ -83,9 +90,9 @@ impl Command {
                 init_rpc_api(
                     &opts.node_opts,
                     &opts,
-                    &signer,
                     peer_table.clone(),
                     local_p2p_node.clone(),
+                    local_node_record.lock().await.clone(),
                     store.clone(),
                     blockchain.clone(),
                     cancel_token.clone(),
@@ -105,6 +112,7 @@ impl Command {
                         &network,
                         &data_dir,
                         local_p2p_node,
+                        local_node_record.clone(),
                         signer,
                         peer_table.clone(),
                         store.clone(),
@@ -127,10 +135,11 @@ impl Command {
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {
                         info!("Server shut down started...");
-                        let peers_file = PathBuf::from(data_dir + "/peers.json");
-                        info!("Storing known peers at {:?}...", peers_file);
+                        let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+                        info!("Storing config at {:?}...", node_config_path);
                         cancel_token.cancel();
-                        store_known_peers(peer_table, peers_file).await;
+                        let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
+                        store_node_config_file(node_config, node_config_path).await;
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         info!("Server shutting down!");
                     }
@@ -152,7 +161,7 @@ impl Command {
             } => {
                 create_dir_all(data_dir.clone())?;
 
-                let eth_client = EthClient::new(l1_eth_rpc.as_str());
+                let eth_client = EthClient::new(l1_eth_rpc.as_str())?;
                 let beacon_client = BeaconClient::new(l1_beacon_rpc);
 
                 // Keep delay for finality

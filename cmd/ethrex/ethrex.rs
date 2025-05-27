@@ -2,17 +2,18 @@ use clap::Parser;
 use ethrex::{
     cli::CLI,
     initializers::{
-        get_local_p2p_node, get_network, get_signer, init_blockchain, init_metrics, init_rpc_api,
-        init_store, init_tracing,
+        get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
+        init_metrics, init_rpc_api, init_store, init_tracing,
     },
-    utils::{set_datadir, store_known_peers},
+    utils::{set_datadir, store_node_config_file, NodeConfigFile},
 };
 use ethrex_p2p::network::peer_table;
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
+use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
-#[cfg(any(feature = "l2", feature = "based"))]
+#[cfg(feature = "l2")]
 use ethrex::l2::L2Options;
 #[cfg(feature = "l2")]
 use ethrex_storage_rollup::StoreRollup;
@@ -39,6 +40,12 @@ async fn main() -> eyre::Result<()> {
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
+    let local_node_record = Arc::new(Mutex::new(get_local_node_record(
+        &data_dir,
+        &local_p2p_node,
+        &signer,
+    )));
+
     let peer_table = peer_table(local_p2p_node.node_id());
 
     // TODO: Check every module starts properly.
@@ -48,11 +55,11 @@ async fn main() -> eyre::Result<()> {
 
     init_rpc_api(
         &opts,
-        #[cfg(any(feature = "l2", feature = "based"))]
+        #[cfg(feature = "l2")]
         &L2Options::default(),
-        &signer,
         peer_table.clone(),
         local_p2p_node.clone(),
+        local_node_record.lock().await.clone(),
         store.clone(),
         blockchain.clone(),
         cancel_token.clone(),
@@ -80,6 +87,7 @@ async fn main() -> eyre::Result<()> {
                     &network,
                     &data_dir,
                     local_p2p_node,
+                    local_node_record.clone(),
                     signer,
                     peer_table.clone(),
                     store.clone(),
@@ -96,10 +104,11 @@ async fn main() -> eyre::Result<()> {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             info!("Server shut down started...");
-            let peers_file = PathBuf::from(data_dir + "/peers.json");
-            info!("Storing known peers at {:?}...", peers_file);
+            let node_config_path = PathBuf::from(data_dir + "/node_config.json");
+            info!("Storing config at {:?}...", node_config_path);
             cancel_token.cancel();
-            store_known_peers(peer_table, peers_file).await;
+            let node_config = NodeConfigFile::new(peer_table, local_node_record.lock().await.clone()).await;
+            store_node_config_file(node_config, node_config_path).await;
             tokio::time::sleep(Duration::from_secs(1)).await;
             info!("Server shutting down!");
         }

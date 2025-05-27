@@ -5,7 +5,7 @@ use crate::rlpx::error::RLPxError;
 
 use super::status::StatusMessage;
 
-pub async fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessage, RLPxError> {
+pub async fn get_status(storage: &Store, eth_version: u8) -> Result<StatusMessage, RLPxError> {
     let chain_config = storage.get_chain_config()?;
     let total_difficulty = U256::from(chain_config.terminal_total_difficulty.unwrap_or_default());
     let network_id = chain_config.chain_id;
@@ -28,7 +28,7 @@ pub async fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessa
         block_number,
     );
     Ok(StatusMessage {
-        eth_version,
+        eth_version: eth_version as u32,
         network_id,
         total_difficulty,
         block_hash,
@@ -40,7 +40,7 @@ pub async fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessa
 pub async fn validate_status(
     msg_data: StatusMessage,
     storage: &Store,
-    eth_version: u32,
+    eth_version: u8,
 ) -> Result<(), RLPxError> {
     let chain_config = storage.get_chain_config()?;
 
@@ -67,7 +67,7 @@ pub async fn validate_status(
         ));
     }
     //Check Protocol Version
-    if msg_data.eth_version != eth_version {
+    if msg_data.eth_version as u8 != eth_version {
         return Err(RLPxError::HandshakeError(
             "Eth protocol version does not match".to_string(),
         ));
@@ -127,7 +127,7 @@ mod tests {
 
         let eth_version = 68;
         let message = StatusMessage {
-            eth_version,
+            eth_version: eth_version as u32,
             network_id: 3503995874084926,
             total_difficulty,
             block_hash: H256::random(),

@@ -1,4 +1,9 @@
-use std::{collections::HashMap, sync::Arc};
+// Inspired by https://github.com/ethereum/go-ethereum/blob/f21adaf245e320a809f9bb6ec96c330726c9078f/core/state/snapshot/difflayer.go
+
+use std::{
+    collections::HashMap,
+    sync::{atomic::AtomicBool, Arc},
+};
 
 use ethrex_common::{
     types::{AccountState, BlockHash},
@@ -13,14 +18,15 @@ use super::{
 
 #[derive(Clone, Debug)]
 pub struct DiffLayer {
-    origin: Arc<DiskLayer>,
+    // Origin (disk layer) block hash
+    pub(crate) origin: H256,
     /// parent block hash
     parent: H256,
     block_hash: BlockHash,
     state_root: H256,
     stale: bool,
     accounts: HashMap<H256, Option<AccountState>>, // None if deleted
-    storage: HashMap<H256, HashMap<H256, U256>>,
+    storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     /// tracks all diffed items up to disk layer
     pub(crate) diffed: Bloom,
 }
@@ -28,14 +34,14 @@ pub struct DiffLayer {
 impl DiffLayer {
     pub fn new(
         parent: H256,
-        origin: Arc<DiskLayer>,
+        origin: H256,
         block_hash: BlockHash,
         state_root: H256,
         accounts: HashMap<H256, Option<AccountState>>,
-        storage: HashMap<H256, HashMap<H256, U256>>,
+        storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     ) -> Self {
         DiffLayer {
-            origin: origin.clone(),
+            origin,
             parent,
             block_hash,
             state_root,
@@ -45,11 +51,9 @@ impl DiffLayer {
             diffed: Bloom::default(),
         }
     }
-}
 
-impl DiffLayer {
     /// Recreates the bloom filter of this layer, either using the parent diff filter as base or a new one.
-    pub fn rebloom(&mut self, origin: Arc<DiskLayer>, parent_diffed: Option<Bloom>) {
+    pub fn rebloom(&mut self, origin: H256, parent_diffed: Option<Bloom>) {
         // Set the new origin that triggered a rebloom.
         self.origin = origin;
 
@@ -97,7 +101,10 @@ impl DiffLayer {
 
         // If bloom misses we can skip diff layers
         if !hit {
-            return self.origin.get_account(hash, layers);
+            return match &layers[&self.origin] {
+                Layer::DiskLayer(disk_layer) => disk_layer.get_account(hash),
+                Layer::DiffLayer(_) => unreachable!(),
+            };
         }
 
         // Start traversing layers.
@@ -119,7 +126,7 @@ impl DiffLayer {
             .get(&account_hash)
             .and_then(|x| x.get(&storage_hash))
         {
-            return Ok(Some(*value));
+            return Ok(*value);
         }
 
         let bloom_hash = account_hash ^ storage_hash;
@@ -129,7 +136,10 @@ impl DiffLayer {
 
         // If bloom misses we can skip diff layers
         if !hit {
-            return self.origin.get_storage(account_hash, storage_hash, layers);
+            return match &layers[&self.origin] {
+                Layer::DiskLayer(disk_layer) => disk_layer.get_storage(account_hash, storage_hash),
+                Layer::DiffLayer(_) => unreachable!(),
+            };
         }
 
         // Start traversing layers.
@@ -155,24 +165,110 @@ impl DiffLayer {
         block: BlockHash,
         state_root: H256,
         accounts: HashMap<H256, Option<AccountState>>,
-        storage: HashMap<H256, HashMap<H256, U256>>,
+        storage: HashMap<H256, HashMap<H256, Option<U256>>>,
     ) -> DiffLayer {
         let mut layer = DiffLayer::new(
             self.block_hash,
-            self.origin.clone(),
+            self.origin,
             block,
             state_root,
             accounts,
             storage,
         );
 
-        layer.rebloom(self.origin.clone(), Some(self.diffed));
+        layer.rebloom(self.origin, Some(self.diffed));
 
         layer
     }
 
-    pub fn origin(&self) -> Arc<DiskLayer> {
-        self.origin.clone()
+    /// Merges the diff into the disk layer.
+    ///
+    /// Returning a new disk layer whose block hash is the diff block hash.
+    ///
+    /// Returns Err if the current disk layer is already marked stale.
+    pub fn save_to_disk(
+        &self,
+        layers: &HashMap<H256, Layer>,
+    ) -> Result<Arc<DiskLayer>, SnapshotError> {
+        let prev_disk = match &layers[&self.origin()] {
+            Layer::DiskLayer(disk_layer) => disk_layer.clone(),
+            Layer::DiffLayer(_) => unreachable!(),
+        };
+
+        if prev_disk.mark_stale() {
+            return Err(SnapshotError::StaleSnapshot);
+        }
+
+        // TODO: here we should save the diff layers to the db (in the future snapshots table) too.
+        let accounts = self.accounts();
+
+        let mut account_hashes = Vec::with_capacity(accounts.len());
+        let mut account_states = Vec::with_capacity(accounts.len());
+
+        for (hash, acc) in accounts.iter() {
+            if let Some(acc) = acc {
+                // TODO: Important, if acc is None it means it comes from a account update
+                // with the removed flag, should we remove it from db too?
+                account_hashes.push(*hash);
+                account_states.push(acc.clone());
+                prev_disk.cache.accounts.insert(*hash, Some(acc.clone()));
+            } else {
+                prev_disk.cache.accounts.remove(hash);
+            }
+        }
+
+        prev_disk
+            .db
+            .write_snapshot_account_batch_blocking(account_hashes, account_states)?;
+
+        let storage = self.storage();
+
+        let mut account_hashes = Vec::with_capacity(storage.len());
+        let mut storage_keys = Vec::with_capacity(storage.len());
+        let mut storage_values = Vec::with_capacity(storage.len());
+
+        for (account_hash, storage) in storage.iter() {
+            account_hashes.push(*account_hash);
+            let mut keys = Vec::new();
+            let mut values = Vec::new();
+            for (storage_hash, value) in storage.iter() {
+                // TODO: Important, if acc is None it means it had a value of zero should we remove it from db too?
+                if let Some(value) = &value {
+                    values.push(*value);
+                    keys.push(*storage_hash);
+                    prev_disk
+                        .cache
+                        .storages
+                        .insert((*account_hash, *storage_hash), Some(*value));
+                } else {
+                    prev_disk
+                        .cache
+                        .storages
+                        .remove(&(*account_hash, *storage_hash));
+                }
+            }
+            storage_values.push(values);
+            storage_keys.push(keys);
+        }
+
+        prev_disk.db.write_snapshot_storage_batches_blocking(
+            account_hashes,
+            storage_keys,
+            storage_values,
+        )?;
+
+        let disk = DiskLayer {
+            db: prev_disk.db.clone(),
+            cache: prev_disk.cache.clone(),
+            block_hash: self.block_hash(),
+            state_root: self.root(),
+            stale: Arc::new(AtomicBool::new(false)),
+        };
+        Ok(Arc::new(disk))
+    }
+
+    pub fn origin(&self) -> H256 {
+        self.origin
     }
 
     pub fn diffed(&self) -> Bloom {
@@ -196,10 +292,10 @@ impl DiffLayer {
 
         // delegate to parent
         match &layers[&self.parent] {
-            Layer::DiskLayer(disk_layer) => disk_layer.get_account(hash, layers),
+            Layer::DiskLayer(disk_layer) => disk_layer.get_account(hash),
             Layer::DiffLayer(diff_layer) => diff_layer
                 .read()
-                .unwrap()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?
                 .get_account_traverse(hash, layers),
         }
     }
@@ -220,20 +316,16 @@ impl DiffLayer {
             .get(&account_hash)
             .and_then(|x| x.get(&storage_hash))
         {
-            return Ok(Some(*value));
+            return Ok(*value);
         }
 
         // delegate to parent
         match &layers[&self.parent] {
-            Layer::DiskLayer(disk_layer) => {
-                disk_layer.get_storage(account_hash, storage_hash, layers)
-            }
-            Layer::DiffLayer(diff_layer) => {
-                diff_layer
-                    .read()
-                    .unwrap()
-                    .get_storage_traverse(account_hash, storage_hash, layers)
-            }
+            Layer::DiskLayer(disk_layer) => disk_layer.get_storage(account_hash, storage_hash),
+            Layer::DiffLayer(diff_layer) => diff_layer
+                .read()
+                .map_err(|error| SnapshotError::LockError(error.to_string()))?
+                .get_storage_traverse(account_hash, storage_hash, layers),
         }
     }
 
@@ -241,7 +333,7 @@ impl DiffLayer {
         self.accounts.extend(accounts);
     }
 
-    pub fn add_storage(&mut self, storage: HashMap<H256, HashMap<H256, U256>>) {
+    pub fn add_storage(&mut self, storage: HashMap<H256, HashMap<H256, Option<U256>>>) {
         for (address, st) in storage.iter() {
             let entry = self.storage.entry(*address).or_default();
             entry.extend(st);
@@ -252,7 +344,7 @@ impl DiffLayer {
         self.accounts.clone()
     }
 
-    pub fn storage(&self) -> HashMap<H256, HashMap<H256, U256>> {
+    pub fn storage(&self) -> HashMap<H256, HashMap<H256, Option<U256>>> {
         self.storage.clone()
     }
 

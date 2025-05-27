@@ -10,6 +10,7 @@ pub enum ProverType {
     RISC0,
     SP1,
     Pico,
+    TDX,
 }
 
 impl ProverType {
@@ -20,6 +21,7 @@ impl ProverType {
             ProverType::RISC0,
             ProverType::SP1,
             ProverType::Pico,
+            ProverType::TDX,
         ]
         .into_iter()
     }
@@ -32,15 +34,11 @@ impl ProverType {
                 vec![
                     Value::Bytes(vec![].into()),
                     Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                    Value::Bytes(vec![].into()),
                 ]
             }
             ProverType::SP1 => {
-                vec![
-                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                    Value::Bytes(vec![].into()),
-                    Value::Bytes(vec![].into()),
-                ]
+                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
             }
             ProverType::Pico => {
                 vec![
@@ -48,6 +46,9 @@ impl ProverType {
                     Value::Bytes(vec![].into()),
                     Value::FixedArray(vec![Value::Uint(U256::zero()); 8]),
                 ]
+            }
+            ProverType::TDX => {
+                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
             }
             ProverType::Exec => unimplemented!("Doesn't need to generate an empty calldata."),
         }
@@ -59,6 +60,7 @@ impl ProverType {
             Self::RISC0 => Some("R0VERIFIER()".to_string()),
             Self::SP1 => Some("SP1VERIFIER()".to_string()),
             Self::Pico => Some("PICOVERIFIER()".to_string()),
+            Self::TDX => Some("TDXVERIFIER()".to_string()),
             Self::Exec => None,
         }
     }
@@ -71,6 +73,7 @@ impl Display for ProverType {
             Self::RISC0 => write!(f, "RISC0"),
             Self::SP1 => write!(f, "SP1"),
             Self::Pico => write!(f, "Pico"),
+            Self::TDX => write!(f, "TDX"),
         }
     }
 }

@@ -18,6 +18,7 @@ services:
       - ../../test_data/genesis-l1-dev.json:${CI_ETHREX_WORKDIR}/test_data/genesis-l1-dev.json
       - ../../test_data/genesis-l2.json:${CI_ETHREX_WORKDIR}/test_data/genesis-l2.json
       - ../../test_data/private_keys_l1.txt:${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
+      - ./prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk:${CI_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
     environment:
       - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
       # NOTE: The paths in the env variables must match those
@@ -33,6 +34,10 @@ services:
       - ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=${ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER:-0x00000000000000000000000000000000000000aa}
       - ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=${ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER:-0x00000000000000000000000000000000000000aa}
       - ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER:-false}
+      - ETHREX_SP1_VERIFICATION_KEY_PATH=${CI_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
+      - ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER=${ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER:-0x00000000000000000000000000000000000000aa}
+      - ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER:-false}
+      - ETHREX_TDX_DEV_MODE=${ETHREX_TDX_DEV_MODE:-false}
       - ETHREX_ON_CHAIN_PROPOSER_OWNER=0x03d0a0aee676cc45bf7032649e0871927c947c8e
       - ETHREX_BRIDGE_OWNER=0x03d0a0aee676cc45bf7032649e0871927c947c8e
     depends_on:
@@ -50,12 +55,14 @@ services:
       - 127.0.0.1:1729:1729
       # Proposer
       - 127.0.0.1:3900:3900
-    environment: # Default values are taken from cmd/ethrex/l2/options.rs defaults.
+    environment:
+      # Default values are taken from cmd/ethrex/l2/options.rs defaults.
       - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
       - ETHREX_COMMITTER_VALIDIUM=${ETHREX_COMMITTER_VALIDIUM:-false}
       - ETHREX_PROPOSER_BLOCK_TIME_MS=${ETHREX_PROPOSER_BLOCK_TIME_MS:-5000}
       - ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER:-false}
       - ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE:-true}
+      - ETHREX_WATCHER_BLOCK_DELAY=${ETHREX_WATCHER_BLOCK_DELAY:-0}
     volumes:
       - ../../test_data/genesis-l2.json:/genesis-l2.json
       - ./.env:/.env:ro

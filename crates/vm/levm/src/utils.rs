@@ -1,6 +1,7 @@
 use crate::{
+    call_frame::CallFrameBackup,
     constants::*,
-    db::gen_db::GeneralizedDatabase,
+    db::{cache, gen_db::GeneralizedDatabase},
     errors::{InternalError, OutOfGasError, TxValidationError, VMError},
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
@@ -134,6 +135,36 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
     }
 
     Ok(valid_jump_destinations)
+}
+
+// ================== Backup related functions =======================
+
+/// Restore the state of the cache to the state it in the callframe backup.
+pub fn restore_cache_state(
+    db: &mut GeneralizedDatabase,
+    callframe_backup: CallFrameBackup,
+) -> Result<(), VMError> {
+    for (address, account) in callframe_backup.original_accounts_info {
+        if let Some(current_account) = cache::get_account_mut(&mut db.cache, &address) {
+            current_account.info = account.info;
+            current_account.code = account.code;
+        }
+    }
+
+    for (address, storage) in callframe_backup.original_account_storage_slots {
+        // This call to `get_account_mut` should never return None, because we are looking up accounts
+        // that had their storage modified, which means they should be in the cache. That's why
+        // we return an internal error in case we haven't found it.
+        let account = cache::get_account_mut(&mut db.cache, &address).ok_or(VMError::Internal(
+            crate::errors::InternalError::AccountNotFound,
+        ))?;
+
+        for (key, value) in storage {
+            account.storage.insert(key, value);
+        }
+    }
+
+    Ok(())
 }
 
 // ================= Blob hash related functions =====================
@@ -324,26 +355,15 @@ pub fn eip7702_recover_address(
     Ok(Some(Address::from_slice(&authority_address_bytes)))
 }
 
-/// Used for the opcodes
-/// The following reading instructions are impacted:
-///      EXTCODESIZE, EXTCODECOPY, EXTCODEHASH
-/// and the following executing instructions are impacted:
-///      CALL, CALLCODE, STATICCALL, DELEGATECALL
-/// In case a delegation designator points to another designator,
-/// creating a potential chain or loop of designators, clients must
-/// retrieve only the first code and then stop following the
-/// designator chain.
+/// Gets code of an account, returning early if it's not a delegated account, otherwise
+/// Returns tuple (is_delegated, eip7702_cost, code_address, code).
+/// Notice that it also inserts the delegated account to the "touched accounts" set.
 ///
-/// For example,
-/// EXTCODESIZE would return 2 (the size of 0xef01) instead of 23
-/// which would represent the delegation designation, EXTCODEHASH
-/// would return
-/// 0xeadcdba66a79ab5dce91622d1d75c8cff5cff0b96944c3bf1072cd08ce018329
-/// (keccak256(0xef01)), and CALL would load the code from address and
-/// execute it in the context of authority.
-///
-/// The idea of this function comes from ethereum/execution-specs:
-/// https://github.com/ethereum/execution-specs/blob/951fc43a709b493f27418a8e57d2d6f3608cef84/src/ethereum/prague/vm/eoa_delegation.py#L115
+/// Where:
+/// - `is_delegated`: True if account is a delegated account.
+/// - `eip7702_cost`: Cost of accessing the delegated account (if any)
+/// - `code_address`: Code address (if delegated, returns the delegated address)
+/// - `code`: Bytecode of the code_address, what the EVM will execute.
 pub fn eip7702_get_code(
     db: &mut GeneralizedDatabase,
     accrued_substate: &mut Substate,
@@ -357,13 +377,13 @@ pub fn eip7702_get_code(
     // return false meaning that is not a delegation
     // return the same address given
     // return the bytecode of the given address
-    if !has_delegation(&account)? {
+    if !has_delegation(account)? {
         return Ok((false, 0, address, bytecode));
     }
 
     // Here the address has a delegation code
     // The delegation code has the authorized address
-    let auth_address = get_authorized_address(&account)?;
+    let auth_address = get_authorized_address(account)?;
 
     let access_cost = if accrued_substate.touched_accounts.contains(&auth_address) {
         WARM_ADDRESS_ACCESS_COST
@@ -372,7 +392,7 @@ pub fn eip7702_get_code(
         COLD_ADDRESS_ACCESS_COST
     };
 
-    let authorized_bytecode = db.get_account(auth_address)?.code;
+    let authorized_bytecode = db.get_account(auth_address)?.code.clone();
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }
@@ -412,7 +432,7 @@ impl<'a> VM<'a> {
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated =
-                authority_account.code.is_empty() || has_delegation(&authority_account)?;
+                authority_account.code.is_empty() || has_delegation(authority_account)?;
             if !empty_or_delegated {
                 continue;
             }
@@ -454,24 +474,6 @@ impl<'a> VM<'a> {
             self.increment_account_nonce(authority_address)
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
         }
-
-        let code_address = self.current_call_frame()?.code_address;
-        let (code_address_info, _) = self.db.access_account(&mut self.substate, code_address)?;
-
-        if has_delegation(&code_address_info)? {
-            self.current_call_frame_mut()?.code_address =
-                get_authorized_address(&code_address_info)?;
-            let code_address = self.current_call_frame()?.code_address;
-            let (auth_address_info, _) =
-                self.db.access_account(&mut self.substate, code_address)?;
-
-            self.current_call_frame_mut()?.bytecode = auth_address_info.code.clone();
-        } else {
-            self.current_call_frame_mut()?.bytecode = code_address_info.code.clone();
-        }
-
-        self.current_call_frame_mut()?.valid_jump_destinations =
-            get_valid_jump_destinations(&self.current_call_frame()?.bytecode).unwrap_or_default();
 
         self.substate.refunded_gas = refunded_gas;
 
@@ -681,15 +683,13 @@ impl<'a> VM<'a> {
         hooks
     }
 
-    pub fn get_callee_and_code(&mut self) -> Result<(Address, Bytes), VMError> {
-        let (callee, code) = match self.tx.to() {
+    /// Gets transaction callee, calculating create address if it's a "Create" transaction.
+    pub fn get_tx_callee(&mut self) -> Result<Address, VMError> {
+        match self.tx.to() {
             TxKind::Call(address_to) => {
                 self.substate.touched_accounts.insert(address_to);
 
-                let (_is_delegation, _eip7702_gas_consumed, _code_address, bytes) =
-                    eip7702_get_code(self.db, &mut self.substate, address_to)?;
-
-                (address_to, bytes)
+                Ok(address_to)
             }
 
             TxKind::Create => {
@@ -701,10 +701,15 @@ impl<'a> VM<'a> {
                 self.substate.touched_accounts.insert(created_address);
                 self.substate.created_accounts.insert(created_address);
 
-                (created_address, Bytes::new()) // Bytecode will be assigned from calldata after validations
+                Ok(created_address)
             }
-        };
+        }
+    }
 
-        Ok((callee, code))
+    /// Checks if an address is delegation target in current transaction.
+    pub fn is_delegation_target(&self, address: Address) -> bool {
+        self.tx.authorization_list().as_ref().map_or(false, |list| {
+            list.iter().any(|item| item.address == address)
+        })
     }
 }

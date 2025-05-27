@@ -1,7 +1,6 @@
 use crate::{
     errors::{ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{default_hook, hook::Hook},
-    utils::get_valid_jump_destinations,
     vm::VM,
 };
 
@@ -24,7 +23,10 @@ impl Hook for L2Hook {
         }
 
         let sender_address = vm.env.origin;
-        let sender_account = vm.db.get_account(sender_address)?;
+        let (sender_balance, sender_nonce) = {
+            let sender_account = vm.db.get_account(sender_address)?;
+            (sender_account.info.balance, sender_account.info.nonce)
+        };
 
         if vm.env.config.fork >= Fork::Prague {
             default_hook::validate_min_gas_limit(vm)?;
@@ -40,7 +42,7 @@ impl Hook for L2Hook {
                     TxValidationError::GasLimitPriceProductOverflow,
                 ))?;
 
-            default_hook::validate_sender_balance(vm, &sender_account)?;
+            default_hook::validate_sender_balance(vm, sender_balance)?;
 
             // (3) INSUFFICIENT_ACCOUNT_FUNDS
             default_hook::deduct_caller(vm, gaslimit_price_product, sender_address)?;
@@ -50,15 +52,15 @@ impl Hook for L2Hook {
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
             // check for nonce mismatch
-            if sender_account.info.nonce != vm.env.tx_nonce {
+            if sender_nonce != vm.env.tx_nonce {
                 return Err(VMError::TxValidation(TxValidationError::NonceMismatch {
-                    expected: sender_account.info.nonce,
+                    expected: sender_nonce,
                     actual: vm.env.tx_nonce,
                 }));
             }
 
             // (9) SENDER_NOT_EOA
-            default_hook::validate_sender(&sender_account)?;
+            default_hook::validate_sender(vm.db.get_account(sender_address)?)?;
         }
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
@@ -103,20 +105,10 @@ impl Hook for L2Hook {
             default_hook::validate_type_4_tx(vm)?;
         }
 
-        if vm.is_create() {
-            // Assign bytecode to context and empty calldata
-            vm.current_call_frame_mut()?.bytecode =
-                std::mem::take(&mut vm.current_call_frame_mut()?.calldata);
-            vm.current_call_frame_mut()?.valid_jump_destinations =
-                get_valid_jump_destinations(&vm.current_call_frame()?.bytecode).unwrap_or_default();
-        } else if !vm.env.is_privileged {
-            // Transfer value to receiver
-            // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
-            vm.increase_account_balance(
-                vm.current_call_frame()?.to,
-                vm.current_call_frame()?.msg_value,
-            )?;
-        }
+        default_hook::transfer_value_if_applicable(vm)?;
+
+        default_hook::set_bytecode_and_code_address(vm)?;
+
         Ok(())
     }
 
