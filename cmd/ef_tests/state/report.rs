@@ -899,8 +899,7 @@ impl TestReRunReport {
                     );
                 }
                 diff += &r#"
-                "#
-                .to_string();
+                "#;
             } else {
                 diff += &format!(
                     r#"
