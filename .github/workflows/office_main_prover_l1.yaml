@@ -36,6 +36,7 @@ jobs:
       - name: Check sp1 is installed
         id: sp1_check
         run: |
+          set +e
           . "$HOME/.cargo/env"
           cargo +succinct --version
           echo "result=$?" >> "$GITHUB_OUTPUT"
