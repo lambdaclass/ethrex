@@ -547,6 +547,20 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     self.send(Message::Receipts(response)).await?;
                 }
             }
+            Message::BlockRangeUpdate(update) => {
+                if update.earliest_block > update.lastest_block {
+                    return Err(RLPxError::InvalidBlockRange);
+                }
+
+                //TODO implement the logic
+                log_peer_debug(
+                    &self.node,
+                    &format!(
+                        "Range block update: {} to {}",
+                        update.earliest_block, update.lastest_block
+                    ),
+                );
+            }
             Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)
                 if peer_supports_eth =>
             {
