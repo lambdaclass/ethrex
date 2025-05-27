@@ -240,11 +240,16 @@ impl PeerHandler {
             for (_, body) in block_hashes.drain(..block_bodies_len).zip(block_bodies) {
                 let Some(header) = headers_iter.next() else {
                     debug!("[SYNCING] Header not found for the block bodies received, skipping...");
-                    continue; // If we run out of headers, skip this response
+                    break; // Break out of block creation and retry with different peer
                 };
 
                 let block = Block::new(header.clone(), body);
                 blocks.push(block);
+            }
+
+            // Only validate if we successfully created blocks for all received bodies
+            if blocks.len() != block_bodies_len {
+                continue; // Retry. We could remove the peer if we found this repeatedly.
             }
 
             // Validate blocks
