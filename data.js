@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748382158606,
+  "lastUpdate": 1748385903545,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11680,6 +11680,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007383064090019569,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "419805b67c44e462ed19ebc40c795c634d1624fc",
+          "message": "fix(core): fix config file name (#2943)\n\n**Motivation**\n\nI were having some issues with peers note being persisted between runs\n\n**Description**\n\nFixes the name of the config file from where peers are check.",
+          "timestamp": "2025-05-27T16:52:04Z",
+          "tree_id": "b30f0cdccf61d80d18bd403a16fab608b1293900",
+          "url": "https://github.com/lambdaclass/ethrex/commit/419805b67c44e462ed19ebc40c795c634d1624fc"
+        },
+        "date": 1748385898420,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007507951741293532,
             "unit": "Mgas/s"
           }
         ]
