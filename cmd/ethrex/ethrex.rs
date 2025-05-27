@@ -23,17 +23,10 @@ use ethrex::l2::L2Options;
 use ethrex_storage_rollup::StoreRollup;
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
-    let get_latest = !matches!(
-        env::var("SYNC-LATEST")
-            .expect("Failed to get sync configuration from environment")
-            .as_str(),
-        "false"
-    );
-    if !get_latest {
-        let block_number = env::var("SYNC-BLOCK-NUM")
-            .expect("Failed to retrieve sync block number from environment")
+    if let Ok(block_number) = env::var("SYNC-BLOCK-NUM") {
+        let block_number = block_number
             .parse()
-            .expect("Error converting block number environmental variable to int");
+            .expect("Block number provided by environment is not numeric");
         let block_hash = store
             .get_canonical_block_hash(block_number)
             .await
