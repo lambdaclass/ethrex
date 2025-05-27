@@ -1,5 +1,6 @@
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::{Address, H256, types::AccountUpdate};
+use ethrex_common::types::{blob_from_bytes, kzg_commitment_to_versioned_hash};
+use ethrex_common::{types::AccountUpdate, Address, H256};
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_vm::Evm;
@@ -46,8 +47,12 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         parent_block_header,
         mut db,
         elasticity_multiplier,
+        #[cfg(feature = "l2")]
         state_diff,
-        ..
+        #[cfg(feature = "l2")]
+        blob_commitment,
+        #[cfg(feature = "l2")]
+        blob_proof,
     } = input;
     // TODO: add blob thingy
 
@@ -163,6 +168,32 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         return Err("invalid state diffs".to_string().into());
     }
 
+    // Verify KZG blob proof
+    #[cfg(feature = "l2")]
+    let blob_versioned_hash = {
+        use kzg_rs::{get_kzg_settings, Blob, Bytes48, KzgProof};
+
+        let encoded_state_diff = state_diff.encode().expect("failed to encode state diff");
+        let blob_data = blob_from_bytes(encoded_state_diff)
+            .expect("failed to convert encoded state diff into blob data");
+        let blob = Blob::from_slice(&blob_data).expect("failed to convert blob data into Blob");
+
+        let blob_proof_valid = KzgProof::verify_blob_kzg_proof(
+            blob,
+            &Bytes48::from_slice(&blob_commitment)
+                .expect("failed type conversion for blob commitment"),
+            &Bytes48::from_slice(&blob_proof).expect("failed type conversion for blob proof"),
+            &get_kzg_settings(),
+        )
+        .expect("failed to verify blob proof (neither valid or invalid proof)");
+
+        if !blob_proof_valid {
+            panic!("invalid blob proof");
+        }
+
+        kzg_commitment_to_versioned_hash(&blob_commitment)
+    };
+
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
@@ -171,6 +202,6 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         #[cfg(feature = "l2")]
         deposit_logs_hash,
         #[cfg(feature = "l2")]
-        blob_versioned_hash: H256::zero(),
+        blob_versioned_hash,
     })
 }
