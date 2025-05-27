@@ -177,7 +177,7 @@ impl BlockFetcher {
                 last_l1_block_number,
             );
 
-            info!(
+            debug!(
                 "Fetching logs from block {} to {}",
                 self.last_l1_block_fetched + 1,
                 new_last_l1_fetched_block
