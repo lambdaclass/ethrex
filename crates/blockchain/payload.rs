@@ -18,7 +18,7 @@ use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
 };
 
-use ethrex_vm::{Evm, EvmEngine, EvmError, StoreVmDatabase};
+use ethrex_vm::{Evm, EvmEngine, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
@@ -34,6 +34,7 @@ use crate::{
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
+    vm::StoreVmDatabase,
     Blockchain,
 };
 
@@ -415,11 +416,6 @@ impl Blockchain {
                 self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
                 continue;
             }
-
-            // Increment the total transaction counter
-            // CHECK: do we want it here to count every processed transaction
-            // or we want it before the return?
-            metrics!(METRICS_TX.inc_tx());
 
             // Execute tx
             let receipt = match self.apply_transaction(&head_tx, context) {

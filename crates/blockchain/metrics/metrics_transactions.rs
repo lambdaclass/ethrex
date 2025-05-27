@@ -1,5 +1,7 @@
 use ethrex_common::types::TxType;
-use prometheus::{Encoder, IntCounter, IntCounterVec, Opts, Registry, TextEncoder};
+use prometheus::{
+    Encoder, Gauge, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder,
+};
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -9,7 +11,9 @@ pub static METRICS_TX: LazyLock<MetricsTx> = LazyLock::new(MetricsTx::default);
 #[derive(Debug, Clone)]
 pub struct MetricsTx {
     pub transactions_tracker: IntCounterVec,
-    pub transactions_total: IntCounter,
+    pub transactions_total: IntGauge,
+    pub mempool_tx_count: IntGaugeVec,
+    pub transactions_per_second: Gauge,
 }
 
 impl Default for MetricsTx {
@@ -30,9 +34,22 @@ impl MetricsTx {
             )
             .unwrap(),
 
-            transactions_total: IntCounter::new(
+            transactions_total: IntGauge::new(
                 "transactions_total",
                 "Keeps track of all transactions",
+            )
+            .unwrap(),
+            mempool_tx_count: IntGaugeVec::new(
+                Opts::new(
+                    "mempool_tx_count",
+                    "Keeps track of the amount of txs on the mempool",
+                ),
+                &["type"],
+            )
+            .unwrap(),
+            transactions_per_second: Gauge::new(
+                "transactions_per_second",
+                "Keeps track of the TPS",
             )
             .unwrap(),
         }
@@ -53,8 +70,26 @@ impl MetricsTx {
         txs_builder.inc();
     }
 
-    pub fn inc_tx(&self) {
-        self.transactions_total.inc();
+    pub fn set_tx_count(&self, count: u64) -> Result<(), MetricsError> {
+        self.transactions_total.set(count.try_into()?);
+        Ok(())
+    }
+
+    pub fn set_mempool_tx_count(&self, count: usize, is_blob: bool) -> Result<(), MetricsError> {
+        let label = if is_blob { "blob" } else { "regular" };
+
+        let builder = self
+            .mempool_tx_count
+            .get_metric_with_label_values(&[label])
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+
+        builder.set(count.try_into()?);
+
+        Ok(())
+    }
+
+    pub fn set_transactions_per_second(&self, tps: f64) {
+        self.transactions_per_second.set(tps);
     }
 
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
@@ -63,6 +98,10 @@ impl MetricsTx {
         r.register(Box::new(self.transactions_total.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.transactions_tracker.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.mempool_tx_count.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.transactions_per_second.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
