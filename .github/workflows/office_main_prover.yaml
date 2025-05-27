@@ -33,9 +33,11 @@ jobs:
         run: |
           cargo +succinct --version
           echo "result=$?" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: RISC-V SP1 toolchain install
         # Only install if cargo +succinct --version returned an error
+        if: steps.sp1_check.outputs.result == '1'
         run: |
           . "$HOME/.cargo/env"
           curl -L https://sp1.succinct.xyz | bash

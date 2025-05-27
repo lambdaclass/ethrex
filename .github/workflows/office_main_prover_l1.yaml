@@ -38,6 +38,7 @@ jobs:
         run: |
           cargo +succinct --version
           echo "result=$?" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: RISC-V SP1 toolchain install
         # Only install if cargo +succinct --version returned an error
