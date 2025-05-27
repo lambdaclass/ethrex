@@ -109,16 +109,17 @@ pub struct L1Committer;
 
 impl L1Committer {
     pub async fn spawn(
-    store: Store,
-    rollup_store: StoreRollup,
-    execution_cache: Arc<ExecutionCache>,
-    cfg: SequencerConfig) -> Result<(), SequencerError> {
+        store: Store,
+        rollup_store: StoreRollup,
+        execution_cache: Arc<ExecutionCache>,
+        cfg: SequencerConfig,
+    ) -> Result<(), SequencerError> {
         let state = CommitterState::new_from_config(
-            &cfg.l1_committer, 
-            &cfg.eth, 
-            store.clone(), 
-            rollup_store.clone(), 
-            execution_cache.clone()
+            &cfg.l1_committer,
+            &cfg.eth,
+            store.clone(),
+            rollup_store.clone(),
+            execution_cache.clone(),
         )?;
         let mut l1_committer = L1Committer::start(state);
         let _ = l1_committer.cast(InMessage::Watch).await;
@@ -134,7 +135,7 @@ impl GenServer for L1Committer {
     type Error = CommitterError;
 
     fn new() -> Self {
-        Self{}
+        Self {}
     }
 
     async fn handle_call(
@@ -148,7 +149,7 @@ impl GenServer for L1Committer {
 
     async fn handle_cast(
         &mut self,
-        _message: Self::InMsg,  
+        _message: Self::InMsg,
         tx: &Sender<GenServerInMsg<Self>>,
         state: &mut Self::State,
     ) -> CastResponse {
@@ -161,7 +162,6 @@ impl GenServer for L1Committer {
         CastResponse::NoReply
     }
 }
-
 
 impl CommitterState {
     async fn main_logic(self: &mut CommitterState) -> Result<(), CommitterError> {

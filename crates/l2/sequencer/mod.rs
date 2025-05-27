@@ -40,11 +40,13 @@ pub async fn start_l2(
 
     L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone()).await;
     if let Err(err) = L1Committer::spawn(
-        store.clone(), 
-        rollup_store.clone(), 
+        store.clone(),
+        rollup_store.clone(),
         execution_cache.clone(),
         cfg.clone(),
-    ).await {
+    )
+    .await
+    {
         error!("Error starting Committer: {err}");
     };
 
