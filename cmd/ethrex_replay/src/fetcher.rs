@@ -1,6 +1,13 @@
 use crate::cache::{load_cache, write_cache, Cache};
-use crate::rpc::{db::RpcDB, get_block};
+use crate::rpc::{db::RpcDB, get_block, get_latest_block_number};
 use eyre::WrapErr;
+
+pub async fn or_latest(maybe_number: Option<usize>, rpc_url: &str) -> eyre::Result<usize> {
+    Ok(match maybe_number {
+        Some(v) => v,
+        None => get_latest_block_number(rpc_url).await?
+    })
+}
 
 pub async fn get_blockdata(rpc_url: String, block_number: usize) -> eyre::Result<Cache> {
     if let Ok(cache) = load_cache(block_number) {

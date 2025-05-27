@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 use crate::bench::run_and_measure;
-use crate::fetcher::get_blockdata;
+use crate::fetcher::{get_blockdata, or_latest};
 use crate::run::{exec, prove};
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
@@ -17,7 +17,7 @@ pub struct EthrexReplayCLI {
 enum SubcommandExecute {
     #[clap(about = "Execute a single block.")]
     Block {
-        block: usize,
+        block: Option<usize>,
         #[arg(long, default_value = "http://localhost:8545", env = "RPC_URL")]
         rpc_url: String,
         #[arg(long, required = false)]
@@ -33,6 +33,7 @@ impl SubcommandExecute {
                 rpc_url,
                 bench,
             } => {
+                let block = or_latest(block, &rpc_url).await?;
                 let cache = get_blockdata(rpc_url, block).await?;
                 let body = async {
                     let gas_used = cache.block.header.gas_used as f64;
@@ -54,7 +55,7 @@ impl SubcommandExecute {
 enum SubcommandProve {
     #[clap(about = "Proves a single block.")]
     Block {
-        block: usize,
+        block: Option<usize>,
         #[arg(long, default_value = "http://localhost:8545", env = "RPC_URL")]
         rpc_url: String,
         #[arg(long, required = false)]
@@ -70,6 +71,7 @@ impl SubcommandProve {
                 rpc_url,
                 bench,
             } => {
+                let block = or_latest(block, &rpc_url).await?;
                 let cache = get_blockdata(rpc_url, block).await?;
                 let body = async {
                     let gas_used = cache.block.header.gas_used as f64;

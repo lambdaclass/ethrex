@@ -52,7 +52,7 @@ jobs:
         run: |
           cp test_data/rpc_prover/cache_22240087.json cmd/ethrex_replay
           cd cmd/ethrex_replay
-          cargo run --features=gpu -- prove block 22240087
+          make prove-sp1-gpu-ci BLOCK_NUMBER=22240087
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
