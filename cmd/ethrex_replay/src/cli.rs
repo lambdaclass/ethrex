@@ -41,10 +41,7 @@ impl SubcommandExecute {
                     Ok((gas_used, res))
                 };
                 let res = run_and_measure(bench, body).await?;
-                println!(
-                    "executed. {} -> {}",
-                    res.0.initial_state_hash, res.0.final_state_hash
-                );
+                println!("{}", res);
             }
         }
         Ok(())
@@ -79,10 +76,7 @@ impl SubcommandProve {
                     Ok((gas_used, res))
                 };
                 let res = run_and_measure(bench, body).await?;
-                println!(
-                    "proven. {} -> {}",
-                    res.0.initial_state_hash, res.0.final_state_hash
-                );
+                println!("{}", res);
             }
         }
         Ok(())
