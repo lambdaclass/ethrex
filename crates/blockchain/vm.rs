@@ -45,9 +45,14 @@ impl VmDatabase for StoreVmDatabase {
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, EvmError> {
-        self.store
-            .get_account_code(code_hash)
-            .map_err(|e| EvmError::DB(e.to_string()))
+    fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
+        match self.store.get_account_code(code_hash) {
+            Ok(Some(code)) => Ok(code),
+            Ok(None) => Err(EvmError::DB(format!(
+                "Code not found for hash: {:?}",
+                code_hash
+            ))),
+            Err(e) => Err(EvmError::DB(e.to_string())),
+        }
     }
 }
