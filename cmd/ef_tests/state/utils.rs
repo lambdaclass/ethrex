@@ -4,12 +4,13 @@ use crate::{
     runner::{EFTestRunnerError, InternalError},
     types::{EFTest, EFTestTransaction},
 };
+use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{types::Genesis, H256, U256};
 use ethrex_levm::db::{gen_db::GeneralizedDatabase, CacheDB};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{
     backends::revm::db::{evm_state, EvmState},
-    DynVmDatabase, StoreVmDatabase,
+    DynVmDatabase,
 };
 
 /// Loads initial state, used for REVM as it contains EvmState.
