@@ -6,13 +6,10 @@ use ethrex_common::{
     Address, H256,
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
-use ethrex_rlp::{encode::RLPEncode, structs::Encoder};
-use ethrex_storage::{error::StoreError, AccountUpdate};
-use itertools::Itertools;
-use keccak_hash::keccak;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::EvmError;
 use itertools::Itertools;
-use revm::primitives::{EVMError as RevmError, ExecutionResult as RevmExecutionResult, Log, LogData};
+use revm::primitives::{EVMError as RevmError, ExecutionResult as RevmExecutionResult};
 use serde::{Deserialize, Serialize};
 use spinoff::{spinners::Dots, Color, Spinner};
 use std::{

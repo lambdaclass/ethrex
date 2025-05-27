@@ -4,7 +4,7 @@ use crate::{
     types::EFTest,
     utils::{effective_gas_price, load_initial_state, load_initial_state_levm},
 };
-use alloy_rlp::{BufMut, Decodable, Encodable, Header, RlpDecodable, RlpEncodable};
+use alloy_rlp::Encodable;
 use bytes::Bytes;
 use ethrex_common::{
     types::{Account, AccountUpdate, Fork, TxKind},
@@ -12,7 +12,6 @@ use ethrex_common::{
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult};
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, AccountUpdate};
 use ethrex_vm::{
     self,
     backends::{self, revm::db::EvmState},
@@ -24,9 +23,9 @@ use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
     primitives::{
-        alloy_primitives::U160, AccessListItem, Authorization, BlobExcessGasAndPrice,
-        BlockEnv as RevmBlockEnv, EVMError as REVMError, ExecutionResult as RevmExecutionResult,
-        Log as RevmLog, SignedAuthorization, TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
+        AccessListItem, Authorization, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv,
+        EVMError as REVMError, ExecutionResult as RevmExecutionResult, SignedAuthorization,
+        TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
     },
     Evm as Revm,
 };
@@ -243,7 +242,7 @@ pub fn prepare_revm_for_tx<'state>(
 pub fn compare_levm_revm_execution_results(
     vector: &TestVector,
     levm_execution_report: &ExecutionReport,
-    revm_execution_result: Result<RevmExecutionResult, RevmError<EvmError>>,
+    revm_execution_result: Result<RevmExecutionResult, REVMError<EvmError>>,
     re_run_report: &mut TestReRunReport,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
@@ -506,7 +505,7 @@ pub async fn _run_ef_test_tx_revm(
 }
 
 pub async fn _ensure_post_state_revm(
-    revm_execution_result: Result<RevmExecutionResult, RevmError<EvmError>>,
+    revm_execution_result: Result<RevmExecutionResult, REVMError<EvmError>>,
     vector: &TestVector,
     test: &EFTest,
     revm_state: &mut EvmState,
