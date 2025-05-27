@@ -21,10 +21,10 @@ members = [
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/bench/revm_comparison",
-  "tools/genesis",
-  "tools/hive_report",
-  "tools/load_test",
-  "tools/loc"
+  "tooling/genesis",
+  "tooling/hive_report",
+  "tooling/load_test",
+  "tooling/loc"
 ]
 resolver = "2"
 
