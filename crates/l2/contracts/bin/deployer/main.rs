@@ -31,6 +31,7 @@ const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
     "initialize(bool,address,address,address,address,address,bytes32,bytes32,address[])";
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
+const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 
 #[tokio::main]
@@ -448,10 +449,35 @@ async fn initialize_contracts(
             .await?
         };
 
-        info!(
-            tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
-            "OnChainProposer ownership transfered"
-        );
+        if let Some(owner_pk) = opts.on_chain_proposer_owner_pk {
+            let accept_ownership_calldata = encode_calldata(ACCEPT_OWNERSHIP_SIGNATURE, &[])?;
+            let accept_tx = eth_client
+                .build_eip1559_transaction(
+                    on_chain_proposer_address,
+                    opts.on_chain_proposer_owner,
+                    accept_ownership_calldata.into(),
+                    Overrides::default(),
+                )
+                .await?;
+            let accept_tx_hash = eth_client
+                .send_eip1559_transaction(&accept_tx, &owner_pk)
+                .await?;
+
+            eth_client
+                .wait_for_transaction_receipt(accept_tx_hash, 100)
+                .await?;
+
+            info!(
+                transfer_tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
+                accept_tx_hash = %format!("{accept_tx_hash:#x}"),
+                "OnChainProposer ownership transfered"
+            );
+        } else {
+            info!(
+                transfer_tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
+                "OnChainProposer ownership transfered but not accepted yet"
+            );
+        }
     }
 
     info!("Initializing CommonBridge");
@@ -473,6 +499,7 @@ async fn initialize_contracts(
     };
 
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
+
     trace!("Contracts initialized");
     Ok(())
 }
