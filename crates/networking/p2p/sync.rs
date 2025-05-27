@@ -390,13 +390,15 @@ impl Syncer {
                 .await;
 
             let new_blocks = block_request_result.ok_or(SyncError::BodiesNotFound)?;
-            headers_consumed += new_blocks.len();
+            let new_blocks_len = new_blocks.len();
+            headers_consumed += new_blocks_len;
             blocks.extend(new_blocks);
+            
 
             debug!(
                 "Accumulated {} Blocks, with {} blocks added starting from block hash {:?}",
                 blocks.len(),
-                new_blocks.len(),
+                new_blocks_len,
                 current_block_hashes_chunk
                     .first()
                     .map_or(H256::default(), |a| *a)
