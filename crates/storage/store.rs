@@ -5,13 +5,12 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
-use crate::AccountUpdate;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{
-    code_hash, payload::PayloadBundle, AccountInfo, AccountState, Block, BlockBody, BlockHash,
-    BlockHeader, BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt,
+    code_hash, payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody,
+    BlockHash, BlockHeader, BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt,
     Transaction, EMPTY_TRIE_HASH,
 };
 use ethrex_rlp::decode::RLPDecode;

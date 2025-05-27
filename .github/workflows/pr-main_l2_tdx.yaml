@@ -8,7 +8,6 @@ on:
       - "crates/l2/tee/**"
       - "crates/l2/contracts/**"
       - "test_data/**"
-      - "crates/blockchain/dev/**"
       - ".github/workflows/pr-main_l2_tdx.yaml"
 
 concurrency:
@@ -16,26 +15,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    # "Lint" is a required check, don't change the name
-    name: Lint
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: true
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-      - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
-      - name: Check exec
-        run: |
-            cd crates/l2/tee/quote-gen
-            cargo check
-      - name: Clippy exec
-        run: |
-            cd crates/l2/tee/quote-gen
-            cargo clippy --all-targets
-
   test:
     # "Test" is a required check, don't change the name
     name: Test

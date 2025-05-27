@@ -6,10 +6,9 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::{Address, Bytes};
+use ethrex_common::{types::AccountUpdate, Address, Bytes};
 use ethrex_l2_sdk::calldata::{encode_tuple, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
-use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
 #[cfg(feature = "l2")]
 use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};

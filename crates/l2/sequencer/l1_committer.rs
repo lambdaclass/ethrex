@@ -7,10 +7,11 @@ use crate::{
     CommitterConfig, EthConfig, SequencerConfig,
 };
 
+use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     types::{
-        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block, BlockHeader,
-        BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
+        blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, BlobsBundleError,
+        Block, BlockHeader, BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
         BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
@@ -23,9 +24,9 @@ use ethrex_rpc::{
     clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
     utils::get_withdrawal_hash,
 };
-use ethrex_storage::{AccountUpdate, Store};
+use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::{Evm, EvmEngine, StoreVmDatabase};
+use ethrex_vm::{Evm, EvmEngine};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
