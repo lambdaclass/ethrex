@@ -14,7 +14,7 @@ use libmdbx::{
 
 use crate::{
     api::StoreEngineRollup,
-    rlp::{BlockNumbersRLP, WithdrawalHashesRLP},
+    rlp::{BlockNumbersRLP, OperationsCountRLP, WithdrawalHashesRLP},
 };
 
 pub struct Store {
@@ -65,6 +65,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
         table_info!(BatchesByBlockNumber),
         table_info!(WithdrawalHashesByBatch),
         table_info!(BlockNumbersByBatch),
+        table_info!(OperationsCount),
     ]
     .into_iter()
     .collect();
@@ -153,6 +154,45 @@ impl StoreEngineRollup for Store {
             .is_some();
         Ok(exists)
     }
+
+    async fn update_operations_count(
+        &self,
+        transaction_inc: u64,
+        deposits_inc: u64,
+        withdrawals_inc: u64,
+    ) -> Result<(), StoreError> {
+        let (transaction_count, withdrawals_count, deposits_count) = {
+            let current_operations = self.get_operations_count().await?;
+            (
+                current_operations[0] + transaction_inc,
+                current_operations[1] + deposits_inc,
+                current_operations[2] + withdrawals_inc,
+            )
+        };
+
+        self.write::<OperationsCount>(
+            0,
+            OperationsCountRLP::from_bytes(
+                vec![transaction_count, withdrawals_count, deposits_count].encode_to_vec(),
+            ),
+        )
+        .await
+    }
+
+    async fn get_operations_count(&self) -> Result<[u64; 3], StoreError> {
+        let operations = self
+            .read::<OperationsCount>(0)
+            .await?
+            .map(|operations| operations.to());
+        match operations {
+            Some(mut operations) => Ok([
+                operations.remove(0),
+                operations.remove(0),
+                operations.remove(0),
+            ]),
+            _ => Ok([0, 0, 0]),
+        }
+    }
 }
 
 table!(
@@ -168,4 +208,9 @@ table!(
 table!(
     /// Block numbers by batch number
     ( BlockNumbersByBatch ) u64 => BlockNumbersRLP
+);
+
+table!(
+    /// Transaction, deposits, withdrawals count
+    ( OperationsCount ) u64 => OperationsCountRLP
 );
