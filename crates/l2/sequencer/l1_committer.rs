@@ -3,10 +3,11 @@ use crate::{
     EthConfig, SequencerConfig,
 };
 
+use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     types::{
-        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block, BlockHeader,
-        BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
+        blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, BlobsBundleError,
+        Block, BlockHeader, BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
         BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
@@ -23,9 +24,9 @@ use ethrex_rpc::{
     clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
     utils::get_withdrawal_hash,
 };
-use ethrex_storage::{AccountUpdate, Store};
+use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::Evm;
+use ethrex_vm::{Evm, EvmEngine};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
@@ -238,8 +239,12 @@ impl Committer {
                     warn!(
                             "Could not find execution cache result for block {}, falling back to re-execution", last_added_block_number + 1
                         );
-                    let mut vm =
-                        Evm::default(self.store.clone(), block_to_commit.header.parent_hash);
+
+                    let vm_db = StoreVmDatabase::new(
+                        self.store.clone(),
+                        block_to_commit.header.parent_hash,
+                    );
+                    let mut vm = Evm::new(EvmEngine::default(), vm_db);
                     vm.execute_block(&block_to_commit)?;
                     vm.get_state_transitions()?
                 }

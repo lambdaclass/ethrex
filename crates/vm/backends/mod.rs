@@ -2,19 +2,20 @@ pub mod levm;
 pub mod revm;
 
 use self::revm::db::evm_state;
+use crate::db::{DynVmDatabase, VmDatabase};
+use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
-use crate::{db::StoreWrapper, errors::EvmError};
-use crate::{ProverDB, ProverDBError};
+use crate::ProverDB;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
-    AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
+    AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
+    Withdrawal,
 };
-use ethrex_common::{Address, H256};
+use ethrex_common::Address;
+pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-use ethrex_levm::db::CacheDB;
-use ethrex_storage::Store;
-use ethrex_storage::{error::StoreError, AccountUpdate};
+use ethrex_levm::db::{CacheDB, Database};
 use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;
@@ -69,20 +70,22 @@ impl std::fmt::Debug for Evm {
 
 impl Evm {
     /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
-    pub fn new(engine: EvmEngine, store: Store, parent_hash: H256) -> Self {
+    pub fn new(engine: EvmEngine, db: impl VmDatabase + 'static) -> Self {
+        let wrapped_db: DynVmDatabase = Box::new(db);
+
         match engine {
             EvmEngine::REVM => Evm::REVM {
-                state: evm_state(store.clone(), parent_hash),
+                state: evm_state(wrapped_db),
             },
             EvmEngine::LEVM => Evm::LEVM {
-                db: GeneralizedDatabase::new(
-                    Arc::new(StoreWrapper {
-                        store: store.clone(),
-                        block_hash: parent_hash,
-                    }),
-                    CacheDB::new(),
-                ),
+                db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
             },
+        }
+    }
+
+    pub fn new_from_db(store: Arc<impl Database + 'static>) -> Self {
+        Evm::LEVM {
+            db: GeneralizedDatabase::new(store, CacheDB::new()),
         }
     }
 
@@ -90,14 +93,6 @@ impl Evm {
         Evm::LEVM {
             db: GeneralizedDatabase::new(Arc::new(db), CacheDB::new()),
         }
-    }
-
-    pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, ProverDBError> {
-        LEVM::to_prover_db(blocks, store).await
-    }
-
-    pub fn default(store: Store, parent_hash: H256) -> Self {
-        Self::new(EvmEngine::default(), store, parent_hash)
     }
 
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
@@ -156,6 +151,47 @@ impl Evm {
         }
     }
 
+    pub fn execute_tx_l2(
+        &mut self,
+        tx: &Transaction,
+        block_header: &BlockHeader,
+        remaining_gas: &mut u64,
+        sender: Address,
+    ) -> Result<(Receipt, u64, CallFrameBackup), EvmError> {
+        match self {
+            Evm::REVM { .. } => Err(EvmError::InvalidEVM(
+                "L2 transactions are not supported in REVM".to_string(),
+            )),
+            Evm::LEVM { db } => {
+                let (execution_report, transaction_backup) =
+                    LEVM::execute_tx_l2(tx, sender, block_header, db)?;
+
+                *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
+
+                let receipt = Receipt::new(
+                    tx.tx_type(),
+                    execution_report.is_success(),
+                    block_header.gas_limit - *remaining_gas,
+                    execution_report.logs.clone(),
+                );
+
+                Ok((receipt, execution_report.gas_used, transaction_backup))
+            }
+        }
+    }
+
+    pub fn restore_cache_state(
+        &mut self,
+        call_frame_backup: CallFrameBackup,
+    ) -> Result<(), EvmError> {
+        match self {
+            Evm::REVM { .. } => Err(EvmError::InvalidEVM(
+                "Cache state is not supported in REVM".to_string(),
+            )),
+            Evm::LEVM { db } => LEVM::restore_cache_state(db, call_frame_backup),
+        }
+    }
+
     /// Wraps [REVM::beacon_root_contract_call], [REVM::process_block_hash_history]
     /// and [LEVM::beacon_root_contract_call], [LEVM::process_block_hash_history].
     /// This function is used to run/apply all the system contracts to the state.
@@ -208,7 +244,7 @@ impl Evm {
 
     /// Wraps the [REVM::process_withdrawals] and [LEVM::process_withdrawals].
     /// Applies the withdrawals to the state or the block_chache if using [LEVM].
-    pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), StoreError> {
+    pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), EvmError> {
         match self {
             Evm::REVM { state } => REVM::process_withdrawals(state, withdrawals),
             Evm::LEVM { db } => LEVM::process_withdrawals(db, withdrawals),

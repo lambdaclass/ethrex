@@ -23,6 +23,7 @@ pub mod execution_cache;
 
 pub mod configs;
 pub mod errors;
+pub mod setup;
 pub mod utils;
 
 pub async fn start_l2(

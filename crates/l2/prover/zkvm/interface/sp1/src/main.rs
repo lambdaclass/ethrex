@@ -5,7 +5,7 @@ use ethrex_common::{
     types::blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash},
     Address,
 };
-use ethrex_storage::AccountUpdate;
+use ethrex_common::types::AccountUpdate;
 use ethrex_vm::Evm;
 use kzg_rs::{dtypes::Blob, kzg_proof::KzgProof, trusted_setup::get_kzg_settings};
 use std::collections::HashMap;

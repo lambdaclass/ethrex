@@ -85,6 +85,8 @@ pub enum ProverServerError {
     BlobsBundleCacheError(#[from] super::blobs_bundle_cache::BlobsBundleCacheError),
     #[error("ProverServer encountered a BlobsBundleError: {0}")]
     BlobsBundleError(#[from] ethrex_common::types::BlobsBundleError),
+    #[error("Failed to execute command: {0}")]
+    ComandError(std::io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -133,6 +135,10 @@ pub enum BlockProducerError {
     Custom(String),
     #[error("Failed to parse withdrawal: {0}")]
     FailedToParseWithdrawal(#[from] UtilsError),
+    #[error("Failed to encode AccountStateDiff: {0}")]
+    FailedToEncodeAccountStateDiff(#[from] StateDiffError),
+    #[error("Failed to get data from: {0}")]
+    FailedToGetDataFrom(String),
 }
 
 #[derive(Debug, thiserror::Error)]

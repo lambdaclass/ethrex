@@ -11,19 +11,17 @@ use ethrex_common::{
         calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
         compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
         requests::{compute_requests_hash, EncodedRequests},
-        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-        MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
+        AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
         DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
 };
 
-use ethrex_vm::{
-    EvmError, {Evm, EvmEngine},
-};
+use ethrex_vm::{Evm, EvmEngine, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, AccountUpdate, Store};
+use ethrex_storage::{error::StoreError, Store};
 
 use sha3::{Digest, Keccak256};
 
@@ -36,6 +34,7 @@ use crate::{
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
+    vm::StoreVmDatabase,
     Blockchain,
 };
 
@@ -179,7 +178,9 @@ pub struct PayloadBuildContext {
 
 impl PayloadBuildContext {
     pub fn new(payload: Block, evm_engine: EvmEngine, storage: &Store) -> Result<Self, EvmError> {
-        let config = storage.get_chain_config()?;
+        let config = storage
+            .get_chain_config()
+            .map_err(|e| EvmError::DB(e.to_string()))?;
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
             config
@@ -187,7 +188,9 @@ impl PayloadBuildContext {
                 .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
         );
-        let vm = Evm::new(evm_engine, storage.clone(), payload.header.parent_hash);
+
+        let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
+        let vm = Evm::new(evm_engine, vm_db);
 
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
@@ -215,7 +218,9 @@ impl PayloadBuildContext {
     }
 
     fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        Ok(self.store.get_chain_config()?)
+        self.store
+            .get_chain_config()
+            .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     fn base_fee_per_gas(&self) -> Option<u64> {
@@ -452,7 +457,7 @@ impl Blockchain {
 
     /// Executes the transaction, updates gas-related context values & return the receipt
     /// The payload build context should have enough remaining gas to cover the transaction's gas_limit
-    pub fn apply_transaction(
+    fn apply_transaction(
         &self,
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
@@ -565,7 +570,7 @@ pub struct TransactionQueue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeadTransaction {
     pub tx: MempoolTransaction,
-    tip: u64,
+    pub tip: u64,
 }
 
 impl std::ops::Deref for HeadTransaction {

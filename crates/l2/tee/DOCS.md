@@ -56,23 +56,49 @@ Runs `mkosi.build.chroot` to produce the output
 - Adding `bash` to mkosi scripts to drop an interactive shell that lets you explore the build process
 - Adding a root password in `mkosi.conf` to allow logging in to the container
 
+## Running
 
-## Quote pusher
+You can enable the prover by setting `ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true` and running the sequencer in production mode (`ETHREX_PROOF_COORDINATOR_DEV_MODE=false`).
 
-Set RPC_URL and PRIVATE_KEY to the corresponding values.
+For development purposes, you can use the flag `ETHREX_TDX_DEV_MODE=true` to disable quote verification. This allows you to run the quote generator even without having TDX-capable hardware.
 
-You must have [rex](https://github.com/lambdaclass/rex) installed.
+To run in production mode, ensure the proof coordinator is listening on 0.0.0.0 and run `mkosi vm -f`.
 
 ```
-# NOTE: initialize&update submodules on all repos
-(ethrex) make dev # start L1
-(ethrex crates/l2/tee/contracts) make deploy-deps
-(ethrex crates/l2/tee/contracts) make deploy
-(ethrex crates/l2/tee/contracts) make mkenv
-(ethrex crates/l2/tee/contracts) source .env.out
-(ethrex crates/l2/tee/quote-pusher) make run
+make init-l1
+ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true make deploy-l1
+ETHREX_PROOF_COORDINATOR_DEV_MODE=false PROOF_COORDINATOR_ADDRESS=0.0.0.0 make init-l2
+cd tee
+mkosi vm -f
 ```
 
-You can run integration tests by replacing the last step with `make test`.
+## Troubleshooting
 
-Alternatively, running `make integration-test` will deploy the contracts for you and then run the tests.
+### RTMR/MRTD mismatch
+
+If any code or dependencies changed, the measurements will change.
+
+To obtain the new measurements, first you obtain the quote by running the prover (you don't need to have the l2 running). It's output will contain `Sending quote <very long hex string>`.
+
+This usually causes a RTMR1 mismatch. The easiest way to obtain the new RTMR values is by looking at the printed quote for the next 96 bytes after the RTMR0, corresponding to RTMR1||RTMR2 (48 bytes each).
+
+More generally, you can generate a report with DCAP.verifyAndAttestOnChain(quote) which validates and extracts the report.
+
+Look at bytes 341..485 of the output for RTMRs and bytes 149..197 for the MRTD.
+
+For example, the file `quote.example` contains a quote, which can be turned into the following report:
+
+````
+00048100000000b0c06f000000060103000000000000000000000000005b38e33a6487958b72c3c12a938eaa5e3fd4510c51aeeab58c7d5ecee41d7c436489d6c8e4f92f160b7cad34207b00c100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000e702060000000000
+
+91eb2b44d141d4ece09f0c75c2c53d247a3c68edd7fafe8a3520c942a604a407de03ae6dc5f87f27428b2538873118b7 # MRTD
+
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+
+4f3d617a1c89bd9a89ea146c15b04383b7db7318f41a851802bba8eace5a6cf71050e65f65fd50176e4f006764a42643 # RTMR0
+53827a034d1e4c7f13fd2a12aee4497e7097f15a04794553e12fe73e2ffb8bd57585e771951115a13ec4d7e6bc193038 # RTMR1
+2ca1a728ff13c36195ad95e8f725bf00d7f9c5d6ed730fb8f50cccad692ab81aefc83d594819375649be934022573528 # RTMR2
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 # RTMR3
+
+39618efd10b14136ab416d6acfff8e36b23533a90000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+```
