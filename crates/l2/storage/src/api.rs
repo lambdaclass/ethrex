@@ -48,6 +48,15 @@ pub trait StoreEngineRollup: Debug + Send + Sync + RefUnwindSafe {
         batch_number: u64,
     ) -> Result<Option<Vec<BlockNumber>>, StoreError>;
 
+    async fn update_operations_count(
+        &self,
+        transaction_inc: u64,
+        deposits_inc: u64,
+        withdrawals_inc: u64,
+    ) -> Result<(), StoreError>;
+
+    async fn get_operations_count(&self) -> Result<[u64; 3], StoreError>;
+
     /// Returns whether the batch with the given number is present.
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError>;
 }

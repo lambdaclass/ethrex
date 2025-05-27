@@ -251,6 +251,15 @@ pub struct DeployerOptions {
     pub bridge_owner: Address,
     #[arg(
         long,
+        value_name = "PRIVATE_KEY",
+        env = "ETHREX_ON_CHAIN_PROPOSER_OWNER_PK",
+        help_heading = "Deployer options",
+        help = "Private key of the owner of the OnChainProposer contract. If set, the deployer will send a transaction to accept the ownership.",
+        requires = "on_chain_proposer_owner"
+    )]
+    pub on_chain_proposer_owner_pk: Option<SecretKey>,
+    #[arg(
+        long,
         default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
@@ -327,6 +336,7 @@ impl Default for DeployerOptions {
                 0x03, 0xd0, 0xa0, 0xae, 0xe6, 0x76, 0xcc, 0x45, 0xbf, 0x70, 0x32, 0x64, 0x9e, 0x08,
                 0x71, 0x92, 0x7c, 0x94, 0x7c, 0x8e,
             ]),
+            on_chain_proposer_owner_pk: None,
             sp1_vk_path: format!(
                 "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
                 env!("CARGO_MANIFEST_DIR")
