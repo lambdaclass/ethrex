@@ -511,6 +511,16 @@ pub enum InvalidBlockHeaderError {
     RequestsHashPresent,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum InvalidBlockBodyError {
+    #[error("Withdrawals root does not match")]
+    WithdrawalsRootNotMatch,
+    #[error("Transactions root does not match")]
+    TransactionsRootNotMatch,
+    #[error("Ommers is not empty")]
+    OmmersIsNotEmpty,
+}
+
 /// Validates that the header fields are correct in reference to the parent_header
 pub fn validate_block_header(
     header: &BlockHeader,
@@ -563,6 +573,35 @@ pub fn validate_block_header(
 
     if header.parent_hash != parent_header.compute_block_hash() {
         return Err(InvalidBlockHeaderError::ParentHashIncorrect);
+    }
+
+    Ok(())
+}
+
+/// Validates that the body matches with the header
+pub fn validate_block_body(block: &Block) -> Result<(), InvalidBlockBodyError> {
+    // Validates that:
+    //  - Transactions root and withdrawals root matches with the header
+    //  - Ommers is empty -> https://eips.ethereum.org/EIPS/eip-3675
+    let computed_tx_root = compute_transactions_root(&block.body.transactions);
+
+    if block.header.transactions_root != computed_tx_root {
+        return Err(InvalidBlockBodyError::TransactionsRootNotMatch);
+    }
+
+    if !block.body.ommers.is_empty() {
+        return Err(InvalidBlockBodyError::OmmersIsNotEmpty);
+    }
+
+    match (block.header.withdrawals_root, &block.body.withdrawals) {
+        (Some(withdrawals_root), Some(withdrawals)) => {
+            let computed_withdrawals_root = compute_withdrawals_root(withdrawals);
+            if withdrawals_root != computed_withdrawals_root {
+                return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
+            }
+        }
+        (None, None) => {}
+        _ => return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch),
     }
 
     Ok(())
