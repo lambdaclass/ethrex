@@ -7,7 +7,7 @@ use ethrex_rpc::{clients::Overrides, EthClient};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use tokio::{sync::Mutex, time::sleep};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{utils::parse::hash_to_address, SequencerConfig};
 
@@ -132,20 +132,14 @@ impl StateUpdater {
             .map_err(StateUpdaterError::StoreError)
     }
 
-    // Sequencing -> Following
-    // 1. Last batch was sealed
-    //  a. And committed -> no uncommitted state to revert
-    //  b. And not committed -> revert uncommitted state
-    // 2. Last bast was not sealed
-    //  a. No more blocks were added -> no uncommitted state to revert
-    //  b. Some blocks were added -> revert uncommitted state
+    /// Reverts state to the last committed batch if known.
     async fn revert_uncommitted_state(&self) -> Result<(), StateUpdaterError> {
         let last_l2_committed_batch = self
             .eth_client
             .get_last_committed_batch(self.on_chain_proposer_address)
             .await?;
 
-        info!("Last committed batch: {last_l2_committed_batch:#x}");
+        debug!("Last committed batch: {last_l2_committed_batch:#x}");
 
         let Some(last_l2_committed_batch_blocks) = self
             .rollup_store
@@ -157,22 +151,22 @@ impl StateUpdater {
             return Ok(());
         };
 
-        info!(
+        debug!(
             "Last committed batch blocks: {:?}",
             last_l2_committed_batch_blocks
         );
 
         let Some(last_l2_committed_batch_block_number) = last_l2_committed_batch_blocks.last()
         else {
-            return Err(StateUpdaterError::InternalError(
-                "No blocks found for the last committed batch".to_string(),
-            ));
+            return Err(StateUpdaterError::InternalError(format!(
+                "No blocks found for the last committed batch {last_l2_committed_batch}"
+            )));
         };
         self.store
             .update_latest_block_number(*last_l2_committed_batch_block_number)
             .await?;
 
-        info!("Last committed batch block number: {last_l2_committed_batch_block_number}");
+        debug!("Last committed batch block number: {last_l2_committed_batch_block_number}");
 
         let last_l2_committed_batch_block_body = self
             .store

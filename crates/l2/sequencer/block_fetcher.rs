@@ -11,7 +11,7 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use keccak_hash::keccak;
 use tokio::{sync::Mutex, time::sleep};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{utils::helpers::is_withdrawal_l2, SequencerConfig};
 
