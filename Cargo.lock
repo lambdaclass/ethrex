@@ -9630,7 +9630,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "ethrex-common",
  "serde_json",

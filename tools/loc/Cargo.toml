@@ -1,13 +1,14 @@
 [package]
 name = "loc"
-edition = "2021"
+edition.workspace = true
+version.workspace = true
 
 [dependencies]
-tokei = "12.1.2"
-serde = "1.0.215"
-serde_json = "1.0.133"
-clap = { version = "4.3", features = ["derive", "env"] }
-clap_complete = "4.5.17"
-colored = "2.1.0"
-spinoff = "0.8.0"
-prettytable = "0.10.0"
+tokei.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+colored.workspace = true
+spinoff.workspace = true
+prettytable.workspace = true
