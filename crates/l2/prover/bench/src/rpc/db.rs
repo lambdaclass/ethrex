@@ -480,7 +480,7 @@ impl LevmDatabase for RpcDB {
         }
     }
 
-    fn get_block_hash(&self, block_number: u64) -> Result<Option<H256>, DatabaseError> {
+    fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError> {
         let handle = tokio::runtime::Handle::current();
         let hash = tokio::task::block_in_place(|| {
             handle.block_on(retry(|| get_block(&self.rpc_url, block_number as usize)))
@@ -488,7 +488,7 @@ impl LevmDatabase for RpcDB {
         .map_err(DatabaseError::Custom)
         .map(|block| block.hash())?;
         self.block_hashes.lock().unwrap().insert(block_number, hash);
-        Ok(Some(hash))
+        Ok(hash)
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {

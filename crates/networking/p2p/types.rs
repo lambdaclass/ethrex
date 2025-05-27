@@ -1,4 +1,5 @@
 use bytes::{BufMut, Bytes};
+use ethrex_common::types::ForkId;
 use ethrex_common::{H256, H264, H512};
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -238,6 +239,8 @@ pub struct NodeRecordPairs {
     pub tcp_port: Option<u16>,
     pub udp_port: Option<u16>,
     pub secp256k1: Option<H264>,
+    // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
+    pub eth: Option<ForkId>,
     // TODO implement ipv6 addresses
 }
 
@@ -262,6 +265,10 @@ impl NodeRecord {
                         continue;
                     }
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
+                }
+                "eth" => {
+                    // the first byte is ignored as an array within an array is received
+                    decoded_pairs.eth = ForkId::decode(&value[1..]).ok();
                 }
                 _ => {}
             }
@@ -315,6 +322,23 @@ impl NodeRecord {
     pub fn update_seq(&mut self, signer: &SigningKey) -> Result<(), String> {
         self.seq += 1;
         self.signature = self.sign_record(signer)?;
+        Ok(())
+    }
+
+    pub fn set_fork_id(&mut self, fork_id: &ForkId, signer: &SigningKey) -> Result<(), String> {
+        if let Some((_, value)) = self.pairs.iter().find(|(k, _)| k == "eth") {
+            if *fork_id == ForkId::decode(&value[1..]).expect("No fork Id in NodeRecord pairs") {
+                return Ok(());
+            }
+        }
+
+        // remove previous eth version
+        self.pairs.retain(|(k, _)| k != "eth");
+
+        self.pairs
+            .push(("eth".into(), vec![fork_id.clone()].encode_to_vec().into()));
+
+        self.update_seq(signer)?;
         Ok(())
     }
 
