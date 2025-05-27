@@ -344,6 +344,7 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
     let size = blocks.len();
 
     for block in &blocks {
+        
         let hash = block.hash();
 
         info!(
@@ -351,7 +352,7 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
             block.header.number, hash
         );
 
-        if let Err(error) = blockchain.add_block(block).await {
+        if let Err(error) = blockchain.try_add_block(block).await {
             warn!(
                 "Failed to add block {} with hash {:#x}: {}.",
                 block.header.number, hash, error

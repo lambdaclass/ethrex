@@ -22,11 +22,12 @@ use ethrex_common::{Address, H256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
 use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
+use k256::elliptic_curve::Error;
 use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
-use tracing::info;
+use tracing::{info, warn};
 use vm::StoreVmDatabase;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -81,7 +82,7 @@ impl Blockchain {
             .get_block_by_hash(block.header.parent_hash)
             .await?;
         let parent_header = match parent {
-            Some(parent_block) => parent_block.header,
+            Some(parent_block) => {warn!("AA: {:?}", parent_block.hash());parent_block.header},
             None => {
                 // If the parent is not present, we store it as pending.
                 self.storage.add_pending_block(block.clone()).await?;
@@ -90,6 +91,7 @@ impl Blockchain {
         };
 
         let chain_config = self.storage.get_chain_config()?;
+
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
@@ -152,6 +154,14 @@ impl Blockchain {
             .add_receipts(block.hash(), execution_result.receipts)
             .await
             .map_err(ChainError::StoreError)
+    }
+
+    pub async fn try_add_block(&self,block: &Block) -> Result<(), ChainError> {
+        match self.storage.get_block_by_hash(block.hash()).await {
+            Ok(Some(_)) => Ok(()), // If the block is already in the blockchain do noting
+            Ok(None) => self.add_block(block).await, // if the block isn't in the blockchain add it
+            Err(_) => Err(ChainError::Custom(String::from("Couldn't check if block is already in the blockchain"))),
+        }
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
