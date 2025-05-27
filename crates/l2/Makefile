@@ -12,7 +12,7 @@ L1_GENESIS_FILE_PATH=../../test_data/genesis-l1-dev.json
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-init: init-local-l1 update-system-contracts deploy-l1 init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
+init: init-local-l1 update-system-contracts deploy-l1 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
 
 ## Same as init but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 init-testnet: update-system-contracts deploy-l1-testnet init-l2
@@ -96,7 +96,7 @@ init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
     --datadir ${ethrex_L1_DEV_LIBMDBX}
 
 down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
-	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down
+	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down -t 0
 	docker compose -f docker-compose-l2.yaml down
 
 restart-local-l1: down-local-l1 rm-db-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
@@ -172,7 +172,7 @@ down-metrics: ## 🛑 Shuts down the metrics' containers
 down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 	pkill -f ethrex || exit 0
 
-restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
+restart-l2: down-l2 rm-db-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
 PROVER_SRC_FILES := $(shell find prover/src -type f)
 
