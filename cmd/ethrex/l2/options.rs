@@ -2,8 +2,8 @@ use crate::{cli::Options as NodeOptions, utils};
 use clap::Parser;
 use ethrex_common::Address;
 use ethrex_l2::{
-    sequencer::configs::StateUpdaterConfig, BasedConfig, BlockProducerConfig, CommitterConfig,
-    EthConfig, L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig,
+    BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
+    L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
 };
 use ethrex_rpc::clients::eth::get_address_from_secret_key;
 use secp256k1::SecretKey;
@@ -40,6 +40,8 @@ pub struct SequencerOptions {
     pub proof_coordinator_opts: ProofCoordinatorOptions,
     #[command(flatten)]
     pub based_opts: BasedOptions,
+    #[command(flatten)]
+    pub block_fetcher: BlockFetcherOptions,
 }
 
 impl From<SequencerOptions> for SequencerConfig {
@@ -96,6 +98,10 @@ impl From<SequencerOptions> for SequencerConfig {
             state_updater: StateUpdaterConfig {
                 sequencer_registry: opts.based_opts.state_updater_opts.sequencer_registry,
                 check_interval_ms: opts.based_opts.state_updater_opts.check_interval_ms,
+            },
+            block_fetcher: BlockFetcherConfig {
+                fetch_interval_ms: opts.block_fetcher.fetch_interval_ms,
+                max_block_step: opts.block_fetcher.max_block_step.into(),
             },
         }
     }
@@ -232,7 +238,7 @@ pub struct ProposerOptions {
         default_value = "5000",
         value_name = "UINT64",
         env = "ETHREX_PROPOSER_BLOCK_TIME_MS",
-        help_heading = "L1 Watcher options"
+        help_heading = "Proposer options"
     )]
     pub block_time_ms: u64,
     #[arg(
@@ -410,4 +416,24 @@ pub struct StateUpdaterOptions {
         help_heading = "Based options"
     )]
     pub check_interval_ms: u64,
+}
+
+#[derive(Parser, Default)]
+pub struct BlockFetcherOptions {
+    #[arg(
+        long = "block-fetcher.fetch_interval_ms",
+        value_name = "UINT64",
+        default_value = "5000",
+        env = "ETHREX_BLOCK_FETCHER_FETCH_INTERVAL_MS",
+        help_heading = "Block Fetcher options"
+    )]
+    pub fetch_interval_ms: u64,
+    #[arg(
+        long = "block-fetcher.max_block_step",
+        default_value = "5000",
+        value_name = "UINT64",
+        env = "ETHREX_BLOCK_FETCHER_MAX_BLOCK_STEP",
+        help_heading = "Block Fetcher options"
+    )]
+    pub max_block_step: u64,
 }

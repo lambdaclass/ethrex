@@ -201,12 +201,12 @@ init-l2-no-metrics-based: ## 🚀 Initializes an L2 Lambda ethrex Based Client
 	--state-updater.sequencer-registry ${SEQUENCER_REGISTRY_ADDRESS}
 
 init-node-2: ## 🚀 Initializes a second L2 Lambda ethrex Client for testing purposes
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX} --force;
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 removedb --datadir ${ethrex_L2_2_DEV_LIBMDBX} --force;
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- \
 		l2 init \
 		--watcher.block-delay 0 \
 		--http.port 1730 \
-		--datadir ${ethrex_L2_2__DEV_LIBMDBX} \
+		--datadir ${ethrex_L2_2_DEV_LIBMDBX} \
 		--network ${L2_GENESIS_FILE_PATH} \
 		--committer-l1-private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 \
 		--proof-coordinator-l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \

@@ -11,6 +11,7 @@ pub struct SequencerConfig {
     pub proof_coordinator: ProofCoordinatorConfig,
     pub based: BasedConfig,
     pub state_updater: StateUpdaterConfig,
+    pub block_fetcher: BlockFetcherConfig,
 }
 
 // TODO: Move to blockchain/dev
@@ -70,4 +71,10 @@ pub struct BasedConfig {
 pub struct StateUpdaterConfig {
     pub sequencer_registry: Address,
     pub check_interval_ms: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct BlockFetcherConfig {
+    pub fetch_interval_ms: u64,
+    pub max_block_step: u64,
 }
