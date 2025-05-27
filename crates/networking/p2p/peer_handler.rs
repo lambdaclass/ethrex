@@ -150,7 +150,7 @@ impl PeerHandler {
     /// Internal method to request block bodies from any suitable peer given their block hashes
     /// Returns the block bodies or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
-    /// - No peer returned a valid response in the given time and retry limits
+    /// - The requested peer did not return a valid response in the given time limit
     async fn request_block_bodies_inner(
         &self,
         block_hashes: Vec<H256>,
@@ -210,8 +210,8 @@ impl PeerHandler {
         None
     }
 
-    /// Requests block bodies from any suitable peer given their block hashes and validates them
-    /// Returns the block bodies or an error if:
+    /// Requests full blocks from any suitable peer given their block hashes and validates them
+    /// Returns the blocks or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     /// - The block bodies are invalid given the block headers
