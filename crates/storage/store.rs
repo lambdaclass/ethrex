@@ -1176,8 +1176,6 @@ impl Store {
         block: Block,
         account_updates: Vec<AccountUpdate>,
     ) -> Result<(), SnapshotError> {
-        use tracing::warn;
-
         let store = self.clone();
 
         let hash = block.hash();
@@ -1224,15 +1222,6 @@ impl Store {
             "Snapshot (diff layer) created for {} with parent {}",
             hash, parent_hash
         );
-
-        // Use this point to cap the amount of layers if needs be
-        if let Err(error) = store.snapshots.cap(hash, 128) {
-            warn!(
-                "Couldn't apply cap to snapshots: {} (current layers {})",
-                error,
-                store.snapshots.len()
-            );
-        }
 
         Ok(())
     }

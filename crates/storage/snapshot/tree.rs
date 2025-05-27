@@ -123,6 +123,8 @@ impl SnapshotTree {
                 .map_err(|error| SnapshotError::LockError(error.to_string()))?
                 .insert(block_hash, Layer::DiffLayer(Arc::new(RwLock::new(snap))));
 
+            self.cap(block_hash, 128)?;
+
             Ok(())
         } else {
             error!(
@@ -147,7 +149,7 @@ impl SnapshotTree {
     /// from the head block until the number of allowed layers is passed.
     ///
     /// It's used to flatten the layers.
-    pub fn cap(&self, head_block_hash: H256, layers_n: usize) -> Result<(), SnapshotError> {
+    fn cap(&self, head_block_hash: H256, layers_n: usize) -> Result<(), SnapshotError> {
         let diff = if let Some(diff) = self.get_snapshot(head_block_hash) {
             match diff {
                 Layer::DiskLayer(_) => {
