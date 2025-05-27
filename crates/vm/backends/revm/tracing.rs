@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use ethrex_common::{types::Block, Address, H256, U256};
-use revm::Evm;
+use revm::{inspector_handle_register, Evm};
 use revm_inspectors::tracing::{
     types::{CallKind, CallLog as RevmCallLog, CallTraceNode},
     CallTraceArena, TracingInspectorConfig,
@@ -119,13 +119,13 @@ fn run_evm_with_call_tracer(
 
         match state {
             EvmState::Store(db) => {
-                let mut evm = evm_builder.with_db(db).build();
+                let mut evm = evm_builder.with_db(db).append_handler_register(inspector_handle_register).build();
                 let res = evm.transact_commit()?;
                 let trace = evm.into_context().external.into_traces();
                 (trace, res)
             }
             EvmState::Execution(db) => {
-                let mut evm = evm_builder.with_db(db).build();
+                let mut evm = evm_builder.with_db(db).append_handler_register(inspector_handle_register).build();
                 let res = evm.transact_commit()?;
                 let trace = evm.into_context().external.into_traces();
                 (trace, res)
