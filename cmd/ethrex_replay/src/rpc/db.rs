@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
-use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
+use crate::constants::RPC_RATE_LIMIT;
 use crate::rpc::{get_account, get_block, retry};
 
 use bytes::Bytes;
+use ethrex_common::types::ChainConfig;
 use ethrex_common::{
     types::{AccountInfo, AccountState, Block, TxKind},
     Address, H256, U256,
@@ -20,7 +21,6 @@ use tokio_utils::RateLimiter;
 use ethrex_levm::db::error::DatabaseError;
 use std::sync::Arc;
 use std::sync::Mutex;
-use tracing::warn;
 
 use super::{Account, NodeRLP};
 
@@ -32,11 +32,13 @@ pub struct RpcDB {
     pub cache: Arc<Mutex<HashMap<Address, Account>>>,
     pub child_cache: Arc<Mutex<HashMap<Address, Account>>>,
     pub block_hashes: Arc<Mutex<HashMap<u64, H256>>>,
+    pub chain_config: ChainConfig,
 }
 
 impl RpcDB {
     pub async fn with_cache(
         rpc_url: &str,
+        chain_config: ChainConfig,
         block_number: usize,
         block: &Block,
     ) -> eyre::Result<Self> {
@@ -46,6 +48,7 @@ impl RpcDB {
             cache: Arc::new(Mutex::new(HashMap::new())),
             child_cache: Arc::new(Mutex::new(HashMap::new())),
             block_hashes: Arc::new(Mutex::new(HashMap::new())),
+            chain_config,
         };
 
         db.cache_accounts(block).await?;
@@ -239,7 +242,7 @@ impl RpcDB {
         // TODO: Simplify this function and potentially merge with the implementation for
         // StoreWrapper.
 
-        let chain_config = *CANCUN_CONFIG;
+        let chain_config = self.chain_config;
 
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()), CacheDB::new());
 
@@ -502,7 +505,7 @@ impl LevmDatabase for RpcDB {
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
-        *CANCUN_CONFIG
+        self.chain_config
     }
 }
 
@@ -544,10 +547,7 @@ fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Nod
                 } {}
                 Some(variants)
             }
-            Node::Branch(_node) => {
-                warn!("branch deletion not working");
-                None
-            }
+            Node::Branch(_node) => None,
         }
     } else {
         None

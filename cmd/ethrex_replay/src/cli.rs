@@ -1,13 +1,15 @@
 use clap::{Parser, Subcommand};
 
 use crate::bench::run_and_measure;
+use crate::constants::get_chain_config;
 use crate::fetcher::{get_blockdata, or_latest};
 use crate::run::{exec, prove};
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
+pub const BINARY_NAME: &str = env!("CARGO_BIN_NAME");
 
 #[derive(Parser)]
-#[command(name="Ethrex_replay_cli", author, version=VERSION_STRING, about, long_about = None)]
+#[command(name=BINARY_NAME, author, version=VERSION_STRING, about, long_about = None)]
 pub struct EthrexReplayCLI {
     #[command(subcommand)]
     command: EthrexReplayCommand,
@@ -18,13 +20,10 @@ enum SubcommandExecute {
     #[clap(about = "Execute a single block.")]
     Block {
         block: Option<usize>,
-        #[arg(
-            long,
-            default_value = "http://localhost:8545",
-            env = "RPC_URL",
-            required = true
-        )]
+        #[arg(long, env = "RPC_URL", required = true)]
         rpc_url: String,
+        #[arg(long, default_value = "mainnet", env = "NETWORK", required = false)]
+        network: String,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -36,10 +35,12 @@ impl SubcommandExecute {
             SubcommandExecute::Block {
                 block,
                 rpc_url,
+                network,
                 bench,
             } => {
+                let chain_config = get_chain_config(&network)?;
                 let block = or_latest(block, &rpc_url).await?;
-                let cache = get_blockdata(rpc_url, block).await?;
+                let cache = get_blockdata(rpc_url, chain_config, block).await?;
                 let body = async {
                     let gas_used = cache.block.header.gas_used as f64;
                     let res = exec(cache).await?;
@@ -58,13 +59,10 @@ enum SubcommandProve {
     #[clap(about = "Proves a single block.")]
     Block {
         block: Option<usize>,
-        #[arg(
-            long,
-            default_value = "http://localhost:8545",
-            env = "RPC_URL",
-            required = true
-        )]
+        #[arg(long, env = "RPC_URL", required = true)]
         rpc_url: String,
+        #[arg(long, default_value = "mainnet", env = "NETWORK", required = false)]
+        network: String,
         #[arg(long, required = false)]
         bench: bool,
     },
@@ -76,10 +74,12 @@ impl SubcommandProve {
             SubcommandProve::Block {
                 block,
                 rpc_url,
+                network,
                 bench,
             } => {
+                let chain_config = get_chain_config(&network)?;
                 let block = or_latest(block, &rpc_url).await?;
-                let cache = get_blockdata(rpc_url, block).await?;
+                let cache = get_blockdata(rpc_url, chain_config, block).await?;
                 let body = async {
                     let gas_used = cache.block.header.gas_used as f64;
                     let res = prove(cache).await?;
