@@ -58,7 +58,7 @@ impl RpcHandler for TraceTransactionRequest {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 1 || params.len() != 2 {
+        if params.len() != 1 && params.len() != 2 {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         let tracer_config = if params.len() == 2 {
