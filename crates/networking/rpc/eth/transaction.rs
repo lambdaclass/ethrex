@@ -9,7 +9,7 @@ use crate::{
     },
     utils::RpcErr,
 };
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{vm::StoreVmDatabase, Blockchain};
 use ethrex_common::{
     types::{
         AccessListEntry, BlockHash, BlockHeader, BlockNumber, Fork, GenericTransaction, TxKind,
@@ -20,10 +20,14 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
-use ethrex_vm::{Evm, ExecutionResult, StoreVmDatabase};
+use ethrex_vm::{Evm, ExecutionResult};
 use serde::Serialize;
 
+#[cfg(feature = "l2")]
+use ethrex_common::types::Transaction;
 use serde_json::Value;
+#[cfg(feature = "l2")]
+use tracing::debug;
 use tracing::info;
 
 pub const ESTIMATE_ERROR_RATIO: f64 = 0.015;
@@ -605,13 +609,26 @@ impl RpcHandler for SendRawTransactionRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
-            context
-                .blockchain
-                .add_blob_transaction_to_pool(
-                    wrapped_blob_tx.tx.clone(),
-                    wrapped_blob_tx.blobs_bundle.clone(),
-                )
-                .await
+            #[cfg(feature = "l2")]
+            {
+                debug!(
+                    "EIP-4844 transaction are not supported in the L2: {:#x}",
+                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx.clone()).compute_hash()
+                );
+                return Err(RpcErr::InvalidEthrexL2Message(
+                    "EIP-4844 transactions are not supported in the L2".to_string(),
+                ));
+            }
+            #[cfg(not(feature = "l2"))]
+            {
+                context
+                    .blockchain
+                    .add_blob_transaction_to_pool(
+                        wrapped_blob_tx.tx.clone(),
+                        wrapped_blob_tx.blobs_bundle.clone(),
+                    )
+                    .await
+            }
         } else {
             context
                 .blockchain

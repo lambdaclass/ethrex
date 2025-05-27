@@ -6,11 +6,10 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    types::{Account, Fork, TxKind},
+    types::{Account, AccountUpdate, Fork, TxKind},
     Address, H256,
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult};
-use ethrex_storage::AccountUpdate;
 use ethrex_vm::{
     self,
     backends::{self, revm::db::EvmState},
