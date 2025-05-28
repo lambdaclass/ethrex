@@ -304,7 +304,7 @@ impl BlockHeader {
     }
 
     pub fn hash(&self) -> H256 {
-        *self.hash.get_or_init(|| self.hash())
+        *self.hash.get_or_init(|| self.compute_block_hash())
     }
 }
 
