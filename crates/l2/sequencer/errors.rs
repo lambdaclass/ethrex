@@ -216,6 +216,8 @@ pub enum MetricsGathererError {
     MetricsError(#[from] ethrex_metrics::MetricsError),
     #[error("MetricsGatherer failed because of an EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("MetricsGatherer: {0}")]
+    TryInto(String),
 }
 
 #[derive(Debug, thiserror::Error)]

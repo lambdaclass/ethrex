@@ -48,7 +48,7 @@ impl DiskLayer {
             block_hash,
             state_root,
             db,
-            cache: DiskCache::new(20000, 40000),
+            cache: DiskCache::new(10000, 20000),
             stale: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -85,7 +85,6 @@ impl DiskLayer {
             return Ok(value);
         }
 
-        // TODO: check that snapshot is done to make sure None is None?
         let value = self.db.get_storage_snapshot(account_hash, storage_hash)?;
 
         self.cache

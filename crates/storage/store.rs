@@ -14,8 +14,8 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{
     code_hash, payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody,
-    BlockHash, BlockHeader, BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, Receipt,
-    Transaction, EMPTY_TRIE_HASH,
+    BlockHash, BlockHeader, BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index,
+    Receipt, Transaction, EMPTY_TRIE_HASH,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -237,6 +237,24 @@ impl Store {
         self.engine.get_block_number(block_hash).await
     }
 
+    pub async fn get_fork_id(&self) -> Result<ForkId, StoreError> {
+        let chain_config = self.get_chain_config()?;
+        let genesis_header = self
+            .get_block_header(0)?
+            .ok_or(StoreError::MissingEarliestBlockNumber)?;
+        let block_number = self.get_latest_block_number().await?;
+        let block_header = self
+            .get_block_header(block_number)?
+            .ok_or(StoreError::MissingLatestBlockNumber)?;
+
+        Ok(ForkId::new(
+            chain_config,
+            genesis_header,
+            block_header.timestamp,
+            block_number,
+        ))
+    }
+
     pub async fn add_transaction_location(
         &self,
         transaction_hash: H256,
@@ -416,9 +434,9 @@ impl Store {
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
-                    storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                    storage_trie.insert(hashed_key.clone(), storage_value.encode_to_vec())?;
 
-                    keys.push(H256(storage_key.to_big_endian()));
+                    keys.push(H256::from_slice(&hashed_key));
                     values.push(storage_value);
                 }
             }
@@ -1203,11 +1221,12 @@ impl Store {
                 accounts.insert(hashed_address, Some(account_state.clone()));
 
                 for (storage_key, storage_value) in &update.added_storage {
+                    let storage_key = H256::from_slice(&hash_key(storage_key));
                     let slots = storage.entry(hashed_address).or_default();
                     if !storage_value.is_zero() {
-                        slots.insert(*storage_key, Some(*storage_value));
+                        slots.insert(storage_key, Some(*storage_value));
                     } else {
-                        slots.insert(*storage_key, None);
+                        slots.insert(storage_key, None);
                     }
                 }
             } else {

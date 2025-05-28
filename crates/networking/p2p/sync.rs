@@ -132,7 +132,10 @@ impl Syncer {
     /// [WARNING] Sync is done optimistically, so headers and bodies may be stored even if their data has not been fully synced if the sync is aborted halfway
     /// [WARNING] Sync is currenlty simplified and will not download bodies + receipts previous to the pivot during snap sync
     pub async fn start_sync(&mut self, current_head: H256, sync_head: H256, store: Store) {
-        info!("Syncing from current head {current_head} to sync_head {sync_head}");
+        info!(
+            "Syncing from current head {:?} to sync_head {:?}",
+            current_head, sync_head
+        );
         let start_time = Instant::now();
         match self.sync_cycle(current_head, sync_head, store).await {
             Ok(()) => {
@@ -186,7 +189,7 @@ impl Syncer {
         loop {
             debug!("Requesting Block Headers from {search_head}");
 
-            let Some(mut block_headers) = self
+            let Some((mut block_headers, mut block_hashes)) = self
                 .peers
                 .request_block_headers(search_head, BlockRequestOrder::OldToNew)
                 .await
@@ -214,11 +217,6 @@ impl Syncer {
                 search_head = first_block_header.parent_hash;
                 continue;
             }
-
-            let mut block_hashes = block_headers
-                .iter()
-                .map(|header| header.compute_block_hash())
-                .collect::<Vec<_>>();
 
             debug!(
                 "Received {} block headers| First Number: {} Last Number: {}",
@@ -376,40 +374,35 @@ impl Syncer {
             Some(res) => res.clone(),
             None => return Ok(None),
         };
-        let mut headers_iter = block_headers.iter();
+        let mut headers_consumed = 0;
         let mut blocks: Vec<Block> = vec![];
 
         let since = Instant::now();
         loop {
             debug!("Requesting Block Bodies");
-            let Some(block_bodies) = self
+            let mut headers_iter = block_headers.iter().skip(headers_consumed);
+            let block_request_result = self
                 .peers
-                .request_block_bodies(current_block_hashes_chunk.clone())
-                .await
-            else {
-                break;
-            };
+                .request_and_validate_block_bodies(
+                    &mut current_block_hashes_chunk,
+                    &mut headers_iter,
+                )
+                .await;
 
-            let block_bodies_len = block_bodies.len();
+            let new_blocks = block_request_result.ok_or(SyncError::BodiesNotFound)?;
+            let new_blocks_len = new_blocks.len();
 
-            let first_block_hash = current_block_hashes_chunk
-                .first()
-                .map_or(H256::default(), |a| *a);
+            headers_consumed += new_blocks_len;
+            blocks.extend(new_blocks);
 
             debug!(
-                "Received {} Block Bodies, starting from block hash {:?}",
-                block_bodies_len, first_block_hash
+                "Accumulated {} Blocks, with {} blocks added starting from block hash {:?}",
+                blocks.len(),
+                new_blocks_len,
+                current_block_hashes_chunk
+                    .first()
+                    .map_or(H256::default(), |a| *a)
             );
-
-            // Push blocks
-            for (_, body) in current_block_hashes_chunk
-                .drain(..block_bodies_len)
-                .zip(block_bodies)
-            {
-                let header = headers_iter.next().ok_or(SyncError::BodiesNotFound)?;
-                let block = Block::new(header.clone(), body);
-                blocks.push(block);
-            }
 
             if current_block_hashes_chunk.is_empty() {
                 current_chunk_idx += 1;

@@ -132,6 +132,21 @@ impl Store {
         Ok(())
     }
 
+    pub async fn update_operations_count(
+        &self,
+        transaction_inc: u64,
+        deposits_inc: u64,
+        withdrawals_inc: u64,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .update_operations_count(transaction_inc, deposits_inc, withdrawals_inc)
+            .await
+    }
+
+    pub async fn get_operations_count(&self) -> Result<[u64; 3], StoreError> {
+        self.engine.get_operations_count().await
+    }
+
     /// Returns whether the batch with the given number is present.
     pub async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
         self.engine.contains_batch(batch_number).await

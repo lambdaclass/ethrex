@@ -126,9 +126,18 @@ impl Command {
 
                 let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
 
-                let l2_sequencer =
-                    ethrex_l2::start_l2(store, rollup_store, blockchain, l2_sequencer_cfg)
-                        .into_future();
+                let l2_sequencer = ethrex_l2::start_l2(
+                    store,
+                    rollup_store,
+                    blockchain,
+                    l2_sequencer_cfg,
+                    #[cfg(feature = "metrics")]
+                    format!(
+                        "http://{}:{}",
+                        opts.node_opts.http_addr, opts.node_opts.http_port
+                    ),
+                )
+                .into_future();
 
                 tracker.spawn(l2_sequencer);
 

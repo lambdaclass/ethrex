@@ -1017,13 +1017,24 @@ impl StoreEngine for Store {
         storage_hash: H256,
     ) -> Result<Option<U256>, StoreError> {
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let mut cursor = txn
+        let cursor = txn
             .cursor::<StorageSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
-        Ok(cursor
-            .seek_value(account_hash.into(), storage_hash.into())
-            .map_err(StoreError::LibmdbxError)?
-            .map(|x| U256::from_big_endian(&x.1 .0)))
+        let iter = cursor
+            .walk_key(account_hash.into(), Some(storage_hash.into()))
+            .map_while(|res| {
+                res.ok()
+                    .map(|(k, v)| (H256(k.0), U256::from_big_endian(&v.0)))
+            })
+            .take(MAX_SNAPSHOT_READS);
+
+        for (key, value) in iter {
+            if key == storage_hash {
+                return Ok(Some(value));
+            }
+        }
+
+        Ok(None)
     }
 }
 

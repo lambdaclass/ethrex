@@ -6,13 +6,14 @@ use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use execution_cache::ExecutionCache;
+use l1_watcher::L1Watcher;
 use tokio::task::JoinSet;
 use tracing::{error, info};
 
 pub mod block_producer;
 pub mod l1_committer;
 pub mod l1_proof_sender;
-pub mod l1_watcher;
+mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
@@ -30,17 +31,15 @@ pub async fn start_l2(
     rollup_store: StoreRollup,
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
+    #[cfg(feature = "metrics")] l2_url: String,
 ) {
     info!("Starting Proposer");
 
     let execution_cache = Arc::new(ExecutionCache::default());
 
+    L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone()).await;
+
     let mut task_set = JoinSet::new();
-    task_set.spawn(l1_watcher::start_l1_watcher(
-        store.clone(),
-        blockchain.clone(),
-        cfg.clone(),
-    ));
     task_set.spawn(l1_committer::start_l1_committer(
         store.clone(),
         rollup_store.clone(),
@@ -49,7 +48,7 @@ pub async fn start_l2(
     ));
     task_set.spawn(proof_coordinator::start_proof_coordinator(
         store.clone(),
-        rollup_store,
+        rollup_store.clone(),
         cfg.clone(),
     ));
     task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
@@ -60,7 +59,7 @@ pub async fn start_l2(
         cfg.clone(),
     ));
     #[cfg(feature = "metrics")]
-    task_set.spawn(metrics::start_metrics_gatherer(cfg));
+    task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
 
     while let Some(res) = task_set.join_next().await {
         match res {

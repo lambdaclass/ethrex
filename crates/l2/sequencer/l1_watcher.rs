@@ -14,39 +14,37 @@ use keccak_hash::keccak;
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
 
-use super::errors::SequencerError;
-use super::utils::sleep_random;
+use super::utils::random_duration;
 
-pub async fn start_l1_watcher(
-    store: Store,
-    blockchain: Arc<Blockchain>,
-    cfg: SequencerConfig,
-) -> Result<(), SequencerError> {
-    let mut l1_watcher = L1Watcher::new_from_config(&cfg.l1_watcher, &cfg.eth).await?;
-    l1_watcher.run(&store, &blockchain).await;
-    Ok(())
+use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
+use spawned_rt::mpsc::Sender;
+
+#[derive(Clone)]
+pub struct L1WatcherState {
+    pub store: Store,
+    pub blockchain: Arc<Blockchain>,
+    pub eth_client: EthClient,
+    pub l2_client: EthClient,
+    pub address: Address,
+    pub max_block_step: U256,
+    pub last_block_fetched: U256,
+    pub check_interval: u64,
+    pub l1_block_delay: u64,
 }
 
-pub struct L1Watcher {
-    eth_client: EthClient,
-    l2_client: EthClient,
-    address: Address,
-    max_block_step: U256,
-    last_block_fetched: U256,
-    check_interval: u64,
-    l1_block_delay: u64,
-}
-
-impl L1Watcher {
-    pub async fn new_from_config(
-        watcher_config: &L1WatcherConfig,
+impl L1WatcherState {
+    pub fn new(
+        store: Store,
+        blockchain: Arc<Blockchain>,
         eth_config: &EthConfig,
+        watcher_config: &L1WatcherConfig,
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
         let l2_client = EthClient::new("http://localhost:1729")?;
-
         let last_block_fetched = U256::zero();
         Ok(Self {
+            store,
+            blockchain,
             eth_client,
             l2_client,
             address: watcher_config.bridge_address,
@@ -56,214 +54,257 @@ impl L1Watcher {
             l1_block_delay: watcher_config.watcher_block_delay,
         })
     }
+}
 
-    pub async fn run(&mut self, store: &Store, blockchain: &Blockchain) {
-        loop {
-            if let Err(err) = self.main_logic(store, blockchain).await {
-                error!("L1 Watcher Error: {}", err);
+#[derive(Clone)]
+pub enum InMessage {
+    Watch,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, PartialEq)]
+pub enum OutMessage {
+    Done,
+    Error,
+}
+
+pub struct L1Watcher;
+
+impl L1Watcher {
+    pub async fn spawn(store: Store, blockchain: Arc<Blockchain>, cfg: SequencerConfig) {
+        match L1WatcherState::new(store.clone(), blockchain.clone(), &cfg.eth, &cfg.l1_watcher) {
+            Ok(state) => {
+                let mut l1_watcher = L1Watcher::start(state);
+                // Perform the check and suscribe a periodic Watch.
+                let _ = l1_watcher.cast(InMessage::Watch).await;
             }
-        }
+            Err(error) => error!("L1 Watcher Error: {}", error),
+        };
+    }
+}
+
+impl GenServer for L1Watcher {
+    type InMsg = InMessage;
+    type OutMsg = OutMessage;
+    type State = L1WatcherState;
+    type Error = L1WatcherError;
+
+    fn new() -> Self {
+        Self {}
     }
 
-    async fn main_logic(
+    async fn handle_call(
         &mut self,
-        store: &Store,
-        blockchain: &Blockchain,
-    ) -> Result<(), L1WatcherError> {
-        loop {
-            sleep_random(self.check_interval).await;
-
-            let logs = self.get_logs().await?;
-
-            // We may not have a deposit nor a withdrawal, that means no events -> no logs.
-            if logs.is_empty() {
-                continue;
-            }
-
-            let _deposit_txs = self.process_logs(logs, store, blockchain).await?;
-        }
+        _message: Self::InMsg,
+        _tx: &Sender<GenServerInMsg<Self>>,
+        _state: &mut Self::State,
+    ) -> CallResponse<Self::OutMsg> {
+        CallResponse::Reply(OutMessage::Done)
     }
 
-    pub async fn get_logs(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
-        if self.last_block_fetched.is_zero() {
-            self.last_block_fetched = self
-                .eth_client
-                .get_last_fetched_l1_block(self.address)
-                .await?
-                .into();
-        }
+    async fn handle_cast(
+        &mut self,
+        message: Self::InMsg,
+        tx: &Sender<GenServerInMsg<Self>>,
+        state: &mut Self::State,
+    ) -> CastResponse {
+        match message {
+            Self::InMsg::Watch => {
+                let check_interval = random_duration(state.check_interval);
+                send_after(check_interval, tx.clone(), Self::InMsg::Watch);
+                match get_logs(state).await {
+                    Ok(logs) => {
+                        // We may not have a deposit nor a withdrawal, that means no events -> no logs.
+                        if !logs.is_empty() {
+                            if let Err(err) = process_logs(state, logs).await {
+                                error!("L1 Watcher Error: {}", err)
+                            };
+                        };
+                    }
+                    Err(err) => error!("L1 Watcher Error: {}", err),
+                };
 
-        let Some(latest_block_to_check) = self
+                CastResponse::NoReply
+            }
+        }
+    }
+}
+
+pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1WatcherError> {
+    if state.last_block_fetched.is_zero() {
+        state.last_block_fetched = state
             .eth_client
-            .get_block_number()
+            .get_last_fetched_l1_block(state.address)
             .await?
-            .checked_sub(self.l1_block_delay.into())
-        else {
-            warn!("Too close to genesis to request deposits");
-            return Ok(vec![]);
-        };
-
-        debug!(
-            "Latest possible block number with {} blocks of delay: {latest_block_to_check} ({latest_block_to_check:#x})",
-            self.l1_block_delay,
-        );
-
-        // last_block_fetched could be greater than latest_block_to_check:
-        // - Right after deploying the contract as latest_block_fetched is set to the block where the contract is deployed
-        // - If the node is stopped and l1_block_delay is changed
-        if self.last_block_fetched > latest_block_to_check {
-            warn!("Last block fetched is greater than latest safe block");
-            return Ok(vec![]);
-        }
-
-        let new_last_block = min(
-            self.last_block_fetched + self.max_block_step,
-            latest_block_to_check,
-        );
-
-        debug!(
-            "Looking logs from block {:#x} to {:#x}",
-            self.last_block_fetched, new_last_block
-        );
-
-        // Matches the event DepositInitiated from ICommonBridge.sol
-        let topic = keccak(
-            b"DepositInitiated(uint256,address,uint256,address,address,uint256,bytes,bytes32)",
-        );
-        let logs = match self
-            .eth_client
-            .get_logs(
-                self.last_block_fetched + 1,
-                new_last_block,
-                self.address,
-                topic,
-            )
-            .await
-        {
-            Ok(logs) => logs,
-            Err(error) => {
-                // We may get an error if the RPC doesn't has the logs for the requested
-                // block interval. For example, Light Nodes.
-                warn!("Error when getting logs from L1: {}", error);
-                vec![]
-            }
-        };
-
-        debug!("Logs: {:#?}", logs);
-
-        // If we have an error adding the tx to the mempool we may assign it to the next
-        // block to fetch, but we may lose a deposit tx.
-        self.last_block_fetched = new_last_block;
-
-        Ok(logs)
+            .into();
     }
 
-    pub async fn process_logs(
-        &self,
-        logs: Vec<RpcLog>,
-        store: &Store,
-        blockchain: &Blockchain,
-    ) -> Result<Vec<H256>, L1WatcherError> {
-        let mut deposit_txs = Vec::new();
+    let Some(latest_block_to_check) = state
+        .eth_client
+        .get_block_number()
+        .await?
+        .checked_sub(state.l1_block_delay.into())
+    else {
+        warn!("Too close to genesis to request deposits");
+        return Ok(vec![]);
+    };
 
-        for log in logs {
-            let deposit_data = DepositData::from_log(log.log)?;
+    debug!(
+            "Latest possible block number with {} blocks of delay: {latest_block_to_check} ({latest_block_to_check:#x})",
+            state.l1_block_delay,
+        );
 
-            if self
-                .deposit_already_processed(deposit_data.deposit_tx_hash, store)
-                .await?
-            {
-                warn!(
-                    "Deposit already processed (to: {:x}, value: {:x}, depositId: {:#}), skipping.",
-                    deposit_data.recipient, deposit_data.mint_value, deposit_data.deposit_id
-                );
-                continue;
-            }
+    // last_block_fetched could be greater than latest_block_to_check:
+    // - Right after deploying the contract as latest_block_fetched is set to the block where the contract is deployed
+    // - If the node is stopped and l1_block_delay is changed
+    if state.last_block_fetched > latest_block_to_check {
+        warn!("Last block fetched is greater than latest safe block");
+        return Ok(vec![]);
+    }
 
-            info!(
-                "Initiating mint transaction for {:x} with value {:x} and depositId: {:#}",
+    let new_last_block = min(
+        state.last_block_fetched + state.max_block_step,
+        latest_block_to_check,
+    );
+
+    debug!(
+        "Looking logs from block {:#x} to {:#x}",
+        state.last_block_fetched, new_last_block
+    );
+
+    // Matches the event DepositInitiated from ICommonBridge.sol
+    let topic =
+        keccak(b"DepositInitiated(uint256,address,uint256,address,address,uint256,bytes,bytes32)");
+    let logs = match state
+        .eth_client
+        .get_logs(
+            state.last_block_fetched + 1,
+            new_last_block,
+            state.address,
+            topic,
+        )
+        .await
+    {
+        Ok(logs) => logs,
+        Err(error) => {
+            // We may get an error if the RPC doesn't has the logs for the requested
+            // block interval. For example, Light Nodes.
+            warn!("Error when getting logs from L1: {}", error);
+            vec![]
+        }
+    };
+
+    debug!("Logs: {:#?}", logs);
+
+    // If we have an error adding the tx to the mempool we may assign it to the next
+    // block to fetch, but we may lose a deposit tx.
+    state.last_block_fetched = new_last_block;
+
+    Ok(logs)
+}
+
+pub async fn process_logs(
+    state: &L1WatcherState,
+    logs: Vec<RpcLog>,
+) -> Result<Vec<H256>, L1WatcherError> {
+    let mut deposit_txs = Vec::new();
+
+    for log in logs {
+        let deposit_data = DepositData::from_log(log.log)?;
+
+        if deposit_already_processed(state, deposit_data.deposit_tx_hash).await? {
+            warn!(
+                "Deposit already processed (to: {:x}, value: {:x}, depositId: {:#}), skipping.",
                 deposit_data.recipient, deposit_data.mint_value, deposit_data.deposit_id
             );
+            continue;
+        }
 
-            let gas_price = self.l2_client.get_gas_price().await?;
-            // Avoid panicking when using as_u64()
-            let gas_price: u64 = gas_price
-                .try_into()
-                .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
+        info!(
+            "Initiating mint transaction for {:x} with value {:x} and depositId: {:#}",
+            deposit_data.recipient, deposit_data.mint_value, deposit_data.deposit_id
+        );
 
-            let mint_transaction = self
-                .eth_client
-                .build_privileged_transaction(
-                    deposit_data.to_address,
-                    deposit_data.recipient,
-                    deposit_data.from,
-                    Bytes::copy_from_slice(&deposit_data.calldata),
-                    Overrides {
-                        chain_id: Some(
-                            store
-                                .get_chain_config()
-                                .map_err(|e| {
-                                    L1WatcherError::FailedToRetrieveChainConfig(e.to_string())
-                                })?
-                                .chain_id,
-                        ),
-                        // Using the deposit_id as nonce.
-                        // If we make a transaction on the L2 with this address, we may break the
-                        // deposit workflow.
-                        nonce: Some(deposit_data.deposit_id.as_u64()),
-                        value: Some(deposit_data.mint_value),
-                        gas_limit: Some(deposit_data.gas_limit.as_u64()),
-                        // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
-                        // Otherwise, the transaction is not included in the mempool.
-                        // We should override the blockchain to always include the transaction.
-                        max_fee_per_gas: Some(gas_price),
-                        max_priority_fee_per_gas: Some(gas_price),
-                        ..Default::default()
-                    },
-                )
-                .await?;
+        let gas_price = state.l2_client.get_gas_price().await?;
+        // Avoid panicking when using as_u64()
+        let gas_price: u64 = gas_price
+            .try_into()
+            .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
 
-            match blockchain
-                .add_transaction_to_pool(Transaction::PrivilegedL2Transaction(mint_transaction))
-                .await
-            {
-                Ok(hash) => {
-                    info!("Mint transaction added to mempool {hash:#x}",);
-                    deposit_txs.push(hash);
-                }
-                Err(e) => {
-                    warn!("Failed to add mint transaction to the mempool: {e:#?}");
-                    // TODO: Figure out if we want to continue or not
-                    continue;
-                }
+        let mint_transaction = state
+            .eth_client
+            .build_privileged_transaction(
+                deposit_data.to_address,
+                deposit_data.recipient,
+                deposit_data.from,
+                Bytes::copy_from_slice(&deposit_data.calldata),
+                Overrides {
+                    chain_id: Some(
+                        state
+                            .store
+                            .get_chain_config()
+                            .map_err(|e| {
+                                L1WatcherError::FailedToRetrieveChainConfig(e.to_string())
+                            })?
+                            .chain_id,
+                    ),
+                    // Using the deposit_id as nonce.
+                    // If we make a transaction on the L2 with this address, we may break the
+                    // deposit workflow.
+                    nonce: Some(deposit_data.deposit_id.as_u64()),
+                    value: Some(deposit_data.mint_value),
+                    gas_limit: Some(deposit_data.gas_limit.as_u64()),
+                    // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
+                    // Otherwise, the transaction is not included in the mempool.
+                    // We should override the blockchain to always include the transaction.
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        match state
+            .blockchain
+            .add_transaction_to_pool(Transaction::PrivilegedL2Transaction(mint_transaction))
+            .await
+        {
+            Ok(hash) => {
+                info!("Mint transaction added to mempool {hash:#x}",);
+                deposit_txs.push(hash);
+            }
+            Err(e) => {
+                warn!("Failed to add mint transaction to the mempool: {e:#?}");
+                // TODO: Figure out if we want to continue or not
+                continue;
             }
         }
-
-        Ok(deposit_txs)
     }
 
-    async fn deposit_already_processed(
-        &self,
-        deposit_hash: H256,
-        store: &Store,
-    ) -> Result<bool, L1WatcherError> {
-        if store
-            .get_transaction_by_hash(deposit_hash)
-            .await
-            .map_err(L1WatcherError::FailedAccessingStore)?
-            .is_some()
-        {
-            return Ok(true);
-        }
+    Ok(deposit_txs)
+}
 
-        // If we have a reconstructed state, we don't have the transaction in our store.
-        // Check if the deposit is marked as pending in the contract.
-        let pending_deposits = self
-            .eth_client
-            .get_pending_deposit_logs(self.address)
-            .await?;
-        Ok(!pending_deposits.contains(&deposit_hash))
+async fn deposit_already_processed(
+    state: &L1WatcherState,
+    deposit_hash: H256,
+) -> Result<bool, L1WatcherError> {
+    if state
+        .store
+        .get_transaction_by_hash(deposit_hash)
+        .await
+        .map_err(L1WatcherError::FailedAccessingStore)?
+        .is_some()
+    {
+        return Ok(true);
     }
+
+    // If we have a reconstructed state, we don't have the transaction in our store.
+    // Check if the deposit is marked as pending in the contract.
+    let pending_deposits = state
+        .eth_client
+        .get_pending_deposit_logs(state.address)
+        .await?;
+    Ok(!pending_deposits.contains(&deposit_hash))
 }
 
 struct DepositData {

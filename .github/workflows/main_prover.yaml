@@ -95,6 +95,12 @@ jobs:
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex_prover -s SIGINT
 
+      - name: Destroy Docker containers
+        if: always()
+        run: |
+          cd crates/l2
+          docker compose -f docker-compose-l2.yaml down -t 0
+
       - name: Ensure admin permissions in _work
         if: always()
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/

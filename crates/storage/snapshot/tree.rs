@@ -11,7 +11,7 @@ use ethrex_common::{
 };
 use tracing::{error, info};
 
-use crate::{api::StoreEngine, hash_address_fixed};
+use crate::{api::StoreEngine, hash_address_fixed, hash_key};
 
 use super::{difflayer::DiffLayer, disklayer::DiskLayer, error::SnapshotError};
 
@@ -94,6 +94,8 @@ impl SnapshotTree {
     }
 
     /// Adds a new snapshot into the tree.
+    ///
+    /// Note: Storage keys must be hashed.
     pub fn add_snapshot(
         &self,
         block_hash: H256,
@@ -358,7 +360,6 @@ impl SnapshotTree {
             .write()
             .map_err(|error| SnapshotError::LockError(error.to_string()))?;
         diff_value.set_parent(base.block_hash());
-        //diff_value.origin = base.block_hash();
 
         Ok(Some(base))
     }
@@ -395,6 +396,8 @@ impl SnapshotTree {
     ///
     /// Note: The result is valid if no Err is returned, this means Ok(None) means it doesn't really exist at all
     /// and no further checking is needed.
+    ///
+    /// Note: the given storage key must be a hash of the key.
     pub fn get_storage_at_hash(
         &self,
         block_hash: BlockHash,
@@ -402,6 +405,7 @@ impl SnapshotTree {
         storage_key: H256,
     ) -> Result<Option<U256>, SnapshotError> {
         if let Some(snapshot) = self.get_snapshot(block_hash) {
+            let storage_key = H256::from_slice(&hash_key(&storage_key));
             let layers = self
                 .layers
                 .read()
@@ -676,7 +680,10 @@ mod tests {
             HashMap::from([(account_hash, Some(account_state1.clone()))]),
             HashMap::from([(account_hash, {
                 let mut map: HashMap<H256, Option<U256>> = HashMap::new();
-                map.insert(H256::zero(), Some(U256::one()));
+                map.insert(
+                    H256::from_slice(&hash_key(&H256::zero())),
+                    Some(U256::one()),
+                );
                 map
             })]),
         )
@@ -689,7 +696,10 @@ mod tests {
             HashMap::from([(account_hash, Some(account_state2.clone()))]),
             HashMap::from([(account_hash, {
                 let mut map: HashMap<H256, Option<U256>> = HashMap::new();
-                map.insert(H256::zero(), Some(U256::zero()));
+                map.insert(
+                    H256::from_slice(&hash_key(&H256::zero())),
+                    Some(U256::zero()),
+                );
                 map
             })]),
         )
@@ -752,7 +762,10 @@ mod tests {
             HashMap::from([(account_hash, Some(account_state1.clone()))]),
             HashMap::from([(account_hash, {
                 let mut map: HashMap<H256, Option<U256>> = HashMap::new();
-                map.insert(H256::zero(), Some(U256::one()));
+                map.insert(
+                    H256::from_slice(&hash_key(&H256::zero())),
+                    Some(U256::one()),
+                );
                 map
             })]),
         )
@@ -766,7 +779,10 @@ mod tests {
             HashMap::from([(account_hash, Some(account_state2.clone()))]),
             HashMap::from([(account_hash, {
                 let mut map: HashMap<H256, Option<U256>> = HashMap::new();
-                map.insert(H256::zero(), Some(U256::zero()));
+                map.insert(
+                    H256::from_slice(&hash_key(&H256::zero())),
+                    Some(U256::zero()),
+                );
                 map
             })]),
         )

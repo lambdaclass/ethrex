@@ -417,11 +417,6 @@ impl Blockchain {
                 continue;
             }
 
-            // Increment the total transaction counter
-            // CHECK: do we want it here to count every processed transaction
-            // or we want it before the return?
-            metrics!(METRICS_TX.inc_tx());
-
             // Execute tx
             let receipt = match self.apply_transaction(&head_tx, context) {
                 Ok(receipt) => {
