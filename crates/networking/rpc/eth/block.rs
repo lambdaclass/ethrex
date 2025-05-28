@@ -7,6 +7,7 @@ use crate::{
     rpc::{RpcApiContext, RpcHandler},
     types::{
         block::RpcBlock,
+        block_execution_witness::ExecutionWitnessResult,
         block_identifier::{BlockIdentifier, BlockIdentifierOrHash},
         receipt::{RpcReceipt, RpcReceiptBlockInfo, RpcReceiptTxInfo},
     },
@@ -348,9 +349,49 @@ impl RpcHandler for ExecutionWitness {
         })
     }
 
-    async fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested execution witness for block: {}", self.block);
-        Err(RpcErr::Internal("Not implemented".to_string()))
+        let block_number = match self.block.resolve_block_number(&context.storage).await? {
+            Some(block_number) => block_number,
+            _ => return Ok(Value::Null),
+        };
+        let header = match context.storage.get_block_header(block_number)? {
+            Some(header) => header,
+            _ => return Err(RpcErr::Internal("Could not get block header".to_owned())),
+        };
+
+        let block = match context
+            .storage
+            .get_block_by_hash(header.compute_block_hash())
+            .await
+        {
+            Ok(Some(block)) => block,
+            _ => return Err(RpcErr::Internal("Could not get block".to_owned())),
+        };
+
+        let Ok((state_rlp, codes, keys, blocks_used)) =
+            context.blockchain.execute_block_with_witness(block).await
+        else {
+            return Err(RpcErr::Internal(
+                "Failed to execute block with witness".to_string(),
+            ));
+        };
+
+        let mut block_headers = vec![header];
+        for (block_number, _block_hash) in blocks_used {
+            if let Ok(Some(block_header)) = context.storage.get_block_header(block_number) {
+                block_headers.push(block_header);
+            }
+        }
+
+        let execution_witness_result = ExecutionWitnessResult {
+            state: state_rlp,
+            codes,
+            keys,
+            block_headers,
+        };
+        serde_json::to_value(execution_witness_result)
+            .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
