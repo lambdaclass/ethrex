@@ -91,11 +91,11 @@ pub fn main() {
 
             let mut block_deposits_hashes = Vec::with_capacity(block_deposits.len());
             for deposit in &block_deposits {
-                if let Some(hash) = deposit.get_deposit_hash() {
-                    block_deposits_hashes.push(hash);
-                } else {
-                    return Err("Failed to get deposit hash for tx".to_string().into());
-                }
+                block_deposits_hashes.push(
+                    deposit
+                        .get_deposit_hash()
+                        .expect("Failed to get deposit hash for tx"),
+                );
             }
             withdrawal_hashes.extend(block_withdrawal_hashes);
             deposits_hashes.extend(
