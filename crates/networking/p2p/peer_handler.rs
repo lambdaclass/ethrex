@@ -95,7 +95,7 @@ impl PeerHandler {
         &self,
         start: H256,
         order: BlockRequestOrder,
-    ) -> Option<(Vec<BlockHeader>, Vec<H256>)> {
+    ) -> Option<(Vec<BlockHeader>)> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
             let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
@@ -132,13 +132,8 @@ impl PeerHandler {
             .flatten()
             .and_then(|headers| (!headers.is_empty()).then_some(headers))
             {
-                let block_hashes = block_headers
-                    .iter()
-                    .map(|header| header.hash())
-                    .collect::<Vec<_>>();
-
-                if are_block_headers_chained(&block_headers, &block_hashes) {
-                    return Some((block_headers, block_hashes));
+                if are_block_headers_chained(&block_headers) {
+                    return Some(block_headers);
                 } else {
                     warn!("Received invalid headers from peer, discarding peer {peer_id} and retrying...");
                     self.remove_peer(peer_id).await;
@@ -767,10 +762,10 @@ impl PeerHandler {
 
 /// Validates the block headers received from a peer by checking that the parent hash of each header
 /// matches the hash of the previous one, i.e. the headers are chained
-fn are_block_headers_chained(block_headers: &[BlockHeader], block_hashes: &[H256]) -> bool {
+fn are_block_headers_chained(block_headers: &[BlockHeader]) -> bool {
     block_headers
         .iter()
         .skip(1) // Skip the first, since we know the current head is valid
-        .zip(block_hashes.iter())
-        .all(|(current_header, previous_hash)| current_header.parent_hash == *previous_hash)
+        .zip(block_headers.iter())
+        .all(|(current_header, previous_header)| current_header.parent_hash == previous_header.hash())
 }

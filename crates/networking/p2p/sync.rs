@@ -189,7 +189,7 @@ impl Syncer {
         loop {
             debug!("Requesting Block Headers from {search_head}");
 
-            let Some((mut block_headers, mut block_hashes)) = self
+            let Some(mut block_headers) = self
                 .peers
                 .request_block_headers(search_head, BlockRequestOrder::OldToNew)
                 .await
@@ -197,6 +197,11 @@ impl Syncer {
                 warn!("Sync failed to find target block header, aborting");
                 return Ok(());
             };
+
+            let mut block_hashes: Vec<BlockHash> = block_headers
+                .iter()
+                .map(|header| header.hash())
+                .collect();
 
             let first_block_header = match block_headers.first() {
                 Some(header) => header.clone(),
