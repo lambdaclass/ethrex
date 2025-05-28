@@ -62,7 +62,7 @@ pub struct CommitterState {
 }
 
 impl CommitterState {
-    pub fn new_from_config(
+    pub fn new(
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
         store: Store,
@@ -92,7 +92,6 @@ impl CommitterState {
     }
 }
 
-// TODO: these are copy pasted from l1_watcher.rs, consider merging them
 #[derive(Clone)]
 pub enum InMessage {
     Watch,
@@ -114,7 +113,7 @@ impl L1Committer {
         execution_cache: Arc<ExecutionCache>,
         cfg: SequencerConfig,
     ) -> Result<(), SequencerError> {
-        let state = CommitterState::new_from_config(
+        let state = CommitterState::new(
             &cfg.l1_committer,
             &cfg.eth,
             store.clone(),
@@ -156,14 +155,14 @@ impl GenServer for L1Committer {
         // Right now we only have the watch message, so we ignore the message
         let check_interval = random_duration(state.commit_time_ms);
         send_after(check_interval, tx.clone(), Self::InMsg::Watch);
-        if let Err(err) = main_logic(state).await {
+        if let Err(err) = commit(state).await {
             error!("L1 Committer Error: {}", err);
         }
         CastResponse::NoReply
     }
 }
 
-async fn main_logic(state: &mut CommitterState) -> Result<(), CommitterError> {
+async fn commit(state: &mut CommitterState) -> Result<(), CommitterError> {
     // Get the batch to commit
     let last_committed_batch_number = state
         .eth_client
