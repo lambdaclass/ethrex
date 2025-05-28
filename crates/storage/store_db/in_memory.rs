@@ -137,9 +137,7 @@ impl StoreEngine for Store {
     }
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        self.inner()
-            .pending_blocks
-            .insert(block.hash(), block);
+        self.inner().pending_blocks.insert(block.hash(), block);
         Ok(())
     }
 

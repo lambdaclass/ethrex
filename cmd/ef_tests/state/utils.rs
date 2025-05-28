@@ -25,11 +25,7 @@ pub async fn load_initial_state(test: &EFTest) -> (EvmState, H256, Store) {
         genesis.get_block().hash(),
     ));
 
-    (
-        evm_state(vm_db),
-        genesis.get_block().hash(),
-        storage,
-    )
+    (evm_state(vm_db), genesis.get_block().hash(), storage)
 }
 
 /// Loads initial state, function for LEVM as it does not require EvmState

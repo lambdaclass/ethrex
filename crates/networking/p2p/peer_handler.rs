@@ -767,5 +767,7 @@ fn are_block_headers_chained(block_headers: &[BlockHeader]) -> bool {
         .iter()
         .skip(1) // Skip the first, since we know the current head is valid
         .zip(block_headers.iter())
-        .all(|(current_header, previous_header)| current_header.parent_hash == previous_header.hash())
+        .all(|(current_header, previous_header)| {
+            current_header.parent_hash == previous_header.hash()
+        })
 }

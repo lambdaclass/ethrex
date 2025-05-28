@@ -179,10 +179,7 @@ impl Store {
     }
 
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        info!(
-            "Adding block to pending: {}",
-            block.hash()
-        );
+        info!("Adding block to pending: {}", block.hash());
         self.engine.add_pending_block(block).await
     }
 

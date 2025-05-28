@@ -198,10 +198,8 @@ impl Syncer {
                 return Ok(());
             };
 
-            let mut block_hashes: Vec<BlockHash> = block_headers
-                .iter()
-                .map(|header| header.hash())
-                .collect();
+            let mut block_hashes: Vec<BlockHash> =
+                block_headers.iter().map(|header| header.hash()).collect();
 
             let first_block_header = match block_headers.first() {
                 Some(header) => header.clone(),
