@@ -99,9 +99,10 @@ impl L1ProofSender {
         loop {
             info!("Running L1 Proof Sender");
             info!("Needed proof systems: {:?}", self.needed_proof_types);
-            if let Err(err) = self.main_logic().await {
-                error!("L1 Proof Sender Error: {}", err);
-            }
+            let _ = self
+                .main_logic()
+                .await
+                .inspect_err(|err| error!("L1 Proof Sender Error: {err}"));
 
             sleep_random(self.proof_send_interval_ms).await;
         }
