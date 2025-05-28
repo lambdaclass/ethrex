@@ -29,9 +29,10 @@ const VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
 
 pub async fn start_l1_proof_sender(cfg: SequencerConfig) -> Result<(), SequencerError> {
-    let proof_sender =
-        L1ProofSender::new(&cfg.proof_coordinator, &cfg.l1_committer, &cfg.eth).await?;
-    proof_sender.run().await;
+    L1ProofSender::new(&cfg.proof_coordinator, &cfg.l1_committer, &cfg.eth)
+        .await?
+        .run()
+        .await;
     Ok(())
 }
 
