@@ -607,6 +607,7 @@ pub fn validate_block_body(block: &Block) -> Result<(), InvalidBlockBodyError> {
             }
         }
         (None, None) => {}
+        _ => return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch),
     }
 
     Ok(())
