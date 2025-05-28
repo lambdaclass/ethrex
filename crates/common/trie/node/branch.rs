@@ -180,7 +180,10 @@ impl BranchNode {
                 let (choice_index, child_hash) = children[0];
                 let Some(child) = state.get_node(*child_hash)? else {
                     // In stateless execution the child might not be known, so a guess is made
-                    let reduced_node: ExtensionNode = ExtensionNode::new(Nibbles::from_hex(vec![choice_index as u8]), *child_hash);
+                    let reduced_node: ExtensionNode = ExtensionNode::new(
+                        Nibbles::from_hex(vec![choice_index as u8]),
+                        *child_hash,
+                    );
                     return Ok((Some(reduced_node.into()), value));
                 };
                 match child {
