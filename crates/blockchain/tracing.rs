@@ -1,8 +1,8 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ethrex_common::{types::Block, H256};
 use ethrex_storage::Store;
-use ethrex_vm::{tracing::CallTrace, Evm, EvmEngine, EvmError};
+use ethrex_vm::{tracing::CallTrace, Evm, EvmEngine};
 
 use crate::{error::ChainError, Blockchain};
 
@@ -51,24 +51,20 @@ impl Blockchain {
             vm.rerun_block(block)?;
         }
         // Run the block with the transaction & trace it
-        Ok(tokio::time::timeout(
-            timeout,
-            vm_trace_tx_calls(&mut vm, &block, tx_index as usize, only_top_call, with_log),
-        )
-        .await
-        .map_err(|_| ChainError::Custom("Tracing timeout".to_string()))??)
+        //let cancel_handle = std::thread::spawn(move || vm_trace_tx_calls(vm, block, tx_index as usize, only_top_call, with_log));
+        let trace_start = Instant::now();
+        let handle = tokio::task::spawn_blocking(move || {
+            vm.trace_tx_calls(&block, tx_index as usize, only_top_call, with_log)
+        });
+        while !handle.is_finished() {
+            if trace_start.elapsed() > timeout {
+                handle.abort();
+            }
+        }
+        Ok(handle
+            .await
+            .map_err(|_| ChainError::Custom("Tracing timeout".to_string()))??)
     }
-}
-
-/// Async wrapper for `Evm::trace_tx_calls`, we need it in order to put a timeout on transaction tracing
-async fn vm_trace_tx_calls(
-    vm: &mut Evm,
-    block: &Block,
-    tx_index: usize,
-    only_top_call: bool,
-    with_log: bool,
-) -> Result<CallTrace, EvmError> {
-    vm.trace_tx_calls(block, tx_index, only_top_call, with_log)
 }
 
 /// Fills the `missing_state_parents` vector with all the parent blocks (starting from parent hash) who's state we don't have stored.
