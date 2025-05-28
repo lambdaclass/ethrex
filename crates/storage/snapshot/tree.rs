@@ -682,7 +682,10 @@ mod tests {
             HashMap::from([(account_hash, Some(account_state1.clone()))]),
             HashMap::from([(account_hash, {
                 let mut map: HashMap<H256, Option<U256>> = HashMap::new();
-                map.insert(H256::zero(), Some(U256::one()));
+                map.insert(
+                    H256::from_slice(&hash_key(&H256::zero())),
+                    Some(U256::one()),
+                );
                 map
             })]),
         )
@@ -695,7 +698,10 @@ mod tests {
             HashMap::from([(account_hash, Some(account_state2.clone()))]),
             HashMap::from([(account_hash, {
                 let mut map: HashMap<H256, Option<U256>> = HashMap::new();
-                map.insert(H256::zero(), Some(U256::zero()));
+                map.insert(
+                    H256::from_slice(&hash_key(&H256::zero())),
+                    Some(U256::zero()),
+                );
                 map
             })]),
         )
@@ -758,7 +764,10 @@ mod tests {
             HashMap::from([(account_hash, Some(account_state1.clone()))]),
             HashMap::from([(account_hash, {
                 let mut map: HashMap<H256, Option<U256>> = HashMap::new();
-                map.insert(H256::zero(), Some(U256::one()));
+                map.insert(
+                    H256::from_slice(&hash_key(&H256::zero())),
+                    Some(U256::one()),
+                );
                 map
             })]),
         )
@@ -772,7 +781,10 @@ mod tests {
             HashMap::from([(account_hash, Some(account_state2.clone()))]),
             HashMap::from([(account_hash, {
                 let mut map: HashMap<H256, Option<U256>> = HashMap::new();
-                map.insert(H256::zero(), Some(U256::zero()));
+                map.insert(
+                    H256::from_slice(&hash_key(&H256::zero())),
+                    Some(U256::zero()),
+                );
                 map
             })]),
         )
