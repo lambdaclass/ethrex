@@ -211,7 +211,7 @@ impl Evm {
                 Ok(())
             }
             Evm::LEVM { db } => {
-                let chain_config = db.store.get_chain_config();
+                let chain_config = db.store.get_chain_config()?;
                 let fork = chain_config.fork(block_header.timestamp);
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
