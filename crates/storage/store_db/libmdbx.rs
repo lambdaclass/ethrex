@@ -588,7 +588,7 @@ impl StoreEngine for Store {
     }
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        self.write::<PendingBlocks>(block.header.compute_block_hash().into(), block.into())
+        self.write::<PendingBlocks>(block.hash().into(), block.into())
             .await
     }
 
@@ -1253,6 +1253,8 @@ impl Encodable for SnapStateIndex {
 const DB_PAGE_SIZE: usize = 4096;
 /// For a default page size of 4096, the max value size is roughly 1/2 page size.
 const DB_MAX_VALUE_SIZE: usize = 2022;
+// Maximum DB size, set to 3 TB
+const MAX_MAP_SIZE: isize = 3096_isize.pow(4); // 3 TB
 
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
@@ -1282,8 +1284,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
     let options = DatabaseOptions {
         page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
         mode: Mode::ReadWrite(ReadWriteOptions {
-            // Set max DB size to 1TB
-            max_size: Some(1024_isize.pow(4)),
+            max_size: Some(MAX_MAP_SIZE),
             ..Default::default()
         }),
         ..Default::default()
@@ -1499,7 +1500,7 @@ mod tests {
         let options = DatabaseOptions {
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
-                max_size: Some(1024_isize.pow(4)),
+                max_size: Some(MAX_MAP_SIZE),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1561,7 +1562,7 @@ mod tests {
         let options = DatabaseOptions {
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
-                max_size: Some(1024_isize.pow(4)),
+                max_size: Some(MAX_MAP_SIZE),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1594,7 +1595,7 @@ mod tests {
         let options = DatabaseOptions {
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
-                max_size: Some(1024_isize.pow(4)),
+                max_size: Some(MAX_MAP_SIZE),
                 ..Default::default()
             }),
             ..Default::default()
