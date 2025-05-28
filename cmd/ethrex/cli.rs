@@ -11,9 +11,7 @@ use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
-    initializers::{init_blockchain, init_store},
-    utils::{self, get_client_version, set_datadir},
-    DEFAULT_DATADIR,
+    initializers::{init_blockchain, init_store}, networks::Networks, utils::{self, get_client_version, set_datadir}, DEFAULT_DATADIR
 };
 
 #[cfg(feature = "l2")]
@@ -272,11 +270,11 @@ impl Subcommand {
                     .await?;
                 }
 
-                let network = opts
+                let network_string = opts
                     .network
                     .as_ref()
                     .expect("--network is required and it was not provided");
-
+                let network = Networks::from(network_string.as_str());
                 import_blocks(&path, &opts.datadir, network, opts.evm).await;
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
@@ -316,7 +314,7 @@ pub fn remove_db(datadir: &str, force: bool) {
     }
 }
 
-pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
+pub async fn import_blocks(path: &str, data_dir: &str, network: Networks, evm: EvmEngine) {
     let data_dir = set_datadir(data_dir);
 
     let store = init_store(&data_dir, network).await;

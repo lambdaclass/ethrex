@@ -1,11 +1,12 @@
 use crate::{
     cli::Options,
-    networks,
+    networks::{self, Networks, PublicNetworkType},
     utils::{
-        get_client_version, get_genesis_path, parse_socket_addr, read_genesis_file, read_jwtsecret_file, read_node_config_file
+        get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file, read_node_config_file
     },
 };
 use ethrex_blockchain::Blockchain;
+use ethrex_common::Public;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{public_key_from_signing_key, P2PContext},
@@ -63,7 +64,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub async fn init_store(data_dir: &str, network: &str) -> Store {
+pub async fn init_store(data_dir: &str, network: Networks) -> Store {
     let path = PathBuf::from(data_dir);
     let store = if path.ends_with("memory") {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
@@ -80,8 +81,7 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
         }
         Store::new(data_dir, engine_type).expect("Failed to create Store")
     };
-    let path = get_genesis_path(network);
-    let genesis = read_genesis_file(path);
+    let genesis = read_genesis_file(network.get_path());
     store
         .add_initial_state(genesis.clone())
         .await
@@ -165,7 +165,7 @@ pub async fn init_rpc_api(
 #[allow(dead_code)]
 pub async fn init_network(
     opts: &Options,
-    network: &str,
+    network: &Networks,
     data_dir: &str,
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
@@ -235,12 +235,14 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
     }
 }
 
-pub fn get_network(opts: &Options) -> String {
-    let mut network = opts
+pub fn get_network(opts: &Options) -> Networks {
+    let network = opts
         .network
         .clone()
         .expect("--network is required and it was not provided");
-
+    
+    Networks::from(network.as_str())
+    /* 
     // Set preset genesis from known networks
     if network == "holesky" {
         network = String::from(networks::HOLESKY_GENESIS_PATH);
@@ -255,33 +257,33 @@ pub fn get_network(opts: &Options) -> String {
         network = String::from(networks::MAINNET_GENESIS_PATH);
     }
 
-    network
+    network*/
 }
 
 #[allow(dead_code)]
-pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node> {
+pub fn get_bootnodes(opts: &Options, network: &Networks, data_dir: &str) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
-    if network == networks::HOLESKY_GENESIS_PATH {
-        info!("Adding holesky preset bootnodes");
-        bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
+    match network {
+        Networks::PublicNetwork(PublicNetworkType::Holesky) => {
+            info!("Adding holesky preset bootnodes");
+            bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
+        },
+        Networks::PublicNetwork(PublicNetworkType::Hoodi) => {
+            info!("Addig hoodi preset bootnodes");
+            bootnodes.extend(networks::HOODI_BOOTNODES.clone());
+        },
+        Networks::PublicNetwork(PublicNetworkType::Mainnet) =>{
+            info!("Adding mainnet preset bootnodes");
+            bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
+        }, 
+        Networks::PublicNetwork(PublicNetworkType::Sepolia) => {
+            info!("Adding sepolia preset bootnodes");
+            bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
+        },
+        _ => {}
     }
-
-    if network == networks::SEPOLIA_GENESIS_PATH {
-        info!("Adding sepolia preset bootnodes");
-        bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
-    }
-
-    if network == networks::HOODI_GENESIS_PATH {
-        info!("Adding hoodi preset bootnodes");
-        bootnodes.extend(networks::HOODI_BOOTNODES.clone());
-    }
-
-    if network == networks::MAINNET_GENESIS_PATH {
-        info!("Adding mainnet preset bootnodes");
-        bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
-    }
-
+    
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }

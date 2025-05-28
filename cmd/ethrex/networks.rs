@@ -1,4 +1,7 @@
+use std::path::Path;
+
 use ethrex_p2p::types::Node;
+use k256::elliptic_curve::ff::derive;
 use lazy_static::lazy_static;
 
 pub const HOLESKY_GENESIS_PATH: &str = "cmd/ethrex/networks/holesky/genesis.json";
@@ -30,4 +33,49 @@ lazy_static! {
         std::fs::File::open(MAINNET_BOOTNODES_PATH).expect("Failed to open mainnet bootnodes file")
     )
     .expect("Failed to parse mainnet bootnodes file");
+}
+pub enum Networks {
+    PublicNetwork(PublicNetworkType),
+    Path(String)
+}
+
+pub enum PublicNetworkType {
+    Hoodi,
+    Holesky,
+    Sepolia,
+    Mainnet
+}
+
+impl From<&str> for Networks{
+    fn from(value: &str) -> Self {
+        match value {
+            "hoodi" => Networks::PublicNetwork(PublicNetworkType::Hoodi),
+            "holesky" => Networks::PublicNetwork(PublicNetworkType::Holesky),
+            "mainnet" => Networks::PublicNetwork(PublicNetworkType::Mainnet),
+            "sepolia" => Networks::PublicNetwork(PublicNetworkType::Sepolia),
+            s => Networks::Path(String::from(s))
+        }
+    }
+}
+
+impl Networks{
+    pub fn get_path(&self) -> &Path{
+        match self {
+            Networks::PublicNetwork(PublicNetworkType::Holesky) => Path::new(HOLESKY_GENESIS_PATH),
+            Networks::PublicNetwork(PublicNetworkType::Hoodi) => Path::new(HOODI_GENESIS_PATH),
+            Networks::PublicNetwork(PublicNetworkType::Mainnet) => Path::new(MAINNET_GENESIS_PATH),
+            Networks::PublicNetwork(PublicNetworkType::Sepolia) => Path::new(SEPOLIA_GENESIS_PATH),
+            Networks::Path(s) => Path::new(s),
+        }
+    }
+
+    pub fn get_bootnodes(&self) -> &Path {
+        match self {
+            Networks::PublicNetwork(PublicNetworkType::Holesky) => Path::new(HOLESKY_GENESIS_PATH),
+            Networks::PublicNetwork(PublicNetworkType::Hoodi) => Path::new(HOODI_GENESIS_PATH),
+            Networks::PublicNetwork(PublicNetworkType::Mainnet) => Path::new(MAINNET_GENESIS_PATH),
+            Networks::PublicNetwork(PublicNetworkType::Sepolia) => Path::new(SEPOLIA_GENESIS_PATH),
+            Networks::Path(s) => Path::new(s),
+        }
+    }
 }
