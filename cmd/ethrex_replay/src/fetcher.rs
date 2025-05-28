@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::cache::{load_cache, write_cache, Cache};
+use crate::cache::{load_cache, load_cache_batch, write_cache, write_cache_batch, Cache};
 use crate::rpc::{db::RpcDB, get_block, get_latest_block_number};
 use ethrex_common::types::ChainConfig;
 use ethrex_common::{Address, H256};
@@ -54,13 +54,16 @@ pub async fn get_rangedata(
     from: usize,
     to: usize,
 ) -> eyre::Result<Cache> {
+    if let Ok(cache) = load_cache_batch(from, to) {
+        return Ok(cache);
+    }
     let mut blocks = Vec::with_capacity(to - from);
     for block_number in from..to {
         let data = get_blockdata(rpc_url, chain_config, block_number).await?;
         blocks.push(data);
     }
     let first_block = blocks[0].blocks[0].clone();
-    let rpc_db = RpcDB::new(rpc_url, chain_config, from);
+    let rpc_db = RpcDB::new(rpc_url, chain_config, from - 1);
     let mut used: HashMap<Address, HashSet<H256>> = HashMap::new();
     for block_data in blocks.iter() {
         for account in block_data.db.accounts.keys() {
@@ -84,10 +87,21 @@ pub async fn get_rangedata(
         .chain([blocks[0].parent_block_header.clone()].iter())
         .map(|header| (header.number, header.compute_block_hash()))
         .collect();
+    for block_data in blocks.iter() {
+        proverdb
+            .state_proofs
+            .1
+            .extend(block_data.db.state_proofs.1.clone());
+        for (account, proofs) in block_data.db.storage_proofs.iter() {
+            let entry = proverdb.storage_proofs.entry(*account).or_default();
+            entry.1.extend(proofs.1.clone());
+        }
+    }
     let cache = Cache {
         blocks: blocks.iter().map(|cache| cache.blocks[0].clone()).collect(),
         parent_block_header: blocks[0].parent_block_header.clone(),
         db: proverdb,
     };
+    write_cache_batch(&cache)?;
     Ok(cache)
 }

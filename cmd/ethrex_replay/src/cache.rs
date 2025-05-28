@@ -29,3 +29,27 @@ pub fn write_cache(cache: &Cache) -> eyre::Result<()> {
     let file = BufWriter::new(File::create(file_name)?);
     Ok(serde_json::to_writer(file, cache)?)
 }
+
+pub fn load_cache_batch(from: usize, to: usize) -> eyre::Result<Cache> {
+    let file_name = format!("cache_{}-{}.json", from, to);
+    let file = BufReader::new(File::open(file_name)?);
+    Ok(serde_json::from_reader(file)?)
+}
+
+pub fn write_cache_batch(cache: &Cache) -> eyre::Result<()> {
+    let from = cache
+        .blocks
+        .first()
+        .ok_or(eyre::Error::msg("cache is empty"))?
+        .header
+        .number;
+    let to = cache
+        .blocks
+        .last()
+        .ok_or(eyre::Error::msg("cache is empty"))?
+        .header
+        .number;
+    let file_name = format!("cache_{}-{}.json", from, to);
+    let file = BufWriter::new(File::create(file_name)?);
+    Ok(serde_json::to_writer(file, cache)?)
+}
