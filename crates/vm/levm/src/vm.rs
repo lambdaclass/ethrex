@@ -4,7 +4,7 @@ use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
-    errors::{ExecutionReport, OpcodeResult, TxResult, VMError},
+    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     hooks::hook::Hook,
     opcodes::Opcode,
     precompiles::execute_precompile,
@@ -112,11 +112,11 @@ impl CallTracer {
         output: Bytes,
         error: Option<String>,
         revert_reason: Option<String>,
-    ) {
+    ) -> Result<(), InternalError> {
         let mut executed_callframe = self
             .callframes
             .pop()
-            .expect("You can't exit if you haven't started before...");
+            .ok_or(InternalError::CouldNotPopCallframe)?;
 
         executed_callframe.process_output(gas_used, output, error, revert_reason);
 
@@ -125,7 +125,8 @@ impl CallTracer {
             parent_callframe.calls.push(executed_callframe);
         } else {
             self.callframes.push(executed_callframe);
-        }
+        };
+        Ok(())
     }
 }
 
@@ -340,7 +341,7 @@ impl<'a> VM<'a> {
         };
         //TODO: See what to do with revert_reason
         self.tracer
-            .exit(report.gas_used, report.output.clone(), error, None);
+            .exit(report.gas_used, report.output.clone(), error, None)?;
 
         // dbg!(&self.tracer);
 

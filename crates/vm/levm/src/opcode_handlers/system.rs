@@ -723,7 +723,7 @@ impl<'a> VM<'a> {
                 current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
 
                 self.tracer
-                    .exit(0, Bytes::new(), Some("CreateFail".to_string()), None);
+                    .exit(0, Bytes::new(), Some("CreateFail".to_string()), None)?;
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
             new_depth
@@ -742,7 +742,7 @@ impl<'a> VM<'a> {
                 Bytes::new(),
                 Some("CreateAccExists".to_string()),
                 None,
-            );
+            )?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -833,7 +833,7 @@ impl<'a> VM<'a> {
                 callframe.stack.push(REVERT_FOR_CALL)?;
 
                 self.tracer
-                    .exit(gas_used, Bytes::new(), Some("OutOfFund".to_string()), None);
+                    .exit(gas_used, Bytes::new(), Some("OutOfFund".to_string()), None)?;
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
             calldata
@@ -859,7 +859,7 @@ impl<'a> VM<'a> {
                 Bytes::new(),
                 Some("MaxCallDepth".to_string()),
                 None,
-            );
+            )?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -945,7 +945,7 @@ impl<'a> VM<'a> {
         match &tx_report.result {
             TxResult::Success => {
                 self.tracer
-                    .exit(tx_report.gas_used, tx_report.output.clone(), None, None);
+                    .exit(tx_report.gas_used, tx_report.output.clone(), None, None)?;
                 self.current_call_frame_mut()?
                     .stack
                     .push(SUCCESS_FOR_CALL)?;
@@ -969,7 +969,7 @@ impl<'a> VM<'a> {
                     tx_report.output.clone(), //TODO: Check if output is cleared when it's not revert opcode
                     Some(error.to_string()),
                     None,
-                );
+                )?;
                 // Push 0 to stack
                 self.current_call_frame_mut()?.stack.push(REVERT_FOR_CALL)?;
             }
@@ -1001,7 +1001,7 @@ impl<'a> VM<'a> {
         match tx_report.result.clone() {
             TxResult::Success => {
                 self.tracer
-                    .exit(tx_report.gas_used, tx_report.output.clone(), None, None);
+                    .exit(tx_report.gas_used, tx_report.output.clone(), None, None)?;
                 self.current_call_frame_mut()?
                     .stack
                     .push(address_to_word(executed_call_frame.to))?;
@@ -1029,7 +1029,7 @@ impl<'a> VM<'a> {
                     tx_report.output.clone(), //TODO: Check if output is cleared when it's not revert opcode
                     Some(err.to_string()),
                     None,
-                );
+                )?;
                 self.current_call_frame_mut()?
                     .stack
                     .push(CREATE_DEPLOYMENT_FAIL)?;
