@@ -18,7 +18,9 @@ use crate::{
 use super::{block_env, db::EvmState, tx_env, REVM};
 
 impl REVM {
-    /// Executes the block until a given tx is reached, then generates the call trace for the tx
+    /// Runs a single tx with the call tracer and outputs its trace
+    /// Asumes that the received state already contains changes from previous blocks and other
+    /// transactions within its block
     pub fn trace_tx_calls(
         block: &Block,
         tx_index: usize,
@@ -28,47 +30,26 @@ impl REVM {
     ) -> Result<CallTrace, EvmError> {
         let spec_id: SpecId = spec_id(&state.chain_config()?, block.header.timestamp);
         let block_env = block_env(&block.header, spec_id);
-        cfg_if::cfg_if! {
-            if #[cfg(not(feature = "l2"))] {
-                if block.header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
-                    Self::beacon_root_contract_call(&block.header, state)?;
-                }
-                //eip 2935: stores parent block hash in system contract
-                if spec_id >= SpecId::PRAGUE {
-                    Self::process_block_hash_history(&block.header, state)?;
-                }
-            }
-        }
-
-        let mut call_trace = CallTrace::new();
-
-        for (index, (tx, sender)) in block
+        let tx = block
             .body
-            .get_transactions_with_sender()
-            .into_iter()
-            .enumerate()
-        {
-            let tx_env = tx_env(tx, sender);
-            if index == tx_index {
-                // Trace the transaction
-                call_trace = run_evm_with_call_tracer(
-                    tx_env,
-                    block_env,
-                    state,
-                    spec_id,
-                    only_top_call,
-                    with_log,
-                )?;
-                break;
-            }
-            run_evm(tx_env, block_env.clone(), state, spec_id)?;
-        }
-
-        Ok(call_trace)
+            .transactions
+            .get(tx_index)
+            .ok_or(EvmError::Custom(
+                "Missing Transaction for Trace".to_string(),
+            ))?;
+        let tx_env = tx_env(tx, tx.sender());
+        // Trace the transaction
+        run_evm_with_call_tracer(tx_env, block_env, state, spec_id, only_top_call, with_log)
     }
 
     /// Reruns the given block, saving the changes on the state, doesn't output any results or receipts
-    pub fn rerun_block(block: &Block, state: &mut EvmState) -> Result<(), EvmError> {
+    /// If the optional argument `stop_index` is set, the run will stop just before executing the transaction at that index
+    /// and won't ptocess the withdrawals afterwards
+    pub fn rerun_block(
+        block: &Block,
+        state: &mut EvmState,
+        stop_index: Option<usize>,
+    ) -> Result<(), EvmError> {
         let spec_id: SpecId = spec_id(&state.chain_config()?, block.header.timestamp);
         let block_env = block_env(&block.header, spec_id);
         cfg_if::cfg_if! {
@@ -83,15 +64,23 @@ impl REVM {
             }
         }
 
-        for (tx, sender) in block.body.get_transactions_with_sender().into_iter() {
+        for (index, (tx, sender)) in block
+            .body
+            .get_transactions_with_sender()
+            .into_iter()
+            .enumerate()
+        {
+            if stop_index.is_some_and(|stop| stop == index) {
+                break;
+            }
             let tx_env = tx_env(tx, sender);
             run_evm(tx_env, block_env.clone(), state, spec_id)?;
         }
-
-        if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(state, withdrawals)?;
+        if stop_index.is_none() {
+            if let Some(withdrawals) = &block.body.withdrawals {
+                Self::process_withdrawals(state, withdrawals)?;
+            }
         }
-
         Ok(())
     }
 }

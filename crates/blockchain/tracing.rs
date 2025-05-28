@@ -28,6 +28,7 @@ impl Blockchain {
         else {
             return Err(ChainError::Custom("Transaction not Found".to_string()));
         };
+        let tx_index = tx_index as usize;
         let Some(block) = self.storage.get_block_by_hash(block_hash).await? else {
             return Err(ChainError::Custom("Block not Found".to_string()));
         };
@@ -48,13 +49,14 @@ impl Blockchain {
         // Run parents to rebuild pre-state
         let mut vm = Evm::new(self.evm_engine, self.storage.clone(), parent_hash);
         for block in blocks_to_re_execute.iter().rev() {
-            vm.rerun_block(block)?;
+            vm.rerun_block(block, None)?;
         }
-        // Run the block with the transaction & trace it
-        //let cancel_handle = std::thread::spawn(move || vm_trace_tx_calls(vm, block, tx_index as usize, only_top_call, with_log));
+        // Run the block until the transaction we want to trace
+        vm.rerun_block(&block, Some(tx_index))?;
+        // Trace the transaction
         let trace_start = Instant::now();
         let handle = tokio::task::spawn_blocking(move || {
-            vm.trace_tx_calls(&block, tx_index as usize, only_top_call, with_log)
+            vm.trace_tx_calls(&block, tx_index, only_top_call, with_log)
         });
         while !handle.is_finished() {
             if trace_start.elapsed() > timeout {
