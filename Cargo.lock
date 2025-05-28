@@ -3163,6 +3163,8 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+ "spawned-concurrency",
+ "spawned-rt",
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
@@ -9445,6 +9447,26 @@ dependencies = [
  "rand_core 0.6.4",
  "sp1-lib",
  "subtle",
+]
+
+[[package]]
+name = "spawned-concurrency"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/spawned.git?tag=v0.1.0-alpha#abd5476b7cc0feeafd96ca79c6844e87702c7f83"
+dependencies = [
+ "futures",
+ "spawned-rt",
+ "tracing",
+]
+
+[[package]]
+name = "spawned-rt"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/spawned.git?tag=v0.1.0-alpha#abd5476b7cc0feeafd96ca79c6844e87702c7f83"
+dependencies = [
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.19",
 ]
 
 [[package]]
