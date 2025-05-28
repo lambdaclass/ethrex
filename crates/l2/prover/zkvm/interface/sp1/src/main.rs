@@ -9,13 +9,14 @@ use ethrex_common::types::AccountUpdate;
 use ethrex_vm::Evm;
 use kzg_rs::{dtypes::Blob, kzg_proof::KzgProof, trusted_setup::get_kzg_settings};
 use std::collections::HashMap;
-#[cfg(feature = "l2")]
-use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
-#[cfg(feature = "l2")]
-use zkvm_interface::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
+};
+
+#[cfg(feature = "l2")]
+use ethrex_l2_common::{
+    get_block_deposits, get_block_withdrawal_hashes, get_deposit_hash, get_withdrawals_merkle_root,
 };
 
 sp1_zkvm::entrypoint!(main);
@@ -55,7 +56,7 @@ pub fn main() {
     let mut cumulative_gas_used = 0;
 
     #[cfg(feature = "l2")]
-    let mut withdrawals = vec![];
+    let mut withdrawal_hashes = vec![];
     #[cfg(feature = "l2")]
     let mut deposits_hashes = vec![];
 
@@ -80,19 +81,27 @@ pub fn main() {
         // Get L2 withdrawals and deposits for this block
         #[cfg(feature = "l2")]
         {
-            let block_withdrawals = get_block_withdrawals(&block.body.transactions, &receipts)
-                .expect("failed to get block withdrawals");
-            let block_deposits = get_block_deposits(&block.body.transactions);
+            let txs = block.body.transactions;
+            let block_deposits = get_block_deposits(&txs);
+
+            let txs_and_receipts: Vec<_> = txs.into_iter().zip(receipts.clone().into_iter()).collect();
+            let block_withdrawal_hashes = get_block_withdrawal_hashes(&txs_and_receipts).expect("failed to retrieve withdrawal hashes");
+
             let mut block_deposits_hashes = Vec::with_capacity(block_deposits.len());
-            for deposit in block_deposits {
-                block_deposits_hashes.push(
-                    deposit
-                        .get_deposit_hash()
-                        .expect("Failed to get deposit hash for tx"),
-                );
+            for deposit in &block_deposits {
+                if let Some(hash) = deposit.get_deposit_hash() {
+                    block_deposits_hashes.push(hash);
+                } else {
+                    return Err("Failed to get deposit hash for tx".to_string().into());
+                }
             }
-            withdrawals.extend(block_withdrawals);
-            deposits_hashes.extend(block_deposits_hashes);
+            withdrawal_hashes.extend(block_withdrawal_hashes);
+            deposits_hashes.extend(
+                block_deposits
+                    .iter()
+                    .filter_map(|tx| tx.get_deposit_hash())
+                    .collect::<Vec<_>>(),
+            );
         }
 
         cumulative_gas_used += receipts
@@ -125,13 +134,13 @@ pub fn main() {
 
     // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
-    let Ok(withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
+    let Ok(withdrawals_merkle_root) = compute_withdrawals_merkle_root(withdrawal_hashes) else {
         panic!("Failed to calculate withdrawals merkle root");
     };
 
     // Calculate L2 deposits logs root
     #[cfg(feature = "l2")]
-    let Ok(deposit_logs_hash) = get_deposit_hash(deposits_hashes) else {
+    let Ok(deposit_logs_hash) = compute_deposit_logs_hash(deposits_hashes) else {
         panic!("Failed to calculate deposits logs hash");
     };
 

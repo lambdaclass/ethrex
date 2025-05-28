@@ -10,11 +10,11 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
-use ethrex_l2_common::{get_block_deposits, get_block_withdrawals, prepare_state_diff, StateDiff};
-use ethrex_l2_sdk::{
-    calldata::{encode_calldata, Value},
-    merkle_tree::merkelize,
+use ethrex_l2_common::{
+    get_block_deposits, get_block_withdrawals, compute_deposit_logs_hash, compute_withdrawals_merkle_root,
+    prepare_state_diff, StateDiff, StateDiffError,
 };
+use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};
@@ -25,7 +25,6 @@ use ethrex_rpc::{
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmEngine};
-use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
@@ -149,7 +148,7 @@ impl Committer {
         }
 
         let withdrawal_logs_merkle_root =
-            self.get_withdrawals_merkle_root(withdrawal_hashes.clone())?;
+            compute_withdrawals_merkle_root(withdrawal_hashes.clone()).map_err(CommitterError::from)?;
 
         info!("Sending commitment for batch {batch_to_commit}. first_block: {first_block_to_commit}, last_block: {last_block_of_batch}");
 
@@ -232,6 +231,7 @@ impl Committer {
 
             // Get block transactions and receipts
             let mut txs_and_receipts = vec![];
+            let mut txs = vec![];
             for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
                 let receipt = self
                     .store
@@ -241,6 +241,7 @@ impl Committer {
                         "Transactions in a block should have a receipt".to_owned(),
                     ))?;
                 txs_and_receipts.push((tx.clone(), receipt));
+                txs.push(tx.clone());
             }
 
             metrics!(
@@ -252,7 +253,7 @@ impl Committer {
             );
             // Get block withdrawals and deposits
             let withdrawals = get_block_withdrawals(&txs_and_receipts)?;
-            let deposits = get_block_deposits(&txs_and_receipts);
+            let deposits = get_block_deposits(&txs);
 
             // Get block account updates.
             let block_to_commit = Block::new(block_to_commit_header.clone(), block_to_commit_body);
@@ -357,7 +358,7 @@ impl Committer {
                 .set_blob_usage_percentage((_blob_size as f64 / BYTES_PER_BLOB as f64) * 100_f64);
         );
 
-        let deposit_logs_hash = self.get_deposit_hash(deposit_logs_hashes)?;
+        let deposit_logs_hash = compute_deposit_logs_hash(deposit_logs_hashes).map_err(CommitterError::from)?;
         Ok((
             blobs_bundle,
             new_state_root,
@@ -365,45 +366,6 @@ impl Committer {
             deposit_logs_hash,
             last_added_block_number,
         ))
-    }
-
-    fn get_withdrawals_merkle_root(
-        &self,
-        withdrawals_hashes: Vec<H256>,
-    ) -> Result<H256, CommitterError> {
-        if !withdrawals_hashes.is_empty() {
-            merkelize(withdrawals_hashes).map_err(CommitterError::FailedToMerkelize)
-        } else {
-            Ok(H256::zero())
-        }
-    }
-
-    fn get_deposit_hash(&self, deposit_hashes: Vec<H256>) -> Result<H256, CommitterError> {
-        if !deposit_hashes.is_empty() {
-            let deposit_hashes_len: u16 = deposit_hashes
-                .len()
-                .try_into()
-                .map_err(CommitterError::from)?;
-            Ok(H256::from_slice(
-                [
-                    &deposit_hashes_len.to_be_bytes(),
-                    keccak(
-                        deposit_hashes
-                            .iter()
-                            .map(H256::as_bytes)
-                            .collect::<Vec<&[u8]>>()
-                            .concat(),
-                    )
-                    .as_bytes()
-                    .get(2..32)
-                    .ok_or(CommitterError::FailedToDecodeDepositHash)?,
-                ]
-                .concat()
-                .as_slice(),
-            ))
-        } else {
-            Ok(H256::zero())
-        }
     }
 
     /// Generate the blob bundle necessary for the EIP-4844 transaction.

@@ -711,12 +711,25 @@ pub fn get_block_withdrawals(
     Ok(ret)
 }
 
-pub fn get_block_deposits(
+pub fn get_block_withdrawal_hashes(
     txs_and_receipts: &[(Transaction, Receipt)],
+) -> Result<Vec<H256>, StateDiffError> {
+    let mut ret = vec![];
+
+    for (tx, receipt) in txs_and_receipts {
+        if is_withdrawal_l2(tx, receipt)? {
+            ret.push(tx.compute_hash())
+        }
+    }
+    Ok(ret)
+}
+
+pub fn get_block_deposits(
+    txs: &[Transaction]
 ) -> Vec<PrivilegedL2Transaction> {
-    let deposits = txs_and_receipts
+    let deposits = txs
         .iter()
-        .filter_map(|(tx, _)| match tx {
+        .filter_map(|tx| match tx {
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.clone()),
             _ => None,
         })
@@ -764,4 +777,59 @@ pub async fn get_tx_and_receipts(
         txs_and_receipts.push((tx.clone(), receipt));
     }
     Ok(txs_and_receipts)
+}
+
+pub fn compute_withdrawals_merkle_root(withdrawals_hashes: Vec<H256>) -> Result<H256, StateDiffError> {
+    if !withdrawals_hashes.is_empty() {
+        merkelize(withdrawals_hashes)
+    } else {
+        Ok(H256::zero())
+    }
+}
+
+pub fn merkelize(data: Vec<H256>) -> Result<H256, StateDiffError> {
+    let mut data = data;
+    let mut first = true;
+    while data.len() > 1 || first {
+        first = false;
+        data = data
+            .chunks(2)
+            .flat_map(|chunk| -> Result<H256, StateDiffError> {
+                let left = chunk.first().ok_or_else(|| StateDiffError::InternalError("Failed to merkelize: chunk was empty".to_string()))?;
+                let right = *chunk.get(1).unwrap_or(left);
+                Ok(keccak([left.as_bytes(), right.as_bytes()].concat())
+                    .as_fixed_bytes()
+                    .into())
+            })
+            .collect(); // Collects H256, errors are propagated by '?' inside flat_map
+    }
+    data.first().copied().ok_or_else(|| StateDiffError::InternalError("Failed to merkelize: data was empty after processing".to_string()))
+}
+
+pub fn compute_deposit_logs_hash(deposit_log_hashes: Vec<H256>) -> Result<H256, StateDiffError> {
+    if !deposit_log_hashes.is_empty() {
+        let len: u16 = deposit_log_hashes
+            .len()
+            .try_into()
+            .map_err(StateDiffError::from)?;
+        Ok(H256::from_slice(
+            [
+                &len.to_be_bytes(),
+                keccak(
+                    deposit_log_hashes
+                        .iter()
+                        .map(H256::as_bytes)
+                        .collect::<Vec<&[u8]>>()
+                        .concat(),
+                )
+                .as_bytes()
+                .get(2..32)
+                .ok_or_else(|| StateDiffError::InternalError("Failed to decode deposit hash".to_string()))?,
+            ]
+            .concat()
+            .as_slice(),
+        ))
+    } else {
+        Ok(H256::zero())
+    }
 }

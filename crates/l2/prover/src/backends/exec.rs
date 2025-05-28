@@ -6,13 +6,14 @@ use ethrex_l2_sdk::calldata::Value;
 use ethrex_vm::Evm;
 use std::collections::HashMap;
 use tracing::warn;
-#[cfg(feature = "l2")]
-use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
-#[cfg(feature = "l2")]
-use zkvm_interface::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
+};
+
+#[cfg(feature = "l2")]
+use ethrex_l2_common::{
+    get_block_deposits, get_block_withdrawal_hashes, compute_deposit_logs_hash, compute_withdrawals_merkle_root,
 };
 
 pub struct ProveOutput(pub ProgramOutput);
@@ -74,7 +75,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
 
     #[cfg(feature = "l2")]
-    let mut withdrawals = vec![];
+    let mut withdrawal_hashes = vec![];
     #[cfg(feature = "l2")]
     let mut deposits_hashes = vec![];
 
@@ -96,18 +97,27 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         // Get L2 withdrawals and deposits for this block
         #[cfg(feature = "l2")]
         {
-            let block_withdrawals = get_block_withdrawals(&block.body.transactions, &receipts)?;
-            let block_deposits = get_block_deposits(&block.body.transactions);
+            let txs = block.body.transactions;
+            let block_deposits = get_block_deposits(&txs);
+
+            let txs_and_receipts: Vec<_> = txs.into_iter().zip(receipts.clone().into_iter()).collect();
+            let block_withdrawal_hashes = get_block_withdrawal_hashes(&txs_and_receipts)?;
+
             let mut block_deposits_hashes = Vec::with_capacity(block_deposits.len());
-            for deposit in block_deposits {
+            for deposit in &block_deposits {
                 if let Some(hash) = deposit.get_deposit_hash() {
                     block_deposits_hashes.push(hash);
                 } else {
                     return Err("Failed to get deposit hash for tx".to_string().into());
                 }
             }
-            withdrawals.extend(block_withdrawals);
-            deposits_hashes.extend(block_deposits_hashes);
+            withdrawal_hashes.extend(block_withdrawal_hashes);
+            deposits_hashes.extend(
+                block_deposits
+                    .iter()
+                    .filter_map(|tx| tx.get_deposit_hash())
+                    .collect::<Vec<_>>(),
+            );
         }
 
         // Update db for the next block
@@ -137,7 +147,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
 
     // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
-    let Ok(withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
+    let Ok(withdrawals_merkle_root) = compute_withdrawals_merkle_root(withdrawal_hashes) else {
         return Err("Failed to calculate withdrawals merkle root"
             .to_string()
             .into());
@@ -145,7 +155,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
 
     // Calculate L2 deposits logs root
     #[cfg(feature = "l2")]
-    let Ok(deposit_logs_hash) = get_deposit_hash(deposits_hashes) else {
+    let Ok(deposit_logs_hash) = compute_deposit_logs_hash(deposits_hashes) else {
         return Err("Failed to calculate deposits logs hash".to_string().into());
     };
 
