@@ -203,7 +203,8 @@ pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, P
 /// perform the deletion. If we have the final proof of exclusion of the deleted value, we can
 /// calculate all posible child nodes.
 pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Node>> {
-    // TODO: Perhaps it's possible to calculate the child nodes instead of storing all possible ones.
+    // TODO: Perhaps it's possible to calculate the child nodes instead of storing all possible ones?.
+    // TODO: https://github.com/lambdaclass/ethrex/issues/2938
     let trie = Trie::from_nodes(
         proof.first(),
         &proof.iter().skip(1).cloned().collect::<Vec<_>>(),
@@ -226,7 +227,10 @@ pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec
                 let mut variants = Vec::with_capacity(node.partial.len());
                 while {
                     variants.push(Node::from(node.clone()));
-                    node.partial.next().is_some()
+                    node.partial.next();
+                    !node.partial.is_empty() // skip the last nibble, which is the leaf flag.
+                                             // if we encode a leaf with its flag missing, it’s going to be encoded as an
+                                             // extension.
                 } {}
                 Some(variants)
             }
