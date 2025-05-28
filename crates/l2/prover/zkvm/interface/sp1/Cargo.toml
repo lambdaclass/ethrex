@@ -20,6 +20,7 @@ ethrex-storage = { path = "../../../../../storage", default-features = false }
 ethrex-rlp = { path = "../../../../../common/rlp" }
 ethrex-vm = { path = "../../../../../vm", default-features = false }
 ethrex-blockchain = { path = "../../../../../blockchain", default-features = false }
+ethrex-l2-common = { path = "../../../../common", default-features = false }
 
 [patch.crates-io]
 sha3-v0-10-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-4.0.0" }
