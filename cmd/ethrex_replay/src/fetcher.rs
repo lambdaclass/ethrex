@@ -1,6 +1,9 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::cache::{load_cache, write_cache, Cache};
 use crate::rpc::{db::RpcDB, get_block, get_latest_block_number};
 use ethrex_common::types::ChainConfig;
+use ethrex_common::{Address, H256};
 use eyre::WrapErr;
 
 pub async fn or_latest(maybe_number: Option<usize>, rpc_url: &str) -> eyre::Result<usize> {
@@ -49,13 +52,42 @@ pub async fn get_rangedata(
     rpc_url: &str,
     chain_config: ChainConfig,
     from: usize,
-    to: usize
+    to: usize,
 ) -> eyre::Result<Cache> {
-    let mut blocks = Vec::with_capacity(to-from);
+    let mut blocks = Vec::with_capacity(to - from);
     for block_number in from..to {
         let data = get_blockdata(rpc_url, chain_config, block_number).await?;
         blocks.push(data);
     }
-    let merged = blocks.into_iter().reduce(|acc, cache| acc.merge(cache));
-    merged.ok_or(eyre::Error::msg("no blocks in range"))
+    let first_block = blocks[0].blocks[0].clone();
+    let rpc_db = RpcDB::new(rpc_url, chain_config, from);
+    let mut used: HashMap<Address, HashSet<H256>> = HashMap::new();
+    for block_data in blocks.iter() {
+        for account in block_data.db.accounts.keys() {
+            used.entry(*account).or_default();
+        }
+        for (account, storage) in block_data.db.storage.iter() {
+            let slots = used.entry(*account).or_default();
+            slots.extend(storage.keys());
+        }
+    }
+    let to_fetch: Vec<(Address, Vec<H256>)> = used
+        .into_iter()
+        .map(|(address, storages)| (address, storages.into_iter().collect()))
+        .collect();
+    println!("{to_fetch:?}");
+    rpc_db.load_accounts(&to_fetch).await?;
+    let mut proverdb = rpc_db.to_exec_db(&first_block)?;
+    proverdb.block_hashes = blocks
+        .iter()
+        .map(|cache| &cache.blocks[0].header)
+        .chain([blocks[0].parent_block_header.clone()].iter())
+        .map(|header| (header.number, header.compute_block_hash()))
+        .collect();
+    let cache = Cache {
+        blocks: blocks.iter().map(|cache| cache.blocks[0].clone()).collect(),
+        parent_block_header: blocks[0].parent_block_header.clone(),
+        db: proverdb,
+    };
+    Ok(cache)
 }

@@ -74,7 +74,7 @@ impl SubcommandExecute {
                 };
                 let res = run_and_measure(bench, body).await?;
                 println!("{}", res);
-            },
+            }
             SubcommandExecute::BlockRange {
                 start,
                 end,
@@ -83,7 +83,9 @@ impl SubcommandExecute {
                 bench,
             } => {
                 if start >= end {
-                    return Err(eyre::Error::msg("starting point can't be greater than ending point"));
+                    return Err(eyre::Error::msg(
+                        "starting point can't be greater than ending point",
+                    ));
                 }
                 let chain_config = get_chain_config(&network)?;
                 let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
