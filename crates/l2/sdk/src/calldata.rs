@@ -72,6 +72,7 @@ fn parse_signature(signature: &str) -> Result<(String, Vec<String>), CalldataEnc
 
 fn compute_function_selector(name: &str, params: &[String]) -> Result<H32, CalldataEncodeError> {
     let normalized_signature = format!("{name}({})", params.join(","));
+
     let hash = keccak(normalized_signature.as_bytes());
 
     Ok(H32::from(&hash[..4].try_into().map_err(|_| {
