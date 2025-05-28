@@ -12,11 +12,11 @@ use ethrex_common::{
     Address, U256,
 };
 use ethrex_metrics::metrics;
-
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
-#[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
+use ethrex_metrics::{
+    metrics_blocks::METRICS_BLOCKS,
+    metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX},
+};
 use ethrex_storage::Store;
 use ethrex_vm::{backends::CallFrameBackup, Evm, EvmError};
 use std::ops::Div;
