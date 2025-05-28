@@ -85,7 +85,6 @@ impl DiskLayer {
             return Ok(value);
         }
 
-        // TODO: check that snapshot is done to make sure None is None?
         let value = self.db.get_storage_snapshot(account_hash, storage_hash)?;
 
         self.cache

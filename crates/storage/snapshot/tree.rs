@@ -360,7 +360,6 @@ impl SnapshotTree {
             .write()
             .map_err(|error| SnapshotError::LockError(error.to_string()))?;
         diff_value.set_parent(base.block_hash());
-        //diff_value.origin = base.block_hash();
 
         Ok(Some(base))
     }
