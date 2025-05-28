@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748448612138,
+  "lastUpdate": 1748452343971,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11885,6 +11885,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007419362340216323,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "653f54557dfde99bbb43a928e12814984a1fd8ba",
+          "message": "fix(core): block_body validation when missing only one field (#2953)\n\n**Motivation**\n\nWhen validating blocks in the case of having only one of either\n`withdrawals_root` or block `withdrawals` we could still check:\n- if we have `withdrawals_root` but not `withdrawals` that the root is\nthe hash of an empty MPT",
+          "timestamp": "2025-05-28T14:57:45Z",
+          "tree_id": "ab3edcd7543a85c0f20eb7356e0a31a389da844f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/653f54557dfde99bbb43a928e12814984a1fd8ba"
+        },
+        "date": 1748452343547,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007433981773399014,
             "unit": "Mgas/s"
           }
         ]
