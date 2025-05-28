@@ -56,7 +56,7 @@ pub async fn start_l2(
         blobs_bundle_cache.clone(),
     ));
     task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
-    task_set.spawn(start_block_producer(store.clone(), blockchain, cfg.clone()));
+    task_set.spawn(start_block_producer(store.clone(), blockchain, cfg.clone(), execution_cache));
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
 

@@ -17,7 +17,7 @@ use payload_builder::build_payload;
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 
-use crate::{BlockProducerConfig, SequencerConfig};
+use crate::{sequencer::execution_cache::ExecutionCache, BlockProducerConfig, SequencerConfig};
 
 use super::errors::{BlockProducerError, SequencerError};
 
@@ -37,9 +37,10 @@ pub async fn start_block_producer(
     store: Store,
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
+    execution_cache: Arc<ExecutionCache>,
 ) -> Result<(), SequencerError> {
     let proposer = BlockProducer::new_from_config(&cfg.block_producer);
-    proposer.run(store.clone(), blockchain).await;
+    proposer.run(store.clone(), blockchain, execution_cache).await;
     Ok(())
 }
 
@@ -57,9 +58,9 @@ impl BlockProducer {
         }
     }
 
-    pub async fn run(&self, store: Store, blockchain: Arc<Blockchain>) {
+    pub async fn run(&self, store: Store, blockchain: Arc<Blockchain>, execution_cache: Arc<ExecutionCache>) {
         loop {
-            if let Err(err) = self.main_logic(store.clone(), blockchain.clone()).await {
+            if let Err(err) = self.main_logic(store.clone(), blockchain.clone(), execution_cache.clone()).await {
                 error!("Block Producer Error: {}", err);
             }
 
@@ -71,6 +72,7 @@ impl BlockProducer {
         &self,
         store: Store,
         blockchain: Arc<Blockchain>,
+        execution_cache: Arc<ExecutionCache>,
     ) -> Result<(), BlockProducerError> {
         let version = 3;
         let head_header = {
@@ -130,6 +132,9 @@ impl BlockProducer {
             .await?;
         info!("Stored new block {:x}", block.hash());
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
+
+        // Cache execution result
+        execution_cache.push(block.hash(), account_updates)?;
 
         // Make the new head be part of the canonical chain
         apply_fork_choice(&store, block.hash(), block.hash(), block.hash()).await?;
