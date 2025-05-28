@@ -22,7 +22,7 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 
 STAMP_FILE := .docker_build_stamp
 $(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex -t ghcr.io/lambdaclass/ethrex .
+	docker build -t ethrex .
 	touch $(STAMP_FILE)
 
 build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
@@ -128,7 +128,7 @@ display-hive-alternatives:
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
 run-hive: display-hive-alternatives build-image setup-hive ## 🧪 Run Hive testing suite
-	- cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
+	- cd hive && ./hive --client-file ../hive_clients.yml --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
 	$(MAKE) view-hive
 
 run-hive-all: display-hive-alternatives build-image setup-hive ## 🧪 Run all Hive testing suites
