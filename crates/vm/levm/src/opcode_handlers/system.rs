@@ -5,6 +5,7 @@ use crate::{
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
+    opcodes::Opcode,
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
@@ -107,6 +108,14 @@ impl<'a> VM<'a> {
         let to = callee; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
         let is_static = current_call_frame.is_static;
 
+        self.tracer.enter(
+            Opcode::CALL,
+            msg_sender,
+            to,
+            value_to_transfer,
+            gas_limit,
+            Bytes::new(),
+        );
         self.generic_call(
             gas_limit,
             value_to_transfer,
@@ -207,6 +216,14 @@ impl<'a> VM<'a> {
         let to = current_call_frame.to;
         let is_static = current_call_frame.is_static;
 
+        self.tracer.enter(
+            Opcode::CALLCODE,
+            msg_sender,
+            code_address, // It is just specified for DELEGATECALL to put code_address here but I'm going to keep it the same here.
+            value_to_transfer,
+            gas_limit,
+            Bytes::new(),
+        );
         self.generic_call(
             gas_limit,
             value_to_transfer,
@@ -331,6 +348,14 @@ impl<'a> VM<'a> {
         let to = current_call_frame.to;
         let is_static = current_call_frame.is_static;
 
+        self.tracer.enter(
+            Opcode::DELEGATECALL,
+            msg_sender,
+            code_address,
+            value,
+            gas_limit,
+            Bytes::new(),
+        );
         self.generic_call(
             gas_limit,
             value,
@@ -424,6 +449,14 @@ impl<'a> VM<'a> {
         let msg_sender = self.current_call_frame()?.to; // The new sender will be the current contract.
         let to = code_address; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
 
+        self.tracer.enter(
+            Opcode::STATICCALL,
+            msg_sender,
+            to,
+            value,
+            gas_limit,
+            Bytes::new(),
+        );
         self.generic_call(
             gas_limit,
             value,
@@ -654,6 +687,19 @@ impl<'a> VM<'a> {
         // touch account
         self.substate.touched_accounts.insert(new_address);
 
+        let call_type = match salt {
+            Some(_) => Opcode::CREATE2,
+            None => Opcode::CREATE,
+        };
+        self.tracer.enter(
+            call_type,
+            deployer_address,
+            new_address,
+            value_in_wei_to_send,
+            max_message_call_gas,
+            Bytes::new(), //TODO: See if this should be the code ???
+        );
+
         let new_depth = {
             let current_call_frame = self.current_call_frame_mut()?;
             let new_depth = current_call_frame
@@ -675,6 +721,9 @@ impl<'a> VM<'a> {
                     .ok_or(VMError::Internal(InternalError::GasOverflow))?;
                 // Push 0
                 current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
+
+                self.tracer
+                    .exit(0, Bytes::new(), Some("CreateFail".to_string()), None);
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
             new_depth
@@ -687,6 +736,13 @@ impl<'a> VM<'a> {
             self.current_call_frame_mut()?
                 .stack
                 .push(CREATE_DEPLOYMENT_FAIL)?;
+
+            self.tracer.exit(
+                max_message_call_gas,
+                Bytes::new(),
+                Some("CreateAccExists".to_string()),
+                None,
+            );
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -760,21 +816,24 @@ impl<'a> VM<'a> {
             .info
             .balance;
         let calldata = {
-            let current_call_frame = self.current_call_frame_mut()?;
+            let callframe = self.current_call_frame_mut()?;
             // Clear callframe subreturn data
-            current_call_frame.sub_return_data = Bytes::new();
+            callframe.sub_return_data = Bytes::new();
 
             let calldata =
-                memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?
-                    .to_vec();
+                memory::load_range(&mut callframe.memory, args_offset, args_size)?.to_vec();
 
             // 1. Validate sender has enough value
             if should_transfer_value && sender_balance < value {
-                current_call_frame.gas_used = current_call_frame
+                let gas_used = callframe
                     .gas_used
                     .checked_sub(gas_limit)
                     .ok_or(InternalError::GasOverflow)?;
-                current_call_frame.stack.push(REVERT_FOR_CALL)?;
+                callframe.gas_used = gas_used;
+                callframe.stack.push(REVERT_FOR_CALL)?;
+
+                self.tracer
+                    .exit(gas_used, Bytes::new(), Some("OutOfFund".to_string()), None);
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
             calldata
@@ -788,12 +847,19 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
         if new_depth > 1024 {
-            self.current_call_frame_mut()?.gas_used = self
-                .current_call_frame()?
+            let callframe = self.current_call_frame_mut()?;
+            let gas_used = callframe
                 .gas_used
                 .checked_sub(gas_limit)
                 .ok_or(InternalError::GasOverflow)?;
-            self.current_call_frame_mut()?.stack.push(REVERT_FOR_CALL)?;
+            callframe.gas_used = gas_used;
+            callframe.stack.push(REVERT_FOR_CALL)?;
+            self.tracer.exit(
+                gas_used,
+                Bytes::new(),
+                Some("MaxCallDepth".to_string()),
+                None,
+            );
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -876,14 +942,16 @@ impl<'a> VM<'a> {
         }
 
         // What to do, depending on TxResult
-        match tx_report.result {
+        match &tx_report.result {
             TxResult::Success => {
+                self.tracer
+                    .exit(tx_report.gas_used, tx_report.output.clone(), None, None);
                 self.current_call_frame_mut()?
                     .stack
                     .push(SUCCESS_FOR_CALL)?;
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
-            TxResult::Revert(_) => {
+            TxResult::Revert(error) => {
                 // Revert value transfer
                 if executed_call_frame.should_transfer_value {
                     self.decrease_account_balance(
@@ -896,6 +964,12 @@ impl<'a> VM<'a> {
                         executed_call_frame.msg_value,
                     )?;
                 }
+                self.tracer.exit(
+                    tx_report.gas_used,
+                    tx_report.output.clone(), //TODO: Check if output is cleared when it's not revert opcode
+                    Some(error.to_string()),
+                    None,
+                );
                 // Push 0 to stack
                 self.current_call_frame_mut()?.stack.push(REVERT_FOR_CALL)?;
             }
@@ -926,6 +1000,8 @@ impl<'a> VM<'a> {
 
         match tx_report.result.clone() {
             TxResult::Success => {
+                self.tracer
+                    .exit(tx_report.gas_used, tx_report.output.clone(), None, None);
                 self.current_call_frame_mut()?
                     .stack
                     .push(address_to_word(executed_call_frame.to))?;
@@ -944,12 +1020,19 @@ impl<'a> VM<'a> {
                     .created_accounts
                     .remove(&executed_call_frame.to);
 
-                let current_call_frame = self.current_call_frame_mut()?;
                 // If revert we have to copy the return_data
                 if err == VMError::RevertOpcode {
-                    current_call_frame.sub_return_data = tx_report.output.clone();
+                    self.current_call_frame_mut()?.sub_return_data = tx_report.output.clone();
                 }
-                current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
+                self.tracer.exit(
+                    tx_report.gas_used,
+                    tx_report.output.clone(), //TODO: Check if output is cleared when it's not revert opcode
+                    Some(err.to_string()),
+                    None,
+                );
+                self.current_call_frame_mut()?
+                    .stack
+                    .push(CREATE_DEPLOYMENT_FAIL)?;
             }
         }
         Ok(())

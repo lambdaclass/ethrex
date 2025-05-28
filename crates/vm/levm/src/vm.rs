@@ -4,19 +4,20 @@ use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
-    errors::{ExecutionReport, OpcodeResult, VMError},
+    errors::{ExecutionReport, OpcodeResult, TxResult, VMError},
     hooks::hook::Hook,
+    opcodes::Opcode,
     precompiles::execute_precompile,
     TransientStorage,
 };
 use bytes::Bytes;
+use derive_more::derive::Debug;
 use ethrex_common::{
     types::{Transaction, TxKind},
     Address, H256, U256,
 };
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    fmt::Debug,
     sync::Arc,
 };
 
@@ -33,6 +34,101 @@ pub struct Substate {
     pub transient_storage: TransientStorage,
 }
 
+#[derive(Debug, Clone)]
+pub struct TracerCallFrame {
+    pub call_type: Opcode,
+    pub from: Address,
+    pub to: Address,
+    pub value: U256,
+    pub gas: u64,
+    pub gas_used: u64,
+    pub input: Bytes,
+    pub output: Bytes,
+    pub error: Option<String>,
+    pub revert_reason: Option<String>,
+    pub calls: Vec<TracerCallFrame>,
+}
+
+impl TracerCallFrame {
+    pub fn new(
+        call_type: Opcode,
+        from: Address,
+        to: Address,
+        value: U256,
+        gas: u64,
+        input: Bytes,
+    ) -> Self {
+        Self {
+            call_type,
+            from,
+            to,
+            value,
+            gas,
+            gas_used: 0,
+            input,
+            output: Bytes::new(),
+            error: None,
+            revert_reason: None,
+            calls: Vec::new(),
+        }
+    }
+
+    pub fn process_output(
+        &mut self,
+        gas_used: u64,
+        output: Bytes,
+        error: Option<String>,
+        revert_reason: Option<String>,
+    ) {
+        self.gas_used = gas_used;
+        self.output = output;
+        self.error = error;
+        self.revert_reason = revert_reason;
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct CallTracer {
+    pub callframes: Vec<TracerCallFrame>,
+}
+
+impl CallTracer {
+    pub fn enter(
+        &mut self,
+        call_type: Opcode,
+        from: Address,
+        to: Address,
+        value: U256,
+        gas: u64,
+        input: Bytes,
+    ) {
+        let callframe = TracerCallFrame::new(call_type, from, to, value, gas, input);
+        self.callframes.push(callframe);
+    }
+
+    pub fn exit(
+        &mut self,
+        gas_used: u64,
+        output: Bytes,
+        error: Option<String>,
+        revert_reason: Option<String>,
+    ) {
+        let mut executed_callframe = self
+            .callframes
+            .pop()
+            .expect("You can't exit if you haven't started before...");
+
+        executed_callframe.process_output(gas_used, output, error, revert_reason);
+
+        // Append executed callframe to parent callframe.
+        if let Some(parent_callframe) = self.callframes.last_mut() {
+            parent_callframe.calls.push(executed_callframe);
+        } else {
+            self.callframes.push(executed_callframe);
+        }
+    }
+}
+
 pub struct VM<'a> {
     pub call_frames: Vec<CallFrame>,
     pub env: Environment,
@@ -43,6 +139,7 @@ pub struct VM<'a> {
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
+    pub tracer: CallTracer,
 }
 
 impl<'a> VM<'a> {
@@ -58,6 +155,7 @@ impl<'a> VM<'a> {
             hooks,
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
+            tracer: CallTracer::default(),
         }
     }
 
@@ -84,6 +182,20 @@ impl<'a> VM<'a> {
         );
 
         self.call_frames.push(initial_call_frame);
+
+        let call_type = if self.is_create() {
+            Opcode::CREATE
+        } else {
+            Opcode::CALL
+        };
+        self.tracer.enter(
+            call_type,
+            self.env.origin,
+            callee,
+            self.tx.value(),
+            self.env.gas_limit,
+            self.tx.data().clone(),
+        );
 
         Ok(())
     }
@@ -221,6 +333,16 @@ impl<'a> VM<'a> {
         for hook in self.hooks.clone() {
             hook.finalize_execution(self, report)?;
         }
+
+        let error = match &report.result {
+            TxResult::Success => None,
+            TxResult::Revert(vmerror) => Some(vmerror.to_string()),
+        };
+        //TODO: See what to do with revert_reason
+        self.tracer
+            .exit(report.gas_used, report.output.clone(), error, None);
+
+        // dbg!(&self.tracer);
 
         Ok(())
     }
