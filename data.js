@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748447679049,
+  "lastUpdate": 1748448612138,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11851,6 +11851,35 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/lambdaclass/ethrex/commit/84509b69343181c447065c70c057c8488b606bac"
         },
         "date": 1748395517709,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007419362340216323,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "23627eb2e241b3fc68c5bd8cfae7f4d2f726e209",
+          "message": "fix(l1,levm): improve vm database methods (#2941)\n\n**Motivation**\n\n- Be more accurate in the VM database when things go wrong. Propagating\nerrors when adequate instead of unwrapping or ignoring them.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- Stop doing unwrap when getting ChainConfig.\n    - This never failed yet but we shouldn’t unwrap in case it does.\n- Stop returning an `Option` when getting account code from DB, if code\nis not found we throw an error now.\n\nNote: If the `code_hash` that's being looked for is `EMPTY_KECCAK_HASH`\nthen return empty bytes.",
+          "timestamp": "2025-05-28T13:24:15Z",
+          "tree_id": "3f7da6cada781153db4b29a918e953f611392bf2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/23627eb2e241b3fc68c5bd8cfae7f4d2f726e209"
+        },
+        "date": 1748448608888,
         "tool": "customBiggerIsBetter",
         "benches": [
           {
