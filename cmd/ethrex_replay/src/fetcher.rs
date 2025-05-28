@@ -11,7 +11,7 @@ pub async fn or_latest(maybe_number: Option<usize>, rpc_url: &str) -> eyre::Resu
 }
 
 pub async fn get_blockdata(
-    rpc_url: String,
+    rpc_url: &str,
     chain_config: ChainConfig,
     block_number: usize,
 ) -> eyre::Result<Cache> {
@@ -37,10 +37,25 @@ pub async fn get_blockdata(
         .wrap_err("failed to build execution db")?;
 
     let cache = Cache {
-        block,
+        blocks: vec![block],
         parent_block_header,
         db,
     };
     write_cache(&cache).expect("failed to write cache");
     Ok(cache)
+}
+
+pub async fn get_rangedata(
+    rpc_url: &str,
+    chain_config: ChainConfig,
+    from: usize,
+    to: usize
+) -> eyre::Result<Cache> {
+    let mut blocks = Vec::with_capacity(to-from);
+    for block_number in from..to {
+        let data = get_blockdata(rpc_url, chain_config, block_number).await?;
+        blocks.push(data);
+    }
+    let merged = blocks.into_iter().reduce(|acc, cache| acc.merge(cache));
+    merged.ok_or(eyre::Error::msg("no blocks in range"))
 }

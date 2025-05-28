@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 
 use crate::bench::run_and_measure;
 use crate::constants::get_chain_config;
-use crate::fetcher::{get_blockdata, or_latest};
+use crate::fetcher::{get_blockdata, get_rangedata, or_latest};
 use crate::run::{exec, prove};
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
@@ -34,6 +34,25 @@ enum SubcommandExecute {
         #[arg(long, required = false)]
         bench: bool,
     },
+    #[command(name = "block-range", about = "Executes a range of blocks")]
+    BlockRange {
+        #[arg(help = "Starting block.")]
+        start: usize,
+        #[arg(help = "Ending block.")]
+        end: usize,
+        #[arg(long, env = "RPC_URL", required = true)]
+        rpc_url: String,
+        #[arg(
+            long,
+            default_value = "mainnet",
+            env = "NETWORK",
+            required = false,
+            help = "Name or ChainID of the network to use"
+        )]
+        network: String,
+        #[arg(long, required = false)]
+        bench: bool,
+    },
 }
 
 impl SubcommandExecute {
@@ -47,9 +66,29 @@ impl SubcommandExecute {
             } => {
                 let chain_config = get_chain_config(&network)?;
                 let block = or_latest(block, &rpc_url).await?;
-                let cache = get_blockdata(rpc_url, chain_config, block).await?;
+                let cache = get_blockdata(&rpc_url, chain_config, block).await?;
                 let body = async {
-                    let gas_used = cache.block.header.gas_used as f64;
+                    let gas_used = cache.blocks[0].header.gas_used as f64;
+                    let res = exec(cache).await?;
+                    Ok((gas_used, res))
+                };
+                let res = run_and_measure(bench, body).await?;
+                println!("{}", res);
+            },
+            SubcommandExecute::BlockRange {
+                start,
+                end,
+                rpc_url,
+                network,
+                bench,
+            } => {
+                if start >= end {
+                    return Err(eyre::Error::msg("starting point can't be greater than ending point"));
+                }
+                let chain_config = get_chain_config(&network)?;
+                let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
+                let body = async {
+                    let gas_used = cache.blocks.iter().map(|b| b.header.gas_used as f64).sum();
                     let res = exec(cache).await?;
                     Ok((gas_used, res))
                 };
@@ -93,9 +132,9 @@ impl SubcommandProve {
             } => {
                 let chain_config = get_chain_config(&network)?;
                 let block = or_latest(block, &rpc_url).await?;
-                let cache = get_blockdata(rpc_url, chain_config, block).await?;
+                let cache = get_blockdata(&rpc_url, chain_config, block).await?;
                 let body = async {
-                    let gas_used = cache.block.header.gas_used as f64;
+                    let gas_used = cache.blocks[0].header.gas_used as f64;
                     let res = prove(cache).await?;
                     Ok((gas_used, res))
                 };
