@@ -116,12 +116,12 @@ impl GenServer for L1Watcher {
                     .await
                     .inspect_err(|err| error!("L1 Watcher Error: {err}"))
                 {
-                        // We may not have a deposit nor a withdrawal, that means no events -> no logs.
-                        if !logs.is_empty() {
+                    // We may not have a deposit nor a withdrawal, that means no events -> no logs.
+                    if !logs.is_empty() {
                         let _ = process_logs(state, logs)
                             .await
                             .inspect_err(|err| error!("L1 Watcher Error: {}", err));
-                };
+                    };
                 }
 
                 CastResponse::NoReply
@@ -262,21 +262,18 @@ pub async fn process_logs(
             )
             .await?;
 
-        match state
+        let Ok(hash) = state
             .blockchain
             .add_transaction_to_pool(Transaction::PrivilegedL2Transaction(mint_transaction))
             .await
-        {
-            Ok(hash) => {
-                info!("Mint transaction added to mempool {hash:#x}",);
-                deposit_txs.push(hash);
-            }
-            Err(e) => {
-                warn!("Failed to add mint transaction to the mempool: {e:#?}");
-                // TODO: Figure out if we want to continue or not
-                continue;
-            }
-        }
+            .inspect_err(|e| warn!("Failed to add mint transaction to the mempool: {e:#?}"))
+        else {
+            // TODO: Figure out if we want to continue or not
+            continue;
+        };
+
+        info!("Mint transaction added to mempool {hash:#x}",);
+        deposit_txs.push(hash);
     }
 
     Ok(deposit_txs)
