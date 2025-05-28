@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748452343971,
+  "lastUpdate": 1748456765861,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11914,6 +11914,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007433981773399014,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "daee43320db55f3980982b2e7408d5a1f621300f",
+          "message": "fix(l1,l2): pin libmdbx and redb versions (#2945)\n\n**Motivation**\n\nlibmdbx 0.5.4 bumps mdbx-sys to version 12.13.0 (previously 12.12.0)\nwhich uses features of Edition 2024, which is incompatible with ethrex.\n\nupdate: same problem encountered with redb, pinned to 2.4.0.",
+          "timestamp": "2025-05-28T17:36:01Z",
+          "tree_id": "f877704ca0a25416605552a218ff592d407a9dcb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/daee43320db55f3980982b2e7408d5a1f621300f"
+        },
+        "date": 1748456762457,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.00740480029440628,
             "unit": "Mgas/s"
           }
         ]
