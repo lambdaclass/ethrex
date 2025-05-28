@@ -156,8 +156,12 @@ impl Blockchain {
     }
 
     pub async fn try_add_block(&self,block: &Block) -> Result<(), ChainError> {
-        match self.storage.get_block_by_hash(block.hash()).await {
-            Ok(Some(_)) => Ok(()),
+        // Check if the block is already in the blockchain, if it is do nothing, if not add it
+        match self.storage.get_block_number(block.hash()).await {
+            Ok(Some(_)) => {
+                info!("Block {} has already been added",block.hash());
+                Ok(())
+            },
             Ok(None) => self.add_block(block).await,
             Err(_) => Err(ChainError::Custom(String::from("Couldn't check if block is already in the blockchain"))),
         }

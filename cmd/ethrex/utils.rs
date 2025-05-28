@@ -1,4 +1,4 @@
-use crate::decode;
+use crate::{decode, networks};
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
@@ -21,7 +21,7 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 #[derive(Serialize, Deserialize)]
 pub struct NodeConfigFile {
@@ -82,17 +82,19 @@ pub fn read_block_file(block_file_path: &str) -> Block {
 }
 
 pub fn read_genesis_file(genesis_file_path: &str) -> Genesis {
-    warn!("{}",genesis_file_path);
-    let path = match genesis_file_path {
-        "holesky" => "./cmd/ethrex/networks/holesky/genesis.json",
-        "hoodi" => "./cmd/ethrex/networks/hoodi/genesis.json",
-        "mainnet" => "./cmd/ethrex/networks/mainnet/genesis.json",
-        "sepolia" => "./cmd/ethrex/networks/sepolia/genesis.json",
-        p => p, 
-    };
-    warn!("{}",path);
+    let path = get_genesis_path(genesis_file_path);
     let genesis_file = std::fs::File::open(path).expect("Failed to open genesis file");
     decode::genesis_file(genesis_file).expect("Failed to decode genesis file")
+}
+// If genesis_file_path is one of the public networks return the path to its genesis.json file, if not return the inputed path
+fn get_genesis_path(genesis_file_path: &str) -> &str{
+    match genesis_file_path {
+        "holesky" => networks::HOLESKY_GENESIS_PATH,
+        "hoodi" => networks::HOODI_GENESIS_PATH,
+        "mainnet" => networks::MAINNET_GENESIS_PATH,
+        "sepolia" => networks::SEPOLIA_GENESIS_PATH,
+        path => path, 
+    }
 }
 
 pub fn parse_evm_engine(s: &str) -> eyre::Result<EvmEngine> {
