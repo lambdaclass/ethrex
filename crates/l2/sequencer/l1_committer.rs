@@ -29,7 +29,7 @@ use ethrex_vm::{Evm, EvmEngine, StoreVmDatabase};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use super::{
     errors::{BlobEstimationError, SequencerError},
@@ -100,11 +100,12 @@ impl Committer {
     }
 
     pub async fn run(&mut self) {
+        sleep_random(self.commit_time_ms * 2).await;
         loop {
             if let Err(err) = self.main_logic().await {
-                error!("L1 Committer Error: {}", err);
+                warn!("L1 Committer Error: {}", err);
             }
-            sleep_random(self.commit_time_ms).await;
+            sleep_random(self.commit_time_ms / 2).await;
         }
     }
 
