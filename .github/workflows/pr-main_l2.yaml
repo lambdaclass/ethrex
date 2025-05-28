@@ -206,10 +206,12 @@ jobs:
 
       - name: Install rex
         run: |
+          rustup install nightly # Install the nightly toolchain needed by rex, change this in the future
+          rustup default nightly
           git clone https://github.com/lambdaclass/rex.git
           cd rex
           make cli
-          echo "rex install successfully"
+          echo "rex install successfully at $(which rex)"
       
       - name: Register sequencer
         run: |
@@ -217,6 +219,8 @@ jobs:
 
       - name: Start Sequencer
         run: |
+          rustup install 1.82.0 # Install the specific toolchain needed by ethrex
+          rustup default 1.82.0
           cd crates/l2
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_VALIDIUM=false \
