@@ -54,7 +54,10 @@ impl Blockchain {
         // Run the block until the transaction we want to trace
         vm.rerun_block(&block, Some(tx_index))?;
         // Trace the transaction
-        timeout_trace_operation(timeout, move || {vm.trace_tx_calls(&block, tx_index, only_top_call, with_log)}).await
+        timeout_trace_operation(timeout, move || {
+            vm.trace_tx_calls(&block, tx_index, only_top_call, with_log)
+        })
+        .await
     }
 }
 
@@ -92,13 +95,13 @@ where
     T: Send + 'static,
 {
     let trace_start = Instant::now();
-        let handle = tokio::task::spawn_blocking(operation);
-        while !handle.is_finished() {
-            if trace_start.elapsed() > timeout {
-                handle.abort();
-            }
+    let handle = tokio::task::spawn_blocking(operation);
+    while !handle.is_finished() {
+        if trace_start.elapsed() > timeout {
+            handle.abort();
         }
-        Ok(handle
-            .await
-            .map_err(|_| ChainError::Custom("Tracing Timeout".to_string()))??)
+    }
+    Ok(handle
+        .await
+        .map_err(|_| ChainError::Custom("Tracing Timeout".to_string()))??)
 }

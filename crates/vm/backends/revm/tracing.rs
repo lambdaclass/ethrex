@@ -132,6 +132,7 @@ fn run_evm_with_call_tracer(
         call_trace,
         &revert_reason_or_error,
         only_top_call,
+        with_log,
     ))
 }
 
@@ -159,6 +160,7 @@ fn map_call_trace(
     revm_trace: CallTraceArena,
     revert_reason_or_error: &String,
     only_top_call: bool,
+    with_log: bool,
 ) -> CallTrace {
     let mut call_trace = CallTrace::new();
     // Idxs of child calls already included in the parent call
@@ -172,6 +174,7 @@ fn map_call_trace(
                 &revm_calls_copy,
                 &mut used_idxs,
                 revert_reason_or_error,
+                with_log,
             ));
         }
         if only_top_call {
@@ -187,6 +190,7 @@ fn map_call(
     revm_calls: &Vec<CallTraceNode>,
     used_idxs: &mut HashSet<usize>,
     revert_reason_or_error: &String,
+    with_log: bool,
 ) -> Call {
     let mut subcalls = vec![];
     for child_idx in &revm_call.children {
@@ -196,6 +200,7 @@ fn map_call(
                 revm_calls,
                 used_idxs,
                 revert_reason_or_error,
+                with_log,
             ));
             used_idxs.insert(*child_idx);
         }
@@ -218,7 +223,7 @@ fn map_call(
             .is_revert()
             .then(|| revert_reason_or_error.clone()),
         calls: Box::new(vec![]),
-        logs: revm_call.logs.into_iter().map(map_log).collect(),
+        logs: with_log.then(|| revm_call.logs.into_iter().map(map_log).collect()),
     }
 }
 

@@ -40,9 +40,9 @@ pub struct Call {
     pub revert_reason: Option<String>,
     /// List of nested sub-calls
     pub calls: Box<Vec<Call>>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     /// Logs (if enabled)
-    pub logs: Vec<CallLog>,
+    pub logs: Option<Vec<CallLog>>,
 }
 
 #[derive(Serialize, Debug)]
