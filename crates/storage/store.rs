@@ -434,9 +434,9 @@ impl Store {
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
-                    storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                    storage_trie.insert(hashed_key.clone(), storage_value.encode_to_vec())?;
 
-                    keys.push(H256(storage_key.to_big_endian()));
+                    keys.push(H256::from_slice(&hashed_key));
                     values.push(storage_value);
                 }
             }
