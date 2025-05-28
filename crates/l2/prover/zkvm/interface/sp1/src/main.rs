@@ -26,8 +26,11 @@ pub fn main() {
         parent_block_header,
         mut db,
         elasticity_multiplier,
+        #[cfg(feature = "l2")]
         state_diff,
+        #[cfg(feature = "l2")]
         blob_commitment,
+        #[cfg(feature = "l2")]
         blob_proof,
     } = sp1_zkvm::io::read::<ProgramInput>();
     // Tries used for validating initial and final state root
