@@ -606,12 +606,6 @@ pub fn validate_block_body(block: &Block) -> Result<(), InvalidBlockBodyError> {
                 return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
             }
         }
-        (None, Some(withdrawals)) => {
-            let computed_withdrawals_root = compute_withdrawals_root(withdrawals);
-            if computed_withdrawals_root != *EMPTY_WITHDRAWALS_HASH {
-                return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
-            }
-        }
         (None, None) => {}
     }
 
