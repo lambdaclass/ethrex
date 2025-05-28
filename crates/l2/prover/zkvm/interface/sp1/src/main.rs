@@ -16,7 +16,7 @@ use zkvm_interface::{
 
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
-    get_block_deposits, get_block_withdrawal_hashes, get_deposit_hash, get_withdrawals_merkle_root,
+    get_block_deposits, get_block_withdrawal_hashes, compute_deposit_logs_hash, compute_withdrawals_merkle_root,
 };
 
 sp1_zkvm::entrypoint!(main);
