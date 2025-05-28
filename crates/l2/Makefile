@@ -60,7 +60,7 @@ L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
 
 ethrex_L2_DEV_LIBMDBX?=dev_ethrex_l2
-ethrex_L2_2__DEV_LIBMDBX?=dev_ethrex_l2_2
+ethrex_L2_2_DEV_LIBMDBX?=dev_ethrex_l2_2
 ethrex_L1_DEV_LIBMDBX=dev_ethrex_l1
 L1_PORT=8545
 L2_PORT=1729
@@ -99,7 +99,7 @@ init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
     --datadir ${ethrex_L1_DEV_LIBMDBX}
 
 down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
-	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down
+	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down -t 0
 	docker compose -f docker-compose-l2.yaml down
 
 restart-local-l1: down-local-l1 rm-db-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
