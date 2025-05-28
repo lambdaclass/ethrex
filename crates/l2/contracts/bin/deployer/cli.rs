@@ -215,6 +215,15 @@ pub struct DeployerOptions {
     )]
     pub tdx_deploy_verifier: bool,
     #[arg(
+        long = "aligned.aggregator-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS",
+        required = true,
+        help_heading = "Deployer options",
+        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+    )]
+    pub aligned_aggregator_address: Address,
+    #[arg(
         long,
         default_value = "false",
         value_name = "BOOLEAN",

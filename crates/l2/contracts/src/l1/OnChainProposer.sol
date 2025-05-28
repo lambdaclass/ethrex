@@ -61,12 +61,11 @@ contract OnChainProposer is
         public authorizedSequencerAddresses;
 
     address public BRIDGE;
-
-    address public ALIGNEDPROOFAGGREGATOR;
     address public PICOVERIFIER;
     address public R0VERIFIER;
     address public SP1VERIFIER;
     address public TDXVERIFIER;
+    address public ALIGNEDPROOFAGGREGATOR;
 
     bytes32 public SP1_VERIFICATION_KEY;
 
@@ -99,11 +98,11 @@ contract OnChainProposer is
     function initialize(
         bool _validium,
         address owner,
-        address alignedProofAggregator,
         address r0verifier,
         address sp1verifier,
         address picoverifier,
         address tdxverifier,
+        address alignedProofAggregator,
         bytes32 sp1Vk,
         bytes32 genesisStateRoot,
         address[] calldata sequencerAddresses
@@ -185,7 +184,7 @@ contract OnChainProposer is
             "OnChainProposer: tdxverifier is the contract address"
         );
         TDXVERIFIER = tdxverifier;
-        
+
         // Set the SP1 program verification key
         require(
             SP1_VERIFICATION_KEY == bytes32(0),
@@ -339,10 +338,7 @@ contract OnChainProposer is
         if (TDXVERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             _verifyPublicData(batchNumber, tdxPublicValues);
-            ITDXVerifier(TDXVERIFIER).verify(
-                tdxPublicValues,
-                tdxSignature
-            );
+            ITDXVerifier(TDXVERIFIER).verify(tdxPublicValues, tdxSignature);
         }
 
         lastVerifiedBatch = batchNumber;
@@ -369,29 +365,40 @@ contract OnChainProposer is
         bytes32 alignedProgramVKey,
         bytes32[] calldata alignedMerkleProof
     ) external override onlySequencer {
-        // If the verification fails, it will revert.
-        _verifyPublicData(batchNumber, alignedPublicInputs[16:]);
-
-        bytes memory callData = abi.encodeWithSignature(
-            "verifyProofInclusion(bytes32[],bytes32,bytes)",
-            alignedMerkleProof,
-            alignedProgramVKey,
-            alignedPublicInputs
-        );
-
-        (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
-            .staticcall(callData);
-
         require(
-            callResult,
-            "OnChainProposer: call to alignedProofAggregator failed"
+            batchNumber == lastVerifiedBatch + 1,
+            "OnChainProposer: batch already verified"
+        );
+        require(
+            batchCommitments[batchNumber].newStateRoot != bytes32(0),
+            "OnChainProposer: cannot verify an uncommitted batch"
         );
 
-        bool proofVerified = abi.decode(response, (bool));
-        require(
-            proofVerified,
-            "OnChainProposer: aligned proof verification failed"
-        );
+        if (ALIGNEDPROOFAGGREGATOR != DEV_MODE) {
+            // If the verification fails, it will revert.
+            _verifyPublicData(batchNumber, sp1PublicValues[16:]);
+
+            bytes memory callData = abi.encodeWithSignature(
+                "verifyProofInclusion(bytes32[],bytes32,bytes)",
+                alignedMerkleProof,
+                alignedProgramVKey,
+                alignedPublicInputs
+            );
+
+            (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
+                .staticcall(callData);
+
+            require(
+                callResult,
+                "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
+            );
+
+            bool proofVerified = abi.decode(response, (bool));
+            require(
+                proofVerified,
+                "OnChainProposer: Aligned proof verification failed"
+            );
+        }
 
         lastVerifiedBatch = batchNumber;
 
@@ -415,7 +422,10 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view {
-        require(publicData.length == 128, "OnChainProposer: invaid public data length");
+        require(
+            publicData.length == 128,
+            "OnChainProposer: invaid public data length"
+        );
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         require(
             batchCommitments[lastVerifiedBatch].newStateRoot ==

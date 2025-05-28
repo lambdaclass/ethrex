@@ -71,13 +71,14 @@ async fn main() -> Result<(), DeployerError> {
         sp1_verifier_address,
         pico_verifier_address,
         tdx_verifier_address,
+        opts.aligned_aggregator_address,
         &eth_client,
         &opts,
     )
     .await?;
 
     if opts.deposit_rich {
-        let _ = make_deposits(bridge_address, &eth_client, &opts).await;
+        make_deposits(bridge_address, &eth_client, &opts).await?;
     }
 
     write_contract_addresses_to_env(
@@ -357,6 +358,7 @@ async fn initialize_contracts(
     sp1_verifier_address: Address,
     pico_verifier_address: Address,
     tdx_verifier_address: Address,
+    aligned_aggregator_address: Address,
     eth_client: &EthClient,
     opts: &DeployerOptions,
 ) -> Result<(), DeployerError> {
@@ -388,13 +390,11 @@ async fn initialize_contracts(
         let calldata_values = vec![
             Value::Bool(opts.validium),
             Value::Address(deployer_address),
-            Value::Address(
-                Address::from_str("0xFD471836031dc5108809D173A067e8486B9047A3").unwrap(), //alignedProofAggregatorService contract
-            ),
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
             Value::Address(tdx_verifier_address),
+            Value::Address(aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Array(vec![
