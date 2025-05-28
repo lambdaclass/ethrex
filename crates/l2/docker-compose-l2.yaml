@@ -40,6 +40,9 @@ services:
       - ETHREX_TDX_DEV_MODE=${ETHREX_TDX_DEV_MODE:-false}
       - ETHREX_ON_CHAIN_PROPOSER_OWNER=0x03d0a0aee676cc45bf7032649e0871927c947c8e
       - ETHREX_BRIDGE_OWNER=0x03d0a0aee676cc45bf7032649e0871927c947c8e
+      - ETHREX_WATCHER_BRIDGE_ADDRESS=${ETHREX_WATCHER_BRIDGE_ADDRESS:-0x}
+      - ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=${ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS:-0x}
+      - ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS=${ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS:-0x}
     depends_on:
       - ethrex
 
@@ -69,13 +72,4 @@ services:
       - ./config.toml:/config.toml:ro
     # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
-      l2 init 
-      --network /genesis-l2.json 
-      --http.addr 0.0.0.0 
-      --http.port 1729 
-      --authrpc.port 8552 
-      --evm levm 
-      --proof-coordinator-listen-ip 0.0.0.0 
-      --bridge-address ${ETHREX_WATCHER_BRIDGE_ADDRESS}
-      --on-chain-proposer-address ${ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS}
-      --state-updater.sequencer-registry ${ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS}
+      l2 init  --network /genesis-l2.json  --http.addr 0.0.0.0  --http.port 1729  --authrpc.port 8552  --evm levm  --proof-coordinator-listen-ip 0.0.0.0  --bridge-address ${ETHREX_WATCHER_BRIDGE_ADDRESS} --on-chain-proposer-address ${ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS} --state-updater.sequencer-registry ${ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS}
