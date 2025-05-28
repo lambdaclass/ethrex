@@ -178,9 +178,10 @@ impl BranchNode {
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
                 let (choice_index, child_hash) = children[0];
-                let child = state
-                    .get_node(*child_hash)?
-                    .ok_or(TrieError::InconsistentTree)?;
+                let Some(child) = state.get_node(*child_hash)? else {
+                    let reduced_node: ExtensionNode = ExtensionNode::new(Nibbles::from_hex(vec![choice_index as u8]), *child_hash);
+                    return Ok((Some(reduced_node.into()), value));
+                };
                 match child {
                     // Replace self with an extension node leading to the child
                     Node::Branch(_) => {
