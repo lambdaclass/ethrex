@@ -112,7 +112,7 @@ impl Prover {
             return Err("Expecting ProofData::SubmitAck".to_owned());
         };
 
-        info!("Received submit ack for batch_number: {}", batch_number);
+        info!("Received submit ack for batch_number: {batch_number}");
         Ok(())
     }
 }
