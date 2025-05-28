@@ -181,7 +181,7 @@ impl Store {
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         info!(
             "Adding block to pending: {}",
-            block.header.compute_block_hash()
+            block.hash()
         );
         self.engine.add_pending_block(block).await
     }
@@ -469,7 +469,7 @@ impl Store {
         let genesis_hash = genesis_block.hash();
 
         if let Some(header) = self.get_block_header(genesis_block_number)? {
-            if header.compute_block_hash() == genesis_hash {
+            if header.hash() == genesis_hash {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
             } else {
@@ -1216,7 +1216,7 @@ mod tests {
     async fn test_store_block(store: Store) {
         let (block_header, block_body) = create_block_for_testing();
         let block_number = 6;
-        let hash = block_header.compute_block_hash();
+        let hash = block_header.hash();
 
         store
             .add_block_header(hash, block_header.clone())

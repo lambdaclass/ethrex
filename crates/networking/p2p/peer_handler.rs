@@ -134,7 +134,7 @@ impl PeerHandler {
             {
                 let block_hashes = block_headers
                     .iter()
-                    .map(|header| header.compute_block_hash())
+                    .map(|header| header.hash())
                     .collect::<Vec<_>>();
 
                 if are_block_headers_chained(&block_headers, &block_hashes) {

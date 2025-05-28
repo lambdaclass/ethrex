@@ -209,7 +209,7 @@ impl Syncer {
             // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
             // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
             if first_block_header == last_block_header
-                && first_block_header.compute_block_hash() == search_head
+                && first_block_header.hash() == search_head
                 && search_head != sync_head
             {
                 // There is no path to the sync head this goes back until it find a common ancerstor
@@ -228,7 +228,7 @@ impl Syncer {
             // If we have a pending block from new_payload request
             // attach it to the end if it matches the parent_hash of the latest received header
             if let Some(ref block) = pending_block {
-                if block.header.parent_hash == last_block_header.compute_block_hash() {
+                if block.header.parent_hash == last_block_header.hash() {
                     block_hashes.push(block.hash());
                     block_headers.push(block.header.clone());
                 }
@@ -242,7 +242,7 @@ impl Syncer {
             }
 
             // Update current fetch head if needed
-            let last_block_hash = last_block_header.compute_block_hash();
+            let last_block_hash = last_block_header.hash();
             if !sync_head_found {
                 debug!(
                     "Syncing head not found, updated current_head {:?}",

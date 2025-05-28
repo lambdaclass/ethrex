@@ -232,7 +232,7 @@ async fn handle_forkchoice(
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
             match context
                 .storage
-                .get_block_by_hash(head.compute_block_hash())
+                .get_block_by_hash(head.hash())
                 .await
             {
                 Ok(Some(block)) => {
