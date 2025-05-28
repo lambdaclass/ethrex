@@ -3298,7 +3298,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-prover-bench"
+name = "ethrex-replay"
 version = "0.1.0"
 dependencies = [
  "again",
@@ -3314,6 +3314,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "eyre",
  "futures-util",
  "hex",
  "lazy_static",
@@ -3325,6 +3326,8 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-utils",
+ "tracing",
+ "tracing-subscriber 0.3.19",
  "zkvm_interface",
 ]
 
