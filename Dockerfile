@@ -13,6 +13,7 @@ WORKDIR /ethrex
 
 FROM chef AS planner
 COPY crates ./crates
+COPY tooling ./tooling
 COPY cmd ./cmd
 COPY Cargo.* .
 # Determine the crates that need to be built from dependencies
