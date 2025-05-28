@@ -90,7 +90,6 @@ impl PeerHandler {
     /// Returns the block headers or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
-    ///   TODO: (#2926) We can remove the hashes return when making .hash publick in the headers
     pub async fn request_block_headers(
         &self,
         start: H256,
