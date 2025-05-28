@@ -382,14 +382,10 @@ impl Display for EFTestsReport {
                                     levm_gas_refunded.abs_diff(*revm_gas_refunded)
                                 )?;
                             }
-                            if let Some((logs_diff, levm_logs, revm_logs)) =
+                            if let Some((logs_diff, _levm_logs, _revm_logs)) =
                                 &execution_report.logs_mismatch
                             {
-                                writeln!(
-                                    f,
-                                    "\t\t\tLogs mismatch: LEVM: {:?}, REVM: {:?} \n\t\t\t with diff: {}",
-                                    levm_logs, revm_logs, logs_diff
-                                )?;
+                                writeln!(f, "\t\t\tLogs mismatch with diff: {}", logs_diff)?;
                             }
                             if let Some((levm_result, revm_error)) =
                                 &execution_report.re_runner_error
