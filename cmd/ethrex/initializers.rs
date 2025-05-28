@@ -195,6 +195,8 @@ pub async fn init_network(
         get_client_version(),
     );
 
+    context.set_fork_id().await.expect("Set fork id");
+
     ethrex_p2p::start_network(context, bootnodes)
         .await
         .expect("Network starts");
@@ -286,7 +288,7 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
 
-    let config_file = PathBuf::from(data_dir.to_owned() + "/config.json");
+    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
 
     info!("Reading known peers from config file {:?}", config_file);
 

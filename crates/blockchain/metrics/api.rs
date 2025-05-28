@@ -3,7 +3,7 @@ use axum::{routing::get, Router};
 #[cfg(feature = "l2")]
 use crate::metrics_l2::METRICS_L2;
 
-use crate::{metrics_transactions::METRICS_TX, MetricsApiError};
+use crate::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX, MetricsApiError};
 
 pub async fn start_prometheus_metrics_api(
     address: String,
@@ -29,6 +29,15 @@ async fn get_metrics() -> String {
             String::new()
         }
     };
+
+    ret_string.push('\n');
+    match METRICS_BLOCKS.gather_metrics() {
+        Ok(string) => ret_string.push_str(&string),
+        Err(_) => {
+            tracing::error!("Failed to register METRICS_BLOCKS");
+            return String::new();
+        }
+    }
 
     #[cfg(feature = "l2")]
     {

@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountInfo, BlockHash, ChainConfig},
+    types::{AccountInfo, BlockHash, ChainConfig, EMPTY_KECCACK_HASH},
     Address, H256, U256,
 };
 use ethrex_storage::Store;
@@ -31,21 +31,33 @@ impl VmDatabase for StoreVmDatabase {
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
-    fn get_block_hash(&self, block_number: u64) -> Result<Option<H256>, EvmError> {
-        Ok(self
-            .store
-            .get_block_header(block_number)
-            .map_err(|e| EvmError::DB(e.to_string()))?
-            .map(|header| H256::from(header.compute_block_hash().0)))
+    fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
+        match self.store.get_block_header(block_number) {
+            Ok(Some(header)) => Ok(H256::from(header.compute_block_hash().0)),
+            Ok(None) => Err(EvmError::DB(format!(
+                "Block header not found for block number {block_number}"
+            ))),
+            Err(e) => Err(EvmError::DB(e.to_string())),
+        }
     }
 
-    fn get_chain_config(&self) -> ChainConfig {
-        self.store.get_chain_config().unwrap()
-    }
-
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, EvmError> {
+    fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
         self.store
-            .get_account_code(code_hash)
+            .get_chain_config()
             .map_err(|e| EvmError::DB(e.to_string()))
+    }
+
+    fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(Bytes::new());
+        }
+        match self.store.get_account_code(code_hash) {
+            Ok(Some(code)) => Ok(code),
+            Ok(None) => Err(EvmError::DB(format!(
+                "Code not found for hash: {:?}",
+                code_hash
+            ))),
+            Err(e) => Err(EvmError::DB(e.to_string())),
+        }
     }
 }
