@@ -21,17 +21,17 @@ pub async fn get_blockdata(
     if let Ok(cache) = load_cache(block_number) {
         return Ok(cache);
     }
-    let block = get_block(&rpc_url, block_number)
+    let block = get_block(rpc_url, block_number)
         .await
         .wrap_err("failed to fetch block")?;
 
-    let parent_block_header = get_block(&rpc_url, block_number - 1)
+    let parent_block_header = get_block(rpc_url, block_number - 1)
         .await
         .wrap_err("failed to fetch block")?
         .header;
 
     println!("populating rpc db cache");
-    let rpc_db = RpcDB::with_cache(&rpc_url, chain_config, block_number - 1, &block)
+    let rpc_db = RpcDB::with_cache(rpc_url, chain_config, block_number - 1, &block)
         .await
         .wrap_err("failed to create rpc db")?;
 
