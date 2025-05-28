@@ -112,17 +112,17 @@ impl GenServer for L1Watcher {
             Self::InMsg::Watch => {
                 let check_interval = random_duration(state.check_interval);
                 send_after(check_interval, tx.clone(), Self::InMsg::Watch);
-                match get_logs(state).await {
-                    Ok(logs) => {
+                if let Ok(logs) = get_logs(state)
+                    .await
+                    .inspect_err(|err| error!("L1 Watcher Error: {err}"))
+                {
                         // We may not have a deposit nor a withdrawal, that means no events -> no logs.
                         if !logs.is_empty() {
-                            if let Err(err) = process_logs(state, logs).await {
-                                error!("L1 Watcher Error: {}", err)
-                            };
-                        };
-                    }
-                    Err(err) => error!("L1 Watcher Error: {}", err),
+                        let _ = process_logs(state, logs)
+                            .await
+                            .inspect_err(|err| error!("L1 Watcher Error: {}", err));
                 };
+                }
 
                 CastResponse::NoReply
             }
