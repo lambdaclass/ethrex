@@ -30,7 +30,7 @@ use lambdaworks_math::{
     traits::ByteConversion,
     unsigned_integer::element,
 };
-use libsecp256k1::{self, Message, RecoveryId, Signature};
+use secp256k1::{ecdsa::{RecoverableSignature, RecoveryId}, Message};
 use num_bigint::BigUint;
 #[cfg(feature = "l2")]
 use p256::{
@@ -306,7 +306,7 @@ pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
 
     // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
     let hash = calldata.get(0..32).ok_or(InternalError::SlicingError)?;
-    let Ok(message) = Message::parse_slice(hash) else {
+    let Ok(message) = Message::from_digest_slice(hash) else {
         return Ok(Bytes::new());
     };
 
@@ -318,18 +318,18 @@ pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
     }
 
     let v = u8::try_from(v).map_err(|_| InternalError::ConversionError)?;
-    let Ok(recovery_id) = RecoveryId::parse_rpc(v) else {
+    let Ok(recovery_id) = RecoveryId::from_i32(v.try_into().map_err(|_| InternalError::ConversionError)?) else {
         return Ok(Bytes::new());
     };
 
     // signature is made up of the parameters r and s
     let sig = calldata.get(64..128).ok_or(InternalError::SlicingError)?;
-    let Ok(signature) = Signature::parse_standard_slice(sig) else {
+    let Ok(signature) = RecoverableSignature::from_compact(sig, recovery_id) else {
         return Ok(Bytes::new());
     };
 
     // Recover the address using secp256k1
-    let Ok(public_key) = libsecp256k1::recover(&message, &signature, &recovery_id) else {
+    let Ok(public_key) = signature.recover(&message) else {
         return Ok(Bytes::new());
     };
 

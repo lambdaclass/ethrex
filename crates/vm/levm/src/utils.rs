@@ -26,7 +26,7 @@ use ethrex_common::{
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
-use libsecp256k1::{Message, RecoveryId, Signature};
+use secp256k1::{ecdsa::{RecoverableSignature, RecoveryId}, Message};
 use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -309,7 +309,7 @@ pub fn eip7702_recover_address(
     hasher.update(rlp_buf);
     let bytes = &mut hasher.finalize();
 
-    let Ok(message) = Message::parse_slice(bytes) else {
+    let Ok(message) = Message::from_digest_slice(bytes) else {
         return Ok(None);
     };
 
@@ -319,11 +319,7 @@ pub fn eip7702_recover_address(
     ]
     .concat();
 
-    let Ok(signature) = Signature::parse_standard_slice(&bytes) else {
-        return Ok(None);
-    };
-
-    let Ok(recovery_id) = RecoveryId::parse(
+    let Ok(recovery_id) = RecoveryId::from_i32(
         auth_tuple
             .y_parity
             .as_u32()
@@ -333,7 +329,12 @@ pub fn eip7702_recover_address(
         return Ok(None);
     };
 
-    let Ok(authority) = libsecp256k1::recover(&message, &signature, &recovery_id) else {
+    let Ok(signature) = RecoverableSignature::from_compact(&bytes, recovery_id) else {
+        return Ok(None);
+    };
+
+    //recover 
+    let Ok(authority) = signature.recover(&message) else {
         return Ok(None);
     };
 
