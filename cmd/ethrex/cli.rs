@@ -344,7 +344,6 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
     let size = blocks.len();
 
     for block in &blocks {
-        
         let hash = block.hash();
 
         info!(

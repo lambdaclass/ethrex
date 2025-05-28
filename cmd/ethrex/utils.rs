@@ -87,13 +87,13 @@ pub fn read_genesis_file(genesis_file_path: &str) -> Genesis {
     decode::genesis_file(genesis_file).expect("Failed to decode genesis file")
 }
 // If genesis_file_path is one of the public networks return the path to its genesis.json file, if not return the inputed path
-fn get_genesis_path(genesis_file_path: &str) -> &str{
+fn get_genesis_path(genesis_file_path: &str) -> &str {
     match genesis_file_path {
         "holesky" => networks::HOLESKY_GENESIS_PATH,
         "hoodi" => networks::HOODI_GENESIS_PATH,
         "mainnet" => networks::MAINNET_GENESIS_PATH,
         "sepolia" => networks::SEPOLIA_GENESIS_PATH,
-        path => path, 
+        path => path,
     }
 }
 

@@ -26,7 +26,7 @@ use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
-use tracing::{info};
+use tracing::info;
 use vm::StoreVmDatabase;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -91,7 +91,6 @@ impl Blockchain {
 
         let chain_config = self.storage.get_chain_config()?;
 
-
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
@@ -155,15 +154,17 @@ impl Blockchain {
             .map_err(ChainError::StoreError)
     }
 
-    pub async fn try_add_block(&self,block: &Block) -> Result<(), ChainError> {
+    pub async fn try_add_block(&self, block: &Block) -> Result<(), ChainError> {
         // Check if the block is already in the blockchain, if it is do nothing, if not add it
         match self.storage.get_block_number(block.hash()).await {
             Ok(Some(_)) => {
-                info!("Block {} has already been added",block.hash());
+                info!("Block {} has already been added", block.hash());
                 Ok(())
-            },
+            }
             Ok(None) => self.add_block(block).await,
-            Err(_) => Err(ChainError::Custom(String::from("Couldn't check if block is already in the blockchain"))),
+            Err(_) => Err(ChainError::Custom(String::from(
+                "Couldn't check if block is already in the blockchain",
+            ))),
         }
     }
 
