@@ -45,7 +45,7 @@ impl Block {
     }
 
     pub fn hash(&self) -> BlockHash {
-        self.hash()
+        self.header.hash()
     }
 }
 

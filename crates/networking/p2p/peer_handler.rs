@@ -95,7 +95,7 @@ impl PeerHandler {
         &self,
         start: H256,
         order: BlockRequestOrder,
-    ) -> Option<(Vec<BlockHeader>)> {
+    ) -> Option<Vec<BlockHeader>> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
             let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
