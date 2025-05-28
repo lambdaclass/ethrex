@@ -9,7 +9,7 @@ use crate::{
 
 use ethrex_blockchain::vm::StoreVmDatabase;
 #[cfg(feature = "metrics")]
-use ethrex_common::types::BYTES_PER_BLOB;
+use ethrex_common::types::BYTES_PER_BLOB_F64;
 use ethrex_common::{
     types::{
         blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, BlobsBundleError,
@@ -350,8 +350,8 @@ impl Committer {
                     });
             }
             #[allow(clippy::as_conversions)]
-            METRICS_L2
-                .set_blob_usage_percentage((_blob_size as f64 / BYTES_PER_BLOB as f64) * 100_f64);
+            let blob_usage_percentage = _blob_size as f64 * 100_f64 / BYTES_PER_BLOB_F64;
+            METRICS_L2.set_blob_usage_percentage(blob_usage_percentage);
         );
 
         let deposit_logs_hash = self.get_deposit_hash(deposit_logs_hashes)?;
