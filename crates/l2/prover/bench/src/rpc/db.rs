@@ -425,8 +425,11 @@ impl LevmDatabase for RpcDB {
             .is_ok_and(|account| matches!(account, Account::Existing { .. }))
     }
 
-    fn get_account_code(&self, _code_hash: H256) -> Result<Option<Bytes>, DatabaseError> {
-        Ok(None) // code is stored in account info
+    fn get_account_code(&self, _code_hash: H256) -> Result<Bytes, DatabaseError> {
+        Err(DatabaseError::Custom(
+            "get_account_code is not supported for RpcDB: code is stored in account info"
+                .to_string(),
+        ))
     }
 
     fn get_account(
@@ -491,8 +494,8 @@ impl LevmDatabase for RpcDB {
         Ok(hash)
     }
 
-    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
-        *CANCUN_CONFIG
+    fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
+        Ok(*CANCUN_CONFIG)
     }
 }
 
