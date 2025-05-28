@@ -48,7 +48,7 @@ impl DiskLayer {
             block_hash,
             state_root,
             db,
-            cache: DiskCache::new(20000, 40000),
+            cache: DiskCache::new(10000, 20000),
             stale: Arc::new(AtomicBool::new(false)),
         }
     }
