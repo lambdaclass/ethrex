@@ -1253,8 +1253,8 @@ impl Encodable for SnapStateIndex {
 const DB_PAGE_SIZE: usize = 4096;
 /// For a default page size of 4096, the max value size is roughly 1/2 page size.
 const DB_MAX_VALUE_SIZE: usize = 2022;
-// Maximum DB size, set to 3 TB
-const MAX_MAP_SIZE: isize = 3096_isize.pow(4); // 3 TB
+// Maximum DB size, set to 2 TB
+const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 2; // 2 TB
 
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
