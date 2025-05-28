@@ -113,30 +113,20 @@ EVM_BACKEND := levm
 SIM_PARALLELISM := 16
 SYNCMODE := full
 
-L1_CLIENT       ?= ethrex
-
-display-hive-alternatives:
-	@echo ""
-	@echo "Running L1 with ${L1_CLIENT} as client. Other clients are available in order to compare tests results."
-	@echo "In order to use a different client, use the environment variable 'L1_CLIENT' with one of the follwoing values:"
-	@echo "   - ethrex: https://github.com/lambdaclass/ethrex"
-	@echo "   - go-ethereum: https://github.com/ethereum/go-ethereum"
-	@echo ""
-
 # Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080
 # The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
-run-hive: display-hive-alternatives build-image setup-hive ## 🧪 Run Hive testing suite
-	- cd hive && ./hive --client-file ../hive_clients.yml --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
+run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
+	- cd hive && ./hive --client-file ../test_data/hive_clients.yml --client ethrex --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
 	$(MAKE) view-hive
 
-run-hive-all: display-hive-alternatives build-image setup-hive ## 🧪 Run all Hive testing suites
-	- cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
+run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
+	- cd hive && ./hive -client-file ../test_data/hive_clients.yml --client ethrex --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
 	$(MAKE) view-hive
 
-run-hive-debug: display-hive-alternatives build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive && ./hive --sim $(SIMULATION) --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
+run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
+	cd hive && ./hive --sim $(SIMULATION) --client-file ../test_data/hive_clients.yml --client ethrex --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs

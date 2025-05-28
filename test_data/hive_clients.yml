@@ -1,4 +1,3 @@
-- client: go-ethereum
 - client: ethrex
   build_args:
     baseimage: ethrex
