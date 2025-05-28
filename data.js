@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748388254602,
+  "lastUpdate": 1748391822373,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11738,6 +11738,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0074930402184707045,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "78856d4d29c765a10b4a5a108fe85e9906443f51",
+          "message": "chore(l2): use `Ownable2Step` instead of `Ownable` (#2833)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n`Ownable2Step` is safer than `Ownable`, as it requires the new owner to\naccept the ownership transfer.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>",
+          "timestamp": "2025-05-27T18:34:13Z",
+          "tree_id": "4c3905572af460079bb6fd0b036019dd75b1b0f6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/78856d4d29c765a10b4a5a108fe85e9906443f51"
+        },
+        "date": 1748391821981,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.007444984213122841,
             "unit": "Mgas/s"
           }
         ]
