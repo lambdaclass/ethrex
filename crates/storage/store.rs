@@ -1228,6 +1228,9 @@ mod tests {
         let stored_header = store.get_block_header(block_number).unwrap().unwrap();
         let stored_body = store.get_block_body(block_number).await.unwrap().unwrap();
 
+        // Ensure both headers have their hashes computed for comparison
+        let _ = stored_header.hash();
+        let _ = block_header.hash();
         assert_eq!(stored_header, block_header);
         assert_eq!(stored_body, block_body);
     }
