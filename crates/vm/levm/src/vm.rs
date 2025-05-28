@@ -335,9 +335,18 @@ impl<'a> VM<'a> {
             hook.finalize_execution(self, report)?;
         }
 
-        let error = match &report.result {
-            TxResult::Success => None,
-            TxResult::Revert(vmerror) => Some(vmerror.to_string()),
+        let (error, revert_reason) = match &report.result {
+            TxResult::Success => (None, None),
+            TxResult::Revert(vmerror) => {
+                let error_string = vmerror.to_string();
+                let revert_reason = if *vmerror == VMError::RevertOpcode {
+                    Some(String::from_utf8(report.output.to_vec()))
+                } else {
+                    None
+                };
+
+                (Some(error_string), revert_reason)
+            }
         };
         //TODO: See what to do with revert_reason
         self.tracer
