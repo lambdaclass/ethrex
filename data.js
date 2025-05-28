@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748395518092,
+  "lastUpdate": 1748442001007,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9565,6 +9565,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 221010690257,
             "range": "± 817316031",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "23627eb2e241b3fc68c5bd8cfae7f4d2f726e209",
+          "message": "fix(l1,levm): improve vm database methods (#2941)\n\n**Motivation**\n\n- Be more accurate in the VM database when things go wrong. Propagating\nerrors when adequate instead of unwrapping or ignoring them.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- Stop doing unwrap when getting ChainConfig.\n    - This never failed yet but we shouldn’t unwrap in case it does.\n- Stop returning an `Option` when getting account code from DB, if code\nis not found we throw an error now.\n\nNote: If the `code_hash` that's being looked for is `EMPTY_KECCAK_HASH`\nthen return empty bytes.",
+          "timestamp": "2025-05-28T13:24:15Z",
+          "tree_id": "3f7da6cada781153db4b29a918e953f611392bf2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/23627eb2e241b3fc68c5bd8cfae7f4d2f726e209"
+        },
+        "date": 1748441997369,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 220881368033,
+            "range": "± 575323396",
             "unit": "ns/iter"
           }
         ]
