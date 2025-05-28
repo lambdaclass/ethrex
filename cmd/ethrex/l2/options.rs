@@ -98,7 +98,7 @@ impl From<SequencerOptions> for SequencerConfig {
                 },
                 block_fetcher: BlockFetcherConfig {
                     fetch_interval_ms: opts.based_opts.block_fetcher.fetch_interval_ms,
-                    fetch_block_step: opts.based_opts.block_fetcher.fetch_block_step.into(),
+                    fetch_block_step: opts.based_opts.block_fetcher.fetch_block_step,
                 },
             },
         }
