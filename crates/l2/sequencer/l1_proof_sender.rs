@@ -113,12 +113,13 @@ impl L1ProofSender {
             .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
 
-        if batch_number_has_all_needed_proofs(batch_to_verify, &self.needed_proof_types)
-            .is_ok_and(|has_all_proofs| has_all_proofs)
+        if let Ok(true) =
+            batch_number_has_all_needed_proofs(batch_to_verify, &self.needed_proof_types)
+                .inspect_err(|_| {
+                    info!("Missing proofs for batch {batch_to_verify}, skipping sending")
+                })
         {
             self.send_proof(batch_to_verify).await?;
-        } else {
-            info!("Missing proofs for batch {batch_to_verify}, skipping sending");
         }
 
         Ok(())
