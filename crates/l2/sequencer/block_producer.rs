@@ -40,7 +40,9 @@ pub async fn start_block_producer(
     execution_cache: Arc<ExecutionCache>,
 ) -> Result<(), SequencerError> {
     let proposer = BlockProducer::new_from_config(&cfg.block_producer);
-    proposer.run(store.clone(), blockchain, execution_cache).await;
+    proposer
+        .run(store.clone(), blockchain, execution_cache)
+        .await;
     Ok(())
 }
 
@@ -58,9 +60,17 @@ impl BlockProducer {
         }
     }
 
-    pub async fn run(&self, store: Store, blockchain: Arc<Blockchain>, execution_cache: Arc<ExecutionCache>) {
+    pub async fn run(
+        &self,
+        store: Store,
+        blockchain: Arc<Blockchain>,
+        execution_cache: Arc<ExecutionCache>,
+    ) {
         loop {
-            if let Err(err) = self.main_logic(store.clone(), blockchain.clone(), execution_cache.clone()).await {
+            if let Err(err) = self
+                .main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
+                .await
+            {
                 error!("Block Producer Error: {}", err);
             }
 
