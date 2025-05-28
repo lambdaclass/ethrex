@@ -17,7 +17,7 @@ pub struct EthrexReplayCLI {
 
 #[derive(Subcommand)]
 enum SubcommandExecute {
-    #[clap(about = "Execute a single block.")]
+    #[command(about = "Execute a single block.")]
     Block {
         #[arg(help = "Block to use. Uses the latest if not specified.")]
         block: Option<usize>,
@@ -63,7 +63,7 @@ impl SubcommandExecute {
 
 #[derive(Subcommand)]
 enum SubcommandProve {
-    #[clap(about = "Proves a single block.")]
+    #[command(about = "Proves a single block.")]
     Block {
         #[arg(help = "Block to use. Uses the latest if not specified.")]
         block: Option<usize>,
@@ -109,12 +109,12 @@ impl SubcommandProve {
 
 #[derive(Subcommand)]
 enum EthrexReplayCommand {
-    #[clap(
+    #[command(
         subcommand,
         about = "Execute blocks, ranges of blocks, or individual transactions."
     )]
     Execute(SubcommandExecute),
-    #[clap(
+    #[command(
         subcommand,
         about = "Proves blocks, ranges of blocks, or individual transactions."
     )]
