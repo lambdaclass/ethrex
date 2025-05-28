@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
-use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
+use crate::constants::RPC_RATE_LIMIT;
 use crate::rpc::{get_account, get_block, retry};
 
 use bytes::Bytes;
+use ethrex_common::types::ChainConfig;
 use ethrex_common::{
     types::{AccountInfo, AccountState, Block, TxKind},
     Address, H256, U256,
@@ -31,20 +32,23 @@ pub struct RpcDB {
     pub cache: Arc<Mutex<HashMap<Address, Account>>>,
     pub child_cache: Arc<Mutex<HashMap<Address, Account>>>,
     pub block_hashes: Arc<Mutex<HashMap<u64, H256>>>,
+    pub chain_config: ChainConfig,
 }
 
 impl RpcDB {
     pub async fn with_cache(
         rpc_url: &str,
+        chain_config: ChainConfig,
         block_number: usize,
         block: &Block,
-    ) -> Result<Self, String> {
+    ) -> eyre::Result<Self> {
         let mut db = RpcDB {
             rpc_url: rpc_url.to_string(),
             block_number,
             cache: Arc::new(Mutex::new(HashMap::new())),
             child_cache: Arc::new(Mutex::new(HashMap::new())),
             block_hashes: Arc::new(Mutex::new(HashMap::new())),
+            chain_config,
         };
 
         db.cache_accounts(block).await?;
@@ -52,7 +56,7 @@ impl RpcDB {
         Ok(db)
     }
 
-    async fn cache_accounts(&mut self, block: &Block) -> Result<(), String> {
+    async fn cache_accounts(&mut self, block: &Block) -> eyre::Result<()> {
         let txs = &block.body.transactions;
 
         let callers = txs.iter().map(|tx| tx.sender());
@@ -84,7 +88,7 @@ impl RpcDB {
         &self,
         index: &[(Address, Vec<H256>)],
         from_child: bool,
-    ) -> Result<HashMap<Address, Account>, String> {
+    ) -> eyre::Result<HashMap<Address, Account>> {
         let rate_limiter = RateLimiter::new(std::time::Duration::from_secs(1));
         let block_number = if from_child {
             self.block_number + 1
@@ -108,7 +112,7 @@ impl RpcDB {
                 .throttle(|| async { join_all(futures).await })
                 .await
                 .into_iter()
-                .collect::<Result<HashMap<_, _>, String>>()?;
+                .collect::<eyre::Result<HashMap<_, _>>>()?;
 
             fetched.extend(fetched_chunk);
 
@@ -207,7 +211,7 @@ impl RpcDB {
         address: Address,
         storage_keys: &[H256],
         from_child: bool,
-    ) -> Result<Account, String> {
+    ) -> eyre::Result<Account> {
         self.fetch_accounts(&[(address, storage_keys.to_vec())], from_child)
             .await
             .map(|mut hashmap| hashmap.remove(&address).expect("account not present"))
@@ -217,7 +221,7 @@ impl RpcDB {
         &self,
         index: &[(Address, Vec<H256>)],
         from_child: bool,
-    ) -> Result<HashMap<Address, Account>, String> {
+    ) -> eyre::Result<HashMap<Address, Account>> {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| handle.block_on(self.fetch_accounts(index, from_child)))
     }
@@ -227,7 +231,7 @@ impl RpcDB {
         address: Address,
         storage_keys: &[H256],
         from_child: bool,
-    ) -> Result<Account, String> {
+    ) -> eyre::Result<Account> {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| {
             handle.block_on(self.fetch_account(address, storage_keys, from_child))
@@ -238,7 +242,7 @@ impl RpcDB {
         // TODO: Simplify this function and potentially merge with the implementation for
         // StoreWrapper.
 
-        let chain_config = *CANCUN_CONFIG;
+        let chain_config = self.chain_config;
 
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()), CacheDB::new());
 
@@ -435,8 +439,7 @@ impl LevmDatabase for RpcDB {
     fn get_account(
         &self,
         address: Address,
-    ) -> std::result::Result<ethrex_common::types::Account, ethrex_levm::db::error::DatabaseError>
-    {
+    ) -> Result<ethrex_common::types::Account, ethrex_levm::db::error::DatabaseError> {
         let cache = self.cache.lock().unwrap();
         let account = if let Some(account) = cache.get(&address).cloned() {
             account
@@ -466,6 +469,16 @@ impl LevmDatabase for RpcDB {
     }
 
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
+        // look into the cache
+        {
+            if let Some(Account::Existing { storage, .. }) =
+                self.cache.lock().unwrap().get(&address)
+            {
+                if let Some(value) = storage.get(&key) {
+                    return Ok(*value);
+                }
+            }
+        }
         let account = self
             .fetch_accounts_blocking(&[(address, vec![key])], false)
             .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
@@ -488,13 +501,13 @@ impl LevmDatabase for RpcDB {
         let hash = tokio::task::block_in_place(|| {
             handle.block_on(retry(|| get_block(&self.rpc_url, block_number as usize)))
         })
-        .map_err(DatabaseError::Custom)
+        .map_err(|e| DatabaseError::Custom(e.to_string()))
         .map(|block| block.hash())?;
         self.block_hashes.lock().unwrap().insert(block_number, hash);
         Ok(hash)
     }
 
     fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
-        Ok(*CANCUN_CONFIG)
+        Ok(self.chain_config)
     }
 }
