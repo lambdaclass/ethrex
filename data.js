@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748457091487,
+  "lastUpdate": 1748463961895,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9655,6 +9655,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 220304852441,
             "range": "± 470604055",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7b7bee316ab712ff0e15d61270e4fbf0d34d2191",
+          "message": "chore(l2): remove duplicated fn get_potential_child_nodes (#2939)\n\n**Motivation**\n\nSelf explanatory. The ideal solution is described in #2938",
+          "timestamp": "2025-05-28T19:29:22Z",
+          "tree_id": "8d01e0855bbb7b4c23338b0764b5a9bfb389ef86",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7b7bee316ab712ff0e15d61270e4fbf0d34d2191"
+        },
+        "date": 1748463957244,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 222452263456,
+            "range": "± 825682457",
             "unit": "ns/iter"
           }
         ]
