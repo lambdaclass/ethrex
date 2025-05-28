@@ -11,7 +11,7 @@ use ethrex_common::{
 };
 use tracing::{error, info};
 
-use crate::{api::StoreEngine, hash_address_fixed};
+use crate::{api::StoreEngine, hash_address_fixed, hash_key};
 
 use super::{difflayer::DiffLayer, disklayer::DiskLayer, error::SnapshotError};
 
@@ -94,6 +94,8 @@ impl SnapshotTree {
     }
 
     /// Adds a new snapshot into the tree.
+    ///
+    /// Note: Storage keys must be hashed.
     pub fn add_snapshot(
         &self,
         block_hash: H256,
@@ -395,6 +397,8 @@ impl SnapshotTree {
     ///
     /// Note: The result is valid if no Err is returned, this means Ok(None) means it doesn't really exist at all
     /// and no further checking is needed.
+    ///
+    /// Note: the given storage key must be a hash of the key.
     pub fn get_storage_at_hash(
         &self,
         block_hash: BlockHash,
@@ -402,6 +406,7 @@ impl SnapshotTree {
         storage_key: H256,
     ) -> Result<Option<U256>, SnapshotError> {
         if let Some(snapshot) = self.get_snapshot(block_hash) {
+            let storage_key = H256::from_slice(&hash_key(&storage_key));
             let layers = self
                 .layers
                 .read()

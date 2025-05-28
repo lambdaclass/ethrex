@@ -1221,11 +1221,12 @@ impl Store {
                 accounts.insert(hashed_address, Some(account_state.clone()));
 
                 for (storage_key, storage_value) in &update.added_storage {
+                    let storage_key = H256::from_slice(&hash_key(storage_key));
                     let slots = storage.entry(hashed_address).or_default();
                     if !storage_value.is_zero() {
-                        slots.insert(*storage_key, Some(*storage_value));
+                        slots.insert(storage_key, Some(*storage_value));
                     } else {
-                        slots.insert(*storage_key, None);
+                        slots.insert(storage_key, None);
                     }
                 }
             } else {
