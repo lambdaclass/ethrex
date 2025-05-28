@@ -498,14 +498,13 @@ mod tests {
     use ethrex_common::{types::AccountState, H256, U256};
     use std::sync::Arc;
 
-    fn create_mock_tree() -> SnapshotTree {
-        let db = Arc::new(Store::new());
-        SnapshotTree::new(db)
+    fn create_tree() -> SnapshotTree {
+        SnapshotTree::new(Arc::new(Store::new()))
     }
 
     #[test]
     fn test_add_single_account_in_single_difflayer() {
-        let tree = create_mock_tree();
+        let tree = create_tree();
         let root = H256::from_low_u64_be(1);
 
         let address = Address::from_low_u64_be(1);
@@ -538,7 +537,7 @@ mod tests {
 
     #[test]
     fn test_add_two_accounts_in_different_difflayers() {
-        let tree = create_mock_tree();
+        let tree = create_tree();
         tree.rebuild(H256::zero(), H256::zero()).unwrap();
 
         let root1 = H256::from_low_u64_be(1);
@@ -592,7 +591,7 @@ mod tests {
 
     #[test]
     fn test_override_account_in_second_difflayer() {
-        let tree = create_mock_tree();
+        let tree = create_tree();
         tree.rebuild(H256::zero(), H256::zero()).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
@@ -644,7 +643,7 @@ mod tests {
 
     #[test]
     fn test_override_account_storage_flattening() {
-        let tree = create_mock_tree();
+        let tree = create_tree();
         tree.rebuild(H256::zero(), H256::zero()).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
@@ -720,7 +719,7 @@ mod tests {
 
     #[test]
     fn test_override_account_storage_in_second_difflayer() {
-        let tree = create_mock_tree();
+        let tree = create_tree();
         tree.rebuild(H256::zero(), H256::zero()).unwrap();
         let root1 = H256::from_low_u64_be(1);
         let root2 = H256::from_low_u64_be(2);
@@ -790,5 +789,141 @@ mod tests {
             .get_storage_at_hash(root1, address, H256::zero())
             .unwrap();
         assert_eq!(value, Some(U256::one()));
+    }
+
+    // Utility function that creates account state and hashed address.
+    fn acc(number: u64) -> (Address, AccountState) {
+        let address = Address::from_low_u64_be(number as u64);
+        let account_state = AccountState {
+            nonce: 1,
+            balance: U256::from(number * 100),
+            storage_root: H256::zero(),
+            code_hash: H256::zero(),
+        };
+        (address, account_state)
+    }
+
+    #[test]
+    fn a_deleted_account_should_return_none_when_querying_later_on() {
+        let (address_1, acc_1) = acc(1);
+        let hashed_1 = hash_address_fixed(&address_1);
+        let (address_2, acc_2) = acc(2);
+        let hashed_2 = hash_address_fixed(&address_2);
+
+        let tree = create_tree();
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
+
+        // Add the account in the first difflayer
+        let root1 = H256::from_low_u64_be(1);
+        tree.add_snapshot(
+            root1,
+            root1,
+            H256::zero(),
+            HashMap::from([(hashed_1, Some(acc_1.clone()))]),
+            HashMap::new(),
+        )
+        .unwrap();
+
+        // Delete the account in the second difflayer
+        let root2 = H256::from_low_u64_be(2);
+        tree.add_snapshot(
+            root2,
+            root2,
+            root1,
+            HashMap::from([(hashed_1, None)]),
+            HashMap::new(),
+        )
+        .unwrap();
+
+        let root3 = H256::from_low_u64_be(3);
+        tree.add_snapshot(
+            root3,
+            root3,
+            root2,
+            HashMap::from([(hashed_2, Some(acc_2.clone()))]),
+            HashMap::new(),
+        ).unwrap();
+
+        // Retrieve the first account and check it returns None for the 2nd and 3rd blocks.
+        let retrieved_account = tree.get_account_state(root3, address_1).unwrap();
+        assert_eq!(retrieved_account, None);
+
+        let retrieved_account = tree.get_account_state(root2, address_1).unwrap();
+        assert_eq!(retrieved_account, None);
+
+        let retrieved_account = tree.get_account_state(root1, address_1).unwrap();
+        assert_eq!(retrieved_account, Some(acc_1));
+
+        // Retrieve the other account from the latest block and check it's there.
+        let retrieved_account = tree.get_account_state(root3, address_2).unwrap();
+        assert_eq!(retrieved_account, Some(acc_2));
+
+        // We now flatten the tree so that the first two layers are merged into the disk layer.
+    }
+
+    // Test that if we merge a none to the disklayer the account is removed from the disklayer.
+    #[test]
+    fn a_deleted_account_should_not_exist_in_disk_layer_after_flattening() {
+        let (address_1, acc_1) = acc(1);
+        let hashed_1 = hash_address_fixed(&address_1);
+
+        let tree = create_tree();
+        tree.rebuild(H256::zero(), H256::zero()).unwrap();
+
+        // Add the account in the first difflayer
+        let root1 = H256::from_low_u64_be(1);
+        tree.add_snapshot(
+            root1,
+            root1,
+            H256::zero(),
+            HashMap::from([(hashed_1, Some(acc_1.clone()))]),
+            HashMap::new(),
+        )
+        .unwrap();
+
+        // Delete the account in the second difflayer
+        let root2 = H256::from_low_u64_be(2);
+        tree.add_snapshot(
+            root2,
+            root2,
+            root1,
+            HashMap::from([(hashed_1, None)]),
+            HashMap::new(),
+        )
+        .unwrap();
+
+        // Add a third snapshot with a different account
+        let (address_2, acc_2) = acc(2);
+        let hashed_2 = hash_address_fixed(&address_2);
+        let root3 = H256::from_low_u64_be(3);
+
+        tree.add_snapshot(
+            root3,
+            root3,
+            root2,
+            HashMap::from([(hashed_2, Some(acc_2.clone()))]),
+            HashMap::new(),
+        ).unwrap();
+
+        // Flatten the tree
+        tree.cap(root3, 1).unwrap();
+
+        // Check that the account is not in the disklayer
+        let retrieved_account = tree.get_account_state(root3, address_1).unwrap();
+        assert_eq!(retrieved_account, None);
+
+        // Check that the other account is still there
+        let retrieved_account = tree.get_account_state(root3, address_2).unwrap();
+        assert_eq!(retrieved_account, Some(acc_2.clone()));
+
+        tree.cap(root3, 0).unwrap(); // Full commit to clear all difflayers
+
+        // Check that the account is not in the disklayer
+        let retrieved_account = tree.get_account_state(root3, address_1).unwrap();
+        assert_eq!(retrieved_account, None);
+
+        // Check that the other account is still there
+        let retrieved_account = tree.get_account_state(root3, address_2).unwrap();
+        assert_eq!(retrieved_account, Some(acc_2.clone()));
     }
 }
