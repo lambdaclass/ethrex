@@ -13,7 +13,7 @@ ethrex-levm.workspace = true
 
 zkvm_interface = { path = "../zkvm/interface", default-features = false }
 ethrex-prover = { path = "../", default-features = false }
-ethrex-l2 = { workspace = true, default-features = false }
+ethrex-l2 = { path = "../../", default-features = false }
 
 serde.workspace = true
 hex.workspace = true
