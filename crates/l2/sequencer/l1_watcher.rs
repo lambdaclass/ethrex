@@ -175,7 +175,8 @@ pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1Watch
     // Matches the event DepositInitiated from ICommonBridge.sol
     let topic =
         keccak(b"DepositInitiated(uint256,address,uint256,address,address,uint256,bytes,bytes32)");
-    let logs = match state
+
+    let logs = state
         .eth_client
         .get_logs(
             state.last_block_fetched + 1,
@@ -184,15 +185,12 @@ pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1Watch
             topic,
         )
         .await
-    {
-        Ok(logs) => logs,
-        Err(error) => {
+        .inspect_err(|error| {
             // We may get an error if the RPC doesn't has the logs for the requested
             // block interval. For example, Light Nodes.
             warn!("Error when getting logs from L1: {}", error);
-            vec![]
-        }
-    };
+        })
+        .unwrap_or_default();
 
     debug!("Logs: {:#?}", logs);
 
