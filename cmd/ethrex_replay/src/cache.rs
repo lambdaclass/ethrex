@@ -53,3 +53,4 @@ pub fn write_cache_batch(cache: &Cache) -> eyre::Result<()> {
     let file = BufWriter::new(File::create(file_name)?);
     Ok(serde_json::to_writer(file, cache)?)
 }
+
