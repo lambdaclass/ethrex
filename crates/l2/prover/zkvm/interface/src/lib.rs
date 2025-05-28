@@ -14,11 +14,14 @@ pub mod methods {
 }
 
 pub mod io {
+    use ethrex_common::{
+        types::{blobs_bundle, Block, BlockHeader},
+        H256,
+    };
     use ethrex_l2_common::StateDiff;
     use ethrex_vm::ProverDB;
     use serde::{de::DeserializeOwned, Deserialize, Serialize};
     use serde_with::{serde_as, DeserializeAs, SerializeAs};
-    use ethrex_common::{types::{blobs_bundle, Block, BlockHeader}, H256};
 
     /// Private input variables passed into the zkVM execution program.
     #[serde_as]

@@ -13,7 +13,8 @@ use zkvm_interface::{
 
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
-    get_block_deposits, get_block_withdrawal_hashes, compute_deposit_logs_hash, compute_withdrawals_merkle_root,
+    compute_deposit_logs_hash, compute_withdrawals_merkle_root, get_block_deposits,
+    get_block_withdrawal_hashes,
 };
 
 pub struct ProveOutput(pub ProgramOutput);
@@ -100,7 +101,8 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
             let txs = block.body.transactions;
             let block_deposits = get_block_deposits(&txs);
 
-            let txs_and_receipts: Vec<_> = txs.into_iter().zip(receipts.clone().into_iter()).collect();
+            let txs_and_receipts: Vec<_> =
+                txs.into_iter().zip(receipts.clone().into_iter()).collect();
             let block_withdrawal_hashes = get_block_withdrawal_hashes(&txs_and_receipts)?;
 
             let mut block_deposits_hashes = Vec::with_capacity(block_deposits.len());

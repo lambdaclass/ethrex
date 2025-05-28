@@ -11,8 +11,8 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use ethrex_l2_common::{
-    get_block_deposits, get_block_withdrawals, compute_deposit_logs_hash, compute_withdrawals_merkle_root,
-    prepare_state_diff, StateDiff, StateDiffError,
+    compute_deposit_logs_hash, compute_withdrawals_merkle_root, get_block_deposits,
+    get_block_withdrawals, prepare_state_diff, StateDiff, StateDiffError,
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_metrics::metrics;
@@ -148,7 +148,8 @@ impl Committer {
         }
 
         let withdrawal_logs_merkle_root =
-            compute_withdrawals_merkle_root(withdrawal_hashes.clone()).map_err(CommitterError::from)?;
+            compute_withdrawals_merkle_root(withdrawal_hashes.clone())
+                .map_err(CommitterError::from)?;
 
         info!("Sending commitment for batch {batch_to_commit}. first_block: {first_block_to_commit}, last_block: {last_block_of_batch}");
 
@@ -358,7 +359,8 @@ impl Committer {
                 .set_blob_usage_percentage((_blob_size as f64 / BYTES_PER_BLOB as f64) * 100_f64);
         );
 
-        let deposit_logs_hash = compute_deposit_logs_hash(deposit_logs_hashes).map_err(CommitterError::from)?;
+        let deposit_logs_hash =
+            compute_deposit_logs_hash(deposit_logs_hashes).map_err(CommitterError::from)?;
         Ok((
             blobs_bundle,
             new_state_root,
