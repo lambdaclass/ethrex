@@ -2,8 +2,7 @@ use crate::{
     cli::Options,
     networks,
     utils::{
-        get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
-        read_node_config_file,
+        get_client_version, get_genesis_path, parse_socket_addr, read_genesis_file, read_jwtsecret_file, read_node_config_file
     },
 };
 use ethrex_blockchain::Blockchain;
@@ -81,7 +80,8 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
         }
         Store::new(data_dir, engine_type).expect("Failed to create Store")
     };
-    let genesis = read_genesis_file(network);
+    let path = get_genesis_path(network);
+    let genesis = read_genesis_file(path);
     store
         .add_initial_state(genesis.clone())
         .await

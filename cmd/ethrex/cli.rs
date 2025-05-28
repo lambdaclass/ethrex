@@ -371,6 +371,7 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
 }
 
 pub fn compute_state_root(genesis_path: &str) {
+    let genesis_path = utils::get_genesis_path(genesis_path);
     let genesis = utils::read_genesis_file(genesis_path);
     let state_root = genesis.compute_state_root();
     println!("{:#x}", state_root);
