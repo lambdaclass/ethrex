@@ -20,13 +20,13 @@ start_geth: create_data_dir
 	mkdir -p $(NETWORK)_data
 	./start_geth.sh $(NETWORK)
 
-sync_levm: create_data_dir
+sync-levm: create_data_dir
 	cd $(ETHREX_DIR) && git checkout main
 	mkdir -p $(NETWORK)_data
 #	samply record --unstable-presymbolicate --save-only -- 
 	make start_ethrex EVM=levm >> ./logs/ethrex-sync-$(NETWORK)-levm.log
 
-sync_revm: create_data_dir
+sync-revm: create_data_dir
 	cd $(ETHREX_DIR) && git checkout main 
 	mkdir -p $(NETWORK)_data                                       
 #	samply record --unstable-presymbolicate --save-only --        
