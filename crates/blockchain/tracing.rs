@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use ethrex_common::{types::Block, H256};
 use ethrex_storage::Store;
-use ethrex_vm::{tracing::CallTrace, Evm, EvmEngine};
+use ethrex_vm::{tracing::CallTrace, Evm, EvmEngine, EvmError};
 
 use crate::{error::ChainError, Blockchain};
 
@@ -54,18 +54,7 @@ impl Blockchain {
         // Run the block until the transaction we want to trace
         vm.rerun_block(&block, Some(tx_index))?;
         // Trace the transaction
-        let trace_start = Instant::now();
-        let handle = tokio::task::spawn_blocking(move || {
-            vm.trace_tx_calls(&block, tx_index, only_top_call, with_log)
-        });
-        while !handle.is_finished() {
-            if trace_start.elapsed() > timeout {
-                handle.abort();
-            }
-        }
-        Ok(handle
-            .await
-            .map_err(|_| ChainError::Custom("Tracing timeout".to_string()))??)
+        timeout_trace_operation(timeout, move || {vm.trace_tx_calls(&block, tx_index, only_top_call, with_log)}).await
     }
 }
 
@@ -88,12 +77,28 @@ pub async fn fill_missing_state_parents(
             return Err(ChainError::Custom("Parent Block not Found".to_string()));
         };
         if store.contains_state_node(parent_block.header.state_root)? {
-            dbg!(&parent_block.header.compute_block_hash());
-            dbg!(&parent_block.header.state_root);
             return Ok(());
         }
         parent_hash = parent_block.header.parent_hash;
         // Add parent to re-execute list
         missing_state_parents.push(parent_block);
     }
+}
+
+/// Runs the given evm trace operation, aborting if it takes more than the time given by `tiemout`
+async fn timeout_trace_operation<O, T>(timeout: Duration, operation: O) -> Result<T, ChainError>
+where
+    O: FnOnce() -> Result<T, EvmError> + Send + 'static,
+    T: Send + 'static,
+{
+    let trace_start = Instant::now();
+        let handle = tokio::task::spawn_blocking(operation);
+        while !handle.is_finished() {
+            if trace_start.elapsed() > timeout {
+                handle.abort();
+            }
+        }
+        Ok(handle
+            .await
+            .map_err(|_| ChainError::Custom("Tracing Timeout".to_string()))??)
 }
