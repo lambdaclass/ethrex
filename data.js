@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748464988808,
+  "lastUpdate": 1748467782779,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9685,6 +9685,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 222452263456,
             "range": "± 825682457",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9933cf46ffd498e2d2c8e522a81a1b2660072ea3",
+          "message": "feat(l2): rename bench util as ethex_replay and turn into CLI (#2929)\n\n**Motivation**\n\nWe want a generic stateless execution/proving client, and the `bench`\nutil was a good starting point.\n\n**Description**\n\n* Moves the l2 `bench` util to the common commands directory\n* Implements CLI interface\n* Replaces most String-based errors with eyre::Result.\n* Checks cache for storage keys, in order to test with bigger blocks in\nreasonable times\n\nMakes progress towards #2913. Missing: fix trie bug (possibly related to\ndeleted nodes), support multiple blocks and single transactions.",
+          "timestamp": "2025-05-28T20:33:53Z",
+          "tree_id": "027e755f86b9e2381ac5e62358f80902800c51e3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9933cf46ffd498e2d2c8e522a81a1b2660072ea3"
+        },
+        "date": 1748467779163,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 221211272234,
+            "range": "± 728011081",
             "unit": "ns/iter"
           }
         ]
