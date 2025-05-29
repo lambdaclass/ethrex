@@ -122,7 +122,7 @@ run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 	$(MAKE) view-hive
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
-	- cd hive && ./hive -client-file ../test_data/hive_clients.yml --client ethrex --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
+	- cd hive && ./hive --client-file ../test_data/hive_clients.yml --client ethrex --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
 	$(MAKE) view-hive
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
