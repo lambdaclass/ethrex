@@ -38,10 +38,12 @@ impl VmDatabase for StoreVmDatabase {
             match ancestor.number.cmp(&block_number) {
                 Ordering::Greater => continue,
                 Ordering::Equal => return Ok(hash),
-                Ordering::Less => return Err(EvmError::DB(format!(
+                Ordering::Less => {
+                    return Err(EvmError::DB(format!(
                     "[VM DB] Block number requested {} is higher than the current block number {}",
                     block_number, ancestor.number
-                ))),
+                )))
+                }
             }
         }
 
