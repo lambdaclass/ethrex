@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{error::ChainError, Blockchain};
 use ethrex_common::types::{Block, Genesis, ELASTICITY_MULTIPLIER};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
@@ -72,11 +72,19 @@ pub async fn generate_program_input(
 
     // create store
     let store = Store::new("memory", EngineType::InMemory)?;
+    let genesis_root = genesis.compute_state_root();
     rt.block_on(store.add_initial_state(genesis))?;
     // create blockchain
     let blockchain = Blockchain::default_with_store(store.clone());
+    let mut state_trie =
+        blockchain
+            .storage
+            .state_trie(genesis_root)?
+            .ok_or(ProverInputError::ChainError(
+                ChainError::ParentStateNotFound,
+            ))?;
     for block in chain {
-        rt.block_on(blockchain.add_block(&block))?;
+        rt.block_on(blockchain.add_block(&block, &mut state_trie))?;
     }
 
     let parent_hash = block.header.parent_hash;

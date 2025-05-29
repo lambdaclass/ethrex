@@ -56,7 +56,16 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block(block).await;
+        let chain_result = blockchain
+            .add_block(
+                block,
+                &mut blockchain
+                    .storage
+                    .state_trie(block.header.parent_hash)
+                    .unwrap()
+                    .unwrap(),
+            )
+            .await;
         match chain_result {
             Err(error) => {
                 assert!(

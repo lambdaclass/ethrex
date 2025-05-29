@@ -343,20 +343,27 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
 
     let size = blocks.len();
 
-    for block in &blocks {
-        let hash = block.hash();
+    if let Some(first_block) = blocks.first() {
+        let mut state_trie = blockchain
+            .storage
+            .state_trie(first_block.header.parent_hash)
+            .unwrap()
+            .unwrap();
+        for block in &blocks {
+            let hash = block.hash();
 
-        info!(
-            "Adding block {} with hash {:#x}.",
-            block.header.number, hash
-        );
-
-        if let Err(error) = blockchain.add_block(block).await {
-            warn!(
-                "Failed to add block {} with hash {:#x}: {}.",
-                block.header.number, hash, error
+            info!(
+                "Adding block {} with hash {:#x}.",
+                block.header.number, hash
             );
-            return;
+
+            if let Err(error) = blockchain.add_block(block, &mut state_trie).await {
+                warn!(
+                    "Failed to add block {} with hash {:#x}: {}.",
+                    block.header.number, hash, error
+                );
+                return;
+            }
         }
     }
 
