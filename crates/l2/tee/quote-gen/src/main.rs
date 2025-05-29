@@ -23,6 +23,7 @@ use sender::{get_batch, submit_proof, submit_quote};
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
     get_block_deposits, get_block_withdrawal_hashes, compute_deposit_logs_hash, compute_withdrawals_merkle_root,
+    StateDiff
 };
 #[cfg(feature = "l2")]
 use ethrex_common::types::{kzg_commitment_to_versioned_hash, blob_from_bytes};
@@ -190,9 +191,25 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
         return Err("invalid state diffs".to_string().into());
     }
 
+    // This could be replaced with something like a ProverConfig.
+    let validium = (state_diff, blob_commitment, blob_proof) == (StateDiff::default(), [0; 48], [0; 48]);
+
+    // Check state diffs are valid
+    #[cfg(feature = "l2")]
+    if !validium {
+        let state_diff_updates = state_diff
+            .to_account_updates(&state_trie).map_err(|err| format!("Failed to calculate updates from state diffs: {err}"))?;
+
+        if state_diff_updates != acc_account_updates {
+        return Err("invalid state diffs".to_string().into());
+        }
+    }
+
     // Verify KZG blob proof
     #[cfg(feature = "l2")]
-    let blob_versioned_hash = {
+    let blob_versioned_hash = if validium { 
+        H256::zero() 
+    } else {
         use kzg_rs::{get_kzg_settings, Blob, Bytes48, KzgProof};
 
         let encoded_state_diff = state_diff

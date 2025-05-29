@@ -15,7 +15,8 @@ use zkvm_interface::{
 
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
-    get_block_deposits, get_block_withdrawal_hashes, compute_deposit_logs_hash, compute_withdrawals_merkle_root,
+    get_block_deposits, get_block_withdrawal_hashes, compute_deposit_logs_hash, 
+    compute_withdrawals_merkle_root, StateDiff
 };
 
 pub fn main() {
@@ -117,12 +118,6 @@ pub fn main() {
         parent_header = block.header;
     }
 
-    // Check state diffs are valid
-    #[cfg(feature = "l2")]
-    let state_diff_updates = state_diff
-        .to_account_updates(&state_trie)
-        .expect("failed to calculate account updates from state diffs");
-
     // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
     let Ok(withdrawals_merkle_root) = compute_withdrawals_merkle_root(withdrawal_hashes) else {
@@ -149,15 +144,26 @@ pub fn main() {
         panic!("invalid final state trie");
     }
 
+    // This could be replaced with something like a ProverConfig.
+    let validium = (state_diff, blob_commitment, blob_proof) == (StateDiff::default(), [0; 48], [0; 48]);
+
     // Check state diffs are valid
     #[cfg(feature = "l2")]
-    if state_diff_updates != acc_account_updates {
-        panic!("invalid state diffs")
+    if !validium {
+        let state_diff_updates = state_diff
+            .to_account_updates(&state_trie)
+            .expect("failed to calculate account updates from state diffs");
+
+        if state_diff_updates != acc_account_updates {
+            panic!("invalid state diffs")
+        }
     }
 
     // Verify KZG blob proof
     #[cfg(feature = "l2")]
-    let blob_versioned_hash = {
+    let blob_versioned_hash = if validium { 
+        H256::zero() 
+    } else {
         use kzg_rs::{dtypes::Blob, kzg_proof::KzgProof, trusted_setup::get_kzg_settings};
 
         let encoded_state_diff = state_diff.encode().expect("failed to encode state diff");

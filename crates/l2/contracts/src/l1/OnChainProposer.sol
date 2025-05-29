@@ -243,7 +243,7 @@ contract OnChainProposer is
         }
         batchCommitments[batchNumber] = BatchCommitmentInfo(
             newStateRoot,
-            stateDiffKZGVersionedHash,
+            blobhash(0),
             processedDepositLogsRollingHash,
             withdrawalsLogsMerkleRoot
         );
