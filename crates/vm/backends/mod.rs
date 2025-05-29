@@ -15,7 +15,7 @@ use ethrex_common::types::{
 use ethrex_common::Address;
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-use ethrex_levm::db::{CacheDB, Database};
+use ethrex_levm::db::{CacheDB, Database as LevmDatabase};
 use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;
@@ -83,15 +83,17 @@ impl Evm {
         }
     }
 
-    pub fn new_from_db(store: Arc<impl Database + 'static>) -> Self {
+    pub fn new_from_db(store: Arc<impl LevmDatabase + 'static>) -> Self {
         Evm::LEVM {
             db: GeneralizedDatabase::new(store, CacheDB::new()),
         }
     }
 
     pub fn from_prover_db(db: ProverDB) -> Self {
+        let wrapped_db: DynVmDatabase = Box::new(db);
+
         Evm::LEVM {
-            db: GeneralizedDatabase::new(Arc::new(db), CacheDB::new()),
+            db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
         }
     }
 

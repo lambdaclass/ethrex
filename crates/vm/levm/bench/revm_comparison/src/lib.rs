@@ -9,7 +9,8 @@ use ethrex_levm::{
     vm::VM,
     Environment,
 };
-use ethrex_vm::ProverDB;
+use ethrex_vm::{DynVmDatabase, ProverDB};
+// use ethrex_vm::ProverDB;
 use revm::{
     db::BenchmarkDB,
     primitives::{address, Address, Bytecode, TransactTo},
@@ -61,7 +62,10 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
         prover_db.accounts.insert(*address, account.info.clone());
     });
 
-    let mut db = GeneralizedDatabase::new(Arc::new(prover_db), CacheDB::new());
+    let mut db = GeneralizedDatabase::new(
+        Arc::new(Box::new(prover_db) as DynVmDatabase),
+        CacheDB::new(),
+    );
 
     cache::insert_account(
         &mut db.cache,

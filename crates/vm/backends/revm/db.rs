@@ -1,17 +1,11 @@
 use ethrex_common::{types::ChainConfig, Address as CoreAddress, H256 as CoreH256};
-use revm::{
-    primitives::{
-        AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
-        Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
-    },
-    DatabaseRef,
+use revm::primitives::{
+    AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
+    Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
 
-use crate::{db::DynVmDatabase, prover_db::ProverDB};
-use crate::{
-    errors::{EvmError, ProverDBError},
-    VmDatabase,
-};
+use crate::db::DynVmDatabase;
+use crate::{errors::EvmError, VmDatabase};
 
 /// State used when running the EVM. The state can be represented with a [VmDbWrapper] database, or
 /// with a [ProverDB] in case we only want to store the necessary data for some particular
@@ -20,7 +14,7 @@ use crate::{
 /// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
 pub enum EvmState {
     Store(revm::db::State<DynVmDatabase>),
-    Execution(Box<revm::db::CacheDB<ProverDB>>),
+    Execution(Box<revm::db::CacheDB<DynVmDatabase>>),
 }
 
 // Needed because revm::db::State is not cloneable and we need to
@@ -37,7 +31,7 @@ impl Clone for EvmState {
                 block_hashes: state.block_hashes.clone(),
             }),
             EvmState::Execution(execution) => {
-                EvmState::Execution(Box::new(Into::<revm::db::CacheDB<ProverDB>>::into(
+                EvmState::Execution(Box::new(Into::<revm::db::CacheDB<DynVmDatabase>>::into(
                     *execution.clone(),
                 )))
             }
@@ -50,7 +44,7 @@ impl EvmState {
     pub fn chain_config(&self) -> Result<ChainConfig, EvmError> {
         match self {
             EvmState::Store(db) => db.database.get_chain_config(),
-            EvmState::Execution(db) => Ok(db.db.get_chain_config()),
+            EvmState::Execution(db) => db.db.get_chain_config(),
         }
     }
 }
@@ -66,56 +60,56 @@ pub fn evm_state(db: DynVmDatabase) -> EvmState {
     )
 }
 
-impl From<ProverDB> for EvmState {
-    fn from(value: ProverDB) -> Self {
+impl From<DynVmDatabase> for EvmState {
+    fn from(value: DynVmDatabase) -> Self {
         EvmState::Execution(Box::new(revm::db::CacheDB::new(value)))
     }
 }
 
-impl DatabaseRef for ProverDB {
-    /// The database error type.
-    type Error = ProverDBError;
+// impl DatabaseRef for ProverDB {
+//     /// The database error type.
+//     type Error = ProverDBError;
 
-    /// Get basic account information.
-    fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        let Some(account_info) = self.accounts.get(&CoreAddress::from(address.0.as_ref())) else {
-            return Ok(None);
-        };
+//     /// Get basic account information.
+//     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
+//         let Some(account_info) = self.accounts.get(&CoreAddress::from(address.0.as_ref())) else {
+//             return Ok(None);
+//         };
 
-        Ok(Some(RevmAccountInfo {
-            balance: RevmU256::from_limbs(account_info.balance.0),
-            nonce: account_info.nonce,
-            code_hash: RevmB256::from_slice(&account_info.code_hash.0),
-            code: None,
-        }))
-    }
+//         Ok(Some(RevmAccountInfo {
+//             balance: RevmU256::from_limbs(account_info.balance.0),
+//             nonce: account_info.nonce,
+//             code_hash: RevmB256::from_slice(&account_info.code_hash.0),
+//             code: None,
+//         }))
+//     }
 
-    /// Get account code by its hash.
-    fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
-        self.code
-            .get(&CoreH256::from(code_hash.as_ref()))
-            .map(|b| RevmBytecode::new_raw(RevmBytes(b.clone())))
-            .ok_or(ProverDBError::CodeNotFound(code_hash))
-    }
+//     /// Get account code by its hash.
+//     fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
+//         self.code
+//             .get(&CoreH256::from(code_hash.as_ref()))
+//             .map(|b| RevmBytecode::new_raw(RevmBytes(b.clone())))
+//             .ok_or(ProverDBError::CodeNotFound(code_hash))
+//     }
 
-    /// Get storage value of address at index.
-    fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
-        self.storage
-            .get(&CoreAddress::from(address.0.as_ref()))
-            .ok_or(ProverDBError::AccountNotFound(address))?
-            .get(&CoreH256::from(index.to_be_bytes()))
-            .map(|v| RevmU256::from_limbs(v.0))
-            .ok_or(ProverDBError::StorageValueNotFound(address, index))
-    }
+//     /// Get storage value of address at index.
+//     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
+//         self.storage
+//             .get(&CoreAddress::from(address.0.as_ref()))
+//             .ok_or(ProverDBError::AccountNotFound(address))?
+//             .get(&CoreH256::from(index.to_be_bytes()))
+//             .map(|v| RevmU256::from_limbs(v.0))
+//             .ok_or(ProverDBError::StorageValueNotFound(address, index))
+//     }
 
-    /// Get block hash by block number.
-    fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
-        self.block_hashes
-            .get(&number)
-            .map(|h| RevmB256::from_slice(&h.0))
-            .ok_or(ProverDBError::BlockHashNotFound(number))
-    }
-}
+//     /// Get block hash by block number.
+//     fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
+//         self.block_hashes
+//             .get(&number)
+//             .map(|h| RevmB256::from_slice(&h.0))
+//             .ok_or(ProverDBError::BlockHashNotFound(number))
+//     }
+// }
 
 impl revm::Database for DynVmDatabase {
     type Error = EvmError;

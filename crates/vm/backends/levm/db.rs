@@ -1,11 +1,11 @@
 use ethrex_common::types::Account;
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
-use ethrex_levm::constants::EMPTY_CODE_HASH;
+// use ethrex_levm::constants::EMPTY_CODE_HASH;
 use ethrex_levm::db::Database as LevmDatabase;
 
 use crate::db::DynVmDatabase;
-use crate::{ProverDB, VmDatabase};
+use crate::VmDatabase;
 use ethrex_levm::db::error::DatabaseError;
 use std::collections::HashMap;
 use std::result::Result;
@@ -147,68 +147,68 @@ impl LevmDatabase for DynVmDatabase {
     }
 }
 
-impl LevmDatabase for ProverDB {
-    fn get_account(&self, address: CoreAddress) -> Result<Account, DatabaseError> {
-        let Some(acc_info) = self.accounts.get(&address) else {
-            return Ok(Account::default());
-        };
+// impl LevmDatabase for ProverDBError {
+//     fn get_account(&self, address: CoreAddress) -> Result<Account, DatabaseError> {
+//         let Some(acc_info) = self.accounts.get(&address) else {
+//             return Ok(Account::default());
+//         };
 
-        let acc_code = if acc_info.code_hash != EMPTY_CODE_HASH {
-            self.code
-                .get(&acc_info.code_hash)
-                .ok_or(DatabaseError::Custom(format!(
-                    "Could not find account's code hash {}",
-                    &acc_info.code_hash
-                )))?
-        } else {
-            &bytes::Bytes::new()
-        };
+//         let acc_code = if acc_info.code_hash != EMPTY_CODE_HASH {
+//             self.code
+//                 .get(&acc_info.code_hash)
+//                 .ok_or(DatabaseError::Custom(format!(
+//                     "Could not find account's code hash {}",
+//                     &acc_info.code_hash
+//                 )))?
+//         } else {
+//             &bytes::Bytes::new()
+//         };
 
-        Ok(Account::new(
-            acc_info.balance,
-            acc_code.clone(),
-            acc_info.nonce,
-            HashMap::new(),
-        ))
-    }
+//         Ok(Account::new(
+//             acc_info.balance,
+//             acc_code.clone(),
+//             acc_info.nonce,
+//             HashMap::new(),
+//         ))
+//     }
 
-    fn account_exists(&self, address: CoreAddress) -> bool {
-        self.accounts.contains_key(&address)
-    }
+//     fn account_exists(&self, address: CoreAddress) -> bool {
+//         self.accounts.contains_key(&address)
+//     }
 
-    fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
-        self.block_hashes
-            .get(&block_number)
-            .cloned()
-            .ok_or_else(|| {
-                DatabaseError::Custom(format!(
-                    "Block hash not found for block number {block_number}"
-                ))
-            })
-    }
+//     fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
+//         self.block_hashes
+//             .get(&block_number)
+//             .cloned()
+//             .ok_or_else(|| {
+//                 DatabaseError::Custom(format!(
+//                     "Block hash not found for block number {block_number}"
+//                 ))
+//             })
+//     }
 
-    fn get_storage_value(
-        &self,
-        address: CoreAddress,
-        key: CoreH256,
-    ) -> Result<CoreU256, DatabaseError> {
-        let Some(storage) = self.storage.get(&address) else {
-            return Ok(CoreU256::default());
-        };
-        Ok(*storage.get(&key).unwrap_or(&CoreU256::default()))
-    }
+//     fn get_storage_value(
+//         &self,
+//         address: CoreAddress,
+//         key: CoreH256,
+//     ) -> Result<CoreU256, DatabaseError> {
+//         let Some(storage) = self.storage.get(&address) else {
+//             return Ok(CoreU256::default());
+//         };
+//         Ok(*storage.get(&key).unwrap_or(&CoreU256::default()))
+//     }
 
-    fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
-        Ok(self.get_chain_config())
-    }
+//     fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
+//         Ok(self.get_chain_config())
+//     }
 
-    fn get_account_code(&self, code_hash: CoreH256) -> Result<bytes::Bytes, DatabaseError> {
-        match self.code.get(&code_hash) {
-            Some(code) => Ok(code.clone()),
-            None => Err(DatabaseError::Custom(format!(
-                "Could not find code for hash {}",
-                code_hash
-            ))),
-        }
-    }
-}
+//     fn get_account_code(&self, code_hash: CoreH256) -> Result<bytes::Bytes, DatabaseError> {
+//         match self.code.get(&code_hash) {
+//             Some(code) => Ok(code.clone()),
+//             None => Err(DatabaseError::Custom(format!(
+//                 "Could not find code for hash {}",
+//                 code_hash
+//             ))),
+//         }
+//     }
+// }
