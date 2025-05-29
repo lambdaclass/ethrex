@@ -79,7 +79,6 @@ pub async fn get_rangedata(
         .into_iter()
         .map(|(address, storages)| (address, storages.into_iter().collect()))
         .collect();
-    println!("{to_fetch:?}");
     rpc_db.load_accounts(&to_fetch).await?;
     let mut proverdb = rpc_db.to_exec_db(&first_block)?;
     proverdb.block_hashes = blocks
