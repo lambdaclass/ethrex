@@ -340,7 +340,10 @@ impl<'a> VM<'a> {
             TxResult::Revert(vmerror) => {
                 let error_string = vmerror.to_string();
                 let revert_reason = if *vmerror == VMError::RevertOpcode {
-                    Some(String::from_utf8(report.output.to_vec()))
+                    Some(
+                        String::from_utf8(report.output.to_vec())
+                            .map_err(|_e| InternalError::ConversionError)?,
+                    )
                 } else {
                     None
                 };
@@ -350,9 +353,9 @@ impl<'a> VM<'a> {
         };
         //TODO: See what to do with revert_reason
         self.tracer
-            .exit(report.gas_used, report.output.clone(), error, None)?;
+            .exit(report.gas_used, report.output.clone(), error, revert_reason)?;
 
-        // dbg!(&self.tracer);
+        dbg!(&self.tracer);
 
         Ok(())
     }

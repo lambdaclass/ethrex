@@ -627,6 +627,17 @@ impl<'a> VM<'a> {
             self.substate.selfdestruct_set.insert(to);
         }
 
+        self.tracer.enter(
+            Opcode::SELFDESTRUCT,
+            to,
+            target_address,
+            balance_to_transfer,
+            0,
+            Bytes::new(),
+        );
+
+        self.tracer.exit(0, Bytes::new(), None, None)?;
+
         Ok(OpcodeResult::Halt)
     }
 
