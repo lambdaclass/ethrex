@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748529108694,
+  "lastUpdate": 1748535093179,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9805,6 +9805,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 198479500793,
             "range": "± 425286616",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "862730e911158f9a31246b549f653a2dfc79d87b",
+          "message": "ci(l1): added hive client list to use ethrex as baseimage (#2955)\n\n**Motivation**\n\nLocally built ethrexs aren't getting picked up by hive, because it\nsearchs for the uploaded version with the ghcr.io tag. This change\nshould make it search for the version tagged only with \"ethrex\". This\naffects PRs CI too, as they would download the ethrex version that is\neffectively the one from main.\n\n**Description**\n\n* Added a client-file to Hive command, making it build with the local\none.\n* Changes the Makefile to use that client-file.\n* Changes to the CI to use that branch,\n\n---------\n\nCo-authored-by: Mechardo <30327624+mechanix97@users.noreply.github.com>",
+          "timestamp": "2025-05-29T15:20:09Z",
+          "tree_id": "34121733daf6c2d7b654c497c034f89747348ef2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/862730e911158f9a31246b549f653a2dfc79d87b"
+        },
+        "date": 1748535089453,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 199713409136,
+            "range": "± 1301003774",
             "unit": "ns/iter"
           }
         ]
