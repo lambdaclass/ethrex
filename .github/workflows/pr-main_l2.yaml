@@ -203,7 +203,10 @@ jobs:
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
           docker compose -f docker-compose-l2.yaml up contract_deployer
+          echo "Showing env seq registry?"
           echo $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS
+          echo "showing .env file"
+          cat .env
 
       - name: Install rex
         run: |
@@ -217,8 +220,8 @@ jobs:
       
       - name: Register sequencer
         run: |
-          rex send $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS 1000000000000000000 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 -- "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
-          rex call $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS -- "leaderSequencer()"
+          rex send 0x754f32775e311bbb58bf934fb129bf383556dfb0 1000000000000000000 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 -- "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
+          rex call 0x754f32775e311bbb58bf934fb129bf383556dfb0 -- "leaderSequencer()"
 
       - name: Start Sequencer
         run: |
