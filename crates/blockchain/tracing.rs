@@ -35,32 +35,10 @@ impl Blockchain {
         let Some(block) = self.storage.get_block_by_hash(block_hash).await? else {
             return Err(ChainError::Custom("Block not Found".to_string()));
         };
-        // Check if we need to re-execute parent blocks
-        let blocks_to_re_execute =
-            get_missing_state_parents(block.header.parent_hash, &self.storage, reexec).await?;
-        // Base our Evm's state on the newest parent block which's state we have available
-        let parent_hash = blocks_to_re_execute
-            .last()
-            .unwrap_or(&block)
-            .header
-            .parent_hash;
-        // Cache block hashes for all parent blocks so we can access them during execution
-        let block_hash_cache = blocks_to_re_execute
-            .iter()
-            .map(|b| (b.header.number, b.hash()))
-            .collect();
-        let mut vm = Evm::new(
-            self.evm_engine,
-            StoreVmDatabase::new_with_block_hash_cache(
-                self.storage.clone(),
-                parent_hash,
-                block_hash_cache,
-            ),
-        );
-        // Run parents to rebuild pre-state
-        for block in blocks_to_re_execute.iter().rev() {
-            vm.rerun_block(block, None)?;
-        }
+        // Obtain the block's parent state
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
         // Run the block until the transaction we want to trace
         vm.rerun_block(&block, Some(tx_index))?;
         // Trace the transaction
@@ -86,28 +64,10 @@ impl Blockchain {
                 "Tracing not supported on LEVM".to_string(),
             ));
         }
-        // Check if we need to re-execute parent blocks
-        let mut blocks_to_re_execute = Vec::new();
-        fill_missing_state_parents(
-            block.header.parent_hash,
-            &mut blocks_to_re_execute,
-            &self.storage,
-            reexec,
-        )
-        .await?;
-        let parent_hash = blocks_to_re_execute
-            .last()
-            .unwrap_or(&block)
-            .header
-            .parent_hash;
-        // Run parents to rebuild pre-state
-        let mut vm = Evm::new(
-            self.evm_engine,
-            StoreVmDatabase::new(self.storage.clone(), parent_hash),
-        );
-        for block in blocks_to_re_execute.iter().rev() {
-            vm.rerun_block(block, None)?;
-        }
+        // Obtain the block's parent state
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
         // Run anything necessary before executing the block's transactions (system calls, etc)
         vm.rerun_block(&block, Some(0))?;
         // Trace each transaction
@@ -129,6 +89,41 @@ impl Blockchain {
             call_traces.push((tx_hash, call_trace));
         }
         Ok(call_traces)
+    }
+
+    /// Rebuild the parent state for a block given its parent hash, returning an `Evm` instance with all changes cached
+    /// Will re-execute all ancestor block's which's state is not stored up to a maximum given by `reexec`
+    async fn rebuild_parent_state(
+        &self,
+        parent_hash: H256,
+        reexec: usize,
+    ) -> Result<Evm, ChainError> {
+        // Check if we need to re-execute parent blocks
+        let blocks_to_re_execute =
+            get_missing_state_parents(parent_hash, &self.storage, reexec).await?;
+        // Base our Evm's state on the newest parent block which's state we have available
+        let parent_hash = blocks_to_re_execute
+            .last()
+            .map(|b| b.header.parent_hash)
+            .unwrap_or(parent_hash);
+        // Cache block hashes for all parent blocks so we can access them during execution
+        let block_hash_cache = blocks_to_re_execute
+            .iter()
+            .map(|b| (b.header.number, b.hash()))
+            .collect();
+        let mut vm = Evm::new(
+            self.evm_engine,
+            StoreVmDatabase::new_with_block_hash_cache(
+                self.storage.clone(),
+                parent_hash,
+                block_hash_cache,
+            ),
+        );
+        // Run parents to rebuild pre-state
+        for block in blocks_to_re_execute.iter().rev() {
+            vm.rerun_block(block, None)?;
+        }
+        Ok(vm)
     }
 }
 
