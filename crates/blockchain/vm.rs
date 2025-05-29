@@ -33,7 +33,7 @@ impl VmDatabase for StoreVmDatabase {
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         match self.store.get_block_header(block_number) {
-            Ok(Some(header)) => Ok(H256::from(header.compute_block_hash().0)),
+            Ok(Some(header)) => Ok(H256::from(header.hash().0)),
             Ok(None) => Err(EvmError::DB(format!(
                 "Block header not found for block number {block_number}"
             ))),
