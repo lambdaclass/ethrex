@@ -95,8 +95,6 @@ impl FullBlockBody {
 }
 #[cfg(test)]
 mod test {
-
-    use bytes::Bytes;
     use ethrex_common::{
         types::{EIP1559Transaction, Transaction, TxKind, EMPTY_KECCACK_HASH},
         Address, Bloom, H256, U256,
@@ -135,7 +133,7 @@ mod test {
             gas_limit: 0x016345785d8a0000,
             gas_used: 0xa8de,
             timestamp: 0x03e8,
-            extra_data: Bytes::new(),
+            extra_data: Vec::new(),
             prev_randao: H256::zero(),
             nonce: 0x0000000000000000,
             base_fee_per_gas: Some(0x07),
@@ -160,7 +158,7 @@ mod test {
                 &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
             )),
             value: 3000000000000000_u64.into(),
-            data: Bytes::from_static(b"0x1568"),
+            data: b"0x1568".to_vec(),
             signature_r: U256::from_str_radix(
                 "151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65d",
                 16,

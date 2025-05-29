@@ -11,7 +11,7 @@ pub trait VmDatabase: Send + Sync + DynClone {
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError>;
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError>;
     fn get_chain_config(&self) -> Result<ChainConfig, EvmError>;
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Vec<u8>>, EvmError>;
+    fn get_account_code(&self, code_hash: H256) -> Result<Vec<u8>, EvmError>;
 }
 
 dyn_clone::clone_trait_object!(VmDatabase);

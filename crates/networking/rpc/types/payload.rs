@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use ethrex_rlp::error::RLPDecodeError;
 use serde::{Deserialize, Serialize};
 
@@ -29,8 +28,7 @@ pub struct ExecutionPayload {
     gas_used: u64,
     #[serde(with = "serde_utils::u64::hex_str")]
     pub timestamp: u64,
-    #[serde(with = "serde_utils::bytes")]
-    extra_data: Bytes,
+    extra_data: Vec<u8>,
     #[serde(with = "serde_utils::u64::hex_str")]
     base_fee_per_gas: u64,
     pub block_hash: H256,
@@ -53,7 +51,7 @@ pub struct ExecutionPayload {
 }
 
 #[derive(Clone, Debug)]
-pub struct EncodedTransaction(pub Bytes);
+pub struct EncodedTransaction(pub Vec<u8>);
 
 impl<'de> Deserialize<'de> for EncodedTransaction {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>

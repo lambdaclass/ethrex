@@ -82,7 +82,7 @@ impl LevmDatabase for DatabaseLogger {
         self.store.lock().unwrap().get_chain_config()
     }
 
-    fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<Vec<u8>>, DatabaseError> {
+    fn get_account_code(&self, code_hash: CoreH256) -> Result<Vec<u8>, DatabaseError> {
         {
             let mut code_accessed = self
                 .code_accessed
@@ -104,8 +104,7 @@ impl LevmDatabase for DynVmDatabase {
             .unwrap_or_default();
 
         let acc_code = <dyn VmDatabase>::get_account_code(self.as_ref(), acc_info.code_hash)
-            .map_err(|e| DatabaseError::Custom(e.to_string()))?
-            .ok_or_else(|| DatabaseError::Custom("Account code not found".into()))?;
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?;
 
         Ok(Account::new(
             acc_info.balance,
@@ -142,7 +141,7 @@ impl LevmDatabase for DynVmDatabase {
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
 
-    fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<Vec<u8>>, DatabaseError> {
+    fn get_account_code(&self, code_hash: CoreH256) -> Result<Vec<u8>, DatabaseError> {
         <dyn VmDatabase>::get_account_code(self.as_ref(), code_hash)
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
@@ -203,7 +202,11 @@ impl LevmDatabase for ProverDB {
         Ok(self.get_chain_config())
     }
 
-    fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<Vec<u8>>, DatabaseError> {
-        Ok(self.code.get(&code_hash).cloned())
+    fn get_account_code(&self, code_hash: CoreH256) -> Result<Vec<u8>, DatabaseError> {
+        let code = self
+            .code
+            .get(&code_hash)
+            .ok_or_else(|| DatabaseError::Custom("code not found".into()))?;
+        Ok(code.clone())
     }
 }

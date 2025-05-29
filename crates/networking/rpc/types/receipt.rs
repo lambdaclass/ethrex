@@ -2,7 +2,7 @@ use ethrex_common::{
     constants::GAS_PER_BLOB,
     serde_utils,
     types::{BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType},
-    Address, Bloom, Bytes, H256,
+    Address, Bloom, H256,
 };
 use ethrex_vm::create_contract_address;
 
@@ -104,8 +104,7 @@ impl RpcLog {
 pub struct RpcLogInfo {
     pub address: Address,
     pub topics: Vec<H256>,
-    #[serde(with = "serde_utils::bytes")]
-    pub data: Bytes,
+    pub data: Vec<u8>,
 }
 
 impl From<Log> for RpcLogInfo {
@@ -203,7 +202,7 @@ mod tests {
     use super::*;
     use ethrex_common::{
         types::{Log, TxType},
-        Bloom, Bytes,
+        Bloom,
     };
     use hex_literal::hex;
 
@@ -218,7 +217,7 @@ mod tests {
                 logs: vec![Log {
                     address: Address::zero(),
                     topics: vec![],
-                    data: Bytes::from_static(b"strawberry"),
+                    data: b"strawberry".to_vec(),
                 }],
             },
             RpcReceiptTxInfo {

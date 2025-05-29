@@ -46,9 +46,9 @@ impl VmDatabase for StoreVmDatabase {
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Vec<u8>>, EvmError> {
+    fn get_account_code(&self, code_hash: H256) -> Result<Vec<u8>, EvmError> {
         if code_hash == *EMPTY_KECCACK_HASH {
-            return Ok(Bytes::new());
+            return Ok(Vec::new());
         }
         match self.store.get_account_code(code_hash) {
             Ok(Some(code)) => Ok(code),

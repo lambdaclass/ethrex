@@ -10,7 +10,6 @@ use crate::{
     },
     utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
 };
-use bytes::Bytes;
 use errors::{
     EngineClientError, ExchangeCapabilitiesError, ForkChoiceUpdatedError, GetPayloadError,
     NewPayloadError,
@@ -33,12 +32,12 @@ pub enum RpcResponse {
 #[derive(Debug, Clone)]
 pub struct EngineClient {
     client: Client,
-    secret: Bytes,
+    secret: Vec<u8>,
     execution_client_url: String,
 }
 
 impl EngineClient {
-    pub fn new(execution_client_url: &str, secret: Bytes) -> Self {
+    pub fn new(execution_client_url: &str, secret: Vec<u8>) -> Self {
         Self {
             client: Client::new(),
             secret,

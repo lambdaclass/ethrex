@@ -7,8 +7,8 @@ use sha2::Digest;
 pub struct GetBlockResponseData {
     pub message: GetBlockResponseMessage,
     // 96 bytes hex string
-    #[serde(rename = "signature", with = "ethrex_common::serde_utils::bytes")]
-    _signature: bytes::Bytes,
+    #[serde(rename = "signature")]
+    _signature: Vec<u8>,
 }
 
 /// `data.message` structure of `/eth/v2/beacon/blocks/{block_id}` endpoint's response
@@ -25,10 +25,8 @@ pub struct GetBlockResponseMessage {
 pub struct BlobSidecar {
     #[serde(deserialize_with = "ethrex_common::serde_utils::u64::deser_dec_str")]
     pub index: u64,
-    #[serde(with = "ethrex_common::serde_utils::bytes")]
-    pub blob: bytes::Bytes,
-    #[serde(with = "ethrex_common::serde_utils::bytes")]
-    pub kzg_commitment: bytes::Bytes,
+    pub blob: Vec<u8>,
+    pub kzg_commitment: Vec<u8>,
 }
 
 impl BlobSidecar {

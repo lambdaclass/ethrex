@@ -7,7 +7,6 @@ use crate::{
     },
     utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
 };
-use bytes::Bytes;
 use errors::{
     EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockByHashError,
     GetBlockByNumberError, GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError,
@@ -710,7 +709,7 @@ impl EthClient {
         &self,
         address: Address,
         block: BlockByNumber,
-    ) -> Result<Bytes, EthClientError> {
+    ) -> Result<Vec<u8>, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),

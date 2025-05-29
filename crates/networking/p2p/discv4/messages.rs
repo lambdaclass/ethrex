@@ -12,6 +12,7 @@ use ethrex_rlp::{
 };
 use k256::ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey};
 use sha3::{Digest, Keccak256};
+use tokio_util::bytes::BufMut;
 
 #[derive(Debug, PartialEq)]
 pub enum PacketDecodeErr {

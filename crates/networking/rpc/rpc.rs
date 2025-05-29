@@ -43,7 +43,6 @@ use axum_extra::{
     headers::{authorization::Bearer, Authorization},
     TypedHeader,
 };
-use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -97,7 +96,7 @@ pub struct RpcApiContext {
 
 #[derive(Debug, Clone)]
 pub struct NodeData {
-    pub jwt_secret: Bytes,
+    pub jwt_secret: Vec<u8>,
     pub local_p2p_node: Node,
     pub local_node_record: NodeRecord,
     pub client_version: String,
@@ -128,7 +127,7 @@ pub async fn start_api(
     authrpc_addr: SocketAddr,
     storage: Store,
     blockchain: Arc<Blockchain>,
-    jwt_secret: Bytes,
+    jwt_secret: Vec<u8>,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     syncer: SyncManager,
