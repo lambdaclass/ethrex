@@ -5,7 +5,7 @@ use crate::rlpx::error::RLPxError;
 
 use super::status::StatusMessage;
 
-pub async fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessage, RLPxError> {
+pub async fn get_status(storage: &Store, eth_version: u8) -> Result<StatusMessage, RLPxError> {
     let chain_config = storage.get_chain_config()?;
     let total_difficulty = U256::from(chain_config.terminal_total_difficulty.unwrap_or_default());
     let network_id = chain_config.chain_id;
@@ -19,16 +19,11 @@ pub async fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessa
         .get_block_header(block_number)?
         .ok_or(RLPxError::NotFound(format!("Block {block_number}")))?;
 
-    let genesis = genesis_header.compute_block_hash();
-    let block_hash = block_header.compute_block_hash();
-    let fork_id = ForkId::new(
-        chain_config,
-        genesis_header,
-        block_header.timestamp,
-        block_number,
-    );
+    let genesis = genesis_header.hash();
+    let block_hash = block_header.hash();
+    let fork_id = storage.get_fork_id().await?;
     Ok(StatusMessage {
-        eth_version,
+        eth_version: eth_version as u32,
         network_id,
         total_difficulty,
         block_hash,
@@ -40,7 +35,7 @@ pub async fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessa
 pub async fn validate_status(
     msg_data: StatusMessage,
     storage: &Store,
-    eth_version: u32,
+    eth_version: u8,
 ) -> Result<(), RLPxError> {
     let chain_config = storage.get_chain_config()?;
 
@@ -48,7 +43,7 @@ pub async fn validate_status(
     let genesis_header = storage
         .get_block_header(0)?
         .ok_or(RLPxError::NotFound("Genesis Block".to_string()))?;
-    let genesis_hash = genesis_header.compute_block_hash();
+    let genesis_hash = genesis_header.hash();
     let latest_block_number = storage.get_latest_block_number().await?;
     let latest_block_header = storage
         .get_block_header(latest_block_number)?
@@ -67,7 +62,7 @@ pub async fn validate_status(
         ));
     }
     //Check Protocol Version
-    if msg_data.eth_version != eth_version {
+    if msg_data.eth_version as u8 != eth_version {
         return Err(RLPxError::HandshakeError(
             "Eth protocol version does not match".to_string(),
         ));
@@ -122,12 +117,12 @@ mod tests {
         let config = genesis.config;
         let total_difficulty = U256::from(config.terminal_total_difficulty.unwrap_or_default());
         let genesis_header = genesis.get_block().header;
-        let genesis_hash = genesis_header.compute_block_hash();
+        let genesis_hash = genesis_header.hash();
         let fork_id = ForkId::new(config, genesis_header, 2707305664, 123);
 
         let eth_version = 68;
         let message = StatusMessage {
-            eth_version,
+            eth_version: eth_version as u32,
             network_id: 3503995874084926,
             total_difficulty,
             block_hash: H256::random(),

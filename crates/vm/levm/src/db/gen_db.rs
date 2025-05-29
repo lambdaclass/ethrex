@@ -7,12 +7,12 @@ use ethrex_common::Address;
 use ethrex_common::U256;
 use keccak_hash::H256;
 
+use crate::errors::InternalError;
 use crate::errors::VMError;
 use crate::vm::Substate;
 use crate::vm::VM;
 
 use super::cache;
-use super::error::DatabaseError;
 use super::CacheDB;
 use super::Database;
 
@@ -20,25 +20,29 @@ use super::Database;
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub cache: CacheDB,
+    pub immutable_cache: HashMap<Address, Account>,
 }
 
 impl GeneralizedDatabase {
     pub fn new(store: Arc<dyn Database>, cache: CacheDB) -> Self {
-        Self { store, cache }
+        Self {
+            store,
+            cache: cache.clone(),
+            immutable_cache: cache,
+        }
     }
 
     // ================== Account related functions =====================
     /// Gets account, first checking the cache and then the database
     /// (caching in the second case)
-    pub fn get_account(&mut self, address: Address) -> Result<Account, DatabaseError> {
-        match cache::get_account(&self.cache, &address) {
-            Some(acc) => Ok(acc.clone()),
-            None => {
-                let account = self.store.get_account(address)?;
-                cache::insert_account(&mut self.cache, address, account.clone());
-                Ok(account)
-            }
+    pub fn get_account(&mut self, address: Address) -> Result<&Account, VMError> {
+        if !cache::account_is_cached(&self.cache, &address) {
+            let account = self.get_account_from_database(address)?;
+            cache::insert_account(&mut self.cache, address, account);
         }
+        cache::get_account(&self.cache, &address).ok_or(VMError::Internal(
+            InternalError::AccountShouldHaveBeenCached,
+        ))
     }
 
     /// **Accesses to an account's information.**
@@ -49,11 +53,40 @@ impl GeneralizedDatabase {
         &mut self,
         accrued_substate: &mut Substate,
         address: Address,
-    ) -> Result<(Account, bool), DatabaseError> {
+    ) -> Result<(&Account, bool), VMError> {
         let address_was_cold = accrued_substate.touched_accounts.insert(address);
         let account = self.get_account(address)?;
 
         Ok((account, address_was_cold))
+    }
+
+    /// Gets account from storage, storing in Immutable Cache for efficiency when getting AccountUpdates.
+    pub fn get_account_from_database(&mut self, address: Address) -> Result<Account, VMError> {
+        let account = self.store.get_account(address)?;
+        self.immutable_cache.insert(address, account.clone());
+        Ok(account)
+    }
+
+    /// Gets storage slot from Database, storing in Immutable Cache for efficiency when getting AccountUpdates.
+    pub fn get_value_from_database(
+        &mut self,
+        address: Address,
+        key: H256,
+    ) -> Result<U256, VMError> {
+        let value = self.store.get_storage_value(address, key)?;
+        // Account must already be in immutable_cache
+        match self.immutable_cache.get_mut(&address) {
+            Some(account) => {
+                account.storage.insert(key, value);
+            }
+            None => {
+                // If we are fetching the storage of an account it means that we previously fetched the account from database before.
+                return Err(VMError::Internal(InternalError::Custom(
+                    "Account not found in InMemoryDB when fetching storage".to_string(),
+                )));
+            }
+        }
+        Ok(value)
     }
 }
 
@@ -86,7 +119,7 @@ impl<'a> VM<'a> {
                 crate::errors::InternalError::AccountNotFound,
             ))
         } else {
-            let acc = self.db.store.get_account(address)?;
+            let acc = self.db.get_account_from_database(address)?;
             cache::insert_account(&mut self.db.cache, address, acc);
             self.backup_account_info(address)?;
             cache::get_account_mut(&mut self.db.cache, &address).ok_or(VMError::Internal(
@@ -145,7 +178,7 @@ impl<'a> VM<'a> {
         Ok(account.info.nonce)
     }
 
-    /// Inserts account to cache backing up the previus state of it in the CacheBackup (if it wasn't already backed up)
+    /// Inserts account to cache backing up the previous state of it in the CacheBackup (if it wasn't already backed up)
     pub fn insert_account(&mut self, address: Address, account: Account) -> Result<(), VMError> {
         self.backup_account_info(address)?;
         let _ = cache::insert_account(&mut self.db.cache, address, account);
@@ -200,14 +233,18 @@ impl<'a> VM<'a> {
             if let Some(value) = account.storage.get(&key) {
                 return Ok(*value);
             }
+        } else {
+            // When requesting storage of an account we should've previously requested and cached the account
+            return Err(VMError::Internal(
+                InternalError::AccountShouldHaveBeenCached,
+            ));
         }
 
-        let value = self.db.store.get_storage_value(address, key)?;
+        let value = self.db.get_value_from_database(address, key)?;
 
-        // When getting storage value of an account that's not yet cached we need to store it in the account
-        // We don't actually know if the account is cached so we cache it anyway
+        // Update the account with the fetched value
         let account = self.get_account_mut(address)?;
-        account.storage.entry(key).or_insert(value);
+        account.storage.insert(key, value);
 
         Ok(value)
     }

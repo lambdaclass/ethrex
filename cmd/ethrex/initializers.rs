@@ -10,6 +10,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{public_key_from_signing_key, P2PContext},
+    peer_handler::PeerHandler,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
@@ -39,15 +40,6 @@ use ::{
     ethrex_storage_rollup::{EngineTypeRollup, StoreRollup},
     secp256k1::SecretKey,
 };
-
-#[cfg(feature = "based")]
-use crate::l2::BasedOptions;
-#[cfg(feature = "based")]
-use ethrex_common::Public;
-#[cfg(feature = "based")]
-use ethrex_rpc::{EngineClient, EthClient};
-#[cfg(feature = "based")]
-use std::str::FromStr;
 
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
@@ -134,9 +126,11 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     #[cfg(feature = "l2")] rollup_store: StoreRollup,
 ) {
+    let peer_handler = PeerHandler::new(peer_table);
+
     // Create SyncManager
     let syncer = SyncManager::new(
-        peer_table.clone(),
+        peer_handler.clone(),
         opts.syncmode.clone(),
         cancel_token,
         blockchain.clone(),
@@ -153,13 +147,8 @@ pub async fn init_rpc_api(
         local_p2p_node,
         local_node_record,
         syncer,
+        peer_handler,
         get_client_version(),
-        #[cfg(feature = "based")]
-        get_gateway_http_client(&l2_opts.based_opts),
-        #[cfg(feature = "based")]
-        get_gateway_auth_client(&l2_opts.based_opts),
-        #[cfg(feature = "based")]
-        get_gateway_public_key(&l2_opts.based_opts),
         #[cfg(feature = "l2")]
         get_valid_delegation_addresses(l2_opts),
         #[cfg(feature = "l2")]
@@ -170,30 +159,6 @@ pub async fn init_rpc_api(
     .into_future();
 
     tracker.spawn(rpc_api);
-}
-
-#[cfg(feature = "based")]
-fn get_gateway_http_client(opts: &BasedOptions) -> EthClient {
-    let gateway_http_socket_addr = parse_socket_addr(&opts.gateway_addr, &opts.gateway_eth_port)
-        .expect("Failed to parse gateway http address and port");
-
-    EthClient::new(&gateway_http_socket_addr.to_string())
-}
-
-#[cfg(feature = "based")]
-fn get_gateway_auth_client(opts: &BasedOptions) -> EngineClient {
-    let gateway_authrpc_socket_addr =
-        parse_socket_addr(&opts.gateway_addr, &opts.gateway_auth_port)
-            .expect("Failed to parse gateway authrpc address and port");
-
-    let gateway_jwtsecret = read_jwtsecret_file(&opts.gateway_jwtsecret);
-
-    EngineClient::new(&gateway_authrpc_socket_addr.to_string(), gateway_jwtsecret)
-}
-
-#[cfg(feature = "based")]
-fn get_gateway_public_key(based_opts: &BasedOptions) -> Public {
-    Public::from_str(&based_opts.gateway_pubkey).expect("Failed to parse gateway pubkey")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -229,6 +194,8 @@ pub async fn init_network(
         blockchain,
         get_client_version(),
     );
+
+    context.set_fork_id().await.expect("Set fork id");
 
     ethrex_p2p::start_network(context, bootnodes)
         .await
@@ -321,7 +288,7 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
 
-    let config_file = PathBuf::from(data_dir.to_owned() + "/config.json");
+    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
 
     info!("Reading known peers from config file {:?}", config_file);
 

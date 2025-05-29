@@ -70,6 +70,7 @@ pub mod test_utils {
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*DEFAULT_REQUESTS_HASH),
+            ..Default::default()
         }
     }
 
@@ -88,7 +89,7 @@ pub mod test_utils {
             let block = Block::new(block_header.clone(), block_body);
             storage.add_block(block).await.unwrap();
             storage
-                .set_canonical_block(block_num, block_header.compute_block_hash())
+                .set_canonical_block(block_num, block_header.hash())
                 .await
                 .unwrap();
             storage.update_latest_block_number(block_num).await.unwrap();
