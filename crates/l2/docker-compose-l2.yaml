@@ -65,12 +65,19 @@ services:
       - ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER:-false}
       - ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE:-true}
       - ETHREX_WATCHER_BLOCK_DELAY=${ETHREX_WATCHER_BLOCK_DELAY:-0}
-      - ETHREX_COMMITTER_L1_PRIVATE_KEY=${ETHREX_COMMITTER_L1_PRIVATE_KEY:-0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924}
-      - ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY={ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY:-0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d}
     volumes:
       - ../../test_data/genesis-l2.json:/genesis-l2.json
       - ./.env:/.env:ro
       - ./config.toml:/config.toml:ro
     # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
-      l2 init  --network /genesis-l2.json  --http.addr 0.0.0.0  --http.port 1729  --authrpc.port 8552  --evm levm  --proof-coordinator-listen-ip 0.0.0.0  --bridge-address ${ETHREX_WATCHER_BRIDGE_ADDRESS} --on-chain-proposer-address ${ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS} --state-updater.sequencer-registry ${ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS}
+      l2 init 
+      --network /genesis-l2.json 
+      --http.addr 0.0.0.0 
+      --http.port 1729 
+      --authrpc.port 8552 
+      --evm levm 
+      --proof-coordinator-listen-ip 0.0.0.0 
+      --bridge-address ${ETHREX_WATCHER_BRIDGE_ADDRESS}
+      --on-chain-proposer-address ${ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS}
+      --state-updater.sequencer-registry ${ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS}
