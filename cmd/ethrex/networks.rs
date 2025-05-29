@@ -33,11 +33,12 @@ lazy_static! {
     )
     .expect("Failed to parse mainnet bootnodes file");
 }
-pub enum Networks {
+#[derive(Debug, Clone)]
+pub enum Network {
     PublicNetwork(PublicNetworkType),
     GenesisPath(PathBuf),
 }
-
+#[derive(Debug, Clone)]
 pub enum PublicNetworkType {
     Hoodi,
     Holesky,
@@ -45,32 +46,32 @@ pub enum PublicNetworkType {
     Mainnet,
 }
 
-impl From<&str> for Networks {
+impl From<&str> for Network {
     fn from(value: &str) -> Self {
         match value {
-            "hoodi" => Networks::PublicNetwork(PublicNetworkType::Hoodi),
-            "holesky" => Networks::PublicNetwork(PublicNetworkType::Holesky),
-            "mainnet" => Networks::PublicNetwork(PublicNetworkType::Mainnet),
-            "sepolia" => Networks::PublicNetwork(PublicNetworkType::Sepolia),
-            s => Networks::GenesisPath(PathBuf::from(s)),
+            "hoodi" => Network::PublicNetwork(PublicNetworkType::Hoodi),
+            "holesky" => Network::PublicNetwork(PublicNetworkType::Holesky),
+            "mainnet" => Network::PublicNetwork(PublicNetworkType::Mainnet),
+            "sepolia" => Network::PublicNetwork(PublicNetworkType::Sepolia),
+            s => Network::GenesisPath(PathBuf::from(s)),
         }
     }
 }
 
-impl From<PathBuf> for Networks {
+impl From<PathBuf> for Network {
     fn from(value: PathBuf) -> Self {
-        Networks::GenesisPath(value)
+        Network::GenesisPath(value)
     }
 }
 
-impl Networks {
+impl Network {
     pub fn get_path(&self) -> &Path {
         match self {
-            Networks::PublicNetwork(PublicNetworkType::Holesky) => Path::new(HOLESKY_GENESIS_PATH),
-            Networks::PublicNetwork(PublicNetworkType::Hoodi) => Path::new(HOODI_GENESIS_PATH),
-            Networks::PublicNetwork(PublicNetworkType::Mainnet) => Path::new(MAINNET_GENESIS_PATH),
-            Networks::PublicNetwork(PublicNetworkType::Sepolia) => Path::new(SEPOLIA_GENESIS_PATH),
-            Networks::GenesisPath(s) => s,
+            Network::PublicNetwork(PublicNetworkType::Holesky) => Path::new(HOLESKY_GENESIS_PATH),
+            Network::PublicNetwork(PublicNetworkType::Hoodi) => Path::new(HOODI_GENESIS_PATH),
+            Network::PublicNetwork(PublicNetworkType::Mainnet) => Path::new(MAINNET_GENESIS_PATH),
+            Network::PublicNetwork(PublicNetworkType::Sepolia) => Path::new(SEPOLIA_GENESIS_PATH),
+            Network::GenesisPath(s) => s,
         }
     }
 }
