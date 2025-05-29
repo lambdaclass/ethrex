@@ -4,6 +4,7 @@ use crate::{
     types::{EFTest, TransactionExpectedException},
     utils::{self, effective_gas_price},
 };
+use bytes::Bytes;
 use ethrex_common::H160;
 use ethrex_common::{
     types::{
@@ -363,9 +364,14 @@ pub async fn ensure_post_state(
 
                     // Do keccak of the RLP of logs
 
-                    if !execution_report.logs.is_empty() {
-                        execution_report.logs[0].address =
+                    if execution_report.logs.len() > 1 {
+                        execution_report.logs[0].topics = vec![H256::from_str(
+                            "0x1234567890987654321234566535655565653565666656536566565656656560",
+                        )
+                        .unwrap()];
+                        execution_report.logs[1].address =
                             H160::from_str("ccccccccccccccccccccccccdccccccccccccccc").unwrap();
+                        execution_report.logs[1].data = Bytes::from_static(b"1234");
                     }
 
                     let keccak_logs = {
