@@ -5,7 +5,7 @@ use crate::{
         init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
     },
     l2::options::Options,
-    utils::{set_datadir, store_node_config_file, NodeConfigFile},
+    utils::{read_genesis_file, set_datadir, store_node_config_file, NodeConfigFile},
     DEFAULT_L2_DATADIR,
 };
 use clap::Subcommand;
