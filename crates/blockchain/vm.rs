@@ -40,7 +40,7 @@ impl VmDatabase for StoreVmDatabase {
                 Ordering::Equal => return Ok(hash),
                 Ordering::Less => {
                     return Err(EvmError::DB(format!(
-                    "[VM DB] Block number requested {} is higher than the current block number {}",
+                    "Block number requested {} is higher than the current block number {}",
                     block_number, ancestor.number
                 )))
                 }
@@ -48,7 +48,7 @@ impl VmDatabase for StoreVmDatabase {
         }
 
         Err(EvmError::DB(format!(
-            "[VM DB] Block hash not found for block number {block_number}"
+            "Block hash not found for block number {block_number}"
         )))
     }
 
