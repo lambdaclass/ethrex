@@ -76,15 +76,10 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-# Shallow clones can't specify a single revision, but at least we avoid working
-# the whole history by making it shallow since a given date (one day before our
-# target revision).
-HIVE_SHALLOW_SINCE := 2025-05-21
-
 HIVE_BRANCH ?= master
 
 hive:
-	git clone --single-branch --branch $(HIVE_BRANCH) --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
+	git clone --branch $(HIVE_BRANCH) https://github.com/lambdaclass/hive && \
 	cd hive && \
 	go build .; \
 
