@@ -363,7 +363,7 @@ impl Default for ProofCoordinatorOptions {
     }
 }
 
-#[derive(Parser)]
+#[derive(Parser, Default)]
 pub struct L2Options {
     #[arg(
         long = "l2-validium",
