@@ -91,7 +91,7 @@ How we determine which is the right fork is called **Fork choice**, which is not
 
 ### VM - State interaction
 
-As mentioned in the previous point, the VM execution doesn't directly mutate the store. It just calculates all necessary updates. But this left out some important points. How does it get the current state? What even is the state?
+As mentioned in the previous point, the VM execution doesn't directly mutate the store. It just calculates all necessary updates. There's an important clarification we need to go through about the starting point for that calculation.
 
 This is a key piece of code in `Blockchain.execute_block`:
 
@@ -108,12 +108,54 @@ The `StoreVmDatabase` is just an implementation of the `VmDatabase` trait, using
 
 The main piece of context a VM DB needs to be created is the `parent_hash`, which is the hash of the parent's block. As we mentioned previously, this hash uniquely identifies an ethereum state, so we are basically telling the VM what it's pre-state is. If we give it that, plus the block, the VM can execute the state-transition function $S' = f(S, B)$ previously mentioned.
 
+The `VmDatabase` context just requires the implementation of the following methods:
+
+```rust
+fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError>;
+fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError>;
+fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError>;
+fn get_chain_config(&self) -> Result<ChainConfig, EvmError>;
+fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError>;
+```
+
+That is, it needs to know how to get information about accounts, about storage, get a block hash according to a specific number, get the config, and the account code for a specific hash.
+
+Internally, the `StoreVmDatabase` implementation just calls the db for this. For example:
+
+```rust
+fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
+    self.store
+        .get_account_info_by_hash(self.block_hash, address)
+        .map_err(|e| EvmError::DB(e.to_string()))
+}
+```
+
+You may note that the `get_account_info_by_hash` receives not only the address, but also the block hash. That is because it doesn't get the account state for the "current" state, it gets it for the post-state of the parent block. That is, the pre-state for the state transition. And this makes sense: we don't want to apply a transaction anywhere, we want to apply it precisely on top of the parent's state, so that's where we'll be getting all of our state.
+
+### What is state anyway
+
+The ethereum state is, logically, two things: accounts and their storage slots. If we were to represent them in memory, they would be something like:
+
+```rust
+pub struct VmState {
+    accounts: HashMap<H256, Option<AccountState>>,
+    storage: HashMap<H256, HashMap<H256, Option<U256>>>,
+}
+```
+
+The accounts are indexed by the hash of their address. The storage has a two level lookup: an index by account address hash, and then an index by hashed slot. The reasons why we use hashes of the addresses and slots instead of using them directly is an implementation detail.
+
+This flat key-value representation is what we usually call a snapshot. To write and get state, it would be enough and efficient to have a table in the db with some snapshot in the past and then the differences in each account and storage each block. This are precisely the account updates, and this is precisely what we do in our snapshots implementation.
+
+However, we also need to be able to efficiently summarize a state, which is done using a structure called the Merkle Patricia Trie (MPT). This is a big topic, not covered by this document. A link to an in-detail document will be added soon. The most important part of it is that it's a merkle tree and we can calculate it's root/hash to summarize a whole state. When a node proposes a block, the root of the post-state is included as metadata in the header. That means that after executing a block, we can calculate the root of the resulting post-state MPT and compare it with the metadata. If it matches, we have a cryptographic proof that both nodes arrived at the same conclusion.
+
+This means that we will need to maintain both a snapshot (for efficient reads) and a trie (for efficient summaries) for every state in the blockchain. Here's an interesting blogpost by the go ethereum (geth) team explaning this need in detail: https://blog.ethereum.org/2020/07/17/ask-about-geth-snapshot-acceleration
+
 # TODO
 
 Imports
 
-- StoreVmDatabase (what state does the store need)
-- Trie vs snapshots in a summary.
+- Add references to our code for MPT and snapshots.
 - What account updates are. What does it mean to apply them.
   
 Live node block execution
