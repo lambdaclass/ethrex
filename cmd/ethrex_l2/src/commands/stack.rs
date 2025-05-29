@@ -214,7 +214,7 @@ impl Command {
 
                 // Get genesis
                 let genesis_header = store.get_block_header(0)?.expect("Genesis block not found");
-                let genesis_block_hash = genesis_header.compute_block_hash();
+                let genesis_block_hash = genesis_header.hash();
 
                 let mut new_trie = store
                     .state_trie(genesis_block_hash)?
@@ -275,7 +275,7 @@ impl Command {
                     };
 
                     // Store last block.
-                    let new_block_hash = new_block.compute_block_hash();
+                    let new_block_hash = new_block.hash();
                     store
                         .add_block_header(new_block_hash, new_block.clone())
                         .await?;

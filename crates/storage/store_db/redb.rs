@@ -489,7 +489,7 @@ impl StoreEngine for RedBStore {
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         self.write(
             PENDING_BLOCKS_TABLE,
-            <H256 as Into<BlockHashRLP>>::into(block.header.compute_block_hash()),
+            <H256 as Into<BlockHashRLP>>::into(block.hash()),
             <Block as Into<BlockRLP>>::into(block),
         )
         .await
