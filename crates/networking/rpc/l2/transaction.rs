@@ -1,6 +1,6 @@
 use crate::{
     clients::eth::get_address_from_secret_key,
-    eth::{fee_calculator::estimate_gas_tip, gas_price::GasPrice, transaction::EstimateGasRequest},
+    eth::{gas_price::GasPrice, transaction::EstimateGasRequest},
     rpc::{RpcApiContext, RpcHandler},
     types::transaction::SendRawTransactionRequest,
     utils::RpcErr,
@@ -133,10 +133,13 @@ impl RpcHandler for SponsoredTx {
             .await
             .map_err(RpcErr::from)?
             .ok_or(RpcErr::InvalidEthrexL2Message("Invalid nonce".to_string()))?;
-        let max_priority_fee_per_gas = estimate_gas_tip(&context.storage)
+        let max_priority_fee_per_gas = context
+            .gas_tip_estimator
+            .lock()
             .await
-            .map_err(RpcErr::from)?
-            .unwrap_or_default();
+            .estimate_gas_tip(&context.storage)
+            .await
+            .map_err(RpcErr::from)?;
         let gas_price_request = GasPrice {}.handle(context.clone()).await?;
         let max_fee_per_gas = u64::from_str_radix(
             gas_price_request
