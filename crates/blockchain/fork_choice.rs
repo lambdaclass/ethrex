@@ -168,7 +168,7 @@ async fn find_link_with_canonical_chain(
     block: &BlockHeader,
 ) -> Result<Option<Vec<(BlockNumber, BlockHash)>>, StoreError> {
     let mut block_number = block.number;
-    let block_hash = block.compute_block_hash();
+    let block_hash = block.hash();
     let mut header = block.clone();
     let mut branch = Vec::new();
 

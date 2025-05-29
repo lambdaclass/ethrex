@@ -159,10 +159,10 @@ SIM_PARALLELISM := 48
 run-hive-levm: build-image-levm ## 🐝 Run Hive with LEVM and Build report
 	$(MAKE) -C ../../../ setup-hive
 	$(MAKE) -C ../../../ clean-hive-logs
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/rpc-compat --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim devp2p --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/engine --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/sync --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/rpc-compat --client-file ../test_data/hive_clients.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim devp2p --client-file ../test_data/hive_clients.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/engine --client-file ../test_data/hive_clients.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/sync --client-file ../test_data/hive_clients.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
 	cd ../../../ && cargo run --release -p hive_report
 
 SUBDIRS := $(shell find $(VECTORS_DIR)/GeneralStateTests -maxdepth 1 -type d ! -path "$(VECTORS_DIR)/GeneralStateTests" -exec basename {} \;)
