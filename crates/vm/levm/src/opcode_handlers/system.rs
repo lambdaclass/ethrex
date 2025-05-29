@@ -924,27 +924,29 @@ impl<'a> VM<'a> {
         parent_call_frame.sub_return_data = tx_report.output.clone();
 
         // What to do, depending on TxResult
-        let error = match &tx_report.result {
+        match &tx_report.result {
             TxResult::Success => {
                 self.current_call_frame_mut()?
                     .stack
                     .push(SUCCESS_FOR_CALL)?;
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
-
-                None
             }
-            TxResult::Revert(vmerror) => {
+            TxResult::Revert(_) => {
                 // Revert value transfer
                 if should_transfer_value {
                     self.transfer(to, msg_sender, msg_value)?;
                 }
                 self.current_call_frame_mut()?.stack.push(REVERT_FOR_CALL)?;
-
-                Some(vmerror.to_string())
             }
         };
-        self.tracer
-            .exit(tx_report.gas_used, tx_report.output.clone(), error, None)?;
+
+        let (error, revert_reason) = tx_report.get_error_and_reason()?;
+        self.tracer.exit(
+            tx_report.gas_used,
+            tx_report.output.clone(),
+            error,
+            revert_reason,
+        )?;
         Ok(())
     }
 
@@ -976,13 +978,12 @@ impl<'a> VM<'a> {
         parent_call_frame.logs.extend(tx_report.logs.clone());
 
         // What to do, depending on TxResult
-        let error = match tx_report.result.clone() {
+        match tx_report.result.clone() {
             TxResult::Success => {
                 self.current_call_frame_mut()?
                     .stack
                     .push(address_to_word(to))?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
-                None
             }
             TxResult::Revert(err) => {
                 // Return value to sender
@@ -1000,12 +1001,16 @@ impl<'a> VM<'a> {
                 self.current_call_frame_mut()?
                     .stack
                     .push(CREATE_DEPLOYMENT_FAIL)?;
-
-                Some(err.to_string())
             }
         };
-        self.tracer
-            .exit(tx_report.gas_used, tx_report.output.clone(), error, None)?;
+
+        let (error, revert_reason) = tx_report.get_error_and_reason()?;
+        self.tracer.exit(
+            tx_report.gas_used,
+            tx_report.output.clone(),
+            error,
+            revert_reason,
+        )?;
         Ok(())
     }
 

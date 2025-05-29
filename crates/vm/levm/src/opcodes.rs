@@ -1,4 +1,6 @@
-#[derive(Debug, PartialEq, Eq, Clone, PartialOrd)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Serialize, Deserialize)]
 pub enum Opcode {
     // Stop and Arithmetic Operations
     STOP = 0x00,

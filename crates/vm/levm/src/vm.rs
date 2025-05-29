@@ -4,7 +4,7 @@ use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
-    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
+    errors::{ExecutionReport, InternalError, OpcodeResult, VMError},
     hooks::hook::Hook,
     opcodes::Opcode,
     precompiles::execute_precompile,
@@ -16,6 +16,7 @@ use ethrex_common::{
     types::{Transaction, TxKind},
     Address, H256, U256,
 };
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
@@ -34,7 +35,7 @@ pub struct Substate {
     pub transient_storage: TransientStorage,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TracerCallFrame {
     pub call_type: Opcode,
     pub from: Address,
@@ -93,6 +94,7 @@ pub struct CallTracer {
 }
 
 impl CallTracer {
+    /// Starts trace call.
     pub fn enter(
         &mut self,
         call_type: Opcode,
@@ -106,6 +108,7 @@ impl CallTracer {
         self.callframes.push(callframe);
     }
 
+    /// Exits trace call.
     pub fn exit(
         &mut self,
         gas_used: u64,
@@ -120,7 +123,7 @@ impl CallTracer {
 
         executed_callframe.process_output(gas_used, output, error, revert_reason);
 
-        // Append executed callframe to parent callframe.
+        // Append executed callframe to parent callframe if appropriate.
         if let Some(parent_callframe) = self.callframes.last_mut() {
             parent_callframe.calls.push(executed_callframe);
         } else {
@@ -335,23 +338,7 @@ impl<'a> VM<'a> {
             hook.finalize_execution(self, report)?;
         }
 
-        let (error, revert_reason) = match &report.result {
-            TxResult::Success => (None, None),
-            TxResult::Revert(vmerror) => {
-                let error_string = vmerror.to_string();
-                let revert_reason = if *vmerror == VMError::RevertOpcode {
-                    Some(
-                        String::from_utf8(report.output.to_vec())
-                            .map_err(|_e| InternalError::ConversionError)?,
-                    )
-                } else {
-                    None
-                };
-
-                (Some(error_string), revert_reason)
-            }
-        };
-        //TODO: See what to do with revert_reason
+        let (error, revert_reason) = report.get_error_and_reason()?;
         self.tracer
             .exit(report.gas_used, report.output.clone(), error, revert_reason)?;
 
