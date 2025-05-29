@@ -40,9 +40,9 @@ impl VmDatabase for StoreVmDatabase {
                 Ordering::Equal => return Ok(hash),
                 Ordering::Less => {
                     return Err(EvmError::DB(format!(
-                    "Block number requested {} is higher than the current block number {}",
-                    block_number, ancestor.number
-                )))
+                        "Block number requested {} is higher than the current block number {}",
+                        block_number, ancestor.number
+                    )))
                 }
             }
         }
