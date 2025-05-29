@@ -7,8 +7,9 @@ use serde_json::Value;
 
 use crate::{rpc::RpcHandler, utils::RpcErr};
 
-/// Default amount of blocks to re-excute if it is not given
+/// Default max amount of blocks to re-excute if it is not given
 const DEFAULT_REEXEC: usize = 128;
+/// Default max amount of time to spend tracing a transaction (doesn't take into account state rebuild time)
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct TraceTransactionRequest {
