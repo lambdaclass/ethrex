@@ -40,7 +40,7 @@ Adding a block is performed in `crates/blockchain/blockchain.rs:add_block`, and 
    3. Post execution validations: gas used, receipts root, requets hash.
    4. The VM execution does not mutate the store itself. It returns a list of all changes that happened in execution so they can be applied in any custom way.
 2. Post-state storage (`store_block`)
-   1. `apply_account_updates` gets the pre-state fro the store, applies the updates to get an updated post-transition-state, calculates the root and commits the new state to disk.
+   1. `apply_account_updates` gets the pre-state from the store, applies the updates to get an updated post-transition-state, calculates the root and commits the new state to disk.
    2. The state root is a merkle root, a cryptographic summary of a state. The one we just calculated is compared with the one in the block header. If it matches, it prooves that your node's post state is the same as the one the block producer reached after executing that same block.
    3. The block and the receipts are saved to disk.
 
