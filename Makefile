@@ -76,7 +76,6 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
@@ -89,12 +88,10 @@ hive:
 	cd hive && \
 	go build .; \
 
-
 setup-hive: hive ## 🐝 Set up Hive testing framework
 	cd hive && \
 	git checkout $(HIVE_BRANCH) && \
 	go build .;\
-	
 
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 4
