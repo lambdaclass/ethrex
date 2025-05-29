@@ -89,7 +89,7 @@ pub mod test_utils {
             let block = Block::new(block_header.clone(), block_body);
             storage.add_block(block).await.unwrap();
             storage
-                .set_canonical_block(block_num, block_header.compute_block_hash())
+                .set_canonical_block(block_num, block_header.hash())
                 .await
                 .unwrap();
             storage.update_latest_block_number(block_num).await.unwrap();

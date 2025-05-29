@@ -21,7 +21,7 @@ mod blockchain_integration_test {
         // Store and genesis
         let store = test_store().await;
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
-        let genesis_hash = genesis_header.compute_block_hash();
+        let genesis_hash = genesis_header.hash();
 
         // Create blockchain
         let blockchain = Blockchain::default_with_store(store.clone());
@@ -64,8 +64,8 @@ mod blockchain_integration_test {
         apply_fork_choice(
             &store,
             block_2.hash(),
-            genesis_header.compute_block_hash(),
-            genesis_header.compute_block_hash(),
+            genesis_header.hash(),
+            genesis_header.hash(),
         )
         .await
         .unwrap();
@@ -87,7 +87,7 @@ mod blockchain_integration_test {
 
         // Build a single valid block.
         let block_1 = new_block(&store, &genesis_header).await;
-        let hash_1 = block_1.header.compute_block_hash();
+        let hash_1 = block_1.hash();
         blockchain.add_block(&block_1).await.unwrap();
         apply_fork_choice(&store, hash_1, H256::zero(), H256::zero())
             .await
@@ -96,7 +96,7 @@ mod blockchain_integration_test {
         // Build a child, then change its parent, making it effectively a pending block.
         let mut block_2 = new_block(&store, &block_1.header).await;
         block_2.header.parent_hash = H256::random();
-        let hash_2 = block_2.header.compute_block_hash();
+        let hash_2 = block_2.hash();
         let result = blockchain.add_block(&block_2).await;
         assert!(matches!(result, Err(ChainError::ParentNotFound)));
 
@@ -115,7 +115,7 @@ mod blockchain_integration_test {
         // Store and genesis
         let store = test_store().await;
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
-        let genesis_hash = genesis_header.compute_block_hash();
+        let genesis_hash = genesis_header.hash();
 
         // Create blockchain
         let blockchain = Blockchain::default_with_store(store.clone());
@@ -169,8 +169,8 @@ mod blockchain_integration_test {
         apply_fork_choice(
             &store,
             block_1a.hash(),
-            genesis_header.compute_block_hash(),
-            genesis_header.compute_block_hash(),
+            genesis_header.hash(),
+            genesis_header.hash(),
         )
         .await
         .unwrap();
@@ -187,7 +187,7 @@ mod blockchain_integration_test {
         // Store and genesis
         let store = test_store().await;
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
-        let genesis_hash = genesis_header.compute_block_hash();
+        let genesis_hash = genesis_header.hash();
 
         // Create blockchain
         let blockchain = Blockchain::default_with_store(store.clone());
@@ -240,7 +240,7 @@ mod blockchain_integration_test {
         // Store and genesis
         let store = test_store().await;
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
-        let genesis_hash = genesis_header.compute_block_hash();
+        let genesis_hash = genesis_header.hash();
 
         // Create blockchain
         let blockchain = Blockchain::default_with_store(store.clone());
@@ -294,7 +294,7 @@ mod blockchain_integration_test {
 
     async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
         let args = BuildPayloadArgs {
-            parent: parent.compute_block_hash(),
+            parent: parent.hash(),
             timestamp: parent.timestamp + 12,
             fee_recipient: H160::random(),
             random: H256::random(),
