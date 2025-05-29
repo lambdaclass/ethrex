@@ -12,7 +12,7 @@ use ethrex_common::{
 };
 use ethrex_l2_common::{
     compute_deposit_logs_hash, compute_withdrawals_merkle_root, get_block_deposits,
-    get_block_withdrawals, prepare_state_diff, StateDiff
+    get_block_withdrawals, prepare_state_diff, StateDiff,
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_metrics::metrics;
