@@ -206,7 +206,7 @@ jobs:
 
       - name: Install rex
         run: |
-          cd
+          cd ..
           rustup install nightly # Install the nightly toolchain needed by rex, change this in the future
           rustup default nightly
           git clone https://github.com/lambdaclass/rex.git
@@ -220,7 +220,7 @@ jobs:
 
       - name: Start Sequencer
         run: |
-          cd ethrex
+          pwd
           rustup install 1.82.0 # Install the specific toolchain needed by ethrex
           rustup default 1.82.0
           cd crates/l2
