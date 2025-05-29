@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748467782779,
+  "lastUpdate": 1748528254441,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9715,6 +9715,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 221211272234,
             "range": "± 728011081",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "43d31da1dce519e783b3955f3ecaaaa7c1948fc4",
+          "message": "chore(l1): make `hash` public in `BlockHeader` and use instead of `compute_block_hash` (#2959)\n\n**Motivation**\n\nAfter #2845 we were still calculating the hash of headers every time\ninstead of using the `get_or_init` version.\n\n**Description**\n\nThis PR does a couple of thing\n- Make `hash` function public and `compute_block_hash` private in the\nBlockHeader\n- Replace all header `compute_block_hash` calls with `hash`\n- On blocks, replace all `block.header.hash()` for `block.hash()`\ninstead given that it already delegates internally.\n- Fixed an [outstanding\ncomment](https://github.com/lambdaclass/ethrex/pull/2658#discussion_r2096244144)\nfrom #2658\n- Increased the size of the DB (it was limiting Holesky syncing)\n\nCloses Status: Open.\n#2926",
+          "timestamp": "2025-05-29T13:21:16Z",
+          "tree_id": "c7fb3ab245524186f70156755b288b91e0ab27d5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/43d31da1dce519e783b3955f3ecaaaa7c1948fc4"
+        },
+        "date": 1748528250701,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 223415255708,
+            "range": "± 967108631",
             "unit": "ns/iter"
           }
         ]
