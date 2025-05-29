@@ -873,9 +873,9 @@ impl<'a> VM<'a> {
 
         // Here happens the interaction between child (executed) and parent (caller) callframe.
         if executed_call_frame.create_op_called {
-            self.handle_return_create(&executed_call_frame, tx_report)?;
+            self.handle_return_create(executed_call_frame, tx_report)?;
         } else {
-            self.handle_return_call(&executed_call_frame, tx_report)?;
+            self.handle_return_call(executed_call_frame, tx_report)?;
         }
 
         // Increment PC of the parent callframe after execution of the child.
@@ -886,14 +886,24 @@ impl<'a> VM<'a> {
 
     pub fn handle_return_call(
         &mut self,
-        executed_call_frame: &CallFrame,
+        executed_call_frame: CallFrame,
         tx_report: &ExecutionReport,
     ) -> Result<(), VMError> {
+        let CallFrame {
+            should_transfer_value,
+            to,
+            msg_sender,
+            msg_value,
+            gas_limit,
+            ret_offset,
+            ret_size,
+            ..
+        } = executed_call_frame;
+
         let parent_call_frame = self.current_call_frame_mut()?;
 
         // Return gas left from subcontext
-        let child_unused_gas = executed_call_frame
-            .gas_limit
+        let child_unused_gas = gas_limit
             .checked_sub(tx_report.gas_used)
             .ok_or(InternalError::GasOverflow)?;
         parent_call_frame.gas_used = parent_call_frame
@@ -907,8 +917,8 @@ impl<'a> VM<'a> {
         // Store return data of sub-context
         memory::try_store_range(
             &mut parent_call_frame.memory,
-            executed_call_frame.ret_offset,
-            executed_call_frame.ret_size,
+            ret_offset,
+            ret_size,
             &tx_report.output,
         )?;
         parent_call_frame.sub_return_data = tx_report.output.clone();
@@ -925,12 +935,8 @@ impl<'a> VM<'a> {
             }
             TxResult::Revert(vmerror) => {
                 // Revert value transfer
-                if executed_call_frame.should_transfer_value {
-                    self.transfer(
-                        executed_call_frame.to,
-                        executed_call_frame.msg_sender,
-                        executed_call_frame.msg_value,
-                    )?;
+                if should_transfer_value {
+                    self.transfer(to, msg_sender, msg_value)?;
                 }
                 self.current_call_frame_mut()?.stack.push(REVERT_FOR_CALL)?;
 
@@ -944,7 +950,7 @@ impl<'a> VM<'a> {
 
     pub fn handle_return_create(
         &mut self,
-        executed_call_frame: &CallFrame,
+        executed_call_frame: CallFrame,
         tx_report: &ExecutionReport,
     ) -> Result<(), VMError> {
         let unused_gas = executed_call_frame
