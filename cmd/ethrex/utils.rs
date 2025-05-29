@@ -1,4 +1,4 @@
-use crate::{decode, networks};
+use crate::decode;
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
