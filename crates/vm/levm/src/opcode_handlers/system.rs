@@ -1,6 +1,6 @@
 use crate::{
     call_frame::CallFrame,
-    constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
+    constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     db::cache,
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
@@ -10,10 +10,7 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{
-    types::{Account, Fork},
-    Address, U256,
-};
+use ethrex_common::{types::Fork, Address, U256};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -638,43 +635,31 @@ impl<'a> VM<'a> {
     /// Common behavior for CREATE and CREATE2 opcodes
     pub fn generic_create(
         &mut self,
-        value_in_wei_to_send: U256,
+        value: U256,
         code_offset_in_memory: U256,
         code_size_in_memory: usize,
         salt: Option<U256>,
     ) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
-        let (deployer_address, max_message_call_gas) = {
-            let current_call_frame = self.current_call_frame_mut()?;
-            // First: Validations that can cause out of gas.
-            // 1. Cant be called in a static context
-            if current_call_frame.is_static {
-                return Err(VMError::OpcodeNotAllowedInStaticContext);
-            }
-            // 2. [EIP-3860] - Cant exceed init code max size
-            if code_size_in_memory > INIT_CODE_MAX_SIZE && fork >= Fork::Shanghai {
-                return Err(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow));
-            }
+        // Validations that can cause out of gas.
+        // 1. [EIP-3860] - Cant exceed init code max size
+        if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.config.fork >= Fork::Shanghai {
+            return Err(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow));
+        }
 
-            // Reserve gas for subcall
-            let max_message_call_gas = max_message_call_gas(current_call_frame)?;
-            current_call_frame.increase_consumed_gas(max_message_call_gas)?;
+        let current_call_frame = self.current_call_frame_mut()?;
+        // 2. CREATE can't be called in a static context
+        if current_call_frame.is_static {
+            return Err(VMError::OpcodeNotAllowedInStaticContext);
+        }
 
-            // Clear callframe subreturn data
-            current_call_frame.sub_return_data = Bytes::new();
+        // Clear callframe subreturn data
+        current_call_frame.sub_return_data = Bytes::new();
 
-            let deployer_address = current_call_frame.to;
-            (deployer_address, max_message_call_gas)
-        };
+        // Reserve gas for subcall
+        let gas_limit = max_message_call_gas(current_call_frame)?;
+        current_call_frame.increase_consumed_gas(gas_limit)?;
 
-        let (deployer_balance, deployer_nonce) = {
-            let deployer_account = self
-                .db
-                .access_account(&mut self.substate, deployer_address)?
-                .0;
-            (deployer_account.info.balance, deployer_account.info.nonce)
-        };
-
+        // Load code from memory
         let code = Bytes::from(
             memory::load_range(
                 &mut self.current_call_frame_mut()?.memory,
@@ -684,14 +669,23 @@ impl<'a> VM<'a> {
             .to_vec(),
         );
 
+        // Get account info of deployer
+        let deployer_address = self.current_call_frame()?.to;
+        let (deployer_balance, deployer_nonce) = {
+            let deployer_account = self.db.get_account(deployer_address)?;
+            (deployer_account.info.balance, deployer_account.info.nonce)
+        };
+
+        // Calculate create address
         let new_address = match salt {
             Some(salt) => calculate_create2_address(deployer_address, &code, salt)?,
             None => calculate_create_address(deployer_address, deployer_nonce)?,
         };
 
-        // touch account
+        // Touch new contract
         self.substate.touched_accounts.insert(new_address);
 
+        // Log CREATE in tracer
         let call_type = match salt {
             Some(_) => Opcode::CREATE2,
             None => Opcode::CREATE,
@@ -700,80 +694,59 @@ impl<'a> VM<'a> {
             call_type,
             deployer_address,
             new_address,
-            value_in_wei_to_send,
-            max_message_call_gas,
+            value,
+            gas_limit,
             code.clone(),
         );
 
-        let new_depth = {
-            let current_call_frame = self.current_call_frame_mut()?;
-            let new_depth = current_call_frame
-                .depth
-                .checked_add(1)
-                .ok_or(InternalError::ArithmeticOperationOverflow)?;
-            // SECOND: Validations that push 0 to the stack and return reserved_gas
-            // 1. Sender doesn't have enough balance to send value.
-            // 2. Depth limit has been reached
-            // 3. Sender nonce is max.
-            if deployer_balance < value_in_wei_to_send
-                || new_depth > 1024
-                || deployer_nonce == u64::MAX
-            {
-                // Return reserved gas
-                current_call_frame.gas_used = current_call_frame
-                    .gas_used
-                    .checked_sub(max_message_call_gas)
-                    .ok_or(VMError::Internal(InternalError::GasOverflow))?;
-                // Push 0
-                current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
+        let new_depth = self
+            .current_call_frame_mut()?
+            .depth
+            .checked_add(1)
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-                self.tracer.exit_early(0, Some("CreateFail".to_string()))?;
+        // Validations that push 0 to the stack and return reserved gas to deployer
+        // 1. Sender doesn't have enough balance to send value.
+        // 2. Depth limit has been reached
+        // 3. Sender nonce is max.
+        let checks = [
+            (deployer_balance < value, "OutOfFund"),
+            (new_depth > 1024, "MaxDepth"),
+            (deployer_nonce == u64::MAX, "MaxNonce"),
+        ];
+        for (condition, reason) in checks {
+            if condition {
+                self.early_revert_message_call(gas_limit, reason.to_string())?;
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
-            new_depth
-        };
+        }
 
-        // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
-        let new_account = self.db.get_account(new_address)?;
+        // Deployment will fail (consuming all gas) if the contract already exists.
+        let new_account = self.get_account_mut(new_address)?;
         if new_account.has_code_or_nonce() {
             self.increment_account_nonce(deployer_address)?;
-            self.current_call_frame_mut()?
-                .stack
-                .push(CREATE_DEPLOYMENT_FAIL)?;
-
+            self.current_call_frame_mut()?.stack.push(FAIL)?;
             self.tracer
-                .exit_early(max_message_call_gas, Some("CreateAccExists".to_string()))?;
+                .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        // FOURTH: Changes to the state
-        // 1. Creating contract.
-
-        // If the address has balance but there is no account associated with it, we need to add the value to it
-        let new_balance = value_in_wei_to_send
-            .checked_add(new_account.info.balance)
-            .ok_or(VMError::BalanceOverflow)?;
-
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-161.md
-        let new_account = Account::new(new_balance, Bytes::new(), 1, Default::default());
-
-        self.insert_account(new_address, new_account)?;
-
-        // 2. Increment sender's nonce.
+        // Increment nonces of sender and contract
         self.increment_account_nonce(deployer_address)?;
+        self.increment_account_nonce(new_address)?; // 0 -> 1
 
-        // 3. Decrease sender's balance.
-        self.decrease_account_balance(deployer_address, value_in_wei_to_send)?;
+        // Transfer value
+        self.transfer(deployer_address, new_address, value)?;
 
         let new_call_frame = CallFrame::new(
             deployer_address,
             new_address,
             new_address,
             code,
-            value_in_wei_to_send,
+            value,
             Bytes::new(),
             false,
-            max_message_call_gas,
+            gas_limit,
             new_depth,
             true,
             true,
@@ -782,7 +755,7 @@ impl<'a> VM<'a> {
         );
         self.call_frames.push(new_call_frame);
 
-        self.substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
+        self.substate.created_accounts.insert(new_address); // Done here for SELFDESTRUCT during initcode.
 
         self.backup_substate();
 
@@ -814,7 +787,7 @@ impl<'a> VM<'a> {
         // Validate sender has enough value
         let sender_balance = self.db.get_account(msg_sender)?.info.balance;
         if should_transfer_value && sender_balance < value {
-            self.early_revert_call(gas_limit, "OutOfFund".to_string())?;
+            self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -825,7 +798,7 @@ impl<'a> VM<'a> {
             .checked_add(1)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
         if new_depth > 1024 {
-            self.early_revert_call(gas_limit, "MaxDepth".to_string())?;
+            self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -921,9 +894,7 @@ impl<'a> VM<'a> {
         // What to do, depending on TxResult
         match &tx_report.result {
             TxResult::Success => {
-                self.current_call_frame_mut()?
-                    .stack
-                    .push(SUCCESS_FOR_CALL)?;
+                self.current_call_frame_mut()?.stack.push(SUCCESS)?;
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(_) => {
@@ -931,7 +902,7 @@ impl<'a> VM<'a> {
                 if should_transfer_value {
                     self.transfer(to, msg_sender, msg_value)?;
                 }
-                self.current_call_frame_mut()?.stack.push(REVERT_FOR_CALL)?;
+                self.current_call_frame_mut()?.stack.push(FAIL)?;
             }
         };
 
@@ -987,9 +958,7 @@ impl<'a> VM<'a> {
                     self.current_call_frame_mut()?.sub_return_data = tx_report.output.clone();
                 }
 
-                self.current_call_frame_mut()?
-                    .stack
-                    .push(CREATE_DEPLOYMENT_FAIL)?;
+                self.current_call_frame_mut()?.stack.push(FAIL)?;
             }
         };
 
@@ -1003,7 +972,7 @@ impl<'a> VM<'a> {
         ))
     }
 
-    fn early_revert_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {
+    fn early_revert_message_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {
         let callframe = self.current_call_frame_mut()?;
 
         // Return gas_limit to callframe.
@@ -1011,7 +980,7 @@ impl<'a> VM<'a> {
             .gas_used
             .checked_sub(gas_limit)
             .ok_or(InternalError::GasOverflow)?;
-        callframe.stack.push(REVERT_FOR_CALL)?;
+        callframe.stack.push(FAIL)?; // It's the same as revert for CREATE
 
         self.tracer.exit_early(0, Some(reason))?;
         Ok(())
