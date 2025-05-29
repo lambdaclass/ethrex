@@ -355,7 +355,7 @@ impl<'a> VM<'a> {
         self.tracer
             .exit(report.gas_used, report.output.clone(), error, revert_reason)?;
 
-        dbg!(&self.tracer);
+        // dbg!(&self.tracer);
 
         Ok(())
     }

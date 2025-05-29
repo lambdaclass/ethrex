@@ -108,13 +108,21 @@ impl<'a> VM<'a> {
         let to = callee; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
         let is_static = current_call_frame.is_static;
 
+        let calldata: Bytes = memory::load_range(
+            &mut self.current_call_frame_mut()?.memory,
+            args_start_offset,
+            args_size,
+        )?
+        .to_vec()
+        .into();
+
         self.tracer.enter(
             Opcode::CALL,
             msg_sender,
             to,
             value_to_transfer,
             gas_limit,
-            Bytes::new(),
+            calldata.clone(),
         );
         self.generic_call(
             gas_limit,
@@ -124,8 +132,7 @@ impl<'a> VM<'a> {
             code_address,
             true,
             is_static,
-            args_start_offset,
-            args_size,
+            calldata,
             return_data_start_offset,
             return_data_size,
             bytecode,
@@ -216,13 +223,21 @@ impl<'a> VM<'a> {
         let to = current_call_frame.to;
         let is_static = current_call_frame.is_static;
 
+        let calldata: Bytes = memory::load_range(
+            &mut self.current_call_frame_mut()?.memory,
+            args_start_offset,
+            args_size,
+        )?
+        .to_vec()
+        .into();
+
         self.tracer.enter(
             Opcode::CALLCODE,
             msg_sender,
             code_address, // It is just specified for DELEGATECALL to put code_address here but I'm going to keep it the same here.
             value_to_transfer,
             gas_limit,
-            Bytes::new(),
+            calldata.clone(),
         );
         self.generic_call(
             gas_limit,
@@ -232,8 +247,7 @@ impl<'a> VM<'a> {
             code_address,
             true,
             is_static,
-            args_start_offset,
-            args_size,
+            calldata,
             return_data_start_offset,
             return_data_size,
             bytecode,
@@ -348,13 +362,21 @@ impl<'a> VM<'a> {
         let to = current_call_frame.to;
         let is_static = current_call_frame.is_static;
 
+        let calldata: Bytes = memory::load_range(
+            &mut self.current_call_frame_mut()?.memory,
+            args_start_offset,
+            args_size,
+        )?
+        .to_vec()
+        .into();
+
         self.tracer.enter(
             Opcode::DELEGATECALL,
             msg_sender,
             code_address,
             value,
             gas_limit,
-            Bytes::new(),
+            calldata.clone(),
         );
         self.generic_call(
             gas_limit,
@@ -364,8 +386,7 @@ impl<'a> VM<'a> {
             code_address,
             false,
             is_static,
-            args_start_offset,
-            args_size,
+            calldata,
             return_data_start_offset,
             return_data_size,
             bytecode,
@@ -449,13 +470,21 @@ impl<'a> VM<'a> {
         let msg_sender = self.current_call_frame()?.to; // The new sender will be the current contract.
         let to = code_address; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
 
+        let calldata: Bytes = memory::load_range(
+            &mut self.current_call_frame_mut()?.memory,
+            args_start_offset,
+            args_size,
+        )?
+        .to_vec()
+        .into();
+
         self.tracer.enter(
             Opcode::STATICCALL,
             msg_sender,
             to,
             value,
             gas_limit,
-            Bytes::new(),
+            calldata.clone(),
         );
         self.generic_call(
             gas_limit,
@@ -465,8 +494,7 @@ impl<'a> VM<'a> {
             code_address,
             true,
             true,
-            args_start_offset,
-            args_size,
+            calldata,
             return_data_start_offset,
             return_data_size,
             bytecode,
@@ -708,7 +736,7 @@ impl<'a> VM<'a> {
             new_address,
             value_in_wei_to_send,
             max_message_call_gas,
-            Bytes::new(), //TODO: See if this should be the code ???
+            code.clone(),
         );
 
         let new_depth = {
@@ -813,8 +841,7 @@ impl<'a> VM<'a> {
         code_address: Address,
         should_transfer_value: bool,
         is_static: bool,
-        args_offset: U256,
-        args_size: usize,
+        calldata: Bytes,
         ret_offset: U256,
         ret_size: usize,
         bytecode: Bytes,
@@ -826,29 +853,24 @@ impl<'a> VM<'a> {
             .0
             .info
             .balance;
-        let calldata = {
-            let callframe = self.current_call_frame_mut()?;
-            // Clear callframe subreturn data
-            callframe.sub_return_data = Bytes::new();
 
-            let calldata =
-                memory::load_range(&mut callframe.memory, args_offset, args_size)?.to_vec();
+        let callframe = self.current_call_frame_mut()?;
+        // Clear callframe subreturn data
+        callframe.sub_return_data = Bytes::new();
 
-            // 1. Validate sender has enough value
-            if should_transfer_value && sender_balance < value {
-                let gas_used = callframe
-                    .gas_used
-                    .checked_sub(gas_limit)
-                    .ok_or(InternalError::GasOverflow)?;
-                callframe.gas_used = gas_used;
-                callframe.stack.push(REVERT_FOR_CALL)?;
+        // 1. Validate sender has enough value
+        if should_transfer_value && sender_balance < value {
+            let gas_used = callframe
+                .gas_used
+                .checked_sub(gas_limit)
+                .ok_or(InternalError::GasOverflow)?;
+            callframe.gas_used = gas_used;
+            callframe.stack.push(REVERT_FOR_CALL)?;
 
-                self.tracer
-                    .exit(gas_used, Bytes::new(), Some("OutOfFund".to_string()), None)?;
-                return Ok(OpcodeResult::Continue { pc_increment: 1 });
-            }
-            calldata
-        };
+            self.tracer
+                .exit(gas_used, Bytes::new(), Some("OutOfFund".to_string()), None)?;
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+        }
 
         // 2. Validate max depth has not been reached yet.
         let new_depth = self
