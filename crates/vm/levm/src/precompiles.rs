@@ -318,7 +318,8 @@ pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
     }
 
     let v = u8::try_from(v).map_err(|_| InternalError::ConversionError)?;
-    let Ok(recovery_id) = RecoveryId::from_i32((v - 27).into()) else {
+    let recovery_id_from_rpc = v.checked_sub(27).ok_or(InternalError::ConversionError)?;
+    let Ok(recovery_id) = RecoveryId::from_i32(recovery_id_from_rpc.into()) else {
         return Ok(Bytes::new());
     };
 
