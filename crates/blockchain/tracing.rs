@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ethrex_common::{types::Block, H256};
 use ethrex_storage::Store;
@@ -97,14 +97,10 @@ where
     O: FnOnce() -> Result<T, EvmError> + Send + 'static,
     T: Send + 'static,
 {
-    let trace_start = Instant::now();
-    let handle = tokio::task::spawn_blocking(operation);
-    while !handle.is_finished() {
-        if trace_start.elapsed() > timeout {
-            handle.abort();
-        }
-    }
-    Ok(handle
-        .await
-        .map_err(|_| ChainError::Custom("Tracing Timeout".to_string()))??)
+    Ok(
+        tokio::time::timeout(timeout, tokio::task::spawn_blocking(operation))
+            .await
+            .map_err(|_| ChainError::Custom("Tracing Timeout".to_string()))?
+            .map_err(|_| ChainError::Custom("Unexpected Runtime Error".to_string()))??,
+    )
 }
