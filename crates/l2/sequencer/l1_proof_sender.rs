@@ -117,7 +117,7 @@ impl L1ProofSender {
             .get_last_committed_batch(self.on_chain_proposer_address)
             .await?;
 
-        if last_committed_batch != batch_to_verify {
+        if last_committed_batch < batch_to_verify {
             info!("Next batch to verify ({batch_to_verify}) is not yet committed");
             return Ok(());
         }
