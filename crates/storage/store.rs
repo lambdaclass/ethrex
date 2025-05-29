@@ -1211,7 +1211,8 @@ impl Store {
             let hashed_address = hash_address_fixed(&update.address);
 
             if !update.removed {
-                let account_state = match state_trie.get(&hashed_address.as_bytes().into()).unwrap() {
+                let account_state = match state_trie.get(&hashed_address.as_bytes().into()).unwrap()
+                {
                     Some(encoded_state) => AccountState::decode(&encoded_state).unwrap(),
                     None => AccountState::default(),
                 };
