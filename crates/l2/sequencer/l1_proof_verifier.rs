@@ -146,7 +146,7 @@ impl L1ProofVerifier {
         let commitment = H256(commitment);
 
         info!(
-            "Proof for batch {batch_number} aggregated by Aligned with {commitment:#x} and Merkle root {merkle_root:#x}"
+            "Proof for batch {batch_number} aggregated by Aligned with commitment {commitment:#x} and Merkle root {merkle_root:#x}"
         );
 
         let merkle_path = merkle_path
