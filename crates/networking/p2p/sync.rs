@@ -14,7 +14,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{error::StoreError, EngineType, Store, STATE_TRIE_SEGMENTS};
-use ethrex_trie::{Nibbles, Node, TrieError, TrieState};
+use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
 use std::{
@@ -189,7 +189,7 @@ impl Syncer {
         loop {
             debug!("Requesting Block Headers from {search_head}");
 
-            let Some((mut block_headers, mut block_hashes)) = self
+            let Some(mut block_headers) = self
                 .peers
                 .request_block_headers(search_head, BlockRequestOrder::OldToNew)
                 .await
@@ -197,6 +197,9 @@ impl Syncer {
                 warn!("Sync failed to find target block header, aborting");
                 return Ok(());
             };
+
+            let mut block_hashes: Vec<BlockHash> =
+                block_headers.iter().map(|header| header.hash()).collect();
 
             let first_block_header = match block_headers.first() {
                 Some(header) => header.clone(),
@@ -209,7 +212,7 @@ impl Syncer {
             // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
             // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
             if first_block_header == last_block_header
-                && first_block_header.compute_block_hash() == search_head
+                && first_block_header.hash() == search_head
                 && search_head != sync_head
             {
                 // There is no path to the sync head this goes back until it find a common ancerstor
@@ -228,7 +231,7 @@ impl Syncer {
             // If we have a pending block from new_payload request
             // attach it to the end if it matches the parent_hash of the latest received header
             if let Some(ref block) = pending_block {
-                if block.header.parent_hash == last_block_header.compute_block_hash() {
+                if block.header.parent_hash == last_block_header.hash() {
                     block_hashes.push(block.hash());
                     block_headers.push(block.header.clone());
                 }
@@ -242,7 +245,7 @@ impl Syncer {
             }
 
             // Update current fetch head if needed
-            let last_block_hash = last_block_header.compute_block_hash();
+            let last_block_hash = last_block_header.hash();
             if !sync_head_found {
                 debug!(
                     "Syncing head not found, updated current_head {:?}",
@@ -660,19 +663,19 @@ impl Syncer {
 fn node_missing_children(
     node: &Node,
     parent_path: &Nibbles,
-    trie_state: &TrieState,
+    trie_state: &dyn TrieDB,
 ) -> Result<Vec<Nibbles>, TrieError> {
     let mut paths = Vec::new();
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid() && trie_state.get_node(*child)?.is_none() {
+                if child.is_valid() && child.get_node(trie_state)?.is_none() {
                     paths.push(parent_path.append_new(index as u8));
                 }
             }
         }
         Node::Extension(node) => {
-            if node.child.is_valid() && trie_state.get_node(node.child)?.is_none() {
+            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
                 paths.push(parent_path.concat(node.prefix.clone()));
             }
         }
