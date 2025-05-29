@@ -47,7 +47,10 @@ impl Blockchain {
             .header
             .parent_hash;
         // Run parents to rebuild pre-state
-        let mut vm = Evm::new(self.evm_engine, StoreVmDatabase::new(self.storage.clone(), parent_hash));
+        let mut vm = Evm::new(
+            self.evm_engine,
+            StoreVmDatabase::new(self.storage.clone(), parent_hash),
+        );
         for block in blocks_to_re_execute.iter().rev() {
             vm.rerun_block(block, None)?;
         }

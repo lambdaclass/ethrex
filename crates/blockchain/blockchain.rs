@@ -7,6 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
+use ::tracing::info;
 use constants::MAX_INITCODE_SIZE;
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -28,7 +29,6 @@ use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
-use ::tracing::info;
 use vm::StoreVmDatabase;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
