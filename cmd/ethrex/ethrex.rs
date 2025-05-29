@@ -53,8 +53,6 @@ async fn main() -> eyre::Result<()> {
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
-    return Ok(()); // Deliberately breaking change to test ci, don't merge!
-
     init_rpc_api(
         &opts,
         #[cfg(feature = "l2")]
