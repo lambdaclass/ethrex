@@ -1298,7 +1298,7 @@ mod tests {
     use bytes::Bytes;
     use ethrex_common::{
         types::{BlockHash, Index, Log, TxType},
-        Address, Bloom, H256,
+        Address, H256,
     };
 
     #[test]
@@ -1640,7 +1640,6 @@ mod tests {
             tx_type: TxType::EIP7702,
             succeeded: true,
             cumulative_gas_used: u64::MAX,
-            bloom: Bloom::default(),
             logs,
         }
     }
