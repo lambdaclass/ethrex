@@ -30,13 +30,16 @@ use lambdaworks_math::{
     traits::ByteConversion,
     unsigned_integer::element,
 };
-use secp256k1::{ecdsa::{RecoverableSignature, RecoveryId}, Message};
 use num_bigint::BigUint;
 #[cfg(feature = "l2")]
 use p256::{
     ecdsa::{signature::hazmat::PrehashVerifier, Signature as P256Signature, VerifyingKey},
     elliptic_curve::{bigint::U256 as P256Uint, ff::PrimeField, Curve},
     EncodedPoint, FieldElement as P256FieldElement, NistP256,
+};
+use secp256k1::{
+    ecdsa::{RecoverableSignature, RecoveryId},
+    Message,
 };
 
 // Secp256r1 curve parameters
