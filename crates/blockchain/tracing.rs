@@ -82,7 +82,7 @@ impl Blockchain {
             let tx_hash = block.as_ref().body.transactions[index].compute_hash();
             let call_trace = timeout_trace_operation(timeout, move || {
                 vm.lock()
-                    .unwrap()
+                    .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
                     .trace_tx_calls(block.as_ref(), index, only_top_call, with_log)
             })
             .await?;
