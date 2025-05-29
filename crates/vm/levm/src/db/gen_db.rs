@@ -128,6 +128,12 @@ impl<'a> VM<'a> {
         }
     }
 
+    pub fn transfer(&mut self, from: Address, to: Address, value: U256) -> Result<(), VMError> {
+        self.decrease_account_balance(from, value)?;
+        self.increase_account_balance(to, value)?;
+        Ok(())
+    }
+
     pub fn increase_account_balance(
         &mut self,
         address: Address,

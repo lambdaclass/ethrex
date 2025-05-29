@@ -828,6 +828,22 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
+    pub fn early_revert_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {
+        let callframe = self.current_call_frame_mut()?;
+
+        let gas_used = callframe
+            .gas_used
+            .checked_sub(gas_limit)
+            .ok_or(InternalError::GasOverflow)?;
+
+        callframe.gas_used = gas_used;
+        callframe.stack.push(REVERT_FOR_CALL)?;
+
+        self.tracer
+            .exit(gas_used, Bytes::new(), Some(reason), None)?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// This (should) be the only function where gas is used as a
     /// U256. This is because we have to use the values that are
@@ -847,59 +863,30 @@ impl<'a> VM<'a> {
         bytecode: Bytes,
         is_delegation_7702: bool,
     ) -> Result<OpcodeResult, VMError> {
-        let sender_balance = self
-            .db
-            .access_account(&mut self.substate, msg_sender)?
-            .0
-            .info
-            .balance;
-
-        let callframe = self.current_call_frame_mut()?;
         // Clear callframe subreturn data
-        callframe.sub_return_data = Bytes::new();
+        self.current_call_frame_mut()?.sub_return_data = Bytes::new();
 
-        // 1. Validate sender has enough value
+        // Validate sender has enough value
+        let sender_balance = self.db.get_account(msg_sender)?.info.balance;
         if should_transfer_value && sender_balance < value {
-            let gas_used = callframe
-                .gas_used
-                .checked_sub(gas_limit)
-                .ok_or(InternalError::GasOverflow)?;
-            callframe.gas_used = gas_used;
-            callframe.stack.push(REVERT_FOR_CALL)?;
-
-            self.tracer
-                .exit(gas_used, Bytes::new(), Some("OutOfFund".to_string()), None)?;
+            self.early_revert_call(gas_limit, "OutOfFund".to_string())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        // 2. Validate max depth has not been reached yet.
+        // Validate max depth has not been reached yet.
         let new_depth = self
             .current_call_frame()?
             .depth
             .checked_add(1)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
-
         if new_depth > 1024 {
-            let callframe = self.current_call_frame_mut()?;
-            let gas_used = callframe
-                .gas_used
-                .checked_sub(gas_limit)
-                .ok_or(InternalError::GasOverflow)?;
-            callframe.gas_used = gas_used;
-            callframe.stack.push(REVERT_FOR_CALL)?;
-            self.tracer.exit(
-                gas_used,
-                Bytes::new(),
-                Some("MaxCallDepth".to_string()),
-                None,
-            )?;
+            self.early_revert_call(gas_limit, "MaxDepth".to_string())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
         // Transfer value from caller to callee.
         if should_transfer_value {
-            self.decrease_account_balance(msg_sender, value)?;
-            self.increase_account_balance(to, value)?;
+            self.transfer(msg_sender, to, value)?;
         }
 
         let new_call_frame = CallFrame::new(
@@ -975,38 +962,32 @@ impl<'a> VM<'a> {
         }
 
         // What to do, depending on TxResult
-        match &tx_report.result {
+        let error = match &tx_report.result {
             TxResult::Success => {
-                self.tracer
-                    .exit(tx_report.gas_used, tx_report.output.clone(), None, None)?;
                 self.current_call_frame_mut()?
                     .stack
                     .push(SUCCESS_FOR_CALL)?;
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
+
+                None
             }
-            TxResult::Revert(error) => {
+            TxResult::Revert(vmerror) => {
                 // Revert value transfer
                 if executed_call_frame.should_transfer_value {
-                    self.decrease_account_balance(
+                    self.transfer(
                         executed_call_frame.to,
-                        executed_call_frame.msg_value,
-                    )?;
-
-                    self.increase_account_balance(
                         executed_call_frame.msg_sender,
                         executed_call_frame.msg_value,
                     )?;
                 }
-                self.tracer.exit(
-                    tx_report.gas_used,
-                    tx_report.output.clone(), //TODO: Check if output is cleared when it's not revert opcode
-                    Some(error.to_string()),
-                    None,
-                )?;
                 // Push 0 to stack
                 self.current_call_frame_mut()?.stack.push(REVERT_FOR_CALL)?;
+
+                Some(vmerror.to_string())
             }
-        }
+        };
+        self.tracer
+            .exit(tx_report.gas_used, tx_report.output.clone(), error, None)?;
         Ok(())
     }
 
@@ -1031,16 +1012,19 @@ impl<'a> VM<'a> {
             parent_call_frame.logs.extend(tx_report.logs.clone());
         }
 
+        let error;
         match tx_report.result.clone() {
             TxResult::Success => {
-                self.tracer
-                    .exit(tx_report.gas_used, tx_report.output.clone(), None, None)?;
+                error = None;
+
                 self.current_call_frame_mut()?
                     .stack
                     .push(address_to_word(executed_call_frame.to))?;
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(err) => {
+                error = Some(err.to_string());
+
                 // Return value to sender
                 self.increase_account_balance(
                     executed_call_frame.msg_sender,
@@ -1057,17 +1041,14 @@ impl<'a> VM<'a> {
                 if err == VMError::RevertOpcode {
                     self.current_call_frame_mut()?.sub_return_data = tx_report.output.clone();
                 }
-                self.tracer.exit(
-                    tx_report.gas_used,
-                    tx_report.output.clone(), //TODO: Check if output is cleared when it's not revert opcode
-                    Some(err.to_string()),
-                    None,
-                )?;
+
                 self.current_call_frame_mut()?
                     .stack
                     .push(CREATE_DEPLOYMENT_FAIL)?;
             }
         }
+        self.tracer
+            .exit(tx_report.gas_used, tx_report.output.clone(), error, None)?;
         Ok(())
     }
 }
