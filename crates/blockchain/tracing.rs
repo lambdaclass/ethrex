@@ -66,6 +66,61 @@ impl Blockchain {
         })
         .await
     }
+
+    /// Outputs the call trace for the given transaction
+    /// May need to re-execute blocks in order to rebuild the transaction's prestate, up to the amount given by `reexec`
+    pub async fn trace_block_calls(
+        &self,
+        // We receive the block instead of its hash/number to support multiple potential endpoints
+        block: Block,
+        reexec: usize,
+        timeout: Duration,
+        only_top_call: bool,
+        with_log: bool,
+    ) -> Result<Vec<(H256, CallTrace)>, ChainError> {
+        if matches!(self.evm_engine, EvmEngine::LEVM) {
+            return Err(ChainError::Custom(
+                "Tracing not supported on LEVM".to_string(),
+            ));
+        }
+        // Check if we need to re-execute parent blocks
+        let mut blocks_to_re_execute = Vec::new();
+        fill_missing_state_parents(
+            block.header.parent_hash,
+            &mut blocks_to_re_execute,
+            &self.storage,
+            reexec,
+        )
+        .await?;
+        let parent_hash = blocks_to_re_execute
+            .last()
+            .unwrap_or(&block)
+            .header
+            .parent_hash;
+        // Run parents to rebuild pre-state
+        let mut vm = Evm::new(
+            self.evm_engine,
+            StoreVmDatabase::new(self.storage.clone(), parent_hash),
+        );
+        for block in blocks_to_re_execute.iter().rev() {
+            vm.rerun_block(block, None)?;
+        }
+        // Run anything necessary before executing the block's transactions (system calls, etc)
+        vm.rerun_block(&block, Some(0))?;
+        // Trace each transaction
+        let mut call_traces = vec![];
+        for index in 0..block.body.transactions.len() {
+            let tx_hash = block.body.transactions[index].compute_hash();
+            let mut vm = vm.clone(); // Find how to avoid this
+            let block = block.clone(); // Find how to avoid this
+            let call_trace = timeout_trace_operation(timeout, move || {
+                vm.trace_tx_calls(&block, index, only_top_call, with_log)
+            })
+            .await?;
+            call_traces.push((tx_hash, call_trace));
+        }
+        Ok(call_traces)
+    }
 }
 
 /// Returns a list of all the parent blocks (starting from parent hash) who's state we don't have stored.
