@@ -125,8 +125,11 @@ impl L1ProofVerifier {
         .map_err(|e| ProofVerifierError::InternalError(format!("{:?}", e)))?;
 
         // We can make this prettier. Aligned updated their API and this was just a quick fix.
-        let merkle_path = match proof_status {
-            ProofStatus::Verified { merkle_path, .. } => merkle_path,
+        let (merkle_root, merkle_path) = match proof_status {
+            ProofStatus::Verified {
+                merkle_root,
+                merkle_path,
+            } => (merkle_root, merkle_path),
             ProofStatus::Invalid => {
                 return Err(ProofVerifierError::InternalError(
                     "Proof was found in the blob but the Merkle Root verification failed."
@@ -137,6 +140,14 @@ impl L1ProofVerifier {
                 return Ok(None);
             }
         };
+
+        let commitment = verification_data.commitment();
+        let merkle_root = H256(merkle_root);
+        let commitment = H256(commitment);
+
+        info!(
+            "Proof for batch {batch_number} aggregated by Aligned with {commitment:#x} and Merkle root {merkle_root:#x}"
+        );
 
         let merkle_path = merkle_path
             .iter()
