@@ -255,7 +255,7 @@ impl<'a> VM<'a> {
                 InternalError::ArithmeticOperationOverflow,
             ))?;
 
-        #[allow(clippy::arithmetic_side_effects)]
+        #[expect(clippy::arithmetic_side_effects)]
         let shifted_value = value_to_extend >> sign_bit_index;
         let sign_bit = shifted_value & U256::one();
 

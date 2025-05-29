@@ -178,7 +178,7 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
+    #[expect(clippy::arithmetic_side_effects)]
     // SHL operation (shift left)
     pub fn op_shl(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
@@ -195,7 +195,7 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
+    #[expect(clippy::arithmetic_side_effects)]
     // SHR operation (shift right)
     pub fn op_shr(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
