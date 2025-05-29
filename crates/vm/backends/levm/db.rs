@@ -104,7 +104,8 @@ impl LevmDatabase for DynVmDatabase {
             .unwrap_or_default();
 
         let acc_code = <dyn VmDatabase>::get_account_code(self.as_ref(), acc_info.code_hash)
-            .map_err(|e| DatabaseError::Custom(e.to_string()))?;
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?
+            .ok_or_else(|| DatabaseError::Custom("Account code not found".into()))?;
 
         Ok(Account::new(
             acc_info.balance,
