@@ -953,46 +953,44 @@ impl<'a> VM<'a> {
         executed_call_frame: CallFrame,
         tx_report: &ExecutionReport,
     ) -> Result<(), VMError> {
-        let unused_gas = executed_call_frame
-            .gas_limit
+        let CallFrame {
+            gas_limit,
+            to,
+            call_frame_backup,
+            msg_sender,
+            msg_value,
+            ..
+        } = executed_call_frame;
+        let parent_call_frame = self.current_call_frame_mut()?;
+
+        // Return unused gas
+        let unused_gas = gas_limit
             .checked_sub(tx_report.gas_used)
             .ok_or(InternalError::GasOverflow)?;
+        parent_call_frame.gas_used = parent_call_frame
+            .gas_used
+            .checked_sub(unused_gas)
+            .ok_or(InternalError::GasOverflow)?;
 
-        {
-            let parent_call_frame = self.current_call_frame_mut()?;
-            // Return reserved gas
-            parent_call_frame.gas_used = parent_call_frame
-                .gas_used
-                .checked_sub(unused_gas)
-                .ok_or(InternalError::GasOverflow)?;
+        // Append logs
+        parent_call_frame.logs.extend(tx_report.logs.clone());
 
-            parent_call_frame.logs.extend(tx_report.logs.clone());
-        }
-
-        let error;
-        match tx_report.result.clone() {
+        // What to do, depending on TxResult
+        let error = match tx_report.result.clone() {
             TxResult::Success => {
-                error = None;
-
                 self.current_call_frame_mut()?
                     .stack
-                    .push(address_to_word(executed_call_frame.to))?;
-                self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
+                    .push(address_to_word(to))?;
+                self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
+                None
             }
             TxResult::Revert(err) => {
-                error = Some(err.to_string());
-
                 // Return value to sender
-                self.increase_account_balance(
-                    executed_call_frame.msg_sender,
-                    executed_call_frame.msg_value,
-                )?;
+                self.increase_account_balance(msg_sender, msg_value)?;
 
                 // Deployment failed so account shouldn't exist
-                cache::remove_account(&mut self.db.cache, &executed_call_frame.to);
-                self.substate
-                    .created_accounts
-                    .remove(&executed_call_frame.to);
+                cache::remove_account(&mut self.db.cache, &to);
+                self.substate.created_accounts.remove(&to);
 
                 // If revert we have to copy the return_data
                 if err == VMError::RevertOpcode {
@@ -1002,8 +1000,10 @@ impl<'a> VM<'a> {
                 self.current_call_frame_mut()?
                     .stack
                     .push(CREATE_DEPLOYMENT_FAIL)?;
+
+                Some(err.to_string())
             }
-        }
+        };
         self.tracer
             .exit(tx_report.gas_used, tx_report.output.clone(), error, None)?;
         Ok(())
