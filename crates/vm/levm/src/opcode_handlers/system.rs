@@ -97,24 +97,15 @@ impl<'a> VM<'a> {
             gas_left,
         )?;
 
-        self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
-        self.current_call_frame_mut()?
-            .increase_consumed_gas(eip7702_gas_consumed)?;
-
-        let current_call_frame = self.current_call_frame()?;
+        let callframe = self.current_call_frame_mut()?;
+        callframe.increase_consumed_gas(cost)?;
+        callframe.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // OPERATION
-        let msg_sender = current_call_frame.to; // The new sender will be the current contract.
+        let msg_sender = callframe.to; // The new sender will be the current contract.
         let to = callee; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
-        let is_static = current_call_frame.is_static;
-
-        let calldata: Bytes = memory::load_range(
-            &mut self.current_call_frame_mut()?.memory,
-            args_start_offset,
-            args_size,
-        )?
-        .to_vec()
-        .into();
+        let is_static = callframe.is_static;
+        let calldata = self.get_calldata(args_start_offset, args_size)?;
 
         self.tracer.enter(
             Opcode::CALL,
@@ -212,24 +203,15 @@ impl<'a> VM<'a> {
             gas_left,
         )?;
 
-        self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
-        self.current_call_frame_mut()?
-            .increase_consumed_gas(eip7702_gas_consumed)?;
-
-        let current_call_frame = self.current_call_frame()?;
+        let callframe = self.current_call_frame_mut()?;
+        callframe.increase_consumed_gas(cost)?;
+        callframe.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
-        let msg_sender = current_call_frame.to;
-        let to = current_call_frame.to;
-        let is_static = current_call_frame.is_static;
-
-        let calldata: Bytes = memory::load_range(
-            &mut self.current_call_frame_mut()?.memory,
-            args_start_offset,
-            args_size,
-        )?
-        .to_vec()
-        .into();
+        let msg_sender = callframe.to;
+        let to = callframe.to;
+        let is_static = callframe.is_static;
+        let calldata = self.get_calldata(args_start_offset, args_size)?;
 
         self.tracer.enter(
             Opcode::CALLCODE,
@@ -350,25 +332,16 @@ impl<'a> VM<'a> {
             gas_left,
         )?;
 
-        self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
-        self.current_call_frame_mut()?
-            .increase_consumed_gas(eip7702_gas_consumed)?;
-
-        let current_call_frame = self.current_call_frame()?;
+        let callframe = self.current_call_frame_mut()?;
+        callframe.increase_consumed_gas(cost)?;
+        callframe.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // OPERATION
-        let msg_sender = current_call_frame.msg_sender;
-        let value = current_call_frame.msg_value;
-        let to = current_call_frame.to;
-        let is_static = current_call_frame.is_static;
-
-        let calldata: Bytes = memory::load_range(
-            &mut self.current_call_frame_mut()?.memory,
-            args_start_offset,
-            args_size,
-        )?
-        .to_vec()
-        .into();
+        let msg_sender = callframe.msg_sender;
+        let value = callframe.msg_value;
+        let to = callframe.to;
+        let is_static = callframe.is_static;
+        let calldata = self.get_calldata(args_start_offset, args_size)?;
 
         self.tracer.enter(
             Opcode::DELEGATECALL,
@@ -461,22 +434,15 @@ impl<'a> VM<'a> {
             gas_left,
         )?;
 
-        self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
-        self.current_call_frame_mut()?
-            .increase_consumed_gas(eip7702_gas_consumed)?;
+        let callframe = self.current_call_frame_mut()?;
+        callframe.increase_consumed_gas(cost)?;
+        callframe.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // OPERATION
         let value = U256::zero();
-        let msg_sender = self.current_call_frame()?.to; // The new sender will be the current contract.
+        let msg_sender = callframe.to; // The new sender will be the current contract.
         let to = code_address; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
-
-        let calldata: Bytes = memory::load_range(
-            &mut self.current_call_frame_mut()?.memory,
-            args_start_offset,
-            args_size,
-        )?
-        .to_vec()
-        .into();
+        let calldata = self.get_calldata(args_start_offset, args_size)?;
 
         self.tracer.enter(
             Opcode::STATICCALL,
@@ -828,22 +794,6 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
-    pub fn early_revert_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {
-        let callframe = self.current_call_frame_mut()?;
-
-        let gas_used = callframe
-            .gas_used
-            .checked_sub(gas_limit)
-            .ok_or(InternalError::GasOverflow)?;
-
-        callframe.gas_used = gas_used;
-        callframe.stack.push(REVERT_FOR_CALL)?;
-
-        self.tracer
-            .exit(gas_used, Bytes::new(), Some(reason), None)?;
-        Ok(())
-    }
-
     #[allow(clippy::too_many_arguments)]
     /// This (should) be the only function where gas is used as a
     /// U256. This is because we have to use the values that are
@@ -1050,6 +1000,28 @@ impl<'a> VM<'a> {
         }
         self.tracer
             .exit(tx_report.gas_used, tx_report.output.clone(), error, None)?;
+        Ok(())
+    }
+
+    fn get_calldata(&mut self, offset: U256, size: usize) -> Result<Bytes, VMError> {
+        Ok(Bytes::from(
+            memory::load_range(&mut self.current_call_frame_mut()?.memory, offset, size)?.to_vec(),
+        ))
+    }
+
+    fn early_revert_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {
+        let callframe = self.current_call_frame_mut()?;
+
+        let gas_used = callframe
+            .gas_used
+            .checked_sub(gas_limit)
+            .ok_or(InternalError::GasOverflow)?;
+
+        callframe.gas_used = gas_used;
+        callframe.stack.push(REVERT_FOR_CALL)?;
+
+        self.tracer
+            .exit(gas_used, Bytes::new(), Some(reason), None)?;
         Ok(())
     }
 }
