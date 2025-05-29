@@ -939,27 +939,29 @@ impl<'a> VM<'a> {
         executed_call_frame: &CallFrame,
         tx_report: &ExecutionReport,
     ) -> Result<(), VMError> {
+        let parent_call_frame = self.current_call_frame_mut()?;
+
         // Return gas left from subcontext
-        let gas_left_from_new_call_frame = executed_call_frame
+        let child_unused_gas = executed_call_frame
             .gas_limit
             .checked_sub(tx_report.gas_used)
             .ok_or(InternalError::GasOverflow)?;
-        {
-            let parent_call_frame = self.current_call_frame_mut()?;
-            parent_call_frame.gas_used = parent_call_frame
-                .gas_used
-                .checked_sub(gas_left_from_new_call_frame)
-                .ok_or(InternalError::GasOverflow)?;
+        parent_call_frame.gas_used = parent_call_frame
+            .gas_used
+            .checked_sub(child_unused_gas)
+            .ok_or(InternalError::GasOverflow)?;
 
-            parent_call_frame.logs.extend(tx_report.logs.clone());
-            memory::try_store_range(
-                &mut parent_call_frame.memory,
-                executed_call_frame.ret_offset,
-                executed_call_frame.ret_size,
-                &tx_report.output,
-            )?;
-            parent_call_frame.sub_return_data = tx_report.output.clone();
-        }
+        // Append logs
+        parent_call_frame.logs.extend(tx_report.logs.clone());
+
+        // Store return data of sub-context
+        memory::try_store_range(
+            &mut parent_call_frame.memory,
+            executed_call_frame.ret_offset,
+            executed_call_frame.ret_size,
+            &tx_report.output,
+        )?;
+        parent_call_frame.sub_return_data = tx_report.output.clone();
 
         // What to do, depending on TxResult
         let error = match &tx_report.result {
@@ -980,7 +982,6 @@ impl<'a> VM<'a> {
                         executed_call_frame.msg_value,
                     )?;
                 }
-                // Push 0 to stack
                 self.current_call_frame_mut()?.stack.push(REVERT_FOR_CALL)?;
 
                 Some(vmerror.to_string())
