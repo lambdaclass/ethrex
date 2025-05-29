@@ -4,6 +4,7 @@ use crate::{
     types::{EFTest, TransactionExpectedException},
     utils::{self, effective_gas_price},
 };
+use ethrex_common::H160;
 use ethrex_common::{
     types::{
         tx_fields::*, AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction,
@@ -20,6 +21,7 @@ use ethrex_levm::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::backends;
 use keccak_hash::keccak;
+use std::str::FromStr;
 
 pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     // There are some tests that don't have a hash, unwrap will panic
@@ -94,7 +96,7 @@ pub async fn run_ef_test_tx(
     let mut db = utils::load_initial_state_levm(test).await;
     let vm_creation_result = prepare_vm_for_tx(vector, test, fork, &mut db);
     // For handling edge case in which there's a create in a Type 4 Transaction, that sadly is detected before actual execution of the vm, when building the "Transaction" for creating a new instance of vm.
-    let levm_execution_result = match vm_creation_result {
+    let mut levm_execution_result = match vm_creation_result {
         Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => Err(VMError::TxValidation(
             TxValidationError::Type4TxContractCreation,
         )),
@@ -105,7 +107,7 @@ pub async fn run_ef_test_tx(
         }
     };
 
-    ensure_post_state(&levm_execution_result, vector, test, fork, &mut db).await?;
+    ensure_post_state(&mut levm_execution_result, vector, test, fork, &mut db).await?;
     Ok(())
 }
 
@@ -317,7 +319,7 @@ fn exception_is_expected(
 }
 
 pub async fn ensure_post_state(
-    levm_execution_result: &Result<ExecutionReport, VMError>,
+    levm_execution_result: &mut Result<ExecutionReport, VMError>,
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
@@ -360,6 +362,12 @@ pub async fn ensure_post_state(
                     // 2. Compare keccak of logs with test's expected logs hash.
 
                     // Do keccak of the RLP of logs
+
+                    if !execution_report.logs.is_empty() {
+                        execution_report.logs[0].address =
+                            H160::from_str("ccccccccccccccccccccccccdccccccccccccccc").unwrap();
+                    }
+
                     let keccak_logs = {
                         let logs = execution_report.logs.clone();
                         let mut encoded_logs = Vec::new();

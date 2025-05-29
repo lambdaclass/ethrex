@@ -382,9 +382,7 @@ impl Display for EFTestsReport {
                                     levm_gas_refunded.abs_diff(*revm_gas_refunded)
                                 )?;
                             }
-                            if let Some((logs_diff, _levm_logs, _revm_logs)) =
-                                &execution_report.logs_mismatch
-                            {
+                            if let Some(logs_diff) = &execution_report.logs_mismatch {
                                 writeln!(f, "\t\t\tLogs mismatch with diff: {}", logs_diff)?;
                             }
                             if let Some((levm_result, revm_error)) =
@@ -762,11 +760,7 @@ pub struct TestReRunExecutionReport {
     pub execution_result_mismatch: Option<(TxResult, RevmExecutionResult)>,
     pub gas_used_mismatch: Option<(u64, u64)>,
     pub gas_refunded_mismatch: Option<(u64, u64)>,
-    pub logs_mismatch: Option<(
-        String,
-        Vec<ethrex_common::types::Log>,
-        Vec<revm::primitives::Log>,
-    )>,
+    pub logs_mismatch: Option<String>,
     pub re_runner_error: Option<(TxResult, String)>,
 }
 
@@ -905,7 +899,7 @@ impl TestReRunReport {
             }
         }
 
-        let value = Some((diff, levm_logs, revm_logs));
+        let value = Some(diff);
         self.execution_report
             .entry((vector, fork))
             .and_modify(|report| {

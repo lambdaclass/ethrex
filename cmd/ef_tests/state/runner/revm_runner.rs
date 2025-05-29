@@ -354,10 +354,8 @@ pub async fn ensure_post_state(
         None => {
             let mut db = load_initial_state_levm(test).await;
             db.cache = levm_cache;
-            let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db)
-                .map_err(|_| {
-                    InternalError::Custom("Error at LEVM::get_state_transitions()".to_owned())
-                })?;
+            let levm_account_updates = vec![];
+
             let revm_account_updates = backends::revm::REVM::get_state_transitions(revm_state);
             let account_updates_report = compare_levm_revm_account_updates(
                 vector,
