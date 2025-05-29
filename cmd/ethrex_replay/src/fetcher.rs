@@ -83,9 +83,7 @@ pub async fn get_rangedata(
     let mut proverdb = rpc_db.to_exec_db(&first_block)?;
     proverdb.block_hashes = blocks
         .iter()
-        .map(|cache| &cache.blocks[0].header)
-        .chain([blocks[0].parent_block_header.clone()].iter())
-        .map(|header| (header.number, header.compute_block_hash()))
+        .flat_map(|cache| cache.db.block_hashes.clone())
         .collect();
     for block_data in blocks.iter() {
         proverdb
