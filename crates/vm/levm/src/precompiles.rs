@@ -30,13 +30,16 @@ use lambdaworks_math::{
     traits::ByteConversion,
     unsigned_integer::element,
 };
-use libsecp256k1::{self, Message, RecoveryId, Signature};
 use num_bigint::BigUint;
 #[cfg(feature = "l2")]
 use p256::{
     ecdsa::{signature::hazmat::PrehashVerifier, Signature as P256Signature, VerifyingKey},
     elliptic_curve::{bigint::U256 as P256Uint, ff::PrimeField, Curve},
     EncodedPoint, FieldElement as P256FieldElement, NistP256,
+};
+use secp256k1::{
+    ecdsa::{RecoverableSignature, RecoveryId},
+    Message,
 };
 
 // Secp256r1 curve parameters
@@ -306,7 +309,7 @@ pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
 
     // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
     let hash = calldata.get(0..32).ok_or(InternalError::SlicingError)?;
-    let Ok(message) = Message::parse_slice(hash) else {
+    let Ok(message) = Message::from_digest_slice(hash) else {
         return Ok(Bytes::new());
     };
 
@@ -318,22 +321,23 @@ pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
     }
 
     let v = u8::try_from(v).map_err(|_| InternalError::ConversionError)?;
-    let Ok(recovery_id) = RecoveryId::parse_rpc(v) else {
+    let recovery_id_from_rpc = v.checked_sub(27).ok_or(InternalError::ConversionError)?;
+    let Ok(recovery_id) = RecoveryId::from_i32(recovery_id_from_rpc.into()) else {
         return Ok(Bytes::new());
     };
 
     // signature is made up of the parameters r and s
     let sig = calldata.get(64..128).ok_or(InternalError::SlicingError)?;
-    let Ok(signature) = Signature::parse_standard_slice(sig) else {
+    let Ok(signature) = RecoverableSignature::from_compact(sig, recovery_id) else {
         return Ok(Bytes::new());
     };
 
     // Recover the address using secp256k1
-    let Ok(public_key) = libsecp256k1::recover(&message, &signature, &recovery_id) else {
+    let Ok(public_key) = signature.recover(&message) else {
         return Ok(Bytes::new());
     };
 
-    let mut public_key = public_key.serialize();
+    let mut public_key = public_key.serialize_uncompressed();
 
     // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
     keccak256(&mut public_key[1..65]);
