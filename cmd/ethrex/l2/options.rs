@@ -89,7 +89,7 @@ impl From<SequencerOptions> for SequencerConfig {
                 listen_port: opts.proof_coordinator_opts.listen_port,
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
                 dev_mode: opts.proof_coordinator_opts.dev_mode,
-                validium: opts.l2_opts.validium
+                validium: opts.l2_opts.validium,
             },
         }
     }
@@ -371,7 +371,7 @@ pub struct L2Options {
         value_name = "BOOLEAN",
         env = "ETHREX_L2_VALIDIUM",
         help_heading = "L2 general options",
-        long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1.",
+        long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
     )]
-    pub validium: bool
+    pub validium: bool,
 }

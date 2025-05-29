@@ -230,7 +230,7 @@ pub struct DeployerOptions {
         value_name = "BOOLEAN",
         env = "ETHREX_L2_VALIDIUM",
         help_heading = "Deployer options",
-        help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1.",
+        help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
     )]
     pub validium: bool,
     #[arg(

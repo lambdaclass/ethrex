@@ -63,7 +63,7 @@ struct ProofCoordinator {
     blobs_bundle_cache: Arc<BlobsBundleCache>,
     rpc_url: String,
     l1_private_key: SecretKey,
-    validium: bool
+    validium: bool,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -218,7 +218,7 @@ impl ProofCoordinator {
             blobs_bundle_cache,
             rpc_url,
             l1_private_key: config.l1_private_key,
-            validium: config.validium
+            validium: config.validium,
         })
     }
 
@@ -464,9 +464,7 @@ impl ProofCoordinator {
                 let state_diff = StateDiff::decode(&bytes_from_blob(blob.to_vec().into()))?;
                 (state_diff, commitment, proof)
             }
-            None if self.validium => {
-                (StateDiff::default(), [0; 48], [0; 48])
-            },
+            None if self.validium => (StateDiff::default(), [0; 48], [0; 48]),
             None => {
                 return Err(ProverServerError::Custom(format!(
                 "BlobsBundle for batch {batch_number} not found in cache and coordinator is in rollup mode (no validium). Prover input cannot be created."
