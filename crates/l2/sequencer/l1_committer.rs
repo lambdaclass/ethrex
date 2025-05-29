@@ -37,11 +37,7 @@ use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
-use super::{
-    errors::{BlobEstimationError, SequencerError},
-    execution_cache::ExecutionCache,
-    utils::random_duration,
-};
+use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::random_duration};
 use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
 use spawned_rt::mpsc::Sender;
 
@@ -94,7 +90,7 @@ impl CommitterState {
 
 #[derive(Clone)]
 pub enum InMessage {
-    Watch,
+    Commit,
 }
 
 #[allow(dead_code)]
@@ -112,7 +108,7 @@ impl L1Committer {
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
         cfg: SequencerConfig,
-    ) -> Result<(), SequencerError> {
+    ) -> Result<(), CommitterError> {
         let state = CommitterState::new(
             &cfg.l1_committer,
             &cfg.eth,
@@ -121,7 +117,7 @@ impl L1Committer {
             execution_cache.clone(),
         )?;
         let mut l1_committer = L1Committer::start(state);
-        let _ = l1_committer.cast(InMessage::Watch).await;
+        let _ = l1_committer.cast(InMessage::Commit).await;
         Ok(())
     }
 }
@@ -152,9 +148,9 @@ impl GenServer for L1Committer {
         tx: &Sender<GenServerInMsg<Self>>,
         state: &mut Self::State,
     ) -> CastResponse {
-        // Right now we only have the watch message, so we ignore the message
+        // Right now we only have the Commit message, so we ignore the message
         let check_interval = random_duration(state.commit_time_ms);
-        send_after(check_interval, tx.clone(), Self::InMsg::Watch);
+        send_after(check_interval, tx.clone(), Self::InMsg::Commit);
         if let Err(err) = commit_next_batch_to_l1(state).await {
             error!("L1 Committer Error: {}", err);
         }
