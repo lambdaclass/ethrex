@@ -162,7 +162,7 @@ pub fn main() {
     // Verify KZG blob proof
     #[cfg(feature = "l2")]
     let blob_versioned_hash = if validium { 
-        H256::zero() 
+        ethrex_common::H256::zero()
     } else {
         use kzg_rs::{dtypes::Blob, kzg_proof::KzgProof, trusted_setup::get_kzg_settings};
 

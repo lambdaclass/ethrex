@@ -148,7 +148,7 @@ pub fn main() {
     }
 
     // This could be replaced with something like a ProverConfig.
-    let validium = (state_diff, blob_commitment, blob_proof) == (StateDiff::default(), [0; 48], [0; 48]);
+    let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
 
     // Check state diffs are valid
     #[cfg(feature = "l2")]
@@ -165,7 +165,7 @@ pub fn main() {
     // Verify KZG blob proof
     #[cfg(feature = "l2")]
     let blob_versioned_hash = if validium { 
-        H256::zero() 
+        ethrex_common::H256::zero() 
     } else {
         use kzg_rs::{dtypes::Blob, kzg_proof::KzgProof, trusted_setup::get_kzg_settings};
 
