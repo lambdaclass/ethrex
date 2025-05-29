@@ -170,7 +170,7 @@ pub async fn get_account(
         .ok_or(eyre::Error::msg("account proof is empty".to_string()))?;
     let other: Vec<_> = account_proof.iter().skip(1).cloned().collect();
     let trie = Trie::from_nodes(Some(root), &other)?;
-    if trie.get(&hash_address(address))?.is_none() {
+    if trie.get(hash_address(address))?.is_none() {
         return Ok(Account::NonExisting {
             account_proof,
             storage_proofs,
