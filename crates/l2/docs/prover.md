@@ -294,7 +294,7 @@ The program leverages ethrex-common primitives and ethrex-vm methods. ethrex-pro
 The following sections outline the steps taken by the execution program.
 
 #### Prelude 1: state trie basics
-We recommend learning about Merkle Patricia Tries (MPTs) to better understand this section.
+We recommend learning about Merkle Patricia Tries (MPTs) to better understand this section. Aside from the previous explanation, [this document](https://github.com/kkrt-labs/zk-pig/blob/main/docs/modified-mpt.md) by kkrt-labs is also an useful reference on MPT basics and the modifications needed for stateless verification.
 
 Each executed block transitions the Ethereum state from an initial state to a final state. State values are stored in MPTs:
 1. Each account has a Storage Trie containing its storage values.
