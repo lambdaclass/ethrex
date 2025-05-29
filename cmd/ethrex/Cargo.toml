@@ -35,7 +35,7 @@ local-ip-address = "0.6"
 tokio-util.workspace = true
 redb = { workspace = true, optional = true }
 lazy_static.workspace = true
-secp256k1 = { workspace = true, optional = true }
+secp256k1 = { workspace = true }
 keccak-hash.workspace = true
 reqwest.workspace = true
 
@@ -70,7 +70,6 @@ l2 = [
   "ethrex-vm/l2",
   "ethrex-blockchain/l2",
   "ethrex-rpc/l2",
-  "dep:secp256k1",
   "ethrex-storage-rollup",
 ]
 rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
