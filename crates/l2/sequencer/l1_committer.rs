@@ -155,14 +155,14 @@ impl GenServer for L1Committer {
         // Right now we only have the watch message, so we ignore the message
         let check_interval = random_duration(state.commit_time_ms);
         send_after(check_interval, tx.clone(), Self::InMsg::Watch);
-        if let Err(err) = commit(state).await {
+        if let Err(err) = commit_next_batch_to_l1(state).await {
             error!("L1 Committer Error: {}", err);
         }
         CastResponse::NoReply
     }
 }
 
-async fn commit(state: &mut CommitterState) -> Result<(), CommitterError> {
+async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), CommitterError> {
     // Get the batch to commit
     let last_committed_batch_number = state
         .eth_client
