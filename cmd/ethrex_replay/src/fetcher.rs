@@ -58,7 +58,7 @@ pub async fn get_rangedata(
         return Ok(cache);
     }
     let mut blocks = Vec::with_capacity(to - from);
-    for block_number in from..to {
+    for block_number in from..=to {
         let data = get_blockdata(rpc_url, chain_config, block_number).await?;
         blocks.push(data);
     }

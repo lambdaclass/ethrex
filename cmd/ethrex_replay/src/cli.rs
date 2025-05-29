@@ -36,9 +36,9 @@ enum SubcommandExecute {
     },
     #[command(name = "block-range", about = "Executes a range of blocks")]
     BlockRange {
-        #[arg(help = "Starting block.")]
+        #[arg(help = "Starting block. (Inclusive)")]
         start: usize,
-        #[arg(help = "Ending block.")]
+        #[arg(help = "Ending block. (Inclusive)")]
         end: usize,
         #[arg(long, env = "RPC_URL", required = true)]
         rpc_url: String,
