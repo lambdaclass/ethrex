@@ -121,6 +121,25 @@ enum SubcommandProve {
         #[arg(long, required = false)]
         bench: bool,
     },
+    #[command(name = "block-range", about = "Proves a range of blocks")]
+    BlockRange {
+        #[arg(help = "Starting block. (Inclusive)")]
+        start: usize,
+        #[arg(help = "Ending block. (Inclusive)")]
+        end: usize,
+        #[arg(long, env = "RPC_URL", required = true)]
+        rpc_url: String,
+        #[arg(
+            long,
+            default_value = "mainnet",
+            env = "NETWORK",
+            required = false,
+            help = "Name or ChainID of the network to use"
+        )]
+        network: String,
+        #[arg(long, required = false)]
+        bench: bool,
+    },
 }
 
 impl SubcommandProve {
@@ -137,6 +156,28 @@ impl SubcommandProve {
                 let cache = get_blockdata(&rpc_url, chain_config, block).await?;
                 let body = async {
                     let gas_used = cache.blocks[0].header.gas_used as f64;
+                    let res = prove(cache).await?;
+                    Ok((gas_used, res))
+                };
+                let res = run_and_measure(bench, body).await?;
+                println!("{}", res);
+            }
+            SubcommandProve::BlockRange {
+                start,
+                end,
+                rpc_url,
+                network,
+                bench,
+            } => {
+                if start >= end {
+                    return Err(eyre::Error::msg(
+                        "starting point can't be greater than ending point",
+                    ));
+                }
+                let chain_config = get_chain_config(&network)?;
+                let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
+                let body = async {
+                    let gas_used = cache.blocks.iter().map(|b| b.header.gas_used as f64).sum();
                     let res = prove(cache).await?;
                     Ok((gas_used, res))
                 };
