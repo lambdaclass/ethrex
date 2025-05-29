@@ -155,7 +155,7 @@ pub async fn start_proof_coordinator(
         rollup_store,
     )
     .await?;
-    proof_coordinator.run().await;
+    run(proof_coordinator).await;
 
     Ok(())
 }
@@ -201,259 +201,259 @@ impl ProofCoordinator {
         })
     }
 
-    pub async fn run(&self) {
-        loop {
-            if let Err(err) = self.main_logic().await {
-                error!("L1 Proof Coordinator Error: {}", err);
-            }
+}
 
-            sleep_random(200).await;
+pub async fn run(state: ProofCoordinator) {
+    loop {
+        if let Err(err) = main_logic(&state).await {
+            error!("L1 Proof Coordinator Error: {}", err);
         }
+
+        sleep_random(200).await;
     }
+}
 
-    async fn main_logic(&self) -> Result<(), ProverServerError> {
-        let listener = TcpListener::bind(format!("{}:{}", self.listen_ip, self.port)).await?;
+async fn main_logic(state: &ProofCoordinator) -> Result<(), ProverServerError> {
+    let listener = TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?;
 
-        let concurent_clients = 3;
-        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurent_clients));
-        info!(
-            "Starting TCP server at {}:{} accepting {concurent_clients} concurrent clients.",
-            self.listen_ip, self.port
-        );
+    let concurent_clients = 3;
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurent_clients));
+    info!(
+        "Starting TCP server at {}:{} accepting {concurent_clients} concurrent clients.",
+        state.listen_ip, state.port
+    );
 
-        loop {
-            let res = listener.accept().await;
-            match res {
-                Ok((stream, addr)) => {
-                    match sem.clone().try_acquire_owned() {
-                        Ok(permit) => {
-                            // Cloning the ProofCoordinator structure to use the handle_connection() fn
-                            // in every spawned task.
-                            // The important fields are `Store` and `EthClient`
-                            // Both fields are wrapped with an Arc, making it possible to clone
-                            // the entire structure.
-                            let self_clone = self.clone();
-                            tokio::task::spawn(async move {
-                                if let Err(e) = self_clone.handle_connection(stream).await {
-                                    error!("Error handling connection from {addr}: {e}");
-                                } else {
-                                    debug!("Connection from {addr} handled successfully");
-                                }
-                                drop(permit);
-                            });
-                        }
-                        Err(e) => match e {
-                            TryAcquireError::Closed => {
-                                error!("Fatal error the semaphore has been closed: {e}")
+    loop {
+        let res = listener.accept().await;
+        match res {
+            Ok((stream, addr)) => {
+                match sem.clone().try_acquire_owned() {
+                    Ok(permit) => {
+                        // Cloning the ProofCoordinator structure to use the handle_connection() fn
+                        // in every spawned task.
+                        // The important fields are `Store` and `EthClient`
+                        // Both fields are wrapped with an Arc, making it possible to clone
+                        // the entire structure.
+                        let self_clone = state.clone();
+                        tokio::task::spawn(async move {
+                            if let Err(e) = handle_connection(&self_clone, stream).await {
+                                error!("Error handling connection from {addr}: {e}");
+                            } else {
+                                debug!("Connection from {addr} handled successfully");
                             }
-                            TryAcquireError::NoPermits => {
-                                warn!("Connection limit reached. Closing connection from {addr}.")
-                            }
-                        },
+                            drop(permit);
+                        });
                     }
-                }
-                Err(e) => {
-                    error!("Failed to accept connection: {e}");
-                }
-            }
-        }
-    }
-
-    async fn handle_connection(&self, mut stream: TcpStream) -> Result<(), ProverServerError> {
-        let mut buffer = Vec::new();
-        stream.read_to_end(&mut buffer).await?;
-
-        let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
-        match data {
-            Ok(ProofData::BatchRequest) => {
-                if let Err(e) = self.handle_request(&mut stream).await {
-                    error!("Failed to handle BatchRequest: {e}");
-                }
-            }
-            Ok(ProofData::ProofSubmit {
-                batch_number,
-                calldata,
-            }) => {
-                if let Err(e) = self
-                    .handle_submit(&mut stream, batch_number, calldata)
-                    .await
-                {
-                    error!("Failed to handle ProofSubmit: {e}");
-                }
-            }
-            Ok(ProofData::ProverSetup {
-                prover_type,
-                payload,
-            }) => {
-                if let Err(e) = self.handle_setup(&mut stream, prover_type, payload).await {
-                    error!("Failed to handle ProverSetup: {e}");
+                    Err(e) => match e {
+                        TryAcquireError::Closed => {
+                            error!("Fatal error the semaphore has been closed: {e}")
+                        }
+                        TryAcquireError::NoPermits => {
+                            warn!("Connection limit reached. Closing connection from {addr}.")
+                        }
+                    },
                 }
             }
             Err(e) => {
-                warn!("Failed to parse request: {e}");
-            }
-            _ => {
-                warn!("Invalid request");
+                error!("Failed to accept connection: {e}");
             }
         }
-
-        debug!("Connection closed");
-        Ok(())
     }
+}
 
-    async fn handle_request(&self, stream: &mut TcpStream) -> Result<(), ProverServerError> {
-        info!("BatchRequest received");
+async fn handle_connection(state: &ProofCoordinator, mut stream: TcpStream) -> Result<(), ProverServerError> {
+    let mut buffer = Vec::new();
+    stream.read_to_end(&mut buffer).await?;
 
-        let batch_to_verify = 1 + self
-            .eth_client
-            .get_last_verified_batch(self.on_chain_proposer_address)
-            .await?;
-
-        let response = if !self.rollup_store.contains_batch(&batch_to_verify).await? {
-            let response = ProofData::empty_batch_response();
-            debug!("Sending empty BatchResponse");
-            response
-        } else {
-            let input = self.create_prover_input(batch_to_verify).await?;
-            let response = ProofData::batch_response(batch_to_verify, input);
-            debug!("Sending BatchResponse for block_number: {batch_to_verify}");
-            response
-        };
-
-        let buffer = serde_json::to_vec(&response)?;
-        stream
-            .write_all(&buffer)
-            .await
-            .map_err(ProverServerError::ConnectionError)
-            .map(|_| info!("BatchResponse sent for batch number: {batch_to_verify}"))
-    }
-
-    async fn handle_submit(
-        &self,
-        stream: &mut TcpStream,
-        batch_number: u64,
-        calldata: ProofCalldata,
-    ) -> Result<(), ProverServerError> {
-        info!("ProofSubmit received for batch number: {batch_number}");
-
-        // Check if we have the proof for that ProverType
-        if batch_number_has_state_file(StateFileType::Proof(calldata.prover_type), batch_number)? {
-            debug!("Already known proof. Skipping");
-        } else {
-            write_state(batch_number, &StateType::Proof(calldata))?;
+    let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
+    match data {
+        Ok(ProofData::BatchRequest) => {
+            if let Err(e) = handle_request(state, &mut stream).await {
+                error!("Failed to handle BatchRequest: {e}");
+            }
         }
-
-        let response = ProofData::proof_submit_ack(batch_number);
-
-        let buffer = serde_json::to_vec(&response)?;
-        stream
-            .write_all(&buffer)
-            .await
-            .map_err(ProverServerError::ConnectionError)
-            .map(|_| info!("ProofSubmit ACK sent"))
-    }
-
-    async fn handle_setup(
-        &self,
-        stream: &mut TcpStream,
-        prover_type: ProverType,
-        payload: Bytes,
-    ) -> Result<(), ProverServerError> {
-        info!("ProverSetup received for {prover_type}");
-
-        match prover_type {
-            ProverType::TDX => {
-                prepare_quote_prerequisites(
-                    &self.eth_client,
-                    &self.rpc_url,
-                    &hex::encode(self.l1_private_key.as_ref()),
-                    &hex::encode(&payload),
-                )
+        Ok(ProofData::ProofSubmit {
+            batch_number,
+            calldata,
+        }) => {
+            if let Err(e) = 
+                handle_submit(&mut stream, batch_number, calldata)
                 .await
-                .map_err(|e| ProverServerError::Custom(format!("Could not setup TDX key {e}")))?;
-                register_tdx_key(
-                    &self.eth_client,
-                    &self.l1_private_key,
-                    self.on_chain_proposer_address,
-                    payload,
-                )
-                .await?;
-            }
-            _ => {
-                warn!("Setup requested for {prover_type}, which doesn't need setup.")
+            {
+                error!("Failed to handle ProofSubmit: {e}");
             }
         }
-
-        let response = ProofData::prover_setup_ack();
-
-        let buffer = serde_json::to_vec(&response)?;
-        stream
-            .write_all(&buffer)
-            .await
-            .map_err(ProverServerError::ConnectionError)
-            .map(|_| info!("ProverSetupACK sent"))
+        Ok(ProofData::ProverSetup {
+            prover_type,
+            payload,
+        }) => {
+            if let Err(e) = handle_setup(state, &mut stream, prover_type, payload).await {
+                error!("Failed to handle ProverSetup: {e}");
+            }
+        }
+        Err(e) => {
+            warn!("Failed to parse request: {e}");
+        }
+        _ => {
+            warn!("Invalid request");
+        }
     }
 
-    async fn create_prover_input(
-        &self,
-        batch_number: u64,
-    ) -> Result<ProverInputData, ProverServerError> {
-        // Get blocks in batch
-        let Some(block_numbers) = self
-            .rollup_store
-            .get_block_numbers_by_batch(batch_number)
-            .await?
-        else {
-            return Err(ProverServerError::ItemNotFoundInStore(format!(
-                "Batch number {batch_number} not found in store"
-            )));
-        };
+    debug!("Connection closed");
+    Ok(())
+}
 
-        let blocks = self.fetch_blocks(block_numbers).await?;
+async fn handle_request(state: &ProofCoordinator, stream: &mut TcpStream) -> Result<(), ProverServerError> {
+    info!("BatchRequest received");
 
-        // Create prover_db
-        let db = to_prover_db(&self.store.clone(), &blocks)
+    let batch_to_verify = 1 + state
+        .eth_client
+        .get_last_verified_batch(state.on_chain_proposer_address)
+        .await?;
+
+    let response = if !state.rollup_store.contains_batch(&batch_to_verify).await? {
+        let response = ProofData::empty_batch_response();
+        debug!("Sending empty BatchResponse");
+        response
+    } else {
+        let input = create_prover_input(state, batch_to_verify).await?;
+        let response = ProofData::batch_response(batch_to_verify, input);
+        debug!("Sending BatchResponse for block_number: {batch_to_verify}");
+        response
+    };
+
+    let buffer = serde_json::to_vec(&response)?;
+    stream
+        .write_all(&buffer)
+        .await
+        .map_err(ProverServerError::ConnectionError)
+        .map(|_| info!("BatchResponse sent for batch number: {batch_to_verify}"))
+}
+
+async fn handle_submit(
+    stream: &mut TcpStream,
+    batch_number: u64,
+    calldata: ProofCalldata,
+) -> Result<(), ProverServerError> {
+    info!("ProofSubmit received for batch number: {batch_number}");
+
+    // Check if we have the proof for that ProverType
+    if batch_number_has_state_file(StateFileType::Proof(calldata.prover_type), batch_number)? {
+        debug!("Already known proof. Skipping");
+    } else {
+        write_state(batch_number, &StateType::Proof(calldata))?;
+    }
+
+    let response = ProofData::proof_submit_ack(batch_number);
+
+    let buffer = serde_json::to_vec(&response)?;
+    stream
+        .write_all(&buffer)
+        .await
+        .map_err(ProverServerError::ConnectionError)
+        .map(|_| info!("ProofSubmit ACK sent"))
+}
+
+async fn handle_setup(
+    state: &ProofCoordinator,
+    stream: &mut TcpStream,
+    prover_type: ProverType,
+    payload: Bytes,
+) -> Result<(), ProverServerError> {
+    info!("ProverSetup received for {prover_type}");
+
+    match prover_type {
+        ProverType::TDX => {
+            prepare_quote_prerequisites(
+                &state.eth_client,
+                &state.rpc_url,
+                &hex::encode(state.l1_private_key.as_ref()),
+                &hex::encode(&payload),
+            )
             .await
-            .map_err(EvmError::ProverDB)?;
+            .map_err(|e| ProverServerError::Custom(format!("Could not setup TDX key {e}")))?;
+            register_tdx_key(
+                &state.eth_client,
+                &state.l1_private_key,
+                state.on_chain_proposer_address,
+                payload,
+            )
+            .await?;
+        }
+        _ => {
+            warn!("Setup requested for {prover_type}, which doesn't need setup.")
+        }
+    }
 
-        // Get the block_header of the parent of the first block
-        let parent_hash = blocks
-            .first()
-            .ok_or_else(|| {
-                ProverServerError::Custom("No blocks found for the given batch number".to_string())
-            })?
-            .header
-            .parent_hash;
+    let response = ProofData::prover_setup_ack();
 
-        let parent_block_header = self
+    let buffer = serde_json::to_vec(&response)?;
+    stream
+        .write_all(&buffer)
+        .await
+        .map_err(ProverServerError::ConnectionError)
+        .map(|_| info!("ProverSetupACK sent"))
+}
+
+async fn create_prover_input(
+    state: &ProofCoordinator,
+    batch_number: u64,
+) -> Result<ProverInputData, ProverServerError> {
+    // Get blocks in batch
+    let Some(block_numbers) = state
+        .rollup_store
+        .get_block_numbers_by_batch(batch_number)
+        .await?
+    else {
+        return Err(ProverServerError::ItemNotFoundInStore(format!(
+            "Batch number {batch_number} not found in store"
+        )));
+    };
+
+    let blocks = fetch_blocks(state, block_numbers).await?;
+
+    // Create prover_db
+    let db = to_prover_db(&state.store.clone(), &blocks)
+        .await
+        .map_err(EvmError::ProverDB)?;
+
+    // Get the block_header of the parent of the first block
+    let parent_hash = blocks
+        .first()
+        .ok_or_else(|| {
+            ProverServerError::Custom("No blocks found for the given batch number".to_string())
+        })?
+        .header
+        .parent_hash;
+
+    let parent_block_header = state
+        .store
+        .get_block_header_by_hash(parent_hash)?
+        .ok_or(ProverServerError::StorageDataIsNone)?;
+
+    debug!("Created prover input for batch {batch_number}");
+
+    Ok(ProverInputData {
+        db,
+        blocks,
+        parent_block_header,
+        elasticity_multiplier: state.elasticity_multiplier,
+    })
+}
+
+async fn fetch_blocks(state: &ProofCoordinator, block_numbers: Vec<u64>) -> Result<Vec<Block>, ProverServerError> {
+    let mut blocks = vec![];
+    for block_number in block_numbers {
+        let header = state
             .store
-            .get_block_header_by_hash(parent_hash)?
+            .get_block_header(block_number)?
             .ok_or(ProverServerError::StorageDataIsNone)?;
-
-        debug!("Created prover input for batch {batch_number}");
-
-        Ok(ProverInputData {
-            db,
-            blocks,
-            parent_block_header,
-            elasticity_multiplier: self.elasticity_multiplier,
-        })
+        let body = state
+            .store
+            .get_block_body(block_number)
+            .await?
+            .ok_or(ProverServerError::StorageDataIsNone)?;
+        blocks.push(Block::new(header, body));
     }
-
-    async fn fetch_blocks(&self, block_numbers: Vec<u64>) -> Result<Vec<Block>, ProverServerError> {
-        let mut blocks = vec![];
-        for block_number in block_numbers {
-            let header = self
-                .store
-                .get_block_header(block_number)?
-                .ok_or(ProverServerError::StorageDataIsNone)?;
-            let body = self
-                .store
-                .get_block_body(block_number)
-                .await?
-                .ok_or(ProverServerError::StorageDataIsNone)?;
-            blocks.push(Block::new(header, body));
-        }
-        Ok(blocks)
-    }
+    Ok(blocks)
 }
