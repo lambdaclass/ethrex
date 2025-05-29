@@ -1,4 +1,3 @@
-use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
@@ -22,7 +21,7 @@ const SNAP_CAPABILITY_OFFSET: u8 = 0x21;
 pub trait RLPxMessage: Sized {
     const CODE: u8;
 
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError>;
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError>;
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError>;
 }
@@ -148,7 +147,7 @@ impl Message {
         }
     }
 
-    pub fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    pub fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         self.code().encode(buf);
         match self {
             Message::Hello(msg) => msg.encode(buf),

@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
@@ -24,8 +23,8 @@ pub struct Genesis {
     /// Genesis header values
     pub coinbase: Address,
     pub difficulty: U256,
-    #[serde(default, with = "crate::serde_utils::bytes")]
-    pub extra_data: Bytes,
+    #[serde(default)]
+    pub extra_data: Vec<u8>,
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub gas_limit: u64,
     #[serde(with = "crate::serde_utils::u64::hex_str")]
@@ -294,8 +293,8 @@ impl ChainConfig {
 #[allow(unused)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct GenesisAccount {
-    #[serde(default, with = "crate::serde_utils::bytes")]
-    pub code: Bytes,
+    #[serde(default)]
+    pub code: Vec<u8>,
     #[serde(default)]
     pub storage: HashMap<U256, U256>,
     #[serde(deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str")]
@@ -443,7 +442,7 @@ mod tests {
         let addr_a = Address::from_str("0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap();
         assert!(genesis.alloc.contains_key(&addr_a));
         let expected_account_a = GenesisAccount {
-        code: Bytes::from(hex::decode("3373fffffffffffffffffffffffffffffffffffffffe14604d57602036146024575f5ffd5b5f35801560495762001fff810690815414603c575f5ffd5b62001fff01545f5260205ff35b5f5ffd5b62001fff42064281555f359062001fff015500").unwrap()),
+        code: hex::decode("3373fffffffffffffffffffffffffffffffffffffffe14604d57602036146024575f5ffd5b5f35801560495762001fff810690815414603c575f5ffd5b62001fff01545f5260205ff35b5f5ffd5b62001fff42064281555f359062001fff015500").unwrap().into(),
         balance: 0.into(),
         nonce: 1,
         storage: Default::default(),
@@ -509,7 +508,7 @@ mod tests {
         assert_eq!(header.gas_limit, 25_000_000);
         assert_eq!(header.gas_used, 0);
         assert_eq!(header.timestamp, 1_718_040_081);
-        assert_eq!(header.extra_data, Bytes::default());
+        assert_eq!(header.extra_data, Vec::<u8>::new());
         assert_eq!(header.prev_randao, H256::from([0; 32]));
         assert_eq!(header.nonce, 4660);
         assert_eq!(

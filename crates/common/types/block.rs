@@ -7,7 +7,7 @@ use crate::{
     types::{Receipt, Transaction},
     Address, H256, U256,
 };
-use bytes::Bytes;
+
 use ethereum_types::Bloom;
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -50,7 +50,7 @@ impl Block {
 }
 
 impl RLPEncode for Block {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.header)
             .encode_field(&self.body.transactions)
@@ -103,8 +103,8 @@ pub struct BlockHeader {
     pub gas_used: u64,
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub timestamp: u64,
-    #[serde(with = "crate::serde_utils::bytes")]
-    pub extra_data: Bytes,
+
+    pub extra_data: Vec<u8>,
     #[serde(rename = "mixHash")]
     pub prev_randao: H256,
     #[serde(with = "crate::serde_utils::u64::hex_str_padding")]
@@ -130,7 +130,7 @@ pub struct BlockHeader {
 }
 
 impl RLPEncode for BlockHeader {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.parent_hash)
             .encode_field(&self.ommers_hash)
@@ -270,7 +270,7 @@ pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
 }
 
 impl RLPEncode for BlockBody {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.transactions)
             .encode_field(&self.ommers)
@@ -321,7 +321,7 @@ pub struct Withdrawal {
 }
 
 impl RLPEncode for Withdrawal {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.index)
             .encode_field(&self.validator_index)
@@ -778,7 +778,7 @@ mod test {
             gas_limit: 0x016345785d8a0000,
             gas_used: 0,
             timestamp: 0,
-            extra_data: Bytes::new(),
+            extra_data: vec![],
             prev_randao: H256::zero(),
             nonce: 0x0000000000000000,
             base_fee_per_gas: Some(0x07),
@@ -822,7 +822,7 @@ mod test {
             gas_limit: 0x016345785d8a0000,
             gas_used: 0xa8de,
             timestamp: 0x03e8,
-            extra_data: Bytes::new(),
+            extra_data: vec![],
             prev_randao: H256::zero(),
             nonce: 0x0000000000000000,
             base_fee_per_gas: Some(0x07),

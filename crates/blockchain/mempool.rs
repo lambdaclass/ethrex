@@ -319,7 +319,7 @@ mod tests {
         BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
         MempoolTransaction, Transaction, TxKind, BYTES_PER_BLOB,
     };
-    use ethrex_common::{Address, Bytes, H256, U256};
+    use ethrex_common::{Address, H256, U256};
     use ethrex_storage::EngineType;
     use ethrex_storage::{error::StoreError, Store};
 
@@ -366,7 +366,7 @@ mod tests {
             gas_limit: 100_000,
             to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
             value: U256::zero(),                           // Value zero
-            data: Bytes::default(),                        // No data
+            data: Vec::new(),                              // No data
             access_list: Default::default(),               // No access list
             ..Default::default()
         };
@@ -389,7 +389,7 @@ mod tests {
             gas_limit: 100_000,
             to: TxKind::Create,              // Create tx
             value: U256::zero(),             // Value zero
-            data: Bytes::default(),          // No data
+            data: Vec::new(),                // No data
             access_list: Default::default(), // No access list
             ..Default::default()
         };
@@ -412,7 +412,7 @@ mod tests {
             gas_limit: 100_000,
             to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
             value: U256::zero(),                           // Value zero
-            data: Bytes::from(vec![0x0, 0x1, 0x1, 0x0, 0x1, 0x1]), // 6 bytes of data
+            data: vec![0x0, 0x1, 0x1, 0x0, 0x1, 0x1],      // 6 bytes of data
             access_list: Default::default(),               // No access list
             ..Default::default()
         };
@@ -435,7 +435,7 @@ mod tests {
             gas_limit: 100_000,
             to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
             value: U256::zero(),                           // Value zero
-            data: Bytes::from(vec![0x0, 0x1, 0x1, 0x0, 0x1, 0x1]), // 6 bytes of data
+            data: vec![0x0, 0x1, 0x1, 0x0, 0x1, 0x1],      // 6 bytes of data
             access_list: Default::default(),               // No access list
             ..Default::default()
         };
@@ -460,10 +460,10 @@ mod tests {
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
             gas_limit: 100_000,
-            to: TxKind::Create,                                // Create tx
-            value: U256::zero(),                               // Value zero
-            data: Bytes::from(vec![0x1_u8; n_bytes as usize]), // Bytecode data
-            access_list: Default::default(),                   // No access list
+            to: TxKind::Create,                   // Create tx
+            value: U256::zero(),                  // Value zero
+            data: vec![0x1_u8; n_bytes as usize], // Bytecode data
+            access_list: Default::default(),      // No access list
             ..Default::default()
         };
 
@@ -486,10 +486,10 @@ mod tests {
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
             gas_limit: 100_000,
-            to: TxKind::Create,                                // Create tx
-            value: U256::zero(),                               // Value zero
-            data: Bytes::from(vec![0x1_u8; n_bytes as usize]), // Bytecode data
-            access_list: Default::default(),                   // No access list
+            to: TxKind::Create,                   // Create tx
+            value: U256::zero(),                  // Value zero
+            data: vec![0x1_u8; n_bytes as usize], // Bytecode data
+            access_list: Default::default(),      // No access list
             ..Default::default()
         };
 
@@ -519,7 +519,7 @@ mod tests {
             gas_limit: 100_000,
             to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
             value: U256::zero(),                           // Value zero
-            data: Bytes::default(),                        // No data
+            data: Vec::new(),                              // No data
             access_list,
             ..Default::default()
         };
@@ -544,10 +544,10 @@ mod tests {
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: 0,
             gas_limit: 99_000_000,
-            to: TxKind::Create,                                  // Create tx
-            value: U256::zero(),                                 // Value zero
-            data: Bytes::from(vec![0x1; MAX_INITCODE_SIZE + 1]), // Large init code
-            access_list: Default::default(),                     // No access list
+            to: TxKind::Create,              // Create tx
+            value: U256::zero(),             // Value zero
+            data: Vec::new(),                // No data
+            access_list: Default::default(), // No access list
             ..Default::default()
         };
 
@@ -573,7 +573,7 @@ mod tests {
             gas_limit: 100_000_001,
             to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
             value: U256::zero(),                           // Value zero
-            data: Bytes::default(),                        // No data
+            data: Vec::new(),                              // No data
             access_list: Default::default(),               // No access list
             ..Default::default()
         };
@@ -600,7 +600,7 @@ mod tests {
             gas_limit: 50_000_000,
             to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
             value: U256::zero(),                           // Value zero
-            data: Bytes::default(),                        // No data
+            data: Vec::new(),                              // No data
             access_list: Default::default(),               // No access list
             ..Default::default()
         };
@@ -627,7 +627,7 @@ mod tests {
             gas_limit: intrinsic_gas_cost - 1,
             to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
             value: U256::zero(),                           // Value zero
-            data: Bytes::default(),                        // No data
+            data: Vec::new(),                              // No data
             access_list: Default::default(),               // No access list
             ..Default::default()
         };
@@ -654,7 +654,7 @@ mod tests {
             gas: 15_000_000,
             to: Address::from_low_u64_be(1), // Normal tx
             value: U256::zero(),             // Value zero
-            data: Bytes::default(),          // No data
+            data: Vec::new(),                // No data
             access_list: Default::default(), // No access list
             ..Default::default()
         };

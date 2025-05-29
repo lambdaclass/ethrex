@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1.38.0", features = ["full"] }
 ethereum-types = { workspace = true, features = ["serialize"] }
-bytes = { version = "1.6.0", features = ["serde"] }
 secp256k1.workspace = true
 keccak-hash.workspace = true
 hex = "0.4.3"

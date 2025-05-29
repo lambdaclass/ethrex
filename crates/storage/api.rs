@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
@@ -143,10 +142,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<Option<Receipt>, StoreError>;
 
     /// Add account code
-    async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError>;
+    async fn add_account_code(&self, code_hash: H256, code: Vec<u8>) -> Result<(), StoreError>;
 
     /// Obtain account code via code hash
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError>;
+    fn get_account_code(&self, code_hash: H256) -> Result<Option<Vec<u8>>, StoreError>;
 
     async fn get_transaction_by_hash(
         &self,

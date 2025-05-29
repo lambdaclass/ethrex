@@ -12,7 +12,6 @@ ethrex-vm.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true
-bytes.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
 tokio.workspace = true

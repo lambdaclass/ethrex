@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bytes::Bytes;
 use ethrex_common::types::Account;
 use ethrex_common::Address;
 use ethrex_common::U256;
@@ -160,7 +159,7 @@ impl<'a> VM<'a> {
     pub fn update_account_bytecode(
         &mut self,
         address: Address,
-        new_bytecode: Bytes,
+        new_bytecode: Vec<u8>,
     ) -> Result<(), VMError> {
         let account = self.get_account_mut(address)?;
         account.set_code(new_bytecode);

@@ -4,7 +4,7 @@ use crate::{
     types::EFTest,
     utils::{effective_gas_price, load_initial_state, load_initial_state_levm},
 };
-use bytes::Bytes;
+
 use ethrex_common::{
     types::{Account, AccountUpdate, Fork, TxKind},
     Address, H256,
@@ -490,7 +490,7 @@ pub async fn _ensure_post_state_revm(
                             gas_used: 42,
                             gas_refunded: 42,
                             logs: vec![],
-                            output: Bytes::new(),
+                            output: Vec::new(),
                         },
                         //TODO: This is not a TransactionReport because it is REVM
                         error_reason,
@@ -512,7 +512,7 @@ pub async fn _ensure_post_state_revm(
                                 gas_used: 42,
                                 gas_refunded: 42,
                                 logs: vec![],
-                                output: Bytes::new(),
+                                output: Vec::new(),
                             },
                             //TODO: This is not a TransactionReport because it is REVM
                             "Post-state root mismatch".to_string(),

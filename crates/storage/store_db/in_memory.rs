@@ -3,7 +3,6 @@ use crate::{
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
 };
-use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
@@ -29,7 +28,7 @@ struct StoreInner {
     bodies: HashMap<BlockHash, BlockBody>,
     headers: HashMap<BlockHash, BlockHeader>,
     // Maps code hashes to code
-    account_codes: HashMap<H256, Bytes>,
+    account_codes: HashMap<H256, Vec<u8>>,
     // Maps transaction hashes to their blocks (height+hash) and index within the blocks.
     transaction_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
     receipts: HashMap<BlockHash, HashMap<Index, Receipt>>,
@@ -280,12 +279,12 @@ impl StoreEngine for Store {
         }
     }
 
-    async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
+    async fn add_account_code(&self, code_hash: H256, code: Vec<u8>) -> Result<(), StoreError> {
         self.inner().account_codes.insert(code_hash, code);
         Ok(())
     }
 
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
+    fn get_account_code(&self, code_hash: H256) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self.inner().account_codes.get(&code_hash).cloned())
     }
 

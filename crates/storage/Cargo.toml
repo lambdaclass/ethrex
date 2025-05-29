@@ -13,7 +13,6 @@ ethrex-trie.workspace = true
 async-trait.workspace = true
 ethereum-types.workspace = true
 anyhow = "1.0.86"
-bytes.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 sha3.workspace = true

@@ -332,7 +332,7 @@ impl REVM {
                             if account.is_contract_changed() {
                                 // Update code in db
                                 if let Some(code) = new_acc_info.code {
-                                    account_update.code = Some(code.original_bytes().0);
+                                    account_update.code = Some(code.original_bytes().0.to_vec());
                                 }
                             }
                         }
@@ -382,9 +382,8 @@ impl REVM {
                         // If code changed, update
                         if matches!(db.db.accounts.get(&address), Some(account) if B256::from(account.code_hash.0) != new_acc_info.code_hash)
                         {
-                            account_update.code = new_acc_info
-                                .code
-                                .map(|code| bytes::Bytes::copy_from_slice(code.bytes_slice()));
+                            account_update.code =
+                                new_acc_info.code.map(|code| code.bytes_slice().to_vec());
                         }
 
                         let account_info = AccountInfo {
@@ -514,8 +513,8 @@ pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
         },
         value: RevmU256::from_limbs(tx.value().0),
         data: match tx {
-            Transaction::PrivilegedL2Transaction(_tx) => DEPOSIT_MAGIC_DATA.into(),
-            _ => tx.data().clone().into(),
+            Transaction::PrivilegedL2Transaction(_tx) => DEPOSIT_MAGIC_DATA.to_vec().into(),
+            _ => tx.data().to_vec().into(),
         },
         nonce: Some(tx.nonce()),
         chain_id: tx.chain_id(),

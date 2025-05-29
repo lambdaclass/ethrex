@@ -1,6 +1,5 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
-use bytes::Bytes;
 use ethrex_common::{
     types::{validate_block_body, AccountState, Block, BlockBody, BlockHeader, Receipt},
     H256, U256,
@@ -540,10 +539,7 @@ impl PeerHandler {
                 id: request_id,
                 root_hash: state_root,
                 // [acc_path, acc_path,...] -> [[acc_path], [acc_path]]
-                paths: paths
-                    .iter()
-                    .map(|vec| vec![Bytes::from(vec.encode_compact())])
-                    .collect(),
+                paths: paths.iter().map(|vec| vec![vec.encode_compact()]).collect(),
                 bytes: MAX_RESPONSE_BYTES,
             });
             let (_, peer_channel) = self
@@ -609,11 +605,8 @@ impl PeerHandler {
                     .iter()
                     .map(|(acc_path, paths)| {
                         [
-                            vec![Bytes::from(acc_path.0.to_vec())],
-                            paths
-                                .iter()
-                                .map(|path| Bytes::from(path.encode_compact()))
-                                .collect(),
+                            vec![acc_path.0.to_vec()],
+                            paths.iter().map(|path| path.encode_compact()).collect(),
                         ]
                         .concat()
                     })

@@ -4,7 +4,6 @@ use crate::{
     errors::{InternalError, OutOfGasError, PrecompileError, VMError},
     memory,
 };
-use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
 use ethrex_common::{types::Fork, U256};
 use num_bigint::BigUint;
@@ -557,7 +556,7 @@ pub fn selfdestruct(
         .ok_or(OutOfGasError::GasCostOverflow)
 }
 
-pub fn tx_calldata(calldata: &Bytes) -> Result<u64, OutOfGasError> {
+pub fn tx_calldata(calldata: &[u8]) -> Result<u64, OutOfGasError> {
     // This cost applies both for call and create
     // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
     let mut calldata_cost: u64 = 0;

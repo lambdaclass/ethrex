@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use ethrex_common::Address;
 use ethrex_common::{types::Log, H256};
 use ethrex_levm::errors::{ExecutionReport as LevmExecutionReport, TxResult};
@@ -11,10 +10,10 @@ pub enum ExecutionResult {
         gas_used: u64,
         gas_refunded: u64,
         logs: Vec<Log>,
-        output: Bytes,
+        output: Vec<u8>,
     },
     /// Reverted by `REVERT` opcode
-    Revert { gas_used: u64, output: Bytes },
+    Revert { gas_used: u64, output: Vec<u8> },
     /// Reverted for other reasons, spends all gas.
     Halt {
         reason: String,
@@ -47,11 +46,11 @@ impl ExecutionResult {
         }
     }
 
-    pub fn output(&self) -> Bytes {
+    pub fn output(&self) -> Vec<u8> {
         match self {
-            ExecutionResult::Success { output, .. } => output.clone(),
-            ExecutionResult::Revert { output, .. } => output.clone(),
-            ExecutionResult::Halt { .. } => Bytes::new(),
+            ExecutionResult::Success { output, .. } => output.to_vec(),
+            ExecutionResult::Revert { output, .. } => output.to_vec(),
+            ExecutionResult::Halt { .. } => Vec::new(),
         }
     }
 }
@@ -77,17 +76,17 @@ impl From<RevmExecutionResult> for ExecutionResult {
                             .iter()
                             .map(|v| H256::from_slice(v.as_slice()))
                             .collect(),
-                        data: log.data.data.0,
+                        data: log.data.data.0.to_vec(),
                     })
                     .collect(),
                 output: match output {
-                    RevmOutput::Call(bytes) => bytes.0,
-                    RevmOutput::Create(bytes, _addr) => bytes.0,
+                    RevmOutput::Call(bytes) => bytes.0.to_vec(),
+                    RevmOutput::Create(bytes, _addr) => bytes.0.to_vec(),
                 },
             },
             RevmExecutionResult::Revert { gas_used, output } => ExecutionResult::Revert {
                 gas_used,
-                output: output.0,
+                output: output.0.to_vec(),
             },
             RevmExecutionResult::Halt { reason, gas_used } => ExecutionResult::Halt {
                 reason: format!("{:?}", reason),

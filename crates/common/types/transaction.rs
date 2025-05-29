@@ -1,6 +1,5 @@
 use std::cmp::min;
 
-use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
@@ -68,10 +67,10 @@ impl TryInto<Transaction> for P2PTransaction {
 }
 
 impl RLPEncode for P2PTransaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         match self {
             P2PTransaction::LegacyTransaction(t) => t.encode(buf),
-            tx => Bytes::copy_from_slice(&tx.encode_canonical_to_vec()).encode(buf),
+            tx => <Vec<u8>>::encode(&tx.encode_canonical_to_vec(), buf),
         };
     }
 }
@@ -122,7 +121,7 @@ pub struct WrappedEIP4844Transaction {
 }
 
 impl RLPEncode for WrappedEIP4844Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         let encoder = Encoder::new(buf);
         encoder
             .encode_field(&self.tx)
@@ -162,7 +161,7 @@ pub struct LegacyTransaction {
     /// Create transactions contain a [`null`](RLP_NULL) value in this field.
     pub to: TxKind,
     pub value: U256,
-    pub data: Bytes,
+    pub data: Vec<u8>,
     pub v: U256,
     pub r: U256,
     pub s: U256,
@@ -176,7 +175,7 @@ pub struct EIP2930Transaction {
     pub gas_limit: u64,
     pub to: TxKind,
     pub value: U256,
-    pub data: Bytes,
+    pub data: Vec<u8>,
     pub access_list: AccessList,
     pub signature_y_parity: bool,
     pub signature_r: U256,
@@ -192,7 +191,7 @@ pub struct EIP1559Transaction {
     pub gas_limit: u64,
     pub to: TxKind,
     pub value: U256,
-    pub data: Bytes,
+    pub data: Vec<u8>,
     pub access_list: AccessList,
     pub signature_y_parity: bool,
     pub signature_r: U256,
@@ -208,7 +207,7 @@ pub struct EIP4844Transaction {
     pub gas: u64,
     pub to: Address,
     pub value: U256,
-    pub data: Bytes,
+    pub data: Vec<u8>,
     pub access_list: AccessList,
     pub max_fee_per_blob_gas: U256,
     pub blob_versioned_hashes: Vec<H256>,
@@ -226,7 +225,7 @@ pub struct EIP7702Transaction {
     pub gas_limit: u64,
     pub to: Address,
     pub value: U256,
-    pub data: Bytes,
+    pub data: Vec<u8>,
     pub access_list: AccessList,
     pub authorization_list: AuthorizationList,
     pub signature_y_parity: bool,
@@ -244,7 +243,7 @@ pub struct PrivilegedL2Transaction {
     pub to: TxKind,
     pub recipient: Address,
     pub value: U256,
-    pub data: Bytes,
+    pub data: Vec<u8>,
     pub access_list: AccessList,
     pub from: Address,
 }
@@ -346,10 +345,10 @@ impl RLPEncode for Transaction {
     /// A) Legacy transactions: rlp(LegacyTransaction)
     /// B) Non legacy transactions: rlp(Bytes) where Bytes represents the canonical encoding for the transaction as a bytes object.
     /// Checkout [Transaction::encode_canonical] for more information
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         match self {
             Transaction::LegacyTransaction(t) => t.encode(buf),
-            tx => Bytes::copy_from_slice(&tx.encode_canonical_to_vec()).encode(buf),
+            tx => <Vec<u8>>::encode(&tx.encode_canonical_to_vec(), buf),
         };
     }
 }
@@ -406,10 +405,10 @@ pub enum TxKind {
 }
 
 impl RLPEncode for TxKind {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         match self {
             Self::Call(address) => address.encode(buf),
-            Self::Create => buf.put_u8(RLP_NULL),
+            Self::Create => buf.push(RLP_NULL),
         }
     }
 }
@@ -425,7 +424,7 @@ impl RLPDecode for TxKind {
 }
 
 impl RLPEncode for LegacyTransaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.nonce)
             .encode_field(&self.gas_price)
@@ -441,7 +440,7 @@ impl RLPEncode for LegacyTransaction {
 }
 
 impl RLPEncode for EIP2930Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -459,7 +458,7 @@ impl RLPEncode for EIP2930Transaction {
 }
 
 impl RLPEncode for EIP1559Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -478,7 +477,7 @@ impl RLPEncode for EIP1559Transaction {
 }
 
 impl RLPEncode for EIP4844Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -499,12 +498,8 @@ impl RLPEncode for EIP4844Transaction {
 }
 
 impl EIP4844Transaction {
-    pub fn rlp_encode_as_pooled_tx(
-        &self,
-        buf: &mut dyn bytes::BufMut,
-        tx_blobs_bundle: &BlobsBundle,
-    ) {
-        buf.put_bytes(TxType::EIP4844.into(), 1);
+    pub fn rlp_encode_as_pooled_tx(&self, buf: &mut Vec<u8>, tx_blobs_bundle: &BlobsBundle) {
+        buf.push(TxType::EIP4844.into());
         self.encode(buf);
         let mut encoded_blobs = Vec::new();
         Encoder::new(&mut encoded_blobs)
@@ -512,7 +507,7 @@ impl EIP4844Transaction {
             .encode_field(&tx_blobs_bundle.commitments)
             .encode_field(&tx_blobs_bundle.proofs)
             .finish();
-        buf.put_slice(&encoded_blobs);
+        buf.extend_from_slice(&encoded_blobs);
     }
 
     pub fn rlp_length_as_pooled_tx(&self, blobs_bundle: &BlobsBundle) -> usize {
@@ -528,7 +523,7 @@ impl EIP4844Transaction {
 }
 
 impl RLPEncode for EIP7702Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -548,7 +543,7 @@ impl RLPEncode for EIP7702Transaction {
 }
 
 impl RLPEncode for PrivilegedL2Transaction {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -566,7 +561,7 @@ impl RLPEncode for PrivilegedL2Transaction {
 }
 
 impl PayloadRLPEncode for Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode_payload(&self, buf: &mut Vec<u8>) {
         match self {
             Transaction::LegacyTransaction(tx) => tx.encode_payload(buf),
             Transaction::EIP1559Transaction(tx) => tx.encode_payload(buf),
@@ -579,7 +574,7 @@ impl PayloadRLPEncode for Transaction {
 }
 
 impl PayloadRLPEncode for LegacyTransaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode_payload(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.nonce)
             .encode_field(&self.gas_price)
@@ -592,7 +587,7 @@ impl PayloadRLPEncode for LegacyTransaction {
 }
 
 impl PayloadRLPEncode for EIP1559Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode_payload(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -608,7 +603,7 @@ impl PayloadRLPEncode for EIP1559Transaction {
 }
 
 impl PayloadRLPEncode for EIP2930Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode_payload(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -623,7 +618,7 @@ impl PayloadRLPEncode for EIP2930Transaction {
 }
 
 impl PayloadRLPEncode for EIP4844Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode_payload(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -641,7 +636,7 @@ impl PayloadRLPEncode for EIP4844Transaction {
 }
 
 impl PayloadRLPEncode for EIP7702Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode_payload(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -658,7 +653,7 @@ impl PayloadRLPEncode for EIP7702Transaction {
 }
 
 impl PayloadRLPEncode for PrivilegedL2Transaction {
-    fn encode_payload(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode_payload(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
@@ -1022,7 +1017,7 @@ impl Transaction {
                         .encode_field(&0u8)
                         .finish(),
                 }
-                recover_address(&tx.r, &tx.s, signature_y_parity, &Bytes::from(buf))
+                recover_address(&tx.r, &tx.s, signature_y_parity, &buf)
             }
             Transaction::EIP2930Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1040,7 +1035,7 @@ impl Transaction {
                     &tx.signature_r,
                     &tx.signature_s,
                     tx.signature_y_parity,
-                    &Bytes::from(buf),
+                    &buf,
                 )
             }
             Transaction::EIP1559Transaction(tx) => {
@@ -1060,7 +1055,7 @@ impl Transaction {
                     &tx.signature_r,
                     &tx.signature_s,
                     tx.signature_y_parity,
-                    &Bytes::from(buf),
+                    &buf,
                 )
             }
             Transaction::EIP4844Transaction(tx) => {
@@ -1082,7 +1077,7 @@ impl Transaction {
                     &tx.signature_r,
                     &tx.signature_s,
                     tx.signature_y_parity,
-                    &Bytes::from(buf),
+                    &buf,
                 )
             }
             Transaction::EIP7702Transaction(tx) => {
@@ -1103,7 +1098,7 @@ impl Transaction {
                     &tx.signature_r,
                     &tx.signature_s,
                     tx.signature_y_parity,
-                    &Bytes::from(buf),
+                    &buf,
                 )
             }
             Transaction::PrivilegedL2Transaction(tx) => tx.from,
@@ -1210,7 +1205,7 @@ impl Transaction {
         }
     }
 
-    pub fn data(&self) -> &Bytes {
+    pub fn data(&self) -> &[u8] {
         match self {
             Transaction::LegacyTransaction(tx) => &tx.data,
             Transaction::EIP2930Transaction(tx) => &tx.data,
@@ -1306,7 +1301,7 @@ fn recover_address(
     signature_r: &U256,
     signature_s: &U256,
     signature_y_parity: bool,
-    message: &Bytes,
+    message: &[u8],
 ) -> Address {
     // Create signature
     let signature_bytes = [signature_r.to_big_endian(), signature_s.to_big_endian()].concat();
@@ -1439,11 +1434,11 @@ mod canonic_encoding {
         /// Transactions can be encoded in the following formats:
         /// A) `TransactionType || Transaction` (Where Transaction type is an 8-bit number between 0 and 0x7f, and Transaction is an rlp encoded transaction of type TransactionType)
         /// B) `LegacyTransaction` (An rlp encoded LegacyTransaction)
-        pub fn encode_canonical(&self, buf: &mut dyn bytes::BufMut) {
+        pub fn encode_canonical(&self, buf: &mut Vec<u8>) {
             match self {
                 // Legacy transactions don't have a prefix
                 Transaction::LegacyTransaction(_) => {}
-                _ => buf.put_u8(self.tx_type() as u8),
+                _ => buf.push(self.tx_type() as u8),
             }
             match self {
                 Transaction::LegacyTransaction(t) => t.encode(buf),
@@ -1479,11 +1474,11 @@ mod canonic_encoding {
             }
         }
 
-        pub fn encode_canonical(&self, buf: &mut dyn bytes::BufMut) {
+        pub fn encode_canonical(&self, buf: &mut Vec<u8>) {
             match self {
                 // Legacy transactions don't have a prefix
                 P2PTransaction::LegacyTransaction(_) => {}
-                _ => buf.put_u8(self.tx_type() as u8),
+                _ => buf.push(self.tx_type() as u8),
             }
             match self {
                 P2PTransaction::LegacyTransaction(t) => t.encode(buf),
@@ -1634,7 +1629,8 @@ mod serde_impl {
             struct_serializer.serialize_field("to", &self.to)?;
             struct_serializer.serialize_field("gas", &format!("{:#x}", self.gas))?;
             struct_serializer.serialize_field("value", &self.value)?;
-            struct_serializer.serialize_field("input", &format!("0x{:x}", self.data))?;
+            struct_serializer
+                .serialize_field("input", &format!("0x{}", &hex::encode(&self.data)))?;
             struct_serializer.serialize_field("gasPrice", &format!("{:#x}", self.gas_price))?;
             struct_serializer.serialize_field(
                 "chainId",
@@ -1658,7 +1654,8 @@ mod serde_impl {
             struct_serializer.serialize_field("to", &self.to)?;
             struct_serializer.serialize_field("gas", &format!("{:#x}", self.gas_limit))?;
             struct_serializer.serialize_field("value", &self.value)?;
-            struct_serializer.serialize_field("input", &format!("0x{:x}", self.data))?;
+            struct_serializer
+                .serialize_field("input", &format!("0x{}", hex::encode(&self.data)))?;
             struct_serializer.serialize_field("gasPrice", &format!("{:#x}", self.gas_price))?;
             struct_serializer.serialize_field(
                 "accessList",
@@ -1690,7 +1687,8 @@ mod serde_impl {
             struct_serializer.serialize_field("to", &self.to)?;
             struct_serializer.serialize_field("gas", &format!("{:#x}", self.gas_limit))?;
             struct_serializer.serialize_field("value", &self.value)?;
-            struct_serializer.serialize_field("input", &format!("0x{:x}", self.data))?;
+            struct_serializer
+                .serialize_field("input", &format!("0x{}", hex::encode(&self.data)))?;
             struct_serializer.serialize_field(
                 "maxPriorityFeePerGas",
                 &format!("{:#x}", self.max_priority_fee_per_gas),
@@ -1729,7 +1727,8 @@ mod serde_impl {
             struct_serializer.serialize_field("to", &self.to)?;
             struct_serializer.serialize_field("gas", &format!("{:#x}", self.gas))?;
             struct_serializer.serialize_field("value", &self.value)?;
-            struct_serializer.serialize_field("input", &format!("0x{:x}", self.data))?;
+            struct_serializer
+                .serialize_field("input", &format!("0x{}", hex::encode(&self.data)))?;
             struct_serializer.serialize_field(
                 "maxPriorityFeePerGas",
                 &format!("{:#x}", self.max_priority_fee_per_gas),
@@ -1774,7 +1773,8 @@ mod serde_impl {
             struct_serializer.serialize_field("to", &self.to)?;
             struct_serializer.serialize_field("gas", &format!("{:#x}", self.gas_limit))?;
             struct_serializer.serialize_field("value", &self.value)?;
-            struct_serializer.serialize_field("input", &format!("0x{:x}", self.data))?;
+            struct_serializer
+                .serialize_field("input", &format!("0x{}", hex::encode(&self.data)))?;
             struct_serializer.serialize_field(
                 "maxPriorityFeePerGas",
                 &format!("{:#x}", self.max_priority_fee_per_gas),
@@ -1822,7 +1822,8 @@ mod serde_impl {
             struct_serializer.serialize_field("recipient", &self.recipient)?;
             struct_serializer.serialize_field("gas", &format!("{:#x}", self.gas_limit))?;
             struct_serializer.serialize_field("value", &self.value)?;
-            struct_serializer.serialize_field("input", &format!("0x{:x}", self.data))?;
+            struct_serializer
+                .serialize_field("input", &format!("0x{}", hex::encode(&self.data)))?;
             struct_serializer.serialize_field(
                 "maxPriorityFeePerGas",
                 &format!("{:#x}", self.max_priority_fee_per_gas),
@@ -1910,7 +1911,7 @@ mod serde_impl {
 
     fn deserialize_input_field(
         map: &mut std::collections::HashMap<String, Value>,
-    ) -> Result<Bytes, serde_json::Error> {
+    ) -> Result<Vec<u8>, serde_json::Error> {
         let data_str: String = serde_json::from_value(
             map.remove("input")
                 .ok_or_else(|| serde::de::Error::missing_field("input"))?,
@@ -1918,7 +1919,7 @@ mod serde_impl {
         .map_err(serde::de::Error::custom)?;
         if let Some(stripped) = data_str.strip_prefix("0x") {
             match hex::decode(stripped) {
-                Ok(decoded_bytes) => Ok(Bytes::from(decoded_bytes)),
+                Ok(decoded_bytes) => Ok(decoded_bytes),
                 Err(_) => Err(serde::de::Error::custom(
                     "Invalid hex format in 'input' field",
                 ))?,
@@ -2176,8 +2177,7 @@ mod serde_impl {
         pub authorization_list: Option<Vec<AuthorizationTupleEntry>>,
         #[serde(default)]
         pub blob_versioned_hashes: Vec<H256>,
-        #[serde(default, with = "crate::serde_utils::bytes::vec")]
-        pub blobs: Vec<Bytes>,
+        pub blobs: Vec<Vec<u8>>,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
         pub chain_id: Option<u64>,
         // rename is needed here so we dont attempt to deserialize the `input` field rather than the remainder of the fields
@@ -2187,10 +2187,10 @@ mod serde_impl {
             deserialize_with = "deserialize_input",
             serialize_with = "crates::serde_utils::bytes::serialize"
         )]
-        pub input: Bytes,
+        pub input: Vec<u8>,
     }
     /// Custom deserialization function to parse either `data` or `input` fields, or both as long as they have the same value
-    pub fn deserialize_input<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
+    pub fn deserialize_input<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -2201,7 +2201,7 @@ mod serde_impl {
         let input = variables.get("input");
         let value = match (data, input) {
             // This replaces `default` attribute for this custom implementation
-            (None, None) => return Ok(Bytes::new()),
+            (None, None) => return Ok(vec![]),
             (None, Some(val)) => val,
             (Some(val), None) => val,
             (Some(val_a), Some(val_b)) => {
@@ -2217,7 +2217,7 @@ mod serde_impl {
         let value = String::deserialize(value).map_err(D::Error::custom)?;
         let bytes = hex::decode(value.trim_start_matches("0x"))
             .map_err(|e| D::Error::custom(e.to_string()))?;
-        Ok(Bytes::from(bytes))
+        Ok(bytes)
     }
 
     impl From<EIP1559Transaction> for GenericTransaction {
@@ -2376,7 +2376,7 @@ mod mempool {
     }
 
     impl RLPEncode for MempoolTransaction {
-        fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        fn encode(&self, buf: &mut Vec<u8>) {
             Encoder::new(buf)
                 .encode_field(&self.timestamp)
                 .encode_field(&*self.inner)
@@ -2473,7 +2473,7 @@ mod tests {
             gas_limit: 0x186A0,
             to: TxKind::Call(hex!("7dcd17433742f4c0ca53122ab541d0ba67fc27df").into()),
             value: 2.into(),
-            data: Bytes::from(&b"\xdbS\x06$\x8e\x03\x13\xe7emit"[..]),
+            data: b"\xdbS\x06$\x8e\x03\x13\xe7emit".into(),
             access_list: vec![(
                 hex!("7dcd17433742f4c0ca53122ab541d0ba67fc27df").into(),
                 vec![
@@ -2528,7 +2528,7 @@ mod tests {
                 &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
             )),
             value: 3000000000000000_u64.into(),
-            data: Bytes::new(),
+            data: vec![],
             r: U256::from_str_radix(
                 "151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65d",
                 16,
@@ -2557,7 +2557,7 @@ mod tests {
                 &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
             )),
             value: 3000000000000000_u64.into(),
-            data: Bytes::new(),
+            data: vec![],
             signature_r: U256::from_str_radix(
                 "151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65d",
                 16,
@@ -2640,7 +2640,7 @@ mod tests {
             ),
             gas: Some(0x5208),
             value: U256::from(1),
-            input: Bytes::from(hex::decode("010203040506").unwrap()),
+            input: hex::decode("010203040506").unwrap().into(),
             gas_price: 7,
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
@@ -2693,7 +2693,7 @@ mod tests {
             ),
             gas: Some(0x5208),
             value: U256::from(1),
-            input: Bytes::from(hex::decode("010203040506").unwrap()),
+            input: hex::decode("010203040506").unwrap().into(),
             gas_price: 7,
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
@@ -2756,7 +2756,7 @@ mod tests {
             gas: 0x5208,
             value: U256::from(0x01),
             // 03 in hex is 0x3033, that's why the 'input' has that number.
-            data: Bytes::from_static(b"03"),
+            data: b"03".into(),
             access_list: vec![(
                 Address::from_slice(
                     &hex::decode("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap(),
@@ -2785,7 +2785,7 @@ mod tests {
             gas_limit: 21000,
             to: TxKind::Call(H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B0").unwrap()),
             value: U256::from(100000),
-            data: Bytes::from_static(b"03"),
+            data: b"03".into(),
             access_list: vec![(
                 H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B3").unwrap(),
                 vec![H256::zero()],
@@ -2817,7 +2817,7 @@ mod tests {
             gas_limit: 21000,
             to: Address::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B0").unwrap(),
             value: U256::from(100000),
-            data: Bytes::from_static(b"03"),
+            data: b"03".into(),
             access_list: vec![],
             signature_y_parity: true,
             signature_r: U256::one(),
@@ -2857,7 +2857,7 @@ mod tests {
             ),
             recipient: Address::from_str("0x8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap(),
             value: U256::from(500000000000000000000000000u128),
-            data: Bytes::new(),
+            data: b"03".into(),
             access_list: vec![],
             from: Address::from_str("0x8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap(),
         };

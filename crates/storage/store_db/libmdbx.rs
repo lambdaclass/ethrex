@@ -10,7 +10,6 @@ use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use anyhow::Result;
-use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
@@ -281,12 +280,12 @@ impl StoreEngine for Store {
         self.read::<BlockNumbers>(block_hash.into()).await
     }
 
-    async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
+    async fn add_account_code(&self, code_hash: H256, code: Vec<u8>) -> Result<(), StoreError> {
         self.write::<AccountCodes>(code_hash.into(), code.into())
             .await
     }
 
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
+    fn get_account_code(&self, code_hash: H256) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self
             .read_sync::<AccountCodes>(code_hash.into())?
             .map(|b| b.to()))
@@ -1296,7 +1295,6 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
 mod tests {
     use super::*;
     use crate::rlp::TupleRLP;
-    use bytes::Bytes;
     use ethrex_common::{
         types::{BlockHash, Index, Log, TxType},
         Address, Bloom, H256,
@@ -1573,7 +1571,7 @@ mod tests {
 
         // we want to store the maximum
         let max_data_bytes: usize = 517377;
-        let data = Bytes::from(vec![1u8; max_data_bytes]);
+        let data = vec![1u8; max_data_bytes];
         let key = block_hash.into();
         let entries = IndexedChunk::<Vec<u8>>::from::<Example>(key, &data);
 
@@ -1606,7 +1604,7 @@ mod tests {
 
         // we want to store the maximum
         let max_data_bytes: usize = 517376;
-        let data = Bytes::from(vec![1u8; max_data_bytes]);
+        let data = vec![1u8; max_data_bytes];
         let key = block_hash.into();
         let entries = IndexedChunk::<Vec<u8>>::from::<Example>(key, &data).unwrap();
 
@@ -1624,7 +1622,7 @@ mod tests {
         logs_size: usize,
         topics_size: usize,
     ) -> Receipt {
-        let large_data: Bytes = Bytes::from(vec![1u8; data_size_in_bytes]);
+        let large_data = vec![1u8; data_size_in_bytes];
         let large_topics: Vec<H256> = std::iter::repeat(H256::random())
             .take(topics_size)
             .collect();

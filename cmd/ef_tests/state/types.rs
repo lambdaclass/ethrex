@@ -9,7 +9,6 @@ use crate::{
     },
     report::TestVector,
 };
-use bytes::Bytes;
 use ethrex_common::{
     types::{Fork, Genesis, GenesisAccount, TxKind},
     Address, H256, U256,
@@ -182,7 +181,7 @@ pub struct EFTestPostValue {
     pub logs: H256,
     // we add the default because some tests don't have this field
     #[serde(default, deserialize_with = "deserialize_hex_bytes")]
-    pub txbytes: Bytes,
+    pub txbytes: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -193,7 +192,7 @@ pub struct EFTestPreValue {
     #[serde(deserialize_with = "deserialize_u256_safe")]
     pub balance: U256,
     #[serde(deserialize_with = "deserialize_hex_bytes")]
-    pub code: Bytes,
+    pub code: Vec<u8>,
     #[serde(deserialize_with = "deserialize_u64_safe")]
     pub nonce: u64,
     #[serde(deserialize_with = "deserialize_u256_valued_hashmap_safe")]
@@ -239,7 +238,7 @@ pub struct EFTestAuthorizationListTuple {
 #[serde(rename_all = "camelCase")]
 pub struct EFTestRawTransaction {
     #[serde(deserialize_with = "deserialize_hex_bytes_vec")]
-    pub data: Vec<Bytes>,
+    pub data: Vec<Vec<u8>>,
     #[serde(deserialize_with = "deserialize_u64_vec_safe")]
     pub gas_limit: Vec<u64>,
     #[serde(default, deserialize_with = "deserialize_u256_optional_safe")]
@@ -268,7 +267,7 @@ pub struct EFTestRawTransaction {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EFTestTransaction {
-    pub data: Bytes,
+    pub data: Vec<u8>,
     pub gas_limit: u64,
     pub gas_price: Option<U256>,
     #[serde(deserialize_with = "deserialize_u64_safe")]

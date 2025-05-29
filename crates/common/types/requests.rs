@@ -1,6 +1,5 @@
 use std::str::FromStr;
 
-use bytes::Bytes;
 use ethereum_types::Address;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use k256::sha2::Sha256;
@@ -25,8 +24,8 @@ lazy_static! {
         H256::from_str("649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5").unwrap();
 }
 
-#[derive(Clone, Debug)]
-pub struct EncodedRequests(pub Bytes);
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EncodedRequests(pub Vec<u8>);
 
 impl EncodedRequests {
     pub fn is_empty(&self) -> bool {
@@ -34,28 +33,8 @@ impl EncodedRequests {
     }
 }
 
-impl<'de> Deserialize<'de> for EncodedRequests {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(EncodedRequests(serde_utils::bytes::deserialize(
-            deserializer,
-        )?))
-    }
-}
-
-impl Serialize for EncodedRequests {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serde_utils::bytes::serialize(&self.0, serializer)
-    }
-}
-
 impl RLPEncode for EncodedRequests {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         self.0.encode(buf)
     }
 }
@@ -89,7 +68,7 @@ impl Requests {
                 .collect(),
         };
 
-        EncodedRequests(Bytes::from(bytes))
+        EncodedRequests(bytes)
     }
 
     /// Returns None if any of the deposit requests couldn't be parsed
@@ -250,7 +229,7 @@ fn fixed_bytes<const N: usize>(data: &[u8], offset: usize) -> [u8; N] {
 pub fn compute_requests_hash(requests: &[EncodedRequests]) -> H256 {
     let mut hasher = Sha256::new();
     for request in requests {
-        let request_bytes = request.0.as_ref();
+        let request_bytes = &request.0;
         if request_bytes.len() > 1 {
             hasher.update(Sha256::digest(request_bytes));
         }

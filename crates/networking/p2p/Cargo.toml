@@ -15,7 +15,6 @@ ethrex-trie.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-bytes.workspace = true
 hex.workspace = true
 thiserror.workspace = true
 lazy_static.workspace = true

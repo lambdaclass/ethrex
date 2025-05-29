@@ -9,7 +9,7 @@ use crate::{
     precompiles::execute_precompile,
     TransientStorage,
 };
-use bytes::Bytes;
+
 use ethrex_common::{
     types::{Transaction, TxKind},
     Address, H256, U256,
@@ -71,9 +71,9 @@ impl<'a> VM<'a> {
             self.env.origin,
             callee,
             Address::default(), // Will be assigned at the end of prepare_execution
-            Bytes::new(),       // Will be assigned at the end of prepare_execution
+            Vec::new(),         // Will be assigned at the end of prepare_execution
             self.tx.value(),
-            self.tx.data().clone(),
+            self.tx.data().to_vec(),
             false,
             self.env.gas_limit,
             0,

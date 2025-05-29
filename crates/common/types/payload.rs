@@ -29,7 +29,7 @@ impl PayloadBundle {
 }
 
 impl RLPEncode for PayloadBundle {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.block)
             .encode_field(&self.block_value)

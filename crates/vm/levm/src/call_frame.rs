@@ -6,7 +6,7 @@ use crate::{
     utils::{get_valid_jump_destinations, restore_cache_state},
     vm::VM,
 };
-use bytes::Bytes;
+
 use ethrex_common::{
     types::{Account, Log},
     Address, U256,
@@ -73,17 +73,17 @@ pub struct CallFrame {
     /// Address of the code to execute. Usually the same as `to`, but can be different
     pub code_address: Address,
     /// Bytecode to execute
-    pub bytecode: Bytes,
+    pub bytecode: Vec<u8>,
     /// Value sent along the transaction
     pub msg_value: U256,
     pub stack: Stack,
     pub memory: Memory,
     /// Data sent along the transaction. Empty in CREATE transactions.
-    pub calldata: Bytes,
+    pub calldata: Vec<u8>,
     /// Return data of the CURRENT CONTEXT (see docs for more details)
-    pub output: Bytes,
+    pub output: Vec<u8>,
     /// Return data of the SUB-CONTEXT (see docs for more details)
-    pub sub_return_data: Bytes,
+    pub sub_return_data: Vec<u8>,
     /// Indicates if current context is static (if it is, it can't alter state)
     pub is_static: bool,
     pub logs: Vec<Log>,
@@ -122,9 +122,9 @@ impl CallFrame {
         msg_sender: Address,
         to: Address,
         code_address: Address,
-        bytecode: Bytes,
+        bytecode: Vec<u8>,
         msg_value: U256,
-        calldata: Bytes,
+        calldata: Vec<u8>,
         is_static: bool,
         gas_limit: u64,
         depth: usize,
@@ -187,7 +187,7 @@ impl CallFrame {
         Ok(())
     }
 
-    pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
+    pub fn set_code(&mut self, code: Vec<u8>) -> Result<(), VMError> {
         self.valid_jump_destinations = get_valid_jump_destinations(&code)?;
         self.bytecode = code;
         Ok(())

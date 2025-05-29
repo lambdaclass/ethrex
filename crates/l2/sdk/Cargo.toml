@@ -18,7 +18,6 @@ serde_json.workspace = true
 serde.workspace = true
 tracing.workspace = true
 ethrex-rlp.workspace = true
-bytes.workspace = true
 reqwest.workspace = true
 eyre.workspace = true
 lazy_static.workspace = true

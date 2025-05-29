@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
 
@@ -135,7 +134,7 @@ pub fn process_trie_nodes_request(
             paths.into_iter().map(|bytes| bytes.to_vec()).collect(),
             remaining_bytes,
         )?;
-        nodes.extend(trie_nodes.iter().map(|nodes| Bytes::copy_from_slice(nodes)));
+        nodes.extend(trie_nodes.iter().map(|nodes| nodes.to_vec()));
         remaining_bytes = remaining_bytes
             .saturating_sub(trie_nodes.iter().fold(0, |acc, nodes| acc + nodes.len()) as u64);
         if remaining_bytes == 0 {
@@ -151,13 +150,13 @@ pub fn process_trie_nodes_request(
 
 // Helper method to convert proof to RLP-encodable format
 #[inline]
-pub(crate) fn proof_to_encodable(proof: Vec<Vec<u8>>) -> Vec<Bytes> {
-    proof.into_iter().map(Bytes::from).collect()
+pub(crate) fn proof_to_encodable(proof: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+    proof.into_iter().map(Vec::from).collect()
 }
 
 // Helper method to obtain proof from RLP-encodable format
 #[inline]
-pub(crate) fn encodable_to_proof(proof: &[Bytes]) -> Vec<Vec<u8>> {
+pub(crate) fn encodable_to_proof(proof: &[Vec<u8>]) -> Vec<Vec<u8>> {
     proof.iter().map(|bytes| bytes.to_vec()).collect()
 }
 

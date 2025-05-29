@@ -2,7 +2,6 @@ use super::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
 };
-use bytes::{BufMut, Bytes};
 use ethrex_common::{
     types::{AccountState, EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     H256, U256,
@@ -31,7 +30,7 @@ pub(crate) struct AccountRange {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     pub id: u64,
     pub accounts: Vec<AccountRangeUnit>,
-    pub proof: Vec<Bytes>,
+    pub proof: Vec<Vec<u8>>,
 }
 
 #[derive(Debug)]
@@ -48,7 +47,7 @@ pub(crate) struct GetStorageRanges {
 pub(crate) struct StorageRanges {
     pub id: u64,
     pub slots: Vec<Vec<StorageSlot>>,
-    pub proof: Vec<Bytes>,
+    pub proof: Vec<Vec<u8>>,
 }
 
 #[derive(Debug)]
@@ -61,7 +60,7 @@ pub(crate) struct GetByteCodes {
 #[derive(Debug)]
 pub(crate) struct ByteCodes {
     pub id: u64,
-    pub codes: Vec<Bytes>,
+    pub codes: Vec<Vec<u8>>,
 }
 
 #[derive(Debug)]
@@ -70,19 +69,19 @@ pub(crate) struct GetTrieNodes {
     pub root_hash: H256,
     // [[acc_path, slot_path_1, slot_path_2,...]...]
     // The paths can be either full paths (hash) or only the partial path (compact-encoded nibbles)
-    pub paths: Vec<Vec<Bytes>>,
+    pub paths: Vec<Vec<Vec<u8>>>,
     pub bytes: u64,
 }
 
 #[derive(Debug)]
 pub(crate) struct TrieNodes {
     pub id: u64,
-    pub nodes: Vec<Bytes>,
+    pub nodes: Vec<Vec<u8>>,
 }
 
 impl RLPxMessage for GetAccountRange {
     const CODE: u8 = 0x00;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -93,7 +92,7 @@ impl RLPxMessage for GetAccountRange {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -119,7 +118,7 @@ impl RLPxMessage for GetAccountRange {
 
 impl RLPxMessage for AccountRange {
     const CODE: u8 = 0x01;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -128,7 +127,7 @@ impl RLPxMessage for AccountRange {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -150,7 +149,7 @@ impl RLPxMessage for AccountRange {
 
 impl RLPxMessage for GetStorageRanges {
     const CODE: u8 = 0x02;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -162,7 +161,7 @@ impl RLPxMessage for GetStorageRanges {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -172,15 +171,15 @@ impl RLPxMessage for GetStorageRanges {
         let (id, decoder) = decoder.decode_field("request-id")?;
         let (root_hash, decoder) = decoder.decode_field("rootHash")?;
         let (account_hashes, decoder) = decoder.decode_field("accountHashes")?;
-        let (starting_hash, decoder): (Bytes, _) = decoder.decode_field("startingHash")?;
+        let (starting_hash, decoder): (Vec<u8>, _) = decoder.decode_field("startingHash")?;
         let starting_hash = (!starting_hash.is_empty())
             .then(|| H256::from_slice(&starting_hash))
             .unwrap_or_default();
-        let (limit_hash, decoder): (Bytes, _) = decoder.decode_field("limitHash")?;
+        let (limit_hash, decoder): (Vec<u8>, _) = decoder.decode_field("limitHash")?;
         let limit_hash = (!limit_hash.is_empty())
             .then(|| H256::from_slice(&limit_hash))
             .unwrap_or(H256([0xFF; 32]));
-        let (response_bytes, decoder) = decoder.decode_field("responseBytes")?;
+        let (response_bytes, decoder) = decoder.decode_field("responseVec<u8>")?;
         decoder.finish()?;
 
         Ok(Self {
@@ -196,7 +195,7 @@ impl RLPxMessage for GetStorageRanges {
 
 impl RLPxMessage for StorageRanges {
     const CODE: u8 = 0x03;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -205,7 +204,7 @@ impl RLPxMessage for StorageRanges {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -223,7 +222,7 @@ impl RLPxMessage for StorageRanges {
 
 impl RLPxMessage for GetByteCodes {
     const CODE: u8 = 0x04;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -232,7 +231,7 @@ impl RLPxMessage for GetByteCodes {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -250,7 +249,7 @@ impl RLPxMessage for GetByteCodes {
 
 impl RLPxMessage for ByteCodes {
     const CODE: u8 = 0x05;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -258,7 +257,7 @@ impl RLPxMessage for ByteCodes {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -275,7 +274,7 @@ impl RLPxMessage for ByteCodes {
 
 impl RLPxMessage for GetTrieNodes {
     const CODE: u8 = 0x06;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -285,7 +284,7 @@ impl RLPxMessage for GetTrieNodes {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -309,7 +308,7 @@ impl RLPxMessage for GetTrieNodes {
 
 impl RLPxMessage for TrieNodes {
     const CODE: u8 = 0x07;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -317,7 +316,7 @@ impl RLPxMessage for TrieNodes {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -344,8 +343,8 @@ pub struct AccountRangeUnit {
 pub struct AccountStateSlim {
     pub nonce: u64,
     pub balance: U256,
-    pub storage_root: Bytes,
-    pub code_hash: Bytes,
+    pub storage_root: Vec<u8>,
+    pub code_hash: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -355,7 +354,7 @@ pub struct StorageSlot {
 }
 
 impl RLPEncode for AccountRangeUnit {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.hash)
             .encode_field(&self.account)
@@ -373,7 +372,7 @@ impl RLPDecode for AccountRangeUnit {
 }
 
 impl RLPEncode for AccountStateSlim {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.nonce)
             .encode_field(&self.balance)
@@ -405,14 +404,14 @@ impl RLPDecode for AccountStateSlim {
 impl From<AccountState> for AccountStateSlim {
     fn from(value: AccountState) -> Self {
         let storage_root = if value.storage_root == *EMPTY_TRIE_HASH {
-            Bytes::new()
+            Vec::new()
         } else {
-            Bytes::copy_from_slice(value.storage_root.as_bytes())
+            value.storage_root.as_bytes().to_vec()
         };
         let code_hash = if value.code_hash == *EMPTY_KECCACK_HASH {
-            Bytes::new()
+            Vec::new()
         } else {
-            Bytes::copy_from_slice(value.code_hash.as_bytes())
+            value.code_hash.as_bytes().to_vec()
         };
         Self {
             nonce: value.nonce,
@@ -445,7 +444,7 @@ impl From<AccountStateSlim> for AccountState {
 }
 
 impl RLPEncode for StorageSlot {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.hash)
             .encode_bytes(&self.data.encode_to_vec())

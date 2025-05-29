@@ -7,12 +7,10 @@ use crate::{
     vm::VM,
 };
 
-use bytes::Bytes;
-
 impl<'a> VM<'a> {
     pub fn handle_precompile_result(
         &mut self,
-        precompile_result: Result<Bytes, VMError>,
+        precompile_result: Result<Vec<u8>, VMError>,
     ) -> Result<ExecutionReport, VMError> {
         match precompile_result {
             Ok(output) => Ok(ExecutionReport {
@@ -31,7 +29,7 @@ impl<'a> VM<'a> {
                     result: TxResult::Revert(error),
                     gas_used: self.current_call_frame()?.gas_limit,
                     gas_refunded: self.substate.refunded_gas,
-                    output: Bytes::new(),
+                    output: Vec::new(),
                     logs: vec![],
                 })
             }
@@ -262,7 +260,7 @@ impl<'a> VM<'a> {
                 gas_used: self.env.gas_limit,
                 gas_refunded: 0,
                 logs: vec![],
-                output: Bytes::new(),
+                output: Vec::new(),
             }));
         }
 

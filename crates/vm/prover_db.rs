@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use ethereum_types::H160;
 use ethrex_common::{
     types::{AccountInfo, AccountUpdate, ChainConfig},
@@ -19,7 +18,7 @@ pub struct ProverDB {
     /// indexed by account address
     pub accounts: HashMap<Address, AccountInfo>,
     /// indexed by code hash
-    pub code: HashMap<H256, Bytes>,
+    pub code: HashMap<H256, Vec<u8>>,
     /// indexed by account address and storage key
     pub storage: HashMap<Address, HashMap<H256, U256>>,
     /// indexed by block number

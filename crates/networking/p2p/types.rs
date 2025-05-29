@@ -1,4 +1,3 @@
-use bytes::{BufMut, Bytes};
 use ethrex_common::types::ForkId;
 use ethrex_common::{H256, H264, H512};
 use ethrex_rlp::{
@@ -35,7 +34,7 @@ impl Endpoint {
 }
 
 impl RLPEncode for Endpoint {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.ip)
             .encode_field(&self.udp_port)
@@ -226,7 +225,7 @@ pub struct NodeRecord {
     pub seq: u64,
     // holds optional values in (key, value) format
     // value represents the rlp encoded bytes
-    pub pairs: Vec<(Bytes, Bytes)>,
+    pub pairs: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -258,7 +257,7 @@ impl NodeRecord {
                 "tcp" => decoded_pairs.tcp_port = u16::decode(&value).ok(),
                 "udp" => decoded_pairs.udp_port = u16::decode(&value).ok(),
                 "secp256k1" => {
-                    let Ok(bytes) = Bytes::decode(&value) else {
+                    let Ok(bytes) = Vec::decode(&value) else {
                         continue;
                     };
                     if bytes.len() < 33 {
@@ -326,14 +325,14 @@ impl NodeRecord {
     }
 
     pub fn set_fork_id(&mut self, fork_id: &ForkId, signer: &SigningKey) -> Result<(), String> {
-        if let Some((_, value)) = self.pairs.iter().find(|(k, _)| k == "eth") {
+        if let Some((_, value)) = self.pairs.iter().find(|(k, _)| k == "eth".as_bytes()) {
             if *fork_id == ForkId::decode(&value[1..]).expect("No fork Id in NodeRecord pairs") {
                 return Ok(());
             }
         }
 
         // remove previous eth version
-        self.pairs.retain(|(k, _)| k != "eth");
+        self.pairs.retain(|(k, _)| k != "eth".as_bytes());
 
         self.pairs
             .push(("eth".into(), vec![fork_id.clone()].encode_to_vec().into()));
@@ -356,7 +355,7 @@ impl NodeRecord {
         let mut rlp = vec![];
         structs::Encoder::new(&mut rlp)
             .encode_field(&self.seq)
-            .encode_key_value_list::<Bytes>(&self.pairs)
+            .encode_key_value_list::<Vec<u8>>(&self.pairs)
             .finish();
         let digest = Keccak256::digest(&rlp);
         digest.to_vec()
@@ -396,13 +395,13 @@ impl RLPDecode for NodeRecord {
 /// This function returns a vector with (key, value) tuples. Both keys and values are stored as Bytes.
 /// Each value is the actual RLP encoding of the field including its prefix so it can be decoded as T::decode(value)
 fn decode_node_record_optional_fields(
-    mut pairs: Vec<(Bytes, Bytes)>,
+    mut pairs: Vec<(Vec<u8>, Vec<u8>)>,
     decoder: Decoder,
-) -> Result<(Vec<(Bytes, Bytes)>, Decoder), RLPDecodeError> {
-    let (key, decoder): (Option<Bytes>, Decoder) = decoder.decode_optional_field();
+) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, Decoder), RLPDecodeError> {
+    let (key, decoder): (Option<Vec<u8>>, Decoder) = decoder.decode_optional_field();
     if let Some(k) = key {
         let (value, decoder): (Vec<u8>, Decoder) = decoder.get_encoded_item()?;
-        pairs.push((k, Bytes::from(value)));
+        pairs.push((k, Vec::from(value)));
         decode_node_record_optional_fields(pairs, decoder)
     } else {
         Ok((pairs, decoder))
@@ -410,17 +409,17 @@ fn decode_node_record_optional_fields(
 }
 
 impl RLPEncode for NodeRecord {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.signature)
             .encode_field(&self.seq)
-            .encode_key_value_list::<Bytes>(&self.pairs)
+            .encode_key_value_list::<Vec<u8>>(&self.pairs)
             .finish();
     }
 }
 
 impl RLPEncode for Node {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.ip)
             .encode_field(&self.udp_port)

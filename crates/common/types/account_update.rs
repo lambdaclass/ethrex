@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::{types::AccountInfo, Address, H256, U256};
-use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -9,7 +8,7 @@ pub struct AccountUpdate {
     pub address: Address,
     pub removed: bool,
     pub info: Option<AccountInfo>,
-    pub code: Option<Bytes>,
+    pub code: Option<Vec<u8>>,
     pub added_storage: HashMap<H256, U256>,
     // Matches TODO in code
     // removed_storage_keys: Vec<H256>,

@@ -15,7 +15,6 @@ ethrex-storage-rollup = { workspace = true, features = ["libmdbx"] }
 
 serde_json.workspace = true
 serde.workspace = true
-bytes.workspace = true
 ethereum-types.workspace = true
 tokio.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }

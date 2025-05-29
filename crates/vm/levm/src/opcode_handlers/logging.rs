@@ -4,7 +4,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     vm::VM,
 };
-use bytes::Bytes;
+
 use ethrex_common::{types::Log, H256};
 
 // Logging Operations (5)
@@ -42,9 +42,7 @@ impl<'a> VM<'a> {
         let log = Log {
             address: current_call_frame.to,
             topics,
-            data: Bytes::from(
-                memory::load_range(&mut current_call_frame.memory, offset, size)?.to_vec(),
-            ),
+            data: memory::load_range(&mut current_call_frame.memory, offset, size)?.to_vec(),
         };
         current_call_frame.logs.push(log);
 

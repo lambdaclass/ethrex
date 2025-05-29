@@ -3,7 +3,6 @@ use crate::{
     rlpx::utils::node_id,
     types::{Endpoint, Node, NodeRecord},
 };
-use bytes::BufMut;
 use ethrex_common::{H256, H512, H520};
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -125,7 +124,7 @@ impl std::fmt::Display for Message {
 }
 
 impl Message {
-    pub fn encode_with_header(&self, buf: &mut dyn BufMut, node_signer: &SigningKey) {
+    pub fn encode_with_header(&self, buf: &mut Vec<u8>, node_signer: &SigningKey) {
         let signature_size = 65_usize;
         let mut data: Vec<u8> = Vec::with_capacity(signature_size.next_power_of_two());
         data.resize(signature_size, 0);
@@ -143,11 +142,11 @@ impl Message {
         data[signature_size - 1] = recovery_id.to_byte();
 
         let hash = Keccak256::digest(&data[..]);
-        buf.put_slice(&hash);
-        buf.put_slice(&data[..]);
+        buf.extend_from_slice(&hash);
+        buf.extend_from_slice(&data[..]);
     }
 
-    fn encode_with_type(&self, buf: &mut dyn BufMut) {
+    fn encode_with_type(&self, buf: &mut Vec<u8>) {
         buf.put_u8(self.packet_type());
         match self {
             Message::Ping(msg) => msg.encode(buf),
@@ -240,7 +239,7 @@ impl PingMessage {
 }
 
 impl RLPEncode for PingMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.version)
             .encode_field(&self.from)
@@ -268,7 +267,7 @@ impl FindNodeMessage {
 }
 
 impl RLPEncode for FindNodeMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.target)
             .encode_field(&self.expiration)
@@ -373,7 +372,7 @@ impl PongMessage {
 }
 
 impl RLPEncode for PongMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.to)
             .encode_field(&self.ping_hash)
@@ -429,7 +428,7 @@ impl RLPDecode for NeighborsMessage {
 }
 
 impl RLPEncode for NeighborsMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.nodes)
             .encode_field(&self.expiration)
@@ -488,7 +487,7 @@ impl RLPDecode for ENRRequestMessage {
 }
 
 impl RLPEncode for ENRRequestMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.expiration)
             .finish();
@@ -496,7 +495,7 @@ impl RLPEncode for ENRRequestMessage {
 }
 
 impl RLPEncode for ENRResponseMessage {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         structs::Encoder::new(buf)
             .encode_field(&self.request_hash)
             .encode_field(&self.node_record)
@@ -507,7 +506,6 @@ impl RLPEncode for ENRResponseMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::Bytes;
     use ethrex_common::{H256, H264};
     use std::fmt::Write;
     use std::net::IpAddr;
@@ -731,7 +729,7 @@ mod tests {
         snap.encode(&mut snap_rlp);
 
         // initialize vector with (key, value) pairs
-        let pairs: Vec<(Bytes, Bytes)> = vec![
+        let pairs: Vec<(Vec<u8>, Vec<u8>)> = vec![
             (String::from("eth").into(), eth_rlp.into()),
             (String::from("id").into(), id_rlp.into()),
             (String::from("ip").into(), ip_rlp.into()),
@@ -857,7 +855,7 @@ mod tests {
         snap.encode(&mut snap_rlp);
 
         // initialize vector with (key, value) pairs
-        let pairs: Vec<(Bytes, Bytes)> = vec![
+        let pairs: Vec<(Vec<u8>, Vec<u8>)> = vec![
             (String::from("eth").into(), eth_rlp.into()),
             (String::from("id").into(), id_rlp.into()),
             (String::from("ip").into(), ip_rlp.into()),
@@ -1030,8 +1028,8 @@ mod tests {
         // re hash the data as we have updated the message
         let hash = Keccak256::digest(&buf[32..]);
         let mut updated_buf = Vec::new();
-        updated_buf.put_slice(&hash);
-        updated_buf.put_slice(&buf[32..]);
+        updated_buf.extend_from_slice(&hash);
+        updated_buf.extend_from_slice(&buf[32..]);
 
         let decoded_packet = Packet::decode(&updated_buf);
         assert!(decoded_packet.is_err());
@@ -1066,8 +1064,8 @@ mod tests {
         // re hash the data as we have updated the message
         let hash = Keccak256::digest(&buf[32..]);
         let mut updated_buf = Vec::new();
-        updated_buf.put_slice(&hash);
-        updated_buf.put_slice(&buf[32..]);
+        updated_buf.extend_from_slice(&hash);
+        updated_buf.extend_from_slice(&buf[32..]);
 
         let decoded_packet = Packet::decode(&updated_buf);
         assert!(decoded_packet.is_err());

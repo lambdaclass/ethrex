@@ -17,7 +17,6 @@ use crate::{
     vm::{Substate, VM},
     EVMConfig,
 };
-use bytes::Bytes;
 use ethrex_common::types::{Account, Transaction, TxKind};
 use ethrex_common::{
     types::{tx_fields::*, Fork},
@@ -75,7 +74,7 @@ pub fn calculate_create_address(
 /// address = keccak256(0xff || sender_address || salt || keccak256(initialization_code))[12:]
 pub fn calculate_create2_address(
     sender_address: Address,
-    initialization_code: &Bytes,
+    initialization_code: &[u8],
     salt: U256,
 ) -> Result<Address, VMError> {
     let init_code_hash = keccak(initialization_code);
@@ -103,7 +102,7 @@ pub fn calculate_create2_address(
 /// This is a necessary calculation because of PUSH opcodes.
 /// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
 /// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
-pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
+pub fn get_valid_jump_destinations(code: &[u8]) -> Result<HashSet<usize>, VMError> {
     let mut valid_jump_destinations = HashSet::new();
     let mut pc = 0;
 
@@ -368,7 +367,7 @@ pub fn eip7702_get_code(
     db: &mut GeneralizedDatabase,
     accrued_substate: &mut Substate,
     address: Address,
-) -> Result<(bool, u64, Address, Bytes), VMError> {
+) -> Result<(bool, u64, Address, Vec<u8>), VMError> {
     // Address is the delgated address
     let account = db.get_account(address)?;
     let bytecode = account.code.clone();
@@ -466,7 +465,7 @@ impl<'a> VM<'a> {
             let code = if auth_tuple.address != Address::zero() {
                 delegation_bytes.into()
             } else {
-                Bytes::new()
+                Vec::new()
             };
             auth_account.set_code(code);
 

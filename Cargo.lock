@@ -2794,7 +2794,6 @@ dependencies = [
 name = "ef_tests-blockchain"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "datatest-stable",
  "ethrex-blockchain",
  "ethrex-common",
@@ -2812,7 +2811,6 @@ dependencies = [
 name = "ef_tests-state"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "clap 4.5.36",
  "clap_complete",
  "colored",
@@ -3031,7 +3029,6 @@ name = "ethrex"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytes",
  "cfg-if",
  "clap 4.5.36",
  "clap_complete",
@@ -3071,7 +3068,6 @@ dependencies = [
 name = "ethrex-blockchain"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "cfg-if",
  "ethrex-common",
  "ethrex-metrics",
@@ -3091,7 +3087,6 @@ dependencies = [
 name = "ethrex-common"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "c-kzg",
  "crc32fast",
  "ethereum-types",
@@ -3117,7 +3112,6 @@ dependencies = [
 name = "ethrex-dev"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "envy",
  "ethereum-types",
  "ethrex-rpc",
@@ -3138,7 +3132,6 @@ name = "ethrex-l2"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "bytes",
  "directories",
  "envy",
  "ethereum-types",
@@ -3177,7 +3170,6 @@ name = "ethrex-levm"
 version = "0.1.0"
 dependencies = [
  "bls12_381 0.8.0",
- "bytes",
  "colored",
  "datatest-stable",
  "derive_more 1.0.0",
@@ -3221,7 +3213,6 @@ name = "ethrex-p2p"
 version = "0.1.0"
 dependencies = [
  "aes",
- "bytes",
  "concat-kdf",
  "ctr",
  "ethrex-blockchain",
@@ -3251,7 +3242,6 @@ dependencies = [
 name = "ethrex-prover"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "clap 4.5.36",
  "ethereum-types",
  "ethrex-blockchain",
@@ -3283,7 +3273,6 @@ version = "0.1.0"
 dependencies = [
  "again",
  "bincode",
- "bytes",
  "clap 4.5.36",
  "derive_more 1.0.0",
  "ethrex-common",
@@ -3315,7 +3304,6 @@ dependencies = [
 name = "ethrex-rlp"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "ethereum-types",
  "hex",
  "hex-literal",
@@ -3331,7 +3319,6 @@ version = "0.1.0"
 dependencies = [
  "axum 0.8.3",
  "axum-extra",
- "bytes",
  "cfg-if",
  "envy",
  "ethrex-blockchain",
@@ -3366,7 +3353,6 @@ dependencies = [
 name = "ethrex-sdk"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "ethereum-types",
  "ethrex-common",
  "ethrex-rlp",
@@ -3391,7 +3377,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bytes",
  "ethereum-types",
  "ethrex-common",
  "ethrex-rlp",
@@ -3430,7 +3415,6 @@ name = "ethrex-trie"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytes",
  "cita_trie",
  "criterion",
  "digest 0.10.7",
@@ -3457,7 +3441,6 @@ name = "ethrex-vm"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "bytes",
  "cfg-if",
  "derive_more 1.0.0",
  "dyn-clone",
@@ -3481,7 +3464,6 @@ dependencies = [
 name = "ethrex_l2-contracts"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "clap 4.5.36",
  "clap_complete",
  "colored",
@@ -3507,7 +3489,6 @@ dependencies = [
 name = "ethrex_l2_cli"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "clap 4.5.36",
  "clap_complete",
  "colored",
@@ -7874,7 +7855,6 @@ dependencies = [
 name = "revm_comparison"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "ethrex-common",
  "ethrex-levm",
  "ethrex-vm",

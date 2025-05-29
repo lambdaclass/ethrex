@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use ethrex_common::{
     types::{AccountInfo, BlockHash, ChainConfig, EMPTY_KECCACK_HASH},
     Address, H256, U256,
@@ -41,7 +40,15 @@ impl VmDatabase for StoreVmDatabase {
         }
     }
 
+<<<<<<< Updated upstream
     fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
+=======
+    fn get_chain_config(&self) -> ChainConfig {
+        self.store.get_chain_config().unwrap()
+    }
+
+    fn get_account_code(&self, code_hash: H256) -> Result<Option<Vec<u8>>, EvmError> {
+>>>>>>> Stashed changes
         self.store
             .get_chain_config()
             .map_err(|e| EvmError::DB(e.to_string()))

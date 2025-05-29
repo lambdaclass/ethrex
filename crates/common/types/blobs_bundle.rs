@@ -1,7 +1,7 @@
 use std::ops::AddAssign;
 
 use crate::serde_utils;
-use crate::{types::constants::VERSIONED_HASH_VERSION_KZG, Bytes, H256};
+use crate::{types::constants::VERSIONED_HASH_VERSION_KZG, H256};
 
 #[cfg(feature = "c-kzg")]
 use {
@@ -42,7 +42,7 @@ pub struct BlobsBundle {
     pub proofs: Vec<Proof>,
 }
 
-pub fn blob_from_bytes(bytes: Bytes) -> Result<Blob, BlobsBundleError> {
+pub fn blob_from_bytes(bytes: Vec<u8>) -> Result<Blob, BlobsBundleError> {
     // This functions moved from `l2/utils/eth_client/transaction.rs`
     // We set the first byte of every 32-bytes chunk to 0x00
     // so it's always under the field module.
@@ -62,7 +62,7 @@ pub fn blob_from_bytes(bytes: Bytes) -> Result<Blob, BlobsBundleError> {
     Ok(buf)
 }
 
-pub fn bytes_from_blob(blob: Bytes) -> [u8; SAFE_BYTES_PER_BLOB] {
+pub fn bytes_from_blob(blob: Vec<u8>) -> [u8; SAFE_BYTES_PER_BLOB] {
     let mut buf = [0u8; SAFE_BYTES_PER_BLOB];
     buf.copy_from_slice(
         &blob
@@ -188,7 +188,7 @@ impl BlobsBundle {
 }
 
 impl RLPEncode for BlobsBundle {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         let encoder = Encoder::new(buf);
         encoder
             .encode_field(&self.blobs)
@@ -242,7 +242,7 @@ mod tests {
     use super::*;
     use crate::{
         types::{blobs_bundle, transaction::EIP4844Transaction},
-        Address, Bytes, U256,
+        Address, U256,
     };
     mod shared {
         pub fn convert_str_to_bytes48(s: &str) -> [u8; 48] {
@@ -274,7 +274,7 @@ mod tests {
             gas: 15_000_000,
             to: Address::from_low_u64_be(1), // Normal tx
             value: U256::zero(),             // Value zero
-            data: Bytes::default(),          // No data
+            data: vec![],                    // No data
             access_list: Default::default(), // No access list
             blob_versioned_hashes,
             ..Default::default()
@@ -313,7 +313,7 @@ mod tests {
             gas: 15_000_000,
             to: Address::from_low_u64_be(1), // Normal tx
             value: U256::zero(),             // Value zero
-            data: Bytes::default(),          // No data
+            data: vec![],                    // No data
             access_list: Default::default(), // No access list
             blob_versioned_hashes: vec![
                 "01ec8054d05bfec80f49231c6e90528bbb826ccd1464c255f38004099c8918d9",
@@ -364,7 +364,7 @@ mod tests {
             gas: 15_000_000,
             to: Address::from_low_u64_be(1), // Normal tx
             value: U256::zero(),             // Value zero
-            data: Bytes::default(),          // No data
+            data: vec![],                    // No data
             access_list: Default::default(), // No access list
             blob_versioned_hashes: vec![
                 "01ec8054d05bfec80f49231c6e90528bbb826ccd1464c255f38004099c8918d9",

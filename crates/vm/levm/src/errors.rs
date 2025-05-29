@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use ethrex_common::types::Log;
 use serde::{Deserialize, Serialize};
 use thiserror;
@@ -239,7 +238,7 @@ pub struct ExecutionReport {
     pub result: TxResult,
     pub gas_used: u64,
     pub gas_refunded: u64,
-    pub output: Bytes,
+    pub output: Vec<u8>,
     pub logs: Vec<Log>,
 }
 

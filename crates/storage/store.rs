@@ -5,7 +5,6 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
-use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{
@@ -266,11 +265,11 @@ impl Store {
         self.engine.get_transaction_location(transaction_hash).await
     }
 
-    pub async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
+    pub async fn add_account_code(&self, code_hash: H256, code: Vec<u8>) -> Result<(), StoreError> {
         self.engine.add_account_code(code_hash, code).await
     }
 
-    pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
+    pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Vec<u8>>, StoreError> {
         self.engine.get_account_code(code_hash)
     }
 
@@ -278,7 +277,7 @@ impl Store {
         &self,
         block_number: BlockNumber,
         address: Address,
-    ) -> Result<Option<Bytes>, StoreError> {
+    ) -> Result<Option<Vec<u8>>, StoreError> {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
@@ -1120,7 +1119,6 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
     use ethereum_types::{H256, U256};
     use ethrex_common::{
         types::{Transaction, TxType, EMPTY_KECCACK_HASH},
@@ -1264,7 +1262,7 @@ mod tests {
             gas_limit: 0x016345785d8a0000,
             gas_used: 0xa8de,
             timestamp: 0x03e8,
-            extra_data: Bytes::new(),
+            extra_data: Vec::new(),
             prev_randao: H256::zero(),
             nonce: 0x0000000000000000,
             base_fee_per_gas: Some(0x07),
@@ -1386,7 +1384,7 @@ mod tests {
 
     async fn test_store_account_code(store: Store) {
         let code_hash = H256::random();
-        let code = Bytes::from("kiwi");
+        let code = b"kiwi".to_vec();
 
         store
             .add_account_code(code_hash, code.clone())

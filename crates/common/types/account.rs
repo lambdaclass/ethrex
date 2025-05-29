@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_trie::Trie;
 use keccak_hash::keccak;
@@ -34,7 +33,7 @@ lazy_static! {
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub info: AccountInfo,
-    pub code: Bytes,
+    pub code: Vec<u8>,
     pub storage: HashMap<H256, U256>,
 }
 
@@ -92,12 +91,12 @@ impl From<GenesisAccount> for Account {
     }
 }
 
-pub fn code_hash(code: &Bytes) -> H256 {
-    keccak_hash::keccak(code.as_ref())
+pub fn code_hash(code: &[u8]) -> H256 {
+    keccak_hash::keccak(code)
 }
 
 impl RLPEncode for AccountInfo {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.code_hash)
             .encode_field(&self.balance)
@@ -122,7 +121,7 @@ impl RLPDecode for AccountInfo {
 }
 
 impl RLPEncode for AccountState {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.nonce)
             .encode_field(&self.balance)
@@ -171,11 +170,11 @@ impl From<&GenesisAccount> for AccountState {
 }
 
 impl Account {
-    pub fn new(balance: U256, code: Bytes, nonce: u64, storage: HashMap<H256, U256>) -> Self {
+    pub fn new(balance: U256, code: Vec<u8>, nonce: u64, storage: HashMap<H256, U256>) -> Self {
         Self {
             info: AccountInfo {
                 balance,
-                code_hash: keccak(code.as_ref()).0.into(),
+                code_hash: keccak(&code).0.into(),
                 nonce,
             },
             code,
@@ -201,8 +200,8 @@ impl Account {
             && self.info.code_hash == *EMPTY_KECCACK_HASH
     }
 
-    pub fn set_code(&mut self, code: Bytes) {
-        self.info.code_hash = keccak(code.as_ref()).0.into();
+    pub fn set_code(&mut self, code: Vec<u8>) {
+        self.info.code_hash = keccak(&code).0.into();
         self.code = code;
     }
 }
@@ -215,7 +214,7 @@ mod test {
 
     #[test]
     fn test_code_hash() {
-        let empty_code = Bytes::new();
+        let empty_code = vec![];
         let hash = code_hash(&empty_code);
         assert_eq!(
             hash,

@@ -230,11 +230,11 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
             )?;
         }
         ensure_pre_state_condition(
-            account.info.code_hash == keccak(pre_value.code.as_ref()),
+            account.info.code_hash == keccak(&pre_value.code),
             format!(
                 "Code hash mismatch for account {:#x}: expected {}, got {}",
                 address,
-                keccak(pre_value.code.as_ref()),
+                keccak(&pre_value.code),
                 account.info.code_hash
             ),
         )?;

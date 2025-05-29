@@ -2,7 +2,6 @@ use super::{
     constants::{RLP_EMPTY_LIST, RLP_NULL},
     error::RLPDecodeError,
 };
-use bytes::{Bytes, BytesMut};
 use ethereum_types::{
     Address, Bloom, Signature, H128, H160, H256, H264, H32, H512, H520, H64, U256,
 };
@@ -122,20 +121,6 @@ impl<const N: usize> RLPDecode for [u8; N] {
             .map_err(|_| RLPDecodeError::InvalidLength);
 
         Ok((value?, rest))
-    }
-}
-
-impl RLPDecode for Bytes {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (decoded, rest) = decode_bytes(rlp)?;
-        Ok((Bytes::copy_from_slice(decoded), rest))
-    }
-}
-
-impl RLPDecode for BytesMut {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (decoded, rest) = decode_bytes(rlp)?;
-        Ok((BytesMut::from(decoded), rest))
     }
 }
 

@@ -6,7 +6,6 @@ use crate::constants::{
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
-use bytes::Bytes;
 use ethrex_common::{
     types::{
         requests::Requests, AccessList, AccountUpdate, AuthorizationTuple, Block, BlockHeader,
@@ -321,7 +320,7 @@ impl LEVM {
 
         generic_system_contract_levm(
             block_header,
-            Bytes::copy_from_slice(beacon_root.as_bytes()),
+            beacon_root.as_bytes().to_vec(),
             db,
             *BEACON_ROOTS_ADDRESS,
             *SYSTEM_ADDRESS,
@@ -335,7 +334,7 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         generic_system_contract_levm(
             block_header,
-            Bytes::copy_from_slice(block_header.parent_hash.as_bytes()),
+            block_header.parent_hash.as_bytes().to_vec(),
             db,
             *HISTORY_STORAGE_ADDRESS,
             *SYSTEM_ADDRESS,
@@ -348,7 +347,7 @@ impl LEVM {
     ) -> Result<ExecutionReport, EvmError> {
         let report = generic_system_contract_levm(
             block_header,
-            Bytes::new(),
+            Vec::new(),
             db,
             *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
@@ -379,7 +378,7 @@ impl LEVM {
     ) -> Result<ExecutionReport, EvmError> {
         let report = generic_system_contract_levm(
             block_header,
-            Bytes::new(),
+            Vec::new(),
             db,
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
@@ -431,7 +430,7 @@ impl LEVM {
 
 pub fn generic_system_contract_levm(
     block_header: &BlockHeader,
-    calldata: Bytes,
+    calldata: Vec<u8>,
     db: &mut GeneralizedDatabase,
     contract_address: Address,
     system_address: Address,

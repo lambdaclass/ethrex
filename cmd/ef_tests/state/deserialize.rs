@@ -2,7 +2,6 @@ use crate::types::{
     EFTest, EFTestAccessListItem, EFTestAuthorizationListTuple, EFTestPostValue, EFTests,
     TransactionExpectedException,
 };
-use bytes::Bytes;
 use ethrex_common::{types::Fork, H256, U256};
 use serde::{Deserialize, Deserializer};
 use std::{collections::HashMap, str::FromStr};
@@ -92,34 +91,30 @@ where
     Ok(indexes)
 }
 
-pub fn deserialize_hex_bytes<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
+pub fn deserialize_hex_bytes<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let s = String::deserialize(deserializer)?;
-    Ok(Bytes::from(
-        hex::decode(s.trim_start_matches("0x")).map_err(|err| {
-            serde::de::Error::custom(format!(
-                "error decoding hex data when deserializing bytes: {err}"
-            ))
-        })?,
-    ))
+    Ok(hex::decode(s.trim_start_matches("0x")).map_err(|err| {
+        serde::de::Error::custom(format!(
+            "error decoding hex data when deserializing bytes: {err}"
+        ))
+    })?)
 }
 
-pub fn deserialize_hex_bytes_vec<'de, D>(deserializer: D) -> Result<Vec<Bytes>, D::Error>
+pub fn deserialize_hex_bytes_vec<'de, D>(deserializer: D) -> Result<Vec<Vec<u8>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let s = Vec::<String>::deserialize(deserializer)?;
     let mut ret = Vec::new();
     for s in s {
-        ret.push(Bytes::from(
-            hex::decode(s.trim_start_matches("0x")).map_err(|err| {
-                serde::de::Error::custom(format!(
-                    "error decoding hex data when deserializing bytes vec: {err}"
-                ))
-            })?,
-        ));
+        ret.push(hex::decode(s.trim_start_matches("0x")).map_err(|err| {
+            serde::de::Error::custom(format!(
+                "error decoding hex data when deserializing bytes vec: {err}"
+            ))
+        })?);
     }
     Ok(ret)
 }

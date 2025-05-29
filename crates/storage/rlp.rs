@@ -1,7 +1,6 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use bytes::Bytes;
 use ethrex_common::{
     types::{
         payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt,
@@ -19,7 +18,7 @@ use std::any::type_name;
 
 // Account types
 pub type AccountCodeHashRLP = Rlp<H256>;
-pub type AccountCodeRLP = Rlp<Bytes>;
+pub type AccountCodeRLP = Rlp<Vec<u8>>;
 pub type AccountHashRLP = Rlp<H256>;
 pub type AccountStateRLP = Rlp<AccountState>;
 pub type TriePathsRLP = Rlp<Vec<Nibbles>>;

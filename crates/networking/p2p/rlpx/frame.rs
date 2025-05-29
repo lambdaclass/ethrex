@@ -8,7 +8,7 @@ use aes::{
     cipher::{BlockEncrypt as _, KeyInit as _, KeyIvInit, StreamCipher as _},
     Aes256Enc,
 };
-use bytes::{Buf, BytesMut};
+
 use ethrex_common::{H128, H256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode as _};
 use sha3::{Digest as _, Keccak256};
@@ -72,7 +72,7 @@ impl Decoder for RLPxCodec {
 
     type Error = RLPxError;
 
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+    fn decode(&mut self, src: &mut Vec<u8>) -> Result<Option<Self::Item>, Self::Error> {
         let mac_aes_cipher = Aes256Enc::new_from_slice(&self.mac_key.0)?;
 
         // Receive the message's frame header
@@ -192,7 +192,7 @@ impl Decoder for RLPxCodec {
         Ok(Some(rlpx::Message::decode(msg_id, msg_data)?))
     }
 
-    fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+    fn decode_eof(&mut self, buf: &mut Vec<u8>) -> Result<Option<Self::Item>, Self::Error> {
         match self.decode(buf)? {
             Some(frame) => Ok(Some(frame)),
             None => {
@@ -219,7 +219,7 @@ impl Decoder for RLPxCodec {
 impl Encoder<rlpx::Message> for RLPxCodec {
     type Error = RLPxError;
 
-    fn encode(&mut self, message: rlpx::Message, buffer: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(&mut self, message: rlpx::Message, buffer: &mut Vec<u8>) -> Result<(), Self::Error> {
         let mut frame_data = vec![];
         message.encode(&mut frame_data)?;
 

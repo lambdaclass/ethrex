@@ -17,7 +17,6 @@ ethrex-rlp.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
 ethrex-l2 = { workspace = true, optional = true }
 
-bytes.workspace = true
 hex.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

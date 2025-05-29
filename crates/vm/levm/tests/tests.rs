@@ -1,20 +1,19 @@
 #![allow(clippy::indexing_slicing)]
 #![allow(clippy::unwrap_used)]
 
-use bytes::Bytes;
 use ethrex_levm::precompiles::bls12_pairing_check;
 #[cfg(feature = "l2")]
 use ethrex_levm::precompiles::p_256_verify;
 
 #[test]
 fn pairing_infinity() {
-    let zero = Bytes::copy_from_slice(&[0_u8; 32]);
+    let zero = [0_u8; 32].to_vec();
 
     // This is a calldata that pairing check returns 0
     // This is from https://eips.ethereum.org/assets/eip-2537/pairing_check_bls.json
     // test "bls_pairing_non-degeneracy"
     let mut calldata = hex::decode("0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e100000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be").unwrap();
-    let calldata_bytes = Bytes::from(calldata.clone());
+    let calldata_bytes = calldata.to_vec();
     let mut consumed_gas = 0;
 
     let result = bls12_pairing_check(&calldata_bytes, 10000000, &mut consumed_gas);
@@ -30,7 +29,7 @@ fn pairing_infinity() {
     // We add only the first G2 point of the calldata
     calldata.extend_from_slice(valid_calldata.get(128..384).unwrap());
 
-    let calldata_bytes = Bytes::from(calldata.clone());
+    let calldata_bytes = calldata.to_vec();
 
     let result = bls12_pairing_check(&calldata_bytes, 10000000, &mut consumed_gas);
 
@@ -63,10 +62,9 @@ fn p_256_verify_test() {
 
     for test in tests {
         let calldata = hex::decode(&test.input).unwrap();
-        let calldata = Bytes::from(calldata);
         let mut consumed_gas = 0;
         let result = p_256_verify(&calldata, 10000, &mut consumed_gas).unwrap();
-        let expected_result = Bytes::from(hex::decode(&test.expected).unwrap());
+        let expected_result = hex::decode(&test.expected).unwrap();
         assert_eq!(
             result, expected_result,
             "Result assertion failed on test: {}.",

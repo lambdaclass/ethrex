@@ -8,7 +8,7 @@ use crate::{
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
-use bytes::Bytes;
+
 use ethrex_common::{
     types::{Account, Fork},
     Address, U256,
@@ -623,7 +623,7 @@ impl<'a> VM<'a> {
             current_call_frame.increase_consumed_gas(max_message_call_gas)?;
 
             // Clear callframe subreturn data
-            current_call_frame.sub_return_data = Bytes::new();
+            current_call_frame.sub_return_data = Vec::new();
 
             let deployer_address = current_call_frame.to;
             (deployer_address, max_message_call_gas)
@@ -637,14 +637,12 @@ impl<'a> VM<'a> {
             (deployer_account.info.balance, deployer_account.info.nonce)
         };
 
-        let code = Bytes::from(
-            memory::load_range(
-                &mut self.current_call_frame_mut()?.memory,
-                code_offset_in_memory,
-                code_size_in_memory,
-            )?
-            .to_vec(),
-        );
+        let code = memory::load_range(
+            &mut self.current_call_frame_mut()?.memory,
+            code_offset_in_memory,
+            code_size_in_memory,
+        )?
+        .to_vec();
 
         let new_address = match salt {
             Some(salt) => calculate_create2_address(deployer_address, &code, salt)?,
@@ -699,7 +697,7 @@ impl<'a> VM<'a> {
             .ok_or(VMError::BalanceOverflow)?;
 
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-161.md
-        let new_account = Account::new(new_balance, Bytes::new(), 1, Default::default());
+        let new_account = Account::new(new_balance, Vec::new(), 1, Default::default());
 
         self.insert_account(new_address, new_account)?;
 
@@ -715,7 +713,7 @@ impl<'a> VM<'a> {
             new_address,
             code,
             value_in_wei_to_send,
-            Bytes::new(),
+            Vec::new(),
             false,
             max_message_call_gas,
             new_depth,
@@ -750,7 +748,7 @@ impl<'a> VM<'a> {
         args_size: usize,
         ret_offset: U256,
         ret_size: usize,
-        bytecode: Bytes,
+        bytecode: Vec<u8>,
         is_delegation_7702: bool,
     ) -> Result<OpcodeResult, VMError> {
         let sender_balance = self
@@ -762,7 +760,7 @@ impl<'a> VM<'a> {
         let calldata = {
             let current_call_frame = self.current_call_frame_mut()?;
             // Clear callframe subreturn data
-            current_call_frame.sub_return_data = Bytes::new();
+            current_call_frame.sub_return_data = Vec::new();
 
             let calldata =
                 memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?

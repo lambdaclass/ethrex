@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use ethrex_common::{
     types::{code_hash, Account, AccountInfo, EIP1559Transaction, Transaction, TxKind},
     Address as EthrexAddress, U256,
@@ -21,8 +20,8 @@ use std::io::Read;
 use std::{collections::HashMap, fs::File, sync::Arc};
 
 pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
-    let bytecode = Bytes::from(hex::decode(program).unwrap());
-    let calldata = Bytes::from(hex::decode(calldata).unwrap());
+    let bytecode = hex::decode(program).unwrap();
+    let calldata = hex::decode(calldata).unwrap();
 
     let code_hash = code_hash(&bytecode);
     let sender_address = EthrexAddress::from_low_u64_be(100);
@@ -50,7 +49,7 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
                     code_hash,
                 },
                 storage: HashMap::new(),
-                code: Bytes::new(),
+                code: Vec::new(),
             },
         ),
     ];
@@ -170,7 +169,7 @@ fn load_file_bytecode(path: &str) -> String {
     contents
 }
 
-pub fn new_vm_with_bytecode(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> VM {
+pub fn new_vm_with_bytecode(db: &mut GeneralizedDatabase, nonce: u64, calldata: Vec<u8>) -> VM {
     new_vm_with_ops_addr_bal_db(EthrexAddress::from_low_u64_be(100), nonce, db, calldata)
 }
 
@@ -179,7 +178,7 @@ fn new_vm_with_ops_addr_bal_db(
     sender_address: EthrexAddress,
     nonce: u64,
     db: &mut GeneralizedDatabase,
-    calldata: Bytes,
+    calldata: Vec<u8>,
 ) -> VM {
     let env = Environment {
         origin: sender_address,

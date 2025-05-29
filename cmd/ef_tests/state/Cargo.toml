@@ -13,7 +13,6 @@ ethrex-levm.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true
-bytes.workspace = true
 hex.workspace = true
 keccak-hash.workspace = true
 colored = "2.1.0"

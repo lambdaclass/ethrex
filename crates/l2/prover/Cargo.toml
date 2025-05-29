@@ -6,7 +6,6 @@ edition.workspace = true
 [dependencies]
 serde_json.workspace = true
 serde.workspace = true
-bytes.workspace = true
 ethereum-types.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

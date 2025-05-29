@@ -207,54 +207,6 @@ pub mod u128 {
 }
 
 /// Serializes to and deserializes from 0x prefixed hex string
-pub mod bytes {
-    use ::bytes::Bytes;
-
-    use super::*;
-
-    pub fn deserialize<'de, D>(d: D) -> Result<Bytes, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(d)?;
-        let bytes = hex::decode(value.trim_start_matches("0x"))
-            .map_err(|e| D::Error::custom(e.to_string()))?;
-        Ok(Bytes::from(bytes))
-    }
-
-    pub fn serialize<S>(value: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&format!("0x{:x}", value))
-    }
-
-    pub mod vec {
-        use super::*;
-
-        pub fn deserialize<'de, D>(d: D) -> Result<Vec<Bytes>, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            let value = Vec::<String>::deserialize(d)?;
-            let mut output = Vec::new();
-            for str in value {
-                let bytes = hex::decode(str.trim_start_matches("0x"))
-                    .map_err(|e| D::Error::custom(e.to_string()))?
-                    .into();
-                output.push(bytes);
-            }
-            Ok(output)
-        }
-
-        pub fn serialize<S>(value: &Vec<Bytes>, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-        {
-            serialize_vec_of_hex_encodables(value, serializer)
-        }
-    }
-}
 
 /// Serializes to and deserializes from 0x prefixed hex string
 pub mod bool {

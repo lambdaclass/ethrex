@@ -15,7 +15,7 @@ use ethrex_common::{
         ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
         DEFAULT_REQUESTS_HASH,
     },
-    Address, Bloom, Bytes, H256, U256,
+    Address, Bloom, H256, U256,
 };
 
 use ethrex_vm::{Evm, EvmEngine, EvmError};
@@ -103,7 +103,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         gas_used: 0,
         timestamp: args.timestamp,
         // TODO: should use builder config's extra_data
-        extra_data: Bytes::new(),
+        extra_data: Vec::new(),
         prev_randao: args.random,
         nonce: 0,
         base_fee_per_gas: calculate_base_fee_per_gas(

@@ -1,5 +1,3 @@
-use bytes::BufMut;
-use bytes::Bytes;
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::BlobsBundle;
@@ -34,7 +32,7 @@ impl Transactions {
 
 impl RLPxMessage for Transactions {
     const CODE: u8 = 0x02;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         let mut encoder = Encoder::new(&mut encoded_data);
         let txs_iter = self.transactions.iter();
@@ -43,7 +41,7 @@ impl RLPxMessage for Transactions {
         }
         encoder.finish();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -67,7 +65,7 @@ impl RLPxMessage for Transactions {
 // Broadcast message
 #[derive(Debug)]
 pub(crate) struct NewPooledTransactionHashes {
-    transaction_types: Bytes,
+    transaction_types: Vec<u8>,
     transaction_sizes: Vec<usize>,
     transaction_hashes: Vec<H256>,
 }
@@ -122,7 +120,7 @@ impl NewPooledTransactionHashes {
 
 impl RLPxMessage for NewPooledTransactionHashes {
     const CODE: u8 = 0x08;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.transaction_types)
@@ -131,14 +129,15 @@ impl RLPxMessage for NewPooledTransactionHashes {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
-        let (transaction_types, decoder): (Bytes, _) = decoder.decode_field("transactionTypes")?;
+        let (transaction_types, decoder): (Vec<u8>, _) =
+            decoder.decode_field("transactionTypes")?;
         let (transaction_sizes, decoder): (Vec<usize>, _) =
             decoder.decode_field("transactionSizes")?;
         let (transaction_hashes, _): (Vec<H256>, _) = decoder.decode_field("transactionHashes")?;
@@ -234,7 +233,7 @@ impl GetPooledTransactions {
 
 impl RLPxMessage for GetPooledTransactions {
     const CODE: u8 = 0x09;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -242,7 +241,7 @@ impl RLPxMessage for GetPooledTransactions {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -301,14 +300,14 @@ impl PooledTransactions {
 
 impl RLPxMessage for PooledTransactions {
     const CODE: u8 = 0x0A;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
             .encode_field(&self.pooled_transactions)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 

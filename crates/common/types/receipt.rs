@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use ethereum_types::{Address, Bloom, BloomInput, H256};
 use ethrex_rlp::{
     decode::{get_rlp_bytes_item_payload, is_encoded_as_bytes, RLPDecode},
@@ -27,7 +26,7 @@ impl Receipt {
             tx_type,
             succeeded,
             cumulative_gas_used,
-            bloom: bloom_from_logs(&logs),
+            bloom: bloom_from_logs(&logs[..]),
             logs,
         }
     }
@@ -122,16 +121,16 @@ impl RLPEncode for Receipt {
     /// Receipts can be encoded in the following formats:
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: rlp(Bytes(tx_type | rlp(receipt))).
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         match self.tx_type {
             TxType::Legacy => {
                 let legacy_encoded = self.encode_inner();
-                buf.put_slice(&legacy_encoded);
+                buf.extend_from_slice(&legacy_encoded);
             }
             _ => {
                 let typed_recepipt_encoded = self.encode_inner();
-                let bytes = Bytes::from(typed_recepipt_encoded);
-                bytes.encode(buf);
+                let bytes = typed_recepipt_encoded;
+                <Vec<u8>>::encode(&bytes, buf);
             }
         };
     }
@@ -186,11 +185,11 @@ impl RLPDecode for Receipt {
 pub struct Log {
     pub address: Address,
     pub topics: Vec<H256>,
-    pub data: Bytes,
+    pub data: Vec<u8>,
 }
 
 impl RLPEncode for Log {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.address)
             .encode_field(&self.topics)
@@ -228,7 +227,7 @@ mod test {
             logs: vec![Log {
                 address: Address::random(),
                 topics: vec![],
-                data: Bytes::from_static(b"foo"),
+                data: b"foo".into(),
             }],
         };
         let encoded_receipt = receipt.encode_to_vec();
@@ -245,7 +244,7 @@ mod test {
             logs: vec![Log {
                 address: Address::random(),
                 topics: vec![],
-                data: Bytes::from_static(b"bar"),
+                data: b"bar".into(),
             }],
         };
         let encoded_receipt = receipt.encode_to_vec();
@@ -262,7 +261,7 @@ mod test {
             logs: vec![Log {
                 address: Address::random(),
                 topics: vec![],
-                data: Bytes::from_static(b"foo"),
+                data: b"foo".into(),
             }],
         };
         let encoded_receipt = receipt.encode_inner();
@@ -279,7 +278,7 @@ mod test {
             logs: vec![Log {
                 address: Address::random(),
                 topics: vec![],
-                data: Bytes::from_static(b"bar"),
+                data: b"bar".into(),
             }],
         };
         let encoded_receipt = receipt.encode_inner();
