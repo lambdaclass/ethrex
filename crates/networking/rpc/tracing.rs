@@ -36,7 +36,9 @@ enum TracerType {
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct CallTracerConfig {
+    #[serde(default)]
     only_top_call: bool,
+    #[serde(default)]
     with_log: bool,
 }
 
