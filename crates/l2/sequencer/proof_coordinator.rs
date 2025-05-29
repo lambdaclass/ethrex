@@ -127,25 +127,6 @@ impl ProofData {
     }
 }
 
-pub async fn start_proof_coordinator(
-    store: Store,
-    rollup_store: StoreRollup,
-    cfg: SequencerConfig,
-) -> Result<(), SequencerError> {
-    let proof_coordinator = ProofCoordinatorState::new(
-        &cfg.proof_coordinator,
-        &cfg.l1_committer,
-        &cfg.eth,
-        &cfg.block_producer,
-        store,
-        rollup_store,
-    )
-    .await.map_err(SequencerError::ProverServerError)?;
-    run(proof_coordinator).await.map_err(SequencerError::ProverServerError)?;
-
-    Ok(())
-}
-
 #[derive(Clone)]
 struct ProofCoordinatorState {
     listen_ip: IpAddr,
@@ -198,6 +179,25 @@ impl ProofCoordinatorState {
         })
     }
 
+}
+
+pub async fn start_proof_coordinator(
+    store: Store,
+    rollup_store: StoreRollup,
+    cfg: SequencerConfig,
+) -> Result<(), SequencerError> {
+    let proof_coordinator = ProofCoordinatorState::new(
+        &cfg.proof_coordinator,
+        &cfg.l1_committer,
+        &cfg.eth,
+        &cfg.block_producer,
+        store,
+        rollup_store,
+    )
+    .await.map_err(SequencerError::ProverServerError)?;
+    run(proof_coordinator).await.map_err(SequencerError::ProverServerError)?;
+
+    Ok(())
 }
 
 async fn run(state: ProofCoordinatorState) -> Result<(), ProverServerError> {
