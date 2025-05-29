@@ -1,7 +1,6 @@
 use crate::{
     errors::{ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{default_hook, hook::Hook},
-    utils::get_valid_jump_destinations,
     vm::VM,
 };
 
@@ -106,20 +105,10 @@ impl Hook for L2Hook {
             default_hook::validate_type_4_tx(vm)?;
         }
 
-        if vm.is_create() {
-            // Assign bytecode to context and empty calldata
-            vm.current_call_frame_mut()?.bytecode =
-                std::mem::take(&mut vm.current_call_frame_mut()?.calldata);
-            vm.current_call_frame_mut()?.valid_jump_destinations =
-                get_valid_jump_destinations(&vm.current_call_frame()?.bytecode).unwrap_or_default();
-        } else if !vm.env.is_privileged {
-            // Transfer value to receiver
-            // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
-            vm.increase_account_balance(
-                vm.current_call_frame()?.to,
-                vm.current_call_frame()?.msg_value,
-            )?;
-        }
+        default_hook::transfer_value_if_applicable(vm)?;
+
+        default_hook::set_bytecode_and_code_address(vm)?;
+
         Ok(())
     }
 

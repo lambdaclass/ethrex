@@ -4,7 +4,7 @@ use ethrex_common::{types::Block, H256};
 use ethrex_storage::Store;
 use ethrex_vm::{tracing::CallTrace, Evm, EvmEngine, EvmError};
 
-use crate::{error::ChainError, Blockchain};
+use crate::{error::ChainError, vm::StoreVmDatabase, Blockchain};
 
 impl Blockchain {
     /// Outputs the call trace for the given transaction
@@ -47,7 +47,7 @@ impl Blockchain {
             .header
             .parent_hash;
         // Run parents to rebuild pre-state
-        let mut vm = Evm::new(self.evm_engine, self.storage.clone(), parent_hash);
+        let mut vm = Evm::new(self.evm_engine, StoreVmDatabase::new(self.storage.clone(), parent_hash));
         for block in blocks_to_re_execute.iter().rev() {
             vm.rerun_block(block, None)?;
         }

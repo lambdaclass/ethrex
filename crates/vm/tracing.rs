@@ -94,7 +94,7 @@ impl Evm {
 
     /// Reruns the given block, saving the changes on the state, doesn't output any results or receipts
     /// If the optional argument `stop_index` is set, the run will stop just before executing the transaction at that index
-    /// and won't ptocess the withdrawals afterwards
+    /// and won't process the withdrawals afterwards
     /// Wraps [REVM::rerun_block], does not currenlty have levm support.
     pub fn rerun_block(
         &mut self,
