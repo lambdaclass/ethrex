@@ -141,8 +141,10 @@ impl revm::Database for DynVmDatabase {
 
     fn code_by_hash(&mut self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
         let code =
-            <dyn VmDatabase>::get_account_code(self.as_ref(), CoreH256::from(code_hash.as_ref()))?;
-        Ok(RevmBytecode::new_raw(RevmBytes(code)))
+            <dyn VmDatabase>::get_account_code(self.as_ref(), CoreH256::from(code_hash.as_ref()))?
+                .ok_or_else(|| EvmError::Custom("Invalid code".into()))?;
+
+        Ok(RevmBytecode::new_raw(RevmBytes(code.into())))
     }
 
     fn storage(&mut self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
@@ -184,8 +186,10 @@ impl revm::DatabaseRef for DynVmDatabase {
 
     fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
         let code =
-            <dyn VmDatabase>::get_account_code(self.as_ref(), CoreH256::from(code_hash.as_ref()))?;
-        Ok(RevmBytecode::new_raw(RevmBytes(code)))
+            <dyn VmDatabase>::get_account_code(self.as_ref(), CoreH256::from(code_hash.as_ref()))?
+                .ok_or_else(|| EvmError::Custom("Invalid code".into()))?;
+
+        Ok(RevmBytecode::new_raw(RevmBytes(code.into())))
     }
 
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
