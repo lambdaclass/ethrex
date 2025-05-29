@@ -67,7 +67,7 @@ impl Blockchain {
 /// Fills the `missing_state_parents` vector with all the parent blocks (starting from parent hash) who's state we don't have stored.
 /// We might be missing this state due to using batch execute or other methods while syncing the chain
 /// If we are not able to find a parent block with state after going through the amount of blocks given by `reexec` an error will be returned
-pub async fn fill_missing_state_parents(
+async fn fill_missing_state_parents(
     mut parent_hash: H256,
     missing_state_parents: &mut Vec<Block>,
     store: &Store,
