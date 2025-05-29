@@ -13,13 +13,13 @@ const DEFAULT_REEXEC: usize = 128;
 /// Default max amount of time to spend tracing a transaction (doesn't take into account state rebuild time)
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub struct TraceBlockByNumberRequest {
-    number: BlockNumber,
-    tracer_config: TracerConfig,
-}
-
 pub struct TraceTransactionRequest {
     tx_hash: H256,
+    trace_config: TracerConfig,
+}
+
+pub struct TraceBlockByNumberRequest {
+    number: BlockNumber,
     trace_config: TraceConfig,
 }
 
@@ -128,7 +128,7 @@ impl RpcHandler for TraceBlockByNumberRequest {
         if params.len() != 1 && params.len() != 2 {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
-        let tracer_config = if params.len() == 2 {
+        let trace_config = if params.len() == 2 {
             serde_json::from_value(params[1].clone())?
         } else {
             TracerConfig::default()
@@ -136,7 +136,7 @@ impl RpcHandler for TraceBlockByNumberRequest {
 
         Ok(TraceBlockByNumberRequest {
             number: serde_json::from_value(params[0].clone())?,
-            tracer_config,
+            trace_config,
         })
     }
 
