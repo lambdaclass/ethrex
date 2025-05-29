@@ -630,7 +630,7 @@ impl<'a> VM<'a> {
             Bytes::new(),
         );
 
-        self.tracer.exit(0, Bytes::new(), None, None)?;
+        self.tracer.exit_early(0, None)?;
 
         Ok(OpcodeResult::Halt)
     }
@@ -727,8 +727,7 @@ impl<'a> VM<'a> {
                 // Push 0
                 current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
 
-                self.tracer
-                    .exit(0, Bytes::new(), Some("CreateFail".to_string()), None)?;
+                self.tracer.exit_early(0, Some("CreateFail".to_string()))?;
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
             new_depth
@@ -742,12 +741,8 @@ impl<'a> VM<'a> {
                 .stack
                 .push(CREATE_DEPLOYMENT_FAIL)?;
 
-            self.tracer.exit(
-                max_message_call_gas,
-                Bytes::new(),
-                Some("CreateAccExists".to_string()),
-                None,
-            )?;
+            self.tracer
+                .exit_early(max_message_call_gas, Some("CreateAccExists".to_string()))?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
@@ -940,13 +935,7 @@ impl<'a> VM<'a> {
             }
         };
 
-        let (error, revert_reason) = tx_report.get_error_and_reason()?;
-        self.tracer.exit(
-            tx_report.gas_used,
-            tx_report.output.clone(),
-            error,
-            revert_reason,
-        )?;
+        self.tracer.exit_report(tx_report)?;
         Ok(())
     }
 
@@ -1004,13 +993,7 @@ impl<'a> VM<'a> {
             }
         };
 
-        let (error, revert_reason) = tx_report.get_error_and_reason()?;
-        self.tracer.exit(
-            tx_report.gas_used,
-            tx_report.output.clone(),
-            error,
-            revert_reason,
-        )?;
+        self.tracer.exit_report(tx_report)?;
         Ok(())
     }
 
@@ -1023,16 +1006,14 @@ impl<'a> VM<'a> {
     fn early_revert_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {
         let callframe = self.current_call_frame_mut()?;
 
-        let gas_used = callframe
+        // Return gas_limit to callframe.
+        callframe.gas_used = callframe
             .gas_used
             .checked_sub(gas_limit)
             .ok_or(InternalError::GasOverflow)?;
-
-        callframe.gas_used = gas_used;
         callframe.stack.push(REVERT_FOR_CALL)?;
 
-        self.tracer
-            .exit(gas_used, Bytes::new(), Some(reason), None)?;
+        self.tracer.exit_early(0, Some(reason))?;
         Ok(())
     }
 }

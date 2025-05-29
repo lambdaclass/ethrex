@@ -4,7 +4,7 @@ use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
-    errors::{ExecutionReport, InternalError, OpcodeResult, VMError},
+    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     hooks::hook::Hook,
     opcodes::Opcode,
     precompiles::execute_precompile,
@@ -109,7 +109,7 @@ impl CallTracer {
     }
 
     /// Exits trace call.
-    pub fn exit(
+    fn exit(
         &mut self,
         gas_used: u64,
         output: Bytes,
@@ -130,6 +130,29 @@ impl CallTracer {
             self.callframes.push(executed_callframe);
         };
         Ok(())
+    }
+
+    /// Exits trace call using the ExecutionReport.
+    pub fn exit_report(&mut self, report: &ExecutionReport) -> Result<(), InternalError> {
+        let (gas_used, output) = (report.gas_used, report.output.clone());
+
+        let (error, revert_reason) = if let TxResult::Revert(ref err) = report.result {
+            let reason = String::from_utf8(report.output.to_vec()).ok();
+            (Some(err.to_string()), reason)
+        } else {
+            (None, None)
+        };
+
+        self.exit(gas_used, output, error, revert_reason)
+    }
+
+    /// Exits trace call when CALL or CREATE opcodes return early or in case SELFDESTRUCT is called.
+    pub fn exit_early(
+        &mut self,
+        gas_used: u64,
+        error: Option<String>,
+    ) -> Result<(), InternalError> {
+        self.exit(gas_used, Bytes::new(), error, None)
     }
 }
 
@@ -338,9 +361,7 @@ impl<'a> VM<'a> {
             hook.finalize_execution(self, report)?;
         }
 
-        let (error, revert_reason) = report.get_error_and_reason()?;
-        self.tracer
-            .exit(report.gas_used, report.output.clone(), error, revert_reason)?;
+        self.tracer.exit_report(report)?;
 
         // dbg!(&self.tracer);
 

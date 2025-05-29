@@ -247,15 +247,4 @@ impl ExecutionReport {
     pub fn is_success(&self) -> bool {
         matches!(self.result, TxResult::Success)
     }
-
-    /// Given the result of the report gets the error and the reason of it (if any).
-    pub fn get_error_and_reason(&self) -> Result<(Option<String>, Option<String>), InternalError> {
-        if let TxResult::Revert(ref err) = self.result {
-            let revert_reason = String::from_utf8(self.output.to_vec()).ok();
-
-            Ok((Some(err.to_string()), revert_reason))
-        } else {
-            Ok((None, None))
-        }
-    }
 }
