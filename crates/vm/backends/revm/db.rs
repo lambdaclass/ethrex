@@ -128,12 +128,8 @@ impl revm::Database for DynVmDatabase {
             None => return Ok(None),
             Some(acc_info) => acc_info,
         };
-<<<<<<< Updated upstream
+
         let code = self.code_by_hash(acc_info.code_hash.0.into())?;
-=======
-        let code = <dyn VmDatabase>::get_account_code(self.as_ref(), acc_info.code_hash)?
-            .map(|b| RevmBytecode::new_raw(RevmBytes(b.into())));
->>>>>>> Stashed changes
 
         Ok(Some(RevmAccountInfo {
             balance: RevmU256::from_limbs(acc_info.balance.0),
@@ -144,15 +140,9 @@ impl revm::Database for DynVmDatabase {
     }
 
     fn code_by_hash(&mut self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
-<<<<<<< Updated upstream
         let code =
             <dyn VmDatabase>::get_account_code(self.as_ref(), CoreH256::from(code_hash.as_ref()))?;
         Ok(RevmBytecode::new_raw(RevmBytes(code)))
-=======
-        <dyn VmDatabase>::get_account_code(self.as_ref(), CoreH256::from(code_hash.as_ref()))?
-            .map(|b| RevmBytecode::new_raw(RevmBytes(b.into())))
-            .ok_or_else(|| EvmError::DB(format!("No code for hash {code_hash}")))
->>>>>>> Stashed changes
     }
 
     fn storage(&mut self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
@@ -182,12 +172,7 @@ impl revm::DatabaseRef for DynVmDatabase {
             None => return Ok(None),
             Some(acc_info) => acc_info,
         };
-<<<<<<< Updated upstream
         let code = self.code_by_hash_ref(acc_info.code_hash.0.into())?;
-=======
-        let code = <dyn VmDatabase>::get_account_code(self.as_ref(), acc_info.code_hash)?
-            .map(|b| RevmBytecode::new_raw(RevmBytes(b.into())));
->>>>>>> Stashed changes
 
         Ok(Some(RevmAccountInfo {
             balance: RevmU256::from_limbs(acc_info.balance.0),
@@ -198,15 +183,9 @@ impl revm::DatabaseRef for DynVmDatabase {
     }
 
     fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
-<<<<<<< Updated upstream
         let code =
             <dyn VmDatabase>::get_account_code(self.as_ref(), CoreH256::from(code_hash.as_ref()))?;
         Ok(RevmBytecode::new_raw(RevmBytes(code)))
-=======
-        <dyn VmDatabase>::get_account_code(self.as_ref(), CoreH256::from(code_hash.as_ref()))?
-            .map(|b| RevmBytecode::new_raw(RevmBytes(b.into())))
-            .ok_or_else(|| EvmError::DB(format!("No code for hash {code_hash}")))
->>>>>>> Stashed changes
     }
 
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
