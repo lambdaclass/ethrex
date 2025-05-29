@@ -110,7 +110,26 @@ The main piece of context a VM DB needs to be created is the `parent_hash`, whic
 
 # TODO
 
-- In the state interaction, explain what state the VM needs
-- Explain what account updates are.
-- Explain trie vs snapshots in a summary.
-- 
+Imports
+
+- StoreVmDatabase (what state does the store need)
+- Trie vs snapshots in a summary.
+- What account updates are. What does it mean to apply them.
+  
+Live node block execution
+
+- Engine api endpoints (fork choice updated with no attrs, new payload).
+- applying fork choice and reorg.
+- JSON RPC endpoints to get state.
+
+Block building
+
+- Mempool and P2P.
+- Fork choice updated with attributes and get_payload.
+- Payload building.
+
+Syncing on node startup
+
+- Discovery.
+- Getting blocks and headers via p2p.
+- Snap sync.
