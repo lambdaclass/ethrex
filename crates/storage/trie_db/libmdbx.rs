@@ -188,7 +188,7 @@ mod test {
 
         assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([0; 32].to_vec()));
         assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
-        assert_eq!(trie.get(&vec![0x02].to_vec()).unwrap(), None);
+        assert_eq!(trie.get(&vec![0x02]).unwrap(), None);
     }
 
     #[test]
