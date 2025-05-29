@@ -138,9 +138,7 @@ impl StoreEngine for Store {
     }
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        self.inner()
-            .pending_blocks
-            .insert(block.header.compute_block_hash(), block);
+        self.inner().pending_blocks.insert(block.hash(), block);
         Ok(())
     }
 
@@ -181,7 +179,7 @@ impl StoreEngine for Store {
         for block in blocks {
             let header = block.header;
             let number = header.number;
-            let hash = header.compute_block_hash();
+            let hash = header.hash();
             let locations = block
                 .body
                 .transactions

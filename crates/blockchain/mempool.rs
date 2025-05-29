@@ -326,7 +326,7 @@ mod tests {
     async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
         let store = Store::new("test", EngineType::InMemory)?;
         let block_number = header.number;
-        let block_hash = header.compute_block_hash();
+        let block_hash = header.hash();
         store.add_block_header(block_hash, header).await?;
         store.set_canonical_block(block_number, block_hash).await?;
         store.update_latest_block_number(block_number).await?;
