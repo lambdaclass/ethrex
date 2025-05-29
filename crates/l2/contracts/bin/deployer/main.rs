@@ -185,7 +185,6 @@ fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
         compile_contract(&opts.contracts_path, "src/l1/OnChainProposer.sol", false)?;
     }
     compile_contract(&opts.contracts_path, "src/l1/CommonBridge.sol", false)?;
-
     compile_contract(
         &opts.contracts_path,
         "lib/sp1-contracts/contracts/src/v4.0.0-rc.3/SP1VerifierGroth16.sol",
@@ -220,6 +219,8 @@ async fn deploy_contracts(
     DeployerError,
 > {
     trace!("Deploying contracts");
+
+    info!("Deploying OnChainProposer");
 
     let salt = if opts.randomize_contract_deployment {
         H256::random().as_bytes().to_vec()

@@ -200,7 +200,7 @@ init-l2-no-metrics-based: ## 🚀 Initializes an L2 Lambda ethrex Based Client
 	--based \
 	--state-updater.sequencer-registry ${SEQUENCER_REGISTRY_ADDRESS}
 
-init-node-2: ## 🚀 Initializes a second L2 Lambda ethrex Client for testing purposes
+init-based-node-2: ## 🚀 Initializes a second L2 Lambda ethrex Client for testing purposes
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 removedb --datadir ${ethrex_L2_2_DEV_LIBMDBX} --force;
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- \
 		l2 init \
