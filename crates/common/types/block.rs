@@ -297,13 +297,13 @@ impl RLPDecode for BlockBody {
 }
 
 impl BlockHeader {
-    pub fn compute_block_hash(&self) -> H256 {
+    fn compute_block_hash(&self) -> H256 {
         let mut buf = vec![];
         self.encode(&mut buf);
         keccak(buf)
     }
 
-    fn hash(&self) -> H256 {
+    pub fn hash(&self) -> H256 {
         *self.hash.get_or_init(|| self.compute_block_hash())
     }
 }
@@ -572,7 +572,7 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::OmmersHashNotDefault);
     }
 
-    if header.parent_hash != parent_header.compute_block_hash() {
+    if header.parent_hash != parent_header.hash() {
         return Err(InvalidBlockHeaderError::ParentHashIncorrect);
     }
 
