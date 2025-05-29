@@ -1,4 +1,7 @@
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use ethrex_common::{types::Block, H256};
 use ethrex_storage::Store;
@@ -108,13 +111,19 @@ impl Blockchain {
         // Run anything necessary before executing the block's transactions (system calls, etc)
         vm.rerun_block(&block, Some(0))?;
         // Trace each transaction
+        // We need to do this in order to pass ownership of block & evm to a blocking process without cloning
+        let vm = Arc::new(Mutex::new(vm));
+        let block = Arc::new(block);
         let mut call_traces = vec![];
         for index in 0..block.body.transactions.len() {
-            let tx_hash = block.body.transactions[index].compute_hash();
-            let mut vm = vm.clone(); // Find how to avoid this
-            let block = block.clone(); // Find how to avoid this
+            // We are cloning the `Arc`s here, not the structs themselves
+            let block = block.clone();
+            let vm = vm.clone();
+            let tx_hash = block.as_ref().body.transactions[index].compute_hash();
             let call_trace = timeout_trace_operation(timeout, move || {
-                vm.trace_tx_calls(&block, index, only_top_call, with_log)
+                vm.lock()
+                    .unwrap()
+                    .trace_tx_calls(block.as_ref(), index, only_top_call, with_log)
             })
             .await?;
             call_traces.push((tx_hash, call_trace));
