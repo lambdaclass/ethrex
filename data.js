@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748528535745,
+  "lastUpdate": 1748529108694,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9775,6 +9775,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 198251261355,
             "range": "± 1480316691",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0260b05d325a803c1778caac15b728163ffe9dc8",
+          "message": "fix(l2): remove bogus parameter from Makefile (#2963)\n\n**Motivation**\n\nMerging #2929 [broke a\ntest](https://github.com/lambdaclass/ethrex/actions/runs/15310214843/job/43072861820).\n\n**Description**\n\nIn #2929 the bench cli changed it's parameters and the Makefile was\nupdated, and one of the arguments (--prove) was no longer needed, but\nwasn't removed.",
+          "timestamp": "2025-05-29T13:41:22Z",
+          "tree_id": "ec19ecbd0afe2e01129b3e8497663490979d3470",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0260b05d325a803c1778caac15b728163ffe9dc8"
+        },
+        "date": 1748529104196,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 198479500793,
+            "range": "± 425286616",
             "unit": "ns/iter"
           }
         ]
