@@ -16,7 +16,7 @@ use ethrex_common::{
     types::{Transaction, TxKind},
     Address, H256, U256,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
@@ -35,17 +35,53 @@ pub struct Substate {
     pub transient_storage: TransientStorage,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+fn u64_to_hex<S>(x: &u64, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    s.serialize_str(&format!("0x{:x}", x))
+}
+
+fn u256_to_hex<S>(x: &U256, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    s.serialize_str(&format!("0x{:x}", x))
+}
+
+fn bytes_to_hex<S>(x: &Bytes, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    s.serialize_str(&format!("0x{:x}", x))
+}
+
+fn option_string_empty_as_str<S>(x: &Option<String>, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    s.serialize_str(x.as_deref().unwrap_or(""))
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct TracerCallFrame {
+    #[serde(rename = "type")]
     pub call_type: Opcode,
     pub from: Address,
     pub to: Address,
+    #[serde(serialize_with = "u256_to_hex")]
     pub value: U256,
+    #[serde(serialize_with = "u64_to_hex")]
     pub gas: u64,
+    #[serde(rename = "gasUsed", serialize_with = "u64_to_hex")]
     pub gas_used: u64,
+    #[serde(serialize_with = "bytes_to_hex")]
     pub input: Bytes,
+    #[serde(serialize_with = "bytes_to_hex")]
     pub output: Bytes,
+    #[serde(serialize_with = "option_string_empty_as_str")]
     pub error: Option<String>,
+    #[serde(rename = "revertReason", serialize_with = "option_string_empty_as_str")]
     pub revert_reason: Option<String>,
     pub calls: Vec<TracerCallFrame>,
 }
@@ -89,6 +125,7 @@ impl TracerCallFrame {
 }
 
 #[derive(Default, Debug)]
+/// Geth's callTracer (https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers)
 pub struct CallTracer {
     pub callframes: Vec<TracerCallFrame>,
 }
@@ -363,7 +400,9 @@ impl<'a> VM<'a> {
 
         self.tracer.exit_report(report)?;
 
-        // dbg!(&self.tracer);
+        //TODO: Remove this
+        // let a = serde_json::to_string_pretty(&self.tracer.callframes.pop().unwrap()).unwrap();
+        // println!("{a}");
 
         Ok(())
     }
