@@ -36,6 +36,17 @@ const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 
+#[derive(Clone, Copy)]
+pub struct ContractAddresses {
+    pub on_chain_proposer_address: Address,
+    pub bridge_address: Address,
+    pub sp1_verifier_address: Address,
+    pub pico_verifier_address: Address,
+    pub risc0_verifier_address: Address,
+    pub tdx_verifier_address: Address,
+    pub sequencer_registry_address: Address,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), DeployerError> {
     tracing_subscriber::fmt().with_max_level(Level::INFO).init();
@@ -57,43 +68,15 @@ async fn main() -> Result<(), DeployerError> {
 
     compile_contracts(&opts)?;
 
-    let (
-        on_chain_proposer_address,
-        bridge_address,
-        sp1_verifier_address,
-        pico_verifier_address,
-        risc0_verifier_address,
-        tdx_verifier_address,
-        sequencer_registry_address,
-    ) = deploy_contracts(&eth_client, &opts).await?;
+    let contract_addresses = deploy_contracts(&eth_client, &opts).await?;
 
-    initialize_contracts(
-        on_chain_proposer_address,
-        bridge_address,
-        risc0_verifier_address,
-        sp1_verifier_address,
-        pico_verifier_address,
-        tdx_verifier_address,
-        sequencer_registry_address,
-        &eth_client,
-        &opts,
-    )
-    .await?;
+    initialize_contracts(contract_addresses, &eth_client, &opts).await?;
 
     if opts.deposit_rich {
-        make_deposits(bridge_address, &eth_client, &opts).await?;
+        make_deposits(contract_addresses.bridge_address, &eth_client, &opts).await?;
     }
 
-    write_contract_addresses_to_env(
-        on_chain_proposer_address,
-        bridge_address,
-        sp1_verifier_address,
-        pico_verifier_address,
-        risc0_verifier_address,
-        tdx_verifier_address,
-        sequencer_registry_address,
-        opts.env_file_path,
-    )?;
+    write_contract_addresses_to_env(contract_addresses, opts.env_file_path)?;
     trace!("Deployer binary finished successfully");
     Ok(())
 }
@@ -206,18 +189,7 @@ lazy_static::lazy_static! {
 async fn deploy_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
-) -> Result<
-    (
-        Address,
-        Address,
-        Address,
-        Address,
-        Address,
-        Address,
-        Address,
-    ),
-    DeployerError,
-> {
+) -> Result<ContractAddresses, DeployerError> {
     trace!("Deploying contracts");
 
     info!("Deploying OnChainProposer");
@@ -365,15 +337,15 @@ async fn deploy_contracts(
         tdx_verifier_address = ?tdx_verifier_address,
         "Contracts deployed"
     );
-    Ok((
-        on_chain_proposer_deployment.proxy_address,
-        bridge_deployment.proxy_address,
+    Ok(ContractAddresses {
+        on_chain_proposer_address: on_chain_proposer_deployment.proxy_address,
+        bridge_address: bridge_deployment.proxy_address,
         sp1_verifier_address,
         pico_verifier_address,
         risc0_verifier_address,
         tdx_verifier_address,
-        sequencer_registry_deployment.proxy_address,
-    ))
+        sequencer_registry_address: sequencer_registry_deployment.proxy_address,
+    })
 }
 
 fn deploy_tdx_contracts(
@@ -405,15 +377,8 @@ fn read_tdx_deployment_address(name: &str) -> Address {
     Address::from_str(&contents).unwrap_or(Address::zero())
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn initialize_contracts(
-    on_chain_proposer_address: Address,
-    bridge_address: Address,
-    risc0_verifier_address: Address,
-    sp1_verifier_address: Address,
-    pico_verifier_address: Address,
-    tdx_verifier_address: Address,
-    sequencer_registry_address: Address,
+    contract_addresses: ContractAddresses,
     eth_client: &EthClient,
     opts: &DeployerOptions,
 ) -> Result<(), DeployerError> {
@@ -446,13 +411,13 @@ async fn initialize_contracts(
         let calldata_values = vec![
             Value::Bool(opts.validium),
             Value::Address(deployer_address),
-            Value::Address(risc0_verifier_address),
-            Value::Address(sp1_verifier_address),
-            Value::Address(pico_verifier_address),
-            Value::Address(tdx_verifier_address),
+            Value::Address(contract_addresses.risc0_verifier_address),
+            Value::Address(contract_addresses.sp1_verifier_address),
+            Value::Address(contract_addresses.pico_verifier_address),
+            Value::Address(contract_addresses.tdx_verifier_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
-            Value::Address(sequencer_registry_address),
+            Value::Address(contract_addresses.sequencer_registry_address),
         ];
 
         trace!(calldata_values = ?calldata_values, "OnChainProposer initialization calldata values");
@@ -462,7 +427,7 @@ async fn initialize_contracts(
         )?;
 
         let initialize_tx_hash = initialize_contract(
-            on_chain_proposer_address,
+            contract_addresses.on_chain_proposer_address,
             on_chain_proposer_initialization_calldata,
             &opts.private_key,
             eth_client,
@@ -475,13 +440,13 @@ async fn initialize_contracts(
         let initialize_tx_hash = {
             let calldata_values = vec![
                 Value::Address(opts.sequencer_registry_owner),
-                Value::Address(on_chain_proposer_address),
+                Value::Address(contract_addresses.on_chain_proposer_address),
             ];
             let sequencer_registry_initialization_calldata =
                 encode_calldata("initialize(address,address)", &calldata_values)?;
 
             initialize_contract(
-                sequencer_registry_address,
+                contract_addresses.sequencer_registry_address,
                 sequencer_registry_initialization_calldata,
                 &opts.private_key,
                 eth_client,
@@ -494,10 +459,10 @@ async fn initialize_contracts(
         let calldata_values = vec![
             Value::Bool(opts.validium),
             Value::Address(deployer_address),
-            Value::Address(risc0_verifier_address),
-            Value::Address(sp1_verifier_address),
-            Value::Address(pico_verifier_address),
-            Value::Address(tdx_verifier_address),
+            Value::Address(contract_addresses.risc0_verifier_address),
+            Value::Address(contract_addresses.sp1_verifier_address),
+            Value::Address(contract_addresses.pico_verifier_address),
+            Value::Address(contract_addresses.tdx_verifier_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Array(vec![
@@ -510,7 +475,7 @@ async fn initialize_contracts(
             encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values)?;
 
         let initialize_tx_hash = initialize_contract(
-            on_chain_proposer_address,
+            contract_addresses.on_chain_proposer_address,
             on_chain_proposer_initialization_calldata,
             &opts.private_key,
             eth_client,
@@ -520,12 +485,12 @@ async fn initialize_contracts(
     }
 
     let initialize_bridge_address_tx_hash = {
-        let calldata_values = vec![Value::Address(bridge_address)];
+        let calldata_values = vec![Value::Address(contract_addresses.bridge_address)];
         let on_chain_proposer_initialization_calldata =
             encode_calldata(INITIALIZE_BRIDGE_ADDRESS_SIGNATURE, &calldata_values)?;
 
         initialize_contract(
-            on_chain_proposer_address,
+            contract_addresses.on_chain_proposer_address,
             on_chain_proposer_initialization_calldata,
             &opts.private_key,
             eth_client,
@@ -546,7 +511,7 @@ async fn initialize_contracts(
             )?;
 
             initialize_contract(
-                on_chain_proposer_address,
+                contract_addresses.on_chain_proposer_address,
                 owener_transfer_calldata,
                 &opts.private_key,
                 eth_client,
@@ -558,7 +523,7 @@ async fn initialize_contracts(
             let accept_ownership_calldata = encode_calldata(ACCEPT_OWNERSHIP_SIGNATURE, &[])?;
             let accept_tx = eth_client
                 .build_eip1559_transaction(
-                    on_chain_proposer_address,
+                    contract_addresses.on_chain_proposer_address,
                     opts.on_chain_proposer_owner,
                     accept_ownership_calldata.into(),
                     Overrides::default(),
@@ -589,13 +554,13 @@ async fn initialize_contracts(
     let initialize_tx_hash = {
         let calldata_values = vec![
             Value::Address(opts.bridge_owner),
-            Value::Address(on_chain_proposer_address),
+            Value::Address(contract_addresses.on_chain_proposer_address),
         ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
 
         initialize_contract(
-            bridge_address,
+            contract_addresses.bridge_address,
             bridge_initialization_calldata,
             &opts.private_key,
             eth_client,
@@ -684,16 +649,8 @@ async fn make_deposits(
     Ok(())
 }
 
-// TODO: Add a data struct for this.
-#[allow(clippy::too_many_arguments)]
 fn write_contract_addresses_to_env(
-    on_chain_proposer_address: Address,
-    bridge_address: Address,
-    sp1_verifier_address: Address,
-    pico_verifier_address: Address,
-    risc0_verifier_address: Address,
-    tdx_verifier_address: Address,
-    sequencer_registry_address: Address,
+    contract_addresses: ContractAddresses,
     env_file_path: Option<PathBuf>,
 ) -> Result<(), DeployerError> {
     trace!("Writing contract addresses to .env file");
@@ -716,25 +673,34 @@ fn write_contract_addresses_to_env(
     let mut writer = BufWriter::new(env_file);
     writeln!(
         writer,
-        "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS={on_chain_proposer_address:#x}"
+        "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS={:#x}",
+        contract_addresses.on_chain_proposer_address
     )?;
-    writeln!(writer, "ETHREX_WATCHER_BRIDGE_ADDRESS={bridge_address:#x}")?;
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER={sp1_verifier_address:#x}"
+        "ETHREX_WATCHER_BRIDGE_ADDRESS={:#x}",
+        contract_addresses.bridge_address
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER={:#x}",
+        contract_addresses.sp1_verifier_address
     )?;
 
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER={pico_verifier_address:#x}"
+        "ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER={:#x}",
+        contract_addresses.pico_verifier_address
     )?;
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={risc0_verifier_address:#x}"
+        "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={:#x}",
+        contract_addresses.risc0_verifier_address
     )?;
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER={tdx_verifier_address:#x}"
+        "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER={:#x}",
+        contract_addresses.tdx_verifier_address
     )?;
     // TDX aux contracts, qpl-tool depends on exact env var naming
     writeln!(
@@ -759,7 +725,8 @@ fn write_contract_addresses_to_env(
     )?;
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS={sequencer_registry_address:#x}"
+        "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS={:#x}",
+        contract_addresses.sequencer_registry_address
     )?;
     trace!(?env_file_path, "Contract addresses written to .env");
     Ok(())
