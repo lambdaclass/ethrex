@@ -908,8 +908,8 @@ impl Store {
         // Root is irrelevant, we only care about the internal state
         Ok(self
             .open_state_trie(*EMPTY_TRIE_HASH)
-            .state()
-            .get_node(node_hash.into())?
+            .db()
+            .get(node_hash.into())?
             .is_some())
     }
 
@@ -922,8 +922,8 @@ impl Store {
         // Root is irrelevant, we only care about the internal state
         Ok(self
             .open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)
-            .state()
-            .get_node(node_hash.into())?
+            .db()
+            .get(node_hash.into())?
             .is_some())
     }
 
