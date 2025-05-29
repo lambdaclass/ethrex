@@ -64,8 +64,9 @@ impl Command {
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
                 let network = get_network(&opts.node_opts);
-
-                let store = init_store(&data_dir, &network).await;
+                
+                let genesis = read_genesis_file(network.get_path());
+                let store = init_store(&data_dir, genesis).await;
                 let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
                 let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
