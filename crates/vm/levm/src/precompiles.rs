@@ -318,7 +318,7 @@ pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
     }
 
     let v = u8::try_from(v).map_err(|_| InternalError::ConversionError)?;
-    let Ok(recovery_id) = RecoveryId::from_i32(v.try_into().map_err(|_| InternalError::ConversionError)?) else {
+    let Ok(recovery_id) = RecoveryId::from_i32((v - 27).into()) else {
         return Ok(Bytes::new());
     };
 
@@ -333,7 +333,7 @@ pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
         return Ok(Bytes::new());
     };
 
-    let mut public_key = public_key.serialize();
+    let mut public_key = public_key.serialize_uncompressed();
 
     // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
     keccak256(&mut public_key[1..65]);

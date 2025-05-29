@@ -26,7 +26,10 @@ use ethrex_common::{
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
-use secp256k1::{ecdsa::{RecoverableSignature, RecoveryId}, Message};
+use secp256k1::{
+    ecdsa::{RecoverableSignature, RecoveryId},
+    Message,
+};
 use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -322,7 +325,6 @@ pub fn eip7702_recover_address(
     let Ok(recovery_id) = RecoveryId::from_i32(
         auth_tuple
             .y_parity
-            .as_u32()
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?,
     ) else {
@@ -333,12 +335,12 @@ pub fn eip7702_recover_address(
         return Ok(None);
     };
 
-    //recover 
+    //recover
     let Ok(authority) = signature.recover(&message) else {
         return Ok(None);
     };
 
-    let public_key = authority.serialize();
+    let public_key = authority.serialize_uncompressed();
     let mut hasher = Keccak256::new();
     hasher.update(
         public_key
