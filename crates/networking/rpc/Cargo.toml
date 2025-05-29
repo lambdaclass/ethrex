@@ -20,7 +20,7 @@ ethrex-vm.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-p2p.workspace = true
 ethrex-rlp.workspace = true
-ethrex-storage-rollup = { workspace = true, optional = true }
+ethrex-storage-rollup = { workspace = true }
 hex.workspace = true
 axum-extra = { version = "0.10.0", features = ["typed-header"] }
 jsonwebtoken.workspace = true
@@ -46,4 +46,4 @@ hex-literal = "0.4.1"
 path = "./lib.rs"
 
 [features]
-l2 = ["ethrex-storage-rollup"]
+l2 = []

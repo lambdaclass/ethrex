@@ -63,20 +63,23 @@ use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "l2")] {
-        use crate::l2::transaction::SponsoredTx;
-        use ethrex_common::Address;
-        use secp256k1::SecretKey;
-        use ethrex_storage_rollup::StoreRollup;
-    }
-}
+use crate::l2::transaction::SponsoredTx;
+use ethrex_common::Address;
+use ethrex_storage_rollup::StoreRollup;
+use secp256k1::SecretKey;
 
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum RpcRequestWrapper {
     Single(RpcRequest),
     Multiple(Vec<RpcRequest>),
+}
+
+#[derive(Debug, Clone)]
+pub struct L2RpcParams {
+    pub valid_delegation_addresses: Vec<Address>,
+    pub sponsor_pk: SecretKey,
+    pub rollup_store: StoreRollup,
 }
 
 #[derive(Debug, Clone)]
@@ -87,12 +90,21 @@ pub struct RpcApiContext {
     pub syncer: Arc<SyncManager>,
     pub peer_handler: PeerHandler,
     pub node_data: NodeData,
-    #[cfg(feature = "l2")]
-    pub valid_delegation_addresses: Vec<Address>,
-    #[cfg(feature = "l2")]
-    pub sponsor_pk: SecretKey,
-    #[cfg(feature = "l2")]
-    pub rollup_store: StoreRollup,
+    pub l2_params: Option<L2RpcParams>,
+}
+
+impl RpcApiContext {
+    pub fn valid_delegation_addresses(&self) -> Option<&Vec<Address>> {
+        self.l2_params.as_ref().map(|l2_params| &l2_params.valid_delegation_addresses)
+    }
+
+    pub fn sponsor_pk(&self) -> Option<&SecretKey> {
+        self.l2_params.as_ref().map(|l2_params| &l2_params.sponsor_pk)
+    }
+
+    pub fn rollup_store(&self) -> Option<&StoreRollup> {
+        self.l2_params.as_ref().map(|l2_params| &l2_params.rollup_store)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -122,21 +134,60 @@ pub const FILTER_DURATION: Duration = {
     }
 };
 
-#[allow(clippy::too_many_arguments)]
-pub async fn start_api(
+pub async fn start_l2_api(
     http_addr: SocketAddr,
     authrpc_addr: SocketAddr,
     storage: Store,
     blockchain: Arc<Blockchain>,
-    jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    node_data: NodeData,
     syncer: SyncManager,
     peer_handler: PeerHandler,
-    client_version: String,
-    #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
-    #[cfg(feature = "l2")] sponsor_pk: SecretKey,
-    #[cfg(feature = "l2")] rollup_store: StoreRollup,
+    l2_params: L2RpcParams,
+) {
+    start_api(
+        http_addr,
+        authrpc_addr,
+        storage,
+        blockchain,
+        node_data,
+        syncer,
+        peer_handler,
+        Some(l2_params),
+    )
+    .await;
+}
+
+pub async fn start_l1_api(
+    http_addr: SocketAddr,
+    authrpc_addr: SocketAddr,
+    storage: Store,
+    blockchain: Arc<Blockchain>,
+    node_data: NodeData,
+    syncer: SyncManager,
+    peer_handler: PeerHandler,
+) {
+    start_api(
+        http_addr,
+        authrpc_addr,
+        storage,
+        blockchain,
+        node_data,
+        syncer,
+        peer_handler,
+        None,
+    )
+    .await;
+}
+
+async fn start_api(
+    http_addr: SocketAddr,
+    authrpc_addr: SocketAddr,
+    storage: Store,
+    blockchain: Arc<Blockchain>,
+    node_data: NodeData,
+    syncer: SyncManager,
+    peer_handler: PeerHandler,
+    l2_params: Option<L2RpcParams>,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -147,18 +198,8 @@ pub async fn start_api(
         active_filters: active_filters.clone(),
         syncer: Arc::new(syncer),
         peer_handler,
-        node_data: NodeData {
-            jwt_secret,
-            local_p2p_node,
-            local_node_record,
-            client_version,
-        },
-        #[cfg(feature = "l2")]
-        valid_delegation_addresses,
-        #[cfg(feature = "l2")]
-        sponsor_pk,
-        #[cfg(feature = "l2")]
-        rollup_store,
+        node_data,
+        l2_params,
     };
 
     // Periodically clean up the active filters for the filters endpoints.

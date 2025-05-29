@@ -71,7 +71,10 @@ impl RpcHandler for SponsoredTx {
         // If tx is not EIP-7702 check we are calling a delegated account
         if let Some(auth_list) = &self.authorization_list {
             for tuple in auth_list {
-                if !context.valid_delegation_addresses.contains(&tuple.address) {
+                let valid_delegation_addresses = context
+                    .valid_delegation_addresses()
+                    .ok_or_else(|| RpcErr::Internal("Not configured for L2".to_string()))?;
+                if !valid_delegation_addresses.contains(&tuple.address) {
                     return Err(RpcErr::InvalidEthrexL2Message(
                         "Invalid tx trying to delegate to an address that isn't sponsored"
                             .to_string(),
@@ -110,14 +113,20 @@ impl RpcHandler for SponsoredTx {
                     "Invalid tx trying to call non delegated account".to_string(),
                 ));
             }
-            if !context.valid_delegation_addresses.contains(&address) {
+            let valid_delegation_addresses = context
+                .valid_delegation_addresses()
+                .ok_or_else(|| RpcErr::Internal("Not configured for L2".to_string()))?;
+            if !valid_delegation_addresses.contains(&address) {
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "Invalid tx trying to call delegated address not in sponsored addresses"
                         .to_string(),
                 ));
             }
         }
-        let sponsor_address = get_address_from_secret_key(&context.sponsor_pk).map_err(|_| {
+        let sponsor_pk = context
+            .sponsor_pk()
+            .ok_or_else(|| RpcErr::Internal("Not configured for L2".to_string()))?;
+        let sponsor_address = get_address_from_secret_key(&sponsor_pk).map_err(|_| {
             RpcErr::InvalidEthrexL2Message("Ethrex L2 Rpc method not enabled".to_string())
         })?;
         let latest_block_number = context
@@ -212,14 +221,20 @@ impl RpcHandler for SponsoredTx {
                 tx.max_fee_per_gas = max_fee_per_gas;
                 tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
                 tx.nonce = nonce;
-                tx.sign_inplace(&context.sponsor_pk);
+                let sponsor_pk = context
+                    .sponsor_pk()
+                    .ok_or_else(|| RpcErr::Internal("Not configured for L2".to_string()))?;
+                tx.sign_inplace(&sponsor_pk);
             }
             SendRawTransactionRequest::EIP1559(ref mut tx) => {
                 tx.gas_limit = gas_limit;
                 tx.max_fee_per_gas = max_fee_per_gas;
                 tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
                 tx.nonce = nonce;
-                tx.sign_inplace(&context.sponsor_pk);
+                let sponsor_pk = context
+                    .sponsor_pk()
+                    .ok_or_else(|| RpcErr::Internal("Not configured for L2".to_string()))?;
+                tx.sign_inplace(&sponsor_pk);
             }
             _ => {
                 return Err(RpcErr::InvalidEthrexL2Message(

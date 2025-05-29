@@ -58,8 +58,9 @@ impl RpcHandler for GetWithdrawalProof {
 
         // Gets the batch number for the block
         let batch_number = match context
-            .rollup_store
-            .get_batch_number_by_block(block_number)
+            .rollup_store()
+            .map(|store| store.get_batch_number_by_block(block_number))
+            .ok_or_else(|| RpcErr::Internal("Not configured for L2".to_string()))?
             .await?
         {
             Some(location) => location,
@@ -68,8 +69,9 @@ impl RpcHandler for GetWithdrawalProof {
 
         // Gets the withdrawal hashes for the batch
         let batch_withdrawal_hashes = match context
-            .rollup_store
-            .get_withdrawal_hashes_by_batch(batch_number)
+            .rollup_store()
+            .map(|store| store.get_withdrawal_hashes_by_batch(batch_number))
+            .ok_or_else(|| RpcErr::Internal("Not configured for L2".to_string()))?
             .await?
         {
             Some(withdrawals) => withdrawals,

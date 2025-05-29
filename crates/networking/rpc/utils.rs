@@ -18,18 +18,12 @@ pub enum RpcErr {
     UnsuportedFork(String),
     Internal(String),
     Vm(String),
-    Revert {
-        data: String,
-    },
-    Halt {
-        reason: String,
-        gas_used: u64,
-    },
+    Revert { data: String },
+    Halt { reason: String, gas_used: u64 },
     AuthenticationError(AuthenticationError),
     InvalidForkChoiceState(String),
     InvalidPayloadAttributes(String),
     UnknownPayload(String),
-    #[cfg(feature = "l2")]
     InvalidEthrexL2Message(String),
 }
 
@@ -130,7 +124,6 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: format!("Unknown payload: {context}"),
             },
-            #[cfg(feature = "l2")]
             RpcErr::InvalidEthrexL2Message(reason) => RpcErrorMetadata {
                 code: -39000,
                 data: None,
@@ -338,12 +331,11 @@ pub mod test_utils {
         types::{Node, NodeRecord},
     };
     use ethrex_storage::{EngineType, Store};
+    use ethrex_storage_rollup::StoreRollup;
     use k256::ecdsa::SigningKey;
 
-    use crate::rpc::{start_api, NodeData, RpcApiContext};
-    #[cfg(feature = "l2")]
-    use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
-    #[cfg(feature = "l2")]
+    use crate::rpc::{start_l1_api, start_l2_api, L2RpcParams, NodeData, RpcApiContext};
+    use ethrex_storage_rollup::EngineTypeRollup;
     use secp256k1::{rand, SecretKey};
 
     pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
@@ -371,7 +363,7 @@ pub mod test_utils {
     // ...
     // server_handle.abort()
     // ```
-    pub async fn start_test_api() {
+    pub async fn start_test_api(enable_l2: bool) {
         let http_addr: SocketAddr = "127.0.0.1:8500".parse().unwrap();
         let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
         let storage =
@@ -383,36 +375,55 @@ pub mod test_utils {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
-        #[cfg(feature = "l2")]
-        let valid_delegation_addresses = Vec::new();
-        #[cfg(feature = "l2")]
-        let sponsor_pk = SecretKey::new(&mut rand::thread_rng());
-        #[cfg(feature = "l2")]
-        let rollup_store = StoreRollup::new("", EngineTypeRollup::InMemory)
-            .expect("Failed to create in-memory storage");
-        start_api(
-            http_addr,
-            authrpc_addr,
-            storage,
-            blockchain,
+        let node_data = NodeData {
             jwt_secret,
             local_p2p_node,
-            example_local_node_record(),
-            SyncManager::dummy(),
-            PeerHandler::dummy(),
-            "ethrex/test".to_string(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses,
-            #[cfg(feature = "l2")]
-            sponsor_pk,
-            #[cfg(feature = "l2")]
-            rollup_store,
-        )
-        .await;
+            local_node_record: example_local_node_record(),
+            client_version: "ethrex/test".to_string(),
+        };
+
+        if enable_l2 {
+            let valid_delegation_addresses = Vec::new();
+            let sponsor_pk = SecretKey::new(&mut rand::thread_rng());
+            let rollup_store = StoreRollup::new("", EngineTypeRollup::InMemory)
+                .expect("Failed to create in-memory storage");
+            start_l2_api(
+                http_addr,
+                authrpc_addr,
+                storage,
+                blockchain,
+                node_data,
+                SyncManager::dummy(),
+                PeerHandler::dummy(),
+                L2RpcParams {
+                    valid_delegation_addresses,
+                    sponsor_pk,
+                    rollup_store,
+                },
+            )
+            .await;
+        } else {
+            start_l1_api(
+                http_addr,
+                authrpc_addr,
+                storage,
+                blockchain,
+                node_data,
+                SyncManager::dummy(),
+                PeerHandler::dummy(),
+            )
+            .await;
+        }
     }
 
     pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+        let l2_params = L2RpcParams {
+            valid_delegation_addresses: Vec::new(),
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            rollup_store: StoreRollup::new("test-store", EngineTypeRollup::InMemory)
+                .expect("Fail to create in-memory db test"),
+        };
         RpcApiContext {
             storage,
             blockchain,
@@ -425,13 +436,7 @@ pub mod test_utils {
                 local_node_record: example_local_node_record(),
                 client_version: "ethrex/test".to_string(),
             },
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-            #[cfg(feature = "l2")]
-            rollup_store: StoreRollup::new("test-store", EngineTypeRollup::InMemory)
-                .expect("Fail to create in-memory db test"),
+            l2_params: Some(l2_params),
         }
     }
 }

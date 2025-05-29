@@ -19,6 +19,7 @@ use ethrex_vm::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
+use secp256k1::SecretKey;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
@@ -32,7 +33,6 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 
-#[cfg(feature = "l2")]
 use crate::l2::L2Options;
 #[cfg(feature = "l2")]
 use ::{
@@ -138,23 +138,28 @@ pub async fn init_rpc_api(
     )
     .await;
 
+    let node_data = NodeData {
+        jwt_secret: read_jwtsecret_file(&opts.authrpc_jwtsecret),
+        local_p2p_node,
+        local_node_record,
+        client_version: get_client_version(),
+    };
+
+    let l2_params = Some(L2RpcParams {
+        valid_delegation_addresses: get_valid_delegation_addresses(l2_opts),
+        sponsor_pk: get_sponsor_pk(l2_opts),
+        rollup_store,
+    });
+
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
-        read_jwtsecret_file(&opts.authrpc_jwtsecret),
-        local_p2p_node,
-        local_node_record,
+        node_data,
         syncer,
         peer_handler,
-        get_client_version(),
-        #[cfg(feature = "l2")]
-        get_valid_delegation_addresses(l2_opts),
-        #[cfg(feature = "l2")]
-        get_sponsor_pk(l2_opts),
-        #[cfg(feature = "l2")]
-        rollup_store,
+        l2_params,
     )
     .into_future();
 
@@ -405,7 +410,6 @@ pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
     addresses
 }
 
-#[cfg(feature = "l2")]
 pub fn get_sponsor_pk(opts: &L2Options) -> SecretKey {
     if let Some(pk) = opts.sponsor_private_key {
         return pk;
