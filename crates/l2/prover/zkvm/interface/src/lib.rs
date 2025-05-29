@@ -134,7 +134,7 @@ pub mod trie {
         //          3.b.2. every value in trie is correct (the same as encoded in trie)
         for (address, db_account_info) in &db.accounts {
             // 1. account is in state trie
-            let trie_account_state = match state_trie.get(hash_address(address)) {
+            let trie_account_state = match state_trie.get(&hash_address(address)) {
                 Ok(Some(encoded_state)) => AccountState::decode(&encoded_state)?,
                 Ok(None) => {
                     return Ok(false);
@@ -171,7 +171,7 @@ pub mod trie {
                     for (key, db_value) in storage {
                         // 3.b. every value is in storage trie, except for zero values which are
                         //      absent
-                        let trie_value = match storage_trie.get(hash_key(key)) {
+                        let trie_value = match storage_trie.get(&hash_key(key)) {
                             Ok(Some(encoded)) => U256::decode(&encoded)?,
                             Ok(None) if db_value.is_zero() => {
                                 // an absent value must be zero

@@ -269,7 +269,7 @@ impl StateDiff {
 
         for (address, diff) in &self.modified_accounts {
             let account_state = match prev_state
-                .get(hash_address(address))
+                .get(&hash_address(address))
                 .map_err(StateDiffError::DbError)?
             {
                 Some(rlp) => AccountState::decode(&rlp)

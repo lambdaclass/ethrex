@@ -845,7 +845,7 @@ impl Store {
         hashed_address: H256,
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
         let state_trie = self.engine.open_state_trie(state_root);
-        let Some(account_rlp) = state_trie.get(hashed_address.as_bytes())? else {
+        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
@@ -882,7 +882,7 @@ impl Store {
         last_hash: Option<H256>,
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
         let state_trie = self.engine.open_state_trie(state_root);
-        let Some(account_rlp) = state_trie.get(hashed_address.as_bytes())? else {
+        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
@@ -1211,7 +1211,7 @@ impl Store {
             let hashed_address = hash_address_fixed(&update.address);
 
             if !update.removed {
-                let account_state = match state_trie.get(hashed_address).unwrap() {
+                let account_state = match state_trie.get(&hashed_address.as_bytes().into()).unwrap() {
                     Some(encoded_state) => AccountState::decode(&encoded_state).unwrap(),
                     None => AccountState::default(),
                 };
