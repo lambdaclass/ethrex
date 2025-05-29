@@ -192,7 +192,6 @@ fn map_call(
     revert_reason_or_error: &String,
     with_log: bool,
 ) -> Call {
-    dbg!(with_log);
     let mut subcalls = vec![];
     for child_idx in &revm_call.children {
         if let Some(child) = revm_calls.get(*child_idx) {
@@ -224,7 +223,7 @@ fn map_call(
             .is_revert()
             .then(|| revert_reason_or_error.clone()),
         calls: Box::new(vec![]),
-        logs: dbg!(with_log.then(|| revm_call.logs.into_iter().map(map_log).collect())),
+        logs: with_log.then(|| revm_call.logs.into_iter().map(map_log).collect()),
     }
 }
 
