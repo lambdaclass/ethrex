@@ -5,6 +5,7 @@ use ethrex_common::{
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
+use std::cmp::Ordering;
 
 #[derive(Clone)]
 pub struct StoreVmDatabase {
@@ -33,19 +34,17 @@ impl VmDatabase for StoreVmDatabase {
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         for ancestor_res in self.store.ancestors(self.block_hash) {
-            match ancestor_res {
-                Ok((hash, ancestor)) => {
-                    if ancestor.number < block_number {
-                        return Err(EvmError::DB(format!(
-                            "[VM DB] Block hash not found for block number {block_number}"
-                        )));
-                    } else if ancestor.number == block_number {
-                        return Ok(hash);
-                    }
-                }
-                Err(e) => return Err(EvmError::DB(e.to_string())),
+            let (hash, ancestor) = ancestor_res.map_err(|e| EvmError::DB(e.to_string()))?;
+            match ancestor.number.cmp(&block_number) {
+                Ordering::Greater => continue,
+                Ordering::Equal => return Ok(hash),
+                Ordering::Less => return Err(EvmError::DB(format!(
+                    "[VM DB] Block number requested {} is higher than the current block number {}",
+                    block_number, ancestor.number
+                ))),
             }
         }
+
         Err(EvmError::DB(format!(
             "[VM DB] Block hash not found for block number {block_number}"
         )))
