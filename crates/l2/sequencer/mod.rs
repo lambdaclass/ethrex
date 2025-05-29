@@ -50,7 +50,7 @@ pub async fn start_l2(
         error!("Error starting Committer: {err}");
     };
 
-    let mut task_set = JoinSet::new();
+    let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     task_set.spawn(proof_coordinator::start_proof_coordinator(
         store.clone(),
         rollup_store.clone(),

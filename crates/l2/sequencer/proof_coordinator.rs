@@ -28,7 +28,6 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 
 use super::errors::SequencerError;
-use super::utils::sleep_random;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
@@ -36,19 +35,6 @@ pub struct ProverInputData {
     pub parent_block_header: BlockHeader,
     pub db: ProverDB,
     pub elasticity_multiplier: u64,
-}
-
-#[derive(Clone)]
-struct ProofCoordinator {
-    listen_ip: IpAddr,
-    port: u16,
-    store: Store,
-    eth_client: EthClient,
-    on_chain_proposer_address: Address,
-    elasticity_multiplier: u64,
-    rollup_store: StoreRollup,
-    rpc_url: String,
-    l1_private_key: SecretKey,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -146,7 +132,7 @@ pub async fn start_proof_coordinator(
     rollup_store: StoreRollup,
     cfg: SequencerConfig,
 ) -> Result<(), SequencerError> {
-    let proof_coordinator = ProofCoordinator::new_from_config(
+    let proof_coordinator = ProofCoordinatorState::new(
         &cfg.proof_coordinator,
         &cfg.l1_committer,
         &cfg.eth,
@@ -154,21 +140,34 @@ pub async fn start_proof_coordinator(
         store,
         rollup_store,
     )
-    .await?;
-    run(proof_coordinator).await;
+    .await.map_err(SequencerError::ProverServerError)?;
+    run(proof_coordinator).await.map_err(SequencerError::ProverServerError)?;
 
     Ok(())
 }
 
-impl ProofCoordinator {
-    pub async fn new_from_config(
+#[derive(Clone)]
+struct ProofCoordinatorState {
+    listen_ip: IpAddr,
+    port: u16,
+    store: Store,
+    eth_client: EthClient,
+    on_chain_proposer_address: Address,
+    elasticity_multiplier: u64,
+    rollup_store: StoreRollup,
+    rpc_url: String,
+    l1_private_key: SecretKey,
+}
+
+impl ProofCoordinatorState {
+    pub async fn new(
         config: &ProofCoordinatorConfig,
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
         proposer_config: &BlockProducerConfig,
         store: Store,
         rollup_store: StoreRollup,
-    ) -> Result<Self, SequencerError> {
+    ) -> Result<Self, ProverServerError> {
         let eth_client = EthClient::new_with_config(
             eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
             eth_config.max_number_of_retries,
@@ -183,9 +182,7 @@ impl ProofCoordinator {
         let rpc_url = eth_config
             .rpc_url
             .first()
-            .ok_or(SequencerError::ProverServerError(
-                ProverServerError::Custom("no rpc urls present!".to_string()),
-            ))?
+            .ok_or(ProverServerError::Custom("no rpc urls present!".to_string()))?
             .to_string();
 
         Ok(Self {
@@ -203,19 +200,13 @@ impl ProofCoordinator {
 
 }
 
-pub async fn run(state: ProofCoordinator) {
-    loop {
-        if let Err(err) = main_logic(&state).await {
-            error!("L1 Proof Coordinator Error: {}", err);
-        }
-
-        sleep_random(200).await;
-    }
+async fn run(state: ProofCoordinatorState) -> Result<(), ProverServerError> {
+    let listener = TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?;
+    main_logic(&state, listener).await;
+    Ok(())
 }
 
-async fn main_logic(state: &ProofCoordinator) -> Result<(), ProverServerError> {
-    let listener = TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?;
-
+async fn main_logic(state: &ProofCoordinatorState, listener: TcpListener) {
     let concurent_clients = 3;
     let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurent_clients));
     info!(
@@ -261,7 +252,9 @@ async fn main_logic(state: &ProofCoordinator) -> Result<(), ProverServerError> {
     }
 }
 
-async fn handle_connection(state: &ProofCoordinator, mut stream: TcpStream) -> Result<(), ProverServerError> {
+
+
+async fn handle_connection(state: &ProofCoordinatorState, mut stream: TcpStream) -> Result<(), ProverServerError> {
     let mut buffer = Vec::new();
     stream.read_to_end(&mut buffer).await?;
 
@@ -303,7 +296,7 @@ async fn handle_connection(state: &ProofCoordinator, mut stream: TcpStream) -> R
     Ok(())
 }
 
-async fn handle_request(state: &ProofCoordinator, stream: &mut TcpStream) -> Result<(), ProverServerError> {
+async fn handle_request(state: &ProofCoordinatorState, stream: &mut TcpStream) -> Result<(), ProverServerError> {
     info!("BatchRequest received");
 
     let batch_to_verify = 1 + state
@@ -355,7 +348,7 @@ async fn handle_submit(
 }
 
 async fn handle_setup(
-    state: &ProofCoordinator,
+    state: &ProofCoordinatorState,
     stream: &mut TcpStream,
     prover_type: ProverType,
     payload: Bytes,
@@ -396,7 +389,7 @@ async fn handle_setup(
 }
 
 async fn create_prover_input(
-    state: &ProofCoordinator,
+    state: &ProofCoordinatorState,
     batch_number: u64,
 ) -> Result<ProverInputData, ProverServerError> {
     // Get blocks in batch
@@ -441,7 +434,7 @@ async fn create_prover_input(
     })
 }
 
-async fn fetch_blocks(state: &ProofCoordinator, block_numbers: Vec<u64>) -> Result<Vec<Block>, ProverServerError> {
+async fn fetch_blocks(state: &ProofCoordinatorState, block_numbers: Vec<u64>) -> Result<Vec<Block>, ProverServerError> {
     let mut blocks = vec![];
     for block_number in block_numbers {
         let header = state
