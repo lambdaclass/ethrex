@@ -22,8 +22,10 @@ use sender::{get_batch, submit_proof, submit_quote};
 
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
-    get_block_deposits, get_block_withdrawals, compute_deposit_logs_hash, compute_withdrawals_merkle_root,
+    get_block_deposits, get_block_withdrawal_hashes, compute_deposit_logs_hash, compute_withdrawals_merkle_root,
 };
+#[cfg(feature = "l2")]
+use ethrex_common::types::{kzg_commitment_to_versioned_hash, blob_from_bytes};
 
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 
@@ -125,7 +127,7 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
                     return Err("Failed to get deposit hash for tx".to_string());
                 }
             }
-            withdrawals.extend(block_withdrawals);
+            withdrawal_hashes.extend(block_withdrawal_hashes);
             deposits_hashes.extend(block_deposits_hashes);
         }
 
@@ -174,7 +176,7 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
         &mut state_trie,
         &mut storage_tries,
         &acc_account_updates.values().cloned().collect::<Vec<_>>(),
-    )?;
+    ).map_err(|e| format!("Error updating tries: {e}"))?;
 
     // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
@@ -239,6 +241,8 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
         Value::FixedBytes(withdrawals_merkle_root_bytes.into()),
         #[cfg(feature = "l2")]
         Value::FixedBytes(deposit_logs_hash_bytes.into()),
+        #[cfg(feature = "l2")]
+        Value::FixedBytes(blob_versioned_hash_bytes.into()),
     ]
     .clone();
     let bytes = encode_tuple(&data).map_err(|e| format!("Error packing data: {e}"))?;
