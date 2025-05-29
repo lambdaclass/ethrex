@@ -35,7 +35,7 @@ lazy_static! {
 }
 pub enum Networks {
     PublicNetwork(PublicNetworkType),
-    Path(String),
+    GenesisPath(String),
 }
 
 pub enum PublicNetworkType {
@@ -52,7 +52,7 @@ impl From<&str> for Networks {
             "holesky" => Networks::PublicNetwork(PublicNetworkType::Holesky),
             "mainnet" => Networks::PublicNetwork(PublicNetworkType::Mainnet),
             "sepolia" => Networks::PublicNetwork(PublicNetworkType::Sepolia),
-            s => Networks::Path(String::from(s)),
+            s => Networks::GenesisPath(String::from(s)),
         }
     }
 }
@@ -64,7 +64,7 @@ impl Networks {
             Networks::PublicNetwork(PublicNetworkType::Hoodi) => Path::new(HOODI_GENESIS_PATH),
             Networks::PublicNetwork(PublicNetworkType::Mainnet) => Path::new(MAINNET_GENESIS_PATH),
             Networks::PublicNetwork(PublicNetworkType::Sepolia) => Path::new(SEPOLIA_GENESIS_PATH),
-            Networks::Path(s) => Path::new(s),
+            Networks::GenesisPath(s) => Path::new(s),
         }
     }
 
@@ -74,7 +74,7 @@ impl Networks {
             Networks::PublicNetwork(PublicNetworkType::Hoodi) => Path::new(HOODI_GENESIS_PATH),
             Networks::PublicNetwork(PublicNetworkType::Mainnet) => Path::new(MAINNET_GENESIS_PATH),
             Networks::PublicNetwork(PublicNetworkType::Sepolia) => Path::new(SEPOLIA_GENESIS_PATH),
-            Networks::Path(s) => Path::new(s),
+            Networks::GenesisPath(s) => Path::new(s),
         }
     }
 }
