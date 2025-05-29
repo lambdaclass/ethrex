@@ -845,7 +845,7 @@ impl<'a> VM<'a> {
             code_address,
             bytecode,
             value,
-            calldata.into(),
+            calldata,
             is_static,
             gas_limit,
             new_depth,
