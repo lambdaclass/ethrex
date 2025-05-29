@@ -2,13 +2,13 @@ use clap::{Parser, ValueEnum};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_l2_sdk::calldata::{self, Value};
+use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::eth::BlockByNumber;
 use ethrex_rpc::clients::{EthClient, EthClientError, Overrides};
 use ethrex_rpc::types::receipt::RpcReceipt;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hex::ToHex;
-use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 use std::fs;
 use std::path::Path;
@@ -63,7 +63,7 @@ struct Cli {
         long,
         short = 'w',
         default_value_t = 0,
-        help = "Timeout to wait for all transactions to be included. If 0 is specified, wait indefinitely."
+        help = "Timeout in minutes. If the node doesn't provide updates in this time, it's considered stuck and the load test fails. If 0 is specified, the load test will wait indefinitely."
     )]
     wait: u64,
 }
@@ -79,30 +79,19 @@ pub enum TestType {
 const RETRIES: u64 = 1000;
 const ETH_TRANSFER_VALUE: u64 = 1000;
 
-// Private key for the rich account present in the gesesis_l2.json file.
-const RICH_ACCOUNT: &str = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
-
-// TODO: this should be in common utils.
-fn address_from_pub_key(public_key: PublicKey) -> H160 {
-    let bytes = public_key.serialize_uncompressed();
-    let hash = keccak(&bytes[1..]);
-    let address_bytes: [u8; 20] = hash.as_ref().get(12..32).unwrap().try_into().unwrap();
-
-    Address::from(address_bytes)
-}
+// Private key for the rich account after making the initial deposits on the L2.
+const RICH_ACCOUNT: &str = "0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31";
 
 async fn deploy_contract(
     client: EthClient,
     deployer: (PublicKey, SecretKey),
     contract: Vec<u8>,
 ) -> eyre::Result<Address> {
+    let address = get_address_from_secret_key(&deployer.1)
+        .map_err(|e| eyre::eyre!("Failed to get address from secret key: {}", e))?;
+
     let (_, contract_address) = client
-        .deploy(
-            address_from_pub_key(deployer.0),
-            deployer.1,
-            contract.into(),
-            Overrides::default(),
-        )
+        .deploy(address, deployer.1, contract.into(), Overrides::default())
         .await?;
 
     eyre::Ok(contract_address)
@@ -131,18 +120,21 @@ async fn claim_erc20_balances(
 ) -> eyre::Result<()> {
     let mut tasks = JoinSet::new();
 
-    for (pk, sk) in accounts {
+    for (_, sk) in accounts {
         let contract = contract_address;
         let client = client.clone();
-        let pk = *pk;
         let sk = *sk;
 
         tasks.spawn(async move {
             let claim_balance_calldata = calldata::encode_calldata("freeMint()", &[]).unwrap();
+            let address = get_address_from_secret_key(&sk)
+                .map_err(|e| eyre::eyre!("Failed to get address from secret key: {}", e))
+                .unwrap();
+
             let claim_tx = client
                 .build_eip1559_transaction(
                     contract,
-                    address_from_pub_key(pk),
+                    address,
                     claim_balance_calldata.into(),
                     Default::default(),
                 )
@@ -222,17 +214,19 @@ async fn load_test(
     tx_builder: TxBuilder,
 ) -> eyre::Result<()> {
     let mut tasks = FuturesUnordered::new();
-    for (pk, sk) in accounts {
-        let pk = *pk;
+    for (_, sk) in accounts {
         let sk = *sk;
         let client = client.clone();
         let tx_builder = tx_builder.clone();
         tasks.push(async move {
+            let address =
+                get_address_from_secret_key(&sk).expect("Failed to get address from secret key");
+
             let nonce = client
-                .get_nonce(address_from_pub_key(pk), BlockByNumber::Latest)
+                .get_nonce(address, BlockByNumber::Latest)
                 .await
                 .unwrap();
-            let src = address_from_pub_key(pk);
+            let src = address;
             let encoded_src: String = src.encode_hex();
 
             for i in 0..tx_amount {
@@ -246,8 +240,8 @@ async fn load_test(
                             chain_id: Some(chain_id),
                             value,
                             nonce: Some(nonce + i),
-                            max_fee_per_gas: Some(3121115334),
-                            max_priority_fee_per_gas: Some(3000000000),
+                            max_fee_per_gas: Some(u64::MAX),
+                            max_priority_fee_per_gas: Some(10_u64),
                             gas_limit: Some(TX_GAS_COST * 100),
                             ..Default::default()
                         },
@@ -256,13 +250,11 @@ async fn load_test(
                 let client = client.clone();
                 sleep(Duration::from_micros(800)).await;
                 let _sent = client.send_eip1559_transaction(&tx, &sk).await?;
-                println!(
-                    "Tx number {} sent! From: {}. To: {}",
-                    nonce + i + 1,
-                    encoded_src,
-                    dst.encode_hex::<String>()
-                );
             }
+            println!(
+                "{} transactions have been sent for {}",
+                tx_amount, encoded_src
+            );
             Ok::<(), EthClientError>(())
         });
     }
@@ -276,19 +268,18 @@ async fn load_test(
 // Waits until the nonce of each account has reached the tx_amount.
 async fn wait_until_all_included(
     client: EthClient,
-    wait: Option<Duration>,
+    timeout: Option<Duration>,
     accounts: &[Account],
     tx_amount: u64,
 ) -> Result<(), String> {
-    let start_time = tokio::time::Instant::now();
-
-    for (pk, _) in accounts {
-        let pk = *pk;
+    for (_, sk) in accounts {
         let client = client.clone();
-        let src = address_from_pub_key(pk);
+        let src = get_address_from_secret_key(sk).expect("Failed to get address from secret key");
         let encoded_src: String = src.encode_hex();
+        let mut last_updated = tokio::time::Instant::now();
+        let mut last_nonce = 0;
+
         loop {
-            let elapsed = start_time.elapsed();
             let nonce = client.get_nonce(src, BlockByNumber::Latest).await.unwrap();
             if nonce >= tx_amount {
                 println!(
@@ -298,14 +289,23 @@ async fn wait_until_all_included(
                 break;
             } else {
                 println!(
-                    "Waiting for transactions to be included from {}. Nonce: {}. Needs: {}. Percentage: {:2}%. Elapsed time: {}s.",
-                    encoded_src, nonce, tx_amount, (nonce as f64 / tx_amount as f64) * 100.0, elapsed.as_secs()
+                    "Waiting for transactions to be included from {}. Nonce: {}. Needs: {}. Percentage: {:2}%.",
+                    encoded_src, nonce, tx_amount, (nonce as f64 / tx_amount as f64) * 100.0
                 );
             }
 
-            if let Some(wait) = wait {
-                if elapsed > wait {
-                    return Err("Timeout reached for transactions to be included".to_string());
+            if let Some(timeout) = timeout {
+                if last_nonce == nonce {
+                    let inactivity_time = last_updated.elapsed();
+                    if inactivity_time > timeout {
+                        return Err(format!(
+                            "Node inactive for {} seconds. Timeout reached.",
+                            inactivity_time.as_secs()
+                        ));
+                    }
+                } else {
+                    last_nonce = nonce;
+                    last_updated = tokio::time::Instant::now();
                 }
             }
 
@@ -342,7 +342,7 @@ async fn main() {
     let pkeys_path = Path::new(&cli.pkeys);
     let accounts = parse_pk_file(pkeys_path)
         .unwrap_or_else(|_| panic!("Failed to parse private keys file {}", pkeys_path.display()));
-    let client = EthClient::new(&cli.node);
+    let client = EthClient::new(&cli.node).expect("Failed to create EthClient");
 
     // We ask the client for the chain id.
     let chain_id = client
@@ -388,7 +388,7 @@ async fn main() {
     };
 
     println!(
-        "Starting load test with {} transactions per account",
+        "Starting load test with {} transactions per account...",
         cli.tx_amount
     );
     let time_now = tokio::time::Instant::now();

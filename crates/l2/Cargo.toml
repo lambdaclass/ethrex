@@ -16,10 +16,11 @@ ethereum-types.workspace = true
 ethrex-common.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
-ethrex-blockchain = { workspace = true, features = ["l2"] }
+ethrex-blockchain.workspace = true
 ethrex-storage.workspace = true
+ethrex-storage-rollup.workspace = true
 ethrex-trie.workspace = true
-ethrex-vm = { workspace = true, features = ["l2"] }
+ethrex-vm.workspace = true
 ethrex-levm.workspace = true
 ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
@@ -33,10 +34,12 @@ envy = "0.4.2"
 rand.workspace = true
 thiserror.workspace = true
 directories = "5.0.1"
-toml = { version = "0.8.19", features = ["parse"] }
 bincode = "1.3.3"
+spawned-concurrency = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.0-alpha"}
+spawned-rt = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.0-alpha"}
+lazy_static.workspace = true
 
-zkvm_interface = { path = "./prover/zkvm/interface/", features = ["l2"] }
+zkvm_interface = { path = "./prover/zkvm/interface/" }
 
 [dev-dependencies]
 rand = "0.8.5"
@@ -53,5 +56,6 @@ unnecessary_cast = "warn"
 panic = "deny"
 
 [features]
-default = []
-metrics = ["ethrex-metrics/l2"]
+default = ["l2"]
+metrics = ["ethrex-blockchain/metrics", "ethrex-metrics/l2"]
+l2 = ["ethrex-blockchain/l2", "ethrex-vm/l2", "zkvm_interface/l2"]

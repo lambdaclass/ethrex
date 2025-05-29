@@ -19,7 +19,7 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, NodeHash, Trie};
 use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
 use libmdbx::{
     dupsort,
@@ -588,7 +588,7 @@ impl StoreEngine for Store {
     }
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        self.write::<PendingBlocks>(block.header.compute_block_hash().into(), block.into())
+        self.write::<PendingBlocks>(block.hash().into(), block.into())
             .await
     }
 
@@ -759,18 +759,6 @@ impl StoreEngine for Store {
         }
         txn.commit().map_err(StoreError::LibmdbxError)?;
         Ok(res)
-    }
-
-    async fn is_synced(&self) -> Result<bool, StoreError> {
-        match self.read::<ChainData>(ChainDataIndex::IsSynced).await? {
-            None => Err(StoreError::Custom("Sync status not found".to_string())),
-            Some(ref rlp) => RLPDecode::decode(rlp).map_err(|_| StoreError::DecodeError),
-        }
-    }
-
-    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
-        self.write::<ChainData>(ChainDataIndex::IsSynced, is_synced.encode_to_vec())
-            .await
     }
 
     async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
@@ -1150,7 +1138,7 @@ table!(
 
 table!(
     /// state trie nodes
-    ( StateTrieNodes ) Vec<u8> => Vec<u8>
+    ( StateTrieNodes ) NodeHash => Vec<u8>
 );
 
 // Local Blocks
@@ -1265,6 +1253,8 @@ impl Encodable for SnapStateIndex {
 const DB_PAGE_SIZE: usize = 4096;
 /// For a default page size of 4096, the max value size is roughly 1/2 page size.
 const DB_MAX_VALUE_SIZE: usize = 2022;
+// Maximum DB size, set to 2 TB
+const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 2; // 2 TB
 
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
@@ -1294,8 +1284,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
     let options = DatabaseOptions {
         page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
         mode: Mode::ReadWrite(ReadWriteOptions {
-            // Set max DB size to 1TB
-            max_size: Some(1024_isize.pow(4)),
+            max_size: Some(MAX_MAP_SIZE),
             ..Default::default()
         }),
         ..Default::default()
@@ -1511,7 +1500,7 @@ mod tests {
         let options = DatabaseOptions {
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
-                max_size: Some(1024_isize.pow(4)),
+                max_size: Some(MAX_MAP_SIZE),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1573,7 +1562,7 @@ mod tests {
         let options = DatabaseOptions {
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
-                max_size: Some(1024_isize.pow(4)),
+                max_size: Some(MAX_MAP_SIZE),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1606,7 +1595,7 @@ mod tests {
         let options = DatabaseOptions {
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
-                max_size: Some(1024_isize.pow(4)),
+                max_size: Some(MAX_MAP_SIZE),
                 ..Default::default()
             }),
             ..Default::default()

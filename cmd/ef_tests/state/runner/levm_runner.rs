@@ -5,20 +5,21 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_common::{
-    types::{tx_fields::*, EIP1559Transaction, EIP7702Transaction, Fork, Transaction, TxKind},
+    types::{
+        tx_fields::*, AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction,
+        TxKind,
+    },
     H256, U256,
 };
 use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
-    vm::{EVMConfig, VM},
-    Environment,
+    vm::VM,
+    EVMConfig, Environment,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::AccountUpdate;
 use ethrex_vm::backends;
 use keccak_hash::keccak;
-use std::collections::HashMap;
 
 pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     // There are some tests that don't have a hash, unwrap will panic
@@ -165,10 +166,9 @@ pub fn prepare_vm_for_tx<'a>(
         }),
     };
 
-    VM::new(
+    Ok(VM::new(
         Environment {
             origin: test_tx.sender,
-            refunded_gas: 0,
             gas_limit: test_tx.gas_limit,
             config,
             block_number: test.env.current_number,
@@ -187,40 +187,39 @@ pub fn prepare_vm_for_tx<'a>(
             tx_max_fee_per_blob_gas: test_tx.max_fee_per_blob_gas,
             tx_nonce: test_tx.nonce,
             block_gas_limit: test.env.current_gas_limit,
-            transient_storage: HashMap::new(),
+            is_privileged: false,
         },
         db,
         &tx,
-    )
-    .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))
+    ))
 }
 
 pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError> {
     let world_state = &evm.db.store;
     for (address, pre_value) in &test.pre.0 {
-        let account = world_state.get_account_info(*address).map_err(|e| {
+        let account = world_state.get_account(*address).map_err(|e| {
             EFTestRunnerError::Internal(InternalError::Custom(format!(
                 "Failed to get account info when ensuring pre state: {}",
                 e
             )))
         })?;
         ensure_pre_state_condition(
-            account.nonce == pre_value.nonce,
+            account.info.nonce == pre_value.nonce,
             format!(
                 "Nonce mismatch for account {:#x}: expected {}, got {}",
-                address, pre_value.nonce, account.nonce
+                address, pre_value.nonce, account.info.nonce
             ),
         )?;
         ensure_pre_state_condition(
-            account.balance == pre_value.balance,
+            account.info.balance == pre_value.balance,
             format!(
                 "Balance mismatch for account {:#x}: expected {}, got {}",
-                address, pre_value.balance, account.balance
+                address, pre_value.balance, account.info.balance
             ),
         )?;
         for (k, v) in &pre_value.storage {
             let storage_slot = world_state
-                .get_storage_slot(*address, H256::from_slice(&k.to_big_endian()))
+                .get_storage_value(*address, H256::from_slice(&k.to_big_endian()))
                 .unwrap();
             ensure_pre_state_condition(
                 &storage_slot == v,
@@ -231,12 +230,12 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
             )?;
         }
         ensure_pre_state_condition(
-            keccak(account.bytecode.clone()) == keccak(pre_value.code.as_ref()),
+            account.info.code_hash == keccak(pre_value.code.as_ref()),
             format!(
                 "Code hash mismatch for account {:#x}: expected {}, got {}",
                 address,
                 keccak(pre_value.code.as_ref()),
-                keccak(account.bytecode)
+                account.info.code_hash
             ),
         )?;
     }
@@ -339,8 +338,8 @@ pub async fn ensure_post_state(
                 }
                 // Execution result was successful and no exception was expected.
                 None => {
-                    let levm_account_updates =
-                        backends::levm::LEVM::get_state_transitions(db, *fork).map_err(|_| {
+                    let levm_account_updates = backends::levm::LEVM::get_state_transitions(db)
+                        .map_err(|_| {
                             InternalError::Custom(
                                 "Error at LEVM::get_state_transitions in ensure_post_state()"
                                     .to_owned(),
@@ -403,10 +402,8 @@ pub async fn ensure_post_state(
 }
 
 pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
-    let (initial_state, block_hash) = utils::load_initial_state(test).await;
-    initial_state
-        .database()
-        .unwrap()
+    let (_initial_state, block_hash, store) = utils::load_initial_state(test).await;
+    store
         .apply_account_updates(block_hash, account_updates)
         .await
         .unwrap()

@@ -3,14 +3,19 @@ use crate::{
     errors::{InternalError, OutOfGasError, VMError},
     memory::Memory,
     opcodes::Opcode,
-    utils::get_valid_jump_destinations,
-    Account,
+    utils::{get_valid_jump_destinations, restore_cache_state},
+    vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{types::Log, Address, U256};
+use ethrex_common::{
+    types::{Account, Log},
+    Address, U256,
+};
+use keccak_hash::H256;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// The EVM uses a stack-based architecture and does not use registers like some other VMs.
 pub struct Stack {
     pub stack: Vec<U256>,
 }
@@ -52,6 +57,8 @@ impl Stack {
 #[derive(Debug, Clone, Default, PartialEq)]
 /// A call frame, or execution environment, is the context in which
 /// the EVM is currently executing.
+/// One context can trigger another with opcodes like CALL or CREATE.
+/// Call frames relationships can be thought of as a parent-child relation.
 pub struct CallFrame {
     /// Max gas a callframe can use
     pub gas_limit: u64,
@@ -77,7 +84,7 @@ pub struct CallFrame {
     pub output: Bytes,
     /// Return data of the SUB-CONTEXT (see docs for more details)
     pub sub_return_data: Bytes,
-    /// Indicates if current context is static (if it is, it can't change state)
+    /// Indicates if current context is static (if it is, it can't alter state)
     pub is_static: bool,
     pub logs: Vec<Log>,
     /// Call stack current depth
@@ -87,10 +94,27 @@ pub struct CallFrame {
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub create_op_called: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
-    pub cache_backup: CacheBackup,
+    pub call_frame_backup: CallFrameBackup,
+    /// Return data offset
+    pub ret_offset: U256,
+    /// Return data size
+    pub ret_size: usize,
+    /// If true then transfer value from caller to callee
+    pub should_transfer_value: bool,
 }
 
-pub type CacheBackup = HashMap<Address, Option<Account>>;
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct CallFrameBackup {
+    pub original_accounts_info: HashMap<Address, Account>,
+    pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
+}
+
+impl CallFrameBackup {
+    pub fn clear(&mut self) {
+        self.original_accounts_info.clear();
+        self.original_account_storage_slots.clear();
+    }
+}
 
 impl CallFrame {
     #[allow(clippy::too_many_arguments)]
@@ -103,9 +127,11 @@ impl CallFrame {
         calldata: Bytes,
         is_static: bool,
         gas_limit: u64,
-        gas_used: u64,
         depth: usize,
+        should_transfer_value: bool,
         create_op_called: bool,
+        ret_offset: U256,
+        ret_size: usize,
     ) -> Self {
         let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
@@ -118,9 +144,11 @@ impl CallFrame {
             calldata,
             is_static,
             depth,
-            gas_used,
             valid_jump_destinations,
+            should_transfer_value,
             create_op_called,
+            ret_offset,
+            ret_size,
             ..Default::default()
         }
     }
@@ -157,5 +185,84 @@ impl CallFrame {
         self.gas_used = potential_consumed_gas;
 
         Ok(())
+    }
+
+    pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
+        self.valid_jump_destinations = get_valid_jump_destinations(&code)?;
+        self.bytecode = code;
+        Ok(())
+    }
+}
+
+impl<'a> VM<'a> {
+    pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, VMError> {
+        self.call_frames.last_mut().ok_or(VMError::Internal(
+            InternalError::CouldNotAccessLastCallframe,
+        ))
+    }
+
+    pub fn current_call_frame(&self) -> Result<&CallFrame, VMError> {
+        self.call_frames.last().ok_or(VMError::Internal(
+            InternalError::CouldNotAccessLastCallframe,
+        ))
+    }
+
+    pub fn pop_call_frame(&mut self) -> Result<CallFrame, VMError> {
+        self.call_frames.pop().ok_or(VMError::Internal(
+            InternalError::CouldNotAccessLastCallframe,
+        ))
+    }
+
+    pub fn is_initial_call_frame(&self) -> bool {
+        self.call_frames.len() == 1
+    }
+
+    /// Restores the cache state to the state before changes made during a callframe.
+    pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
+        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
+        restore_cache_state(self.db, callframe_backup)
+    }
+
+    // The CallFrameBackup of the current callframe has to be merged with the backup of its parent, in the following way:
+    //   - For every account that's present in the parent backup, do nothing (i.e. keep the one that's already there).
+    //   - For every account that's NOT present in the parent backup but is on the child backup, add the child backup to it.
+    //   - Do the same for every individual storage slot.
+    pub fn merge_call_frame_backup_with_parent(
+        &mut self,
+        child_call_frame_backup: &CallFrameBackup,
+    ) -> Result<(), VMError> {
+        let parent_backup_accounts = &mut self
+            .current_call_frame_mut()?
+            .call_frame_backup
+            .original_accounts_info;
+        for (address, account) in child_call_frame_backup.original_accounts_info.iter() {
+            if parent_backup_accounts.get(address).is_none() {
+                parent_backup_accounts.insert(*address, account.clone());
+            }
+        }
+
+        let parent_backup_storage = &mut self
+            .current_call_frame_mut()?
+            .call_frame_backup
+            .original_account_storage_slots;
+        for (address, storage) in child_call_frame_backup
+            .original_account_storage_slots
+            .iter()
+        {
+            let parent_storage = parent_backup_storage
+                .entry(*address)
+                .or_insert(HashMap::new());
+            for (key, value) in storage {
+                if parent_storage.get(key).is_none() {
+                    parent_storage.insert(*key, *value);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
+        self.current_call_frame_mut()?.increment_pc_by(count)
     }
 }

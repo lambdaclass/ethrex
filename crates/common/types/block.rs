@@ -1,6 +1,6 @@
 use super::{
-    ChainConfig, BASE_FEE_MAX_CHANGE_DENOMINATOR, ELASTICITY_MULTIPLIER,
-    GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
+    ChainConfig, BASE_FEE_MAX_CHANGE_DENOMINATOR, GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM,
+    INITIAL_BASE_FEE,
 };
 use crate::{
     constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS},
@@ -31,26 +31,21 @@ use once_cell::sync::OnceCell;
 lazy_static! {
     pub static ref DEFAULT_OMMERS_HASH: H256 = H256::from_slice(&hex::decode("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347").unwrap()); // = Keccak256(RLP([])) as of EIP-3675
     pub static ref DEFAULT_REQUESTS_HASH: H256 = H256::from_slice(&hex::decode("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855").unwrap()); // = Sha256([])) as of EIP-7685
+    pub static ref EMPTY_WITHDRAWALS_HASH: H256 = H256::from_slice(&hex::decode("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421").unwrap()); // = Root of empty Trie as of EIP-4895
 }
 #[derive(PartialEq, Eq, Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Block {
     pub header: BlockHeader,
     pub body: BlockBody,
-    #[serde(skip)]
-    hash: OnceCell<BlockHash>,
 }
 
 impl Block {
     pub fn new(header: BlockHeader, body: BlockBody) -> Block {
-        Block {
-            header,
-            body,
-            hash: OnceCell::new(),
-        }
+        Block { header, body }
     }
 
     pub fn hash(&self) -> BlockHash {
-        *self.hash.get_or_init(|| self.header.compute_block_hash())
+        self.header.hash()
     }
 }
 
@@ -87,6 +82,8 @@ impl RLPDecode for Block {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockHeader {
+    #[serde(skip)]
+    pub hash: OnceCell<BlockHash>,
     pub parent_hash: H256,
     #[serde(rename = "sha3Uncles")]
     pub ommers_hash: H256, // ommer = uncle
@@ -188,6 +185,7 @@ impl RLPDecode for BlockHeader {
 
         Ok((
             BlockHeader {
+                hash: OnceCell::new(),
                 parent_hash,
                 ommers_hash,
                 coinbase,
@@ -299,10 +297,14 @@ impl RLPDecode for BlockBody {
 }
 
 impl BlockHeader {
-    pub fn compute_block_hash(&self) -> H256 {
+    fn compute_block_hash(&self) -> H256 {
         let mut buf = vec![];
         self.encode(&mut buf);
         keccak(buf)
+    }
+
+    pub fn hash(&self) -> H256 {
+        *self.hash.get_or_init(|| self.compute_block_hash())
     }
 }
 
@@ -432,6 +434,7 @@ pub fn calculate_base_fee_per_gas(
     parent_gas_limit: u64,
     parent_gas_used: u64,
     parent_base_fee_per_gas: u64,
+    elasticity_multiplier: u64,
 ) -> Option<u64> {
     // Check gas limit, if the check passes we can also rest assured that none of the
     // following divisions will have zero as a divider
@@ -439,7 +442,7 @@ pub fn calculate_base_fee_per_gas(
         return None;
     }
 
-    let parent_gas_target = parent_gas_limit / ELASTICITY_MULTIPLIER;
+    let parent_gas_target = parent_gas_limit / elasticity_multiplier;
 
     Some(match parent_gas_used.cmp(&parent_gas_target) {
         Ordering::Equal => parent_base_fee_per_gas,
@@ -509,10 +512,21 @@ pub enum InvalidBlockHeaderError {
     RequestsHashPresent,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum InvalidBlockBodyError {
+    #[error("Withdrawals root does not match")]
+    WithdrawalsRootNotMatch,
+    #[error("Transactions root does not match")]
+    TransactionsRootNotMatch,
+    #[error("Ommers is not empty")]
+    OmmersIsNotEmpty,
+}
+
 /// Validates that the header fields are correct in reference to the parent_header
 pub fn validate_block_header(
     header: &BlockHeader,
     parent_header: &BlockHeader,
+    elasticity_multiplier: u64,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.gas_used > header.gas_limit {
         return Err(InvalidBlockHeaderError::GasUsedGreaterThanGasLimit);
@@ -523,6 +537,7 @@ pub fn validate_block_header(
         parent_header.gas_limit,
         parent_header.gas_used,
         parent_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
+        elasticity_multiplier,
     ) {
         base_fee
     } else {
@@ -557,8 +572,42 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::OmmersHashNotDefault);
     }
 
-    if header.parent_hash != parent_header.compute_block_hash() {
+    if header.parent_hash != parent_header.hash() {
         return Err(InvalidBlockHeaderError::ParentHashIncorrect);
+    }
+
+    Ok(())
+}
+
+/// Validates that the body matches with the header
+pub fn validate_block_body(block: &Block) -> Result<(), InvalidBlockBodyError> {
+    // Validates that:
+    //  - Transactions root and withdrawals root matches with the header
+    //  - Ommers is empty -> https://eips.ethereum.org/EIPS/eip-3675
+    let computed_tx_root = compute_transactions_root(&block.body.transactions);
+
+    if block.header.transactions_root != computed_tx_root {
+        return Err(InvalidBlockBodyError::TransactionsRootNotMatch);
+    }
+
+    if !block.body.ommers.is_empty() {
+        return Err(InvalidBlockBodyError::OmmersIsNotEmpty);
+    }
+
+    match (block.header.withdrawals_root, &block.body.withdrawals) {
+        (Some(withdrawals_root), Some(withdrawals)) => {
+            let computed_withdrawals_root = compute_withdrawals_root(withdrawals);
+            if withdrawals_root != computed_withdrawals_root {
+                return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
+            }
+        }
+        (Some(withdrawals_root), None) => {
+            if withdrawals_root != *EMPTY_WITHDRAWALS_HASH {
+                return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
+            }
+        }
+        (None, None) => {}
+        _ => return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch),
     }
 
     Ok(())
@@ -669,7 +718,7 @@ pub fn calc_excess_blob_gas(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::types::EMPTY_KECCACK_HASH;
+    use crate::types::{ELASTICITY_MULTIPLIER, EMPTY_KECCACK_HASH};
     use ethereum_types::H160;
     use hex_literal::hex;
     use std::str::FromStr;
@@ -743,6 +792,7 @@ mod test {
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
+            ..Default::default()
         };
         let block = BlockHeader {
             parent_hash: H256::from_str(
@@ -786,8 +836,9 @@ mod test {
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
+            ..Default::default()
         };
-        assert!(validate_block_header(&block, &parent_block).is_ok())
+        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok())
     }
 
     #[test]

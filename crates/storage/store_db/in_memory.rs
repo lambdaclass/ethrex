@@ -9,14 +9,14 @@ use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
 
-pub type NodeMap = Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>;
+pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
@@ -57,7 +57,6 @@ struct ChainData {
     safe_block_number: Option<BlockNumber>,
     latest_block_number: Option<BlockNumber>,
     pending_block_number: Option<BlockNumber>,
-    is_synced: bool,
 }
 
 // Keeps track of the state left by the latest snap attempt
@@ -138,9 +137,7 @@ impl StoreEngine for Store {
     }
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        self.inner()
-            .pending_blocks
-            .insert(block.header.compute_block_hash(), block);
+        self.inner().pending_blocks.insert(block.hash(), block);
         Ok(())
     }
 
@@ -181,7 +178,7 @@ impl StoreEngine for Store {
         for block in blocks {
             let header = block.header;
             let number = header.number;
-            let hash = header.compute_block_hash();
+            let hash = header.hash();
             let locations = block
                 .body
                 .transactions
@@ -550,15 +547,6 @@ impl StoreEngine for Store {
 
     async fn clear_snap_state(&self) -> Result<(), StoreError> {
         self.inner().snap_state = Default::default();
-        Ok(())
-    }
-
-    async fn is_synced(&self) -> Result<bool, StoreError> {
-        Ok(self.inner().chain_data.is_synced)
-    }
-
-    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
-        self.inner().chain_data.is_synced = is_synced;
         Ok(())
     }
 

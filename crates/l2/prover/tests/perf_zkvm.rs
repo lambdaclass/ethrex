@@ -1,10 +1,10 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::Block;
+use ethrex_common::types::{Block, ELASTICITY_MULTIPLIER};
+use ethrex_l2::utils::prover::db::to_prover_db;
 use ethrex_prover_lib::execute;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::Evm;
 use std::path::Path;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
@@ -16,7 +16,6 @@ async fn test_performance_zkvm() {
     let (input, block_to_prove) = setup().await;
 
     let start = std::time::Instant::now();
-
     // this is only executing because these tests run as a CI job and should be fast
     // TODO: create a test for actual proving
     execute(input).unwrap();
@@ -36,7 +35,7 @@ async fn test_performance_zkvm() {
 async fn setup() -> (ProgramInput, Block) {
     let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../test_data"));
 
-    let genesis_file_path = path.join("genesis-l2-ci.json");
+    let genesis_file_path = path.join("genesis-perf-ci.json");
     // l2-loadtest.rlp has blocks with many txs.
     let chain_file_path = path.join("l2-loadtest.rlp");
 
@@ -65,14 +64,18 @@ async fn setup() -> (ProgramInput, Block) {
         .unwrap()
         .unwrap();
 
-    let db = Evm::to_execution_db(&store.clone(), block_to_prove)
+    let db = to_prover_db(&store.clone(), &vec![block_to_prove.clone()])
         .await
         .unwrap();
 
+    // This is just a test, so we can use the default value for the elasticity multiplier.
+    let elasticity_multiplier = ELASTICITY_MULTIPLIER;
+
     let input = ProgramInput {
-        block: block_to_prove.clone(),
+        blocks: vec![block_to_prove.clone()],
         parent_block_header,
         db,
+        elasticity_multiplier,
     };
     (input, block_to_prove.clone())
 }

@@ -17,23 +17,32 @@ use payload_builder::build_payload;
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 
-use crate::utils::config::{block_producer::BlockProducerConfig, errors::ConfigError};
+use crate::{BlockProducerConfig, SequencerConfig};
 
-use super::{errors::BlockProducerError, execution_cache::ExecutionCache};
+use super::{
+    errors::{BlockProducerError, SequencerError},
+    execution_cache::ExecutionCache,
+};
+
+use ethrex_metrics::metrics;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_transactions::METRICS_TX;
 
 pub struct BlockProducer {
     block_time_ms: u64,
     coinbase_address: Address,
+    elasticity_multiplier: u64,
 }
 
 pub async fn start_block_producer(
     store: Store,
     blockchain: Arc<Blockchain>,
     execution_cache: Arc<ExecutionCache>,
-) -> Result<(), ConfigError> {
-    let proposer_config = BlockProducerConfig::from_env()?;
-    let proposer = BlockProducer::new_from_config(proposer_config).map_err(ConfigError::from)?;
-
+    cfg: SequencerConfig,
+) -> Result<(), SequencerError> {
+    let proposer = BlockProducer::new_from_config(&cfg.block_producer);
     proposer
         .run(store.clone(), blockchain, execution_cache)
         .await;
@@ -41,15 +50,17 @@ pub async fn start_block_producer(
 }
 
 impl BlockProducer {
-    pub fn new_from_config(config: BlockProducerConfig) -> Result<Self, BlockProducerError> {
+    pub fn new_from_config(config: &BlockProducerConfig) -> Self {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
+            elasticity_multiplier,
         } = config;
-        Ok(Self {
-            block_time_ms,
-            coinbase_address,
-        })
+        Self {
+            block_time_ms: *block_time_ms,
+            coinbase_address: *coinbase_address,
+            elasticity_multiplier: *elasticity_multiplier,
+        }
     }
 
     pub async fn run(
@@ -83,7 +94,7 @@ impl BlockProducer {
                 .get_block_header(current_block_number)?
                 .ok_or(BlockProducerError::StorageDataIsNone)?
         };
-        let head_hash = head_header.compute_block_hash();
+        let head_hash = head_header.hash();
         let head_beacon_block_root = H256::zero();
 
         // The proposer leverages the execution payload framework used for the engine API,
@@ -101,6 +112,7 @@ impl BlockProducer {
             withdrawals: Default::default(),
             beacon_root: Some(head_beacon_block_root),
             version,
+            elasticity_multiplier: self.elasticity_multiplier,
         };
         let payload = create_payload(&args, &store)?;
 
@@ -114,7 +126,12 @@ impl BlockProducer {
         // Blockchain stores block
         let block = payload_build_result.payload;
         let chain_config = store.get_chain_config()?;
-        validate_block(&block, &head_header, &chain_config)?;
+        validate_block(
+            &block,
+            &head_header,
+            &chain_config,
+            self.elasticity_multiplier,
+        )?;
 
         let account_updates = payload_build_result.account_updates;
 
@@ -134,6 +151,17 @@ impl BlockProducer {
 
         // Make the new head be part of the canonical chain
         apply_fork_choice(&store, block.hash(), block.hash(), block.hash()).await?;
+
+        metrics!(
+            let _ = METRICS_BLOCKS
+            .set_block_number(block.header.number)
+            .inspect_err(|e| {
+                tracing::error!("Failed to set metric: block_number {}", e.to_string())
+            });
+            #[allow(clippy::as_conversions)]
+            let tps = block.body.transactions.len() as f64 / (self.block_time_ms as f64 / 1000_f64);
+            METRICS_TX.set_transactions_per_second(tps);
+        );
 
         Ok(())
     }

@@ -1,12 +1,12 @@
 use ethrex_common::types::ChainConfig;
-use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
 use serde::Serialize;
 use serde_json::Value;
-use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 
-use crate::utils::RpcErr;
+use crate::{rpc::NodeData, utils::RpcErr};
+mod peers;
+pub use peers::peers;
 
 #[derive(Serialize, Debug)]
 struct NodeInfo {
@@ -31,13 +31,9 @@ enum Protocol {
     Eth(ChainConfig),
 }
 
-pub fn node_info(
-    storage: Store,
-    local_node: Node,
-    local_node_record: NodeRecord,
-) -> Result<Value, RpcErr> {
-    let enode_url = local_node.enode_url();
-    let enr_url = match local_node_record.enr_url() {
+pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> {
+    let enode_url = node_data.local_p2p_node.enode_url();
+    let enr_url = match node_data.local_node_record.enr_url() {
         Ok(enr) => enr,
         Err(_) => "".into(),
     };
@@ -51,12 +47,12 @@ pub fn node_info(
     let node_info = NodeInfo {
         enode: enode_url,
         enr: enr_url,
-        id: hex::encode(Keccak256::digest(local_node.node_id.as_bytes())),
-        name: "ethrex/0.1.0/rust1.82".to_string(),
-        ip: local_node.ip.to_string(),
+        id: hex::encode(node_data.local_p2p_node.node_id()),
+        name: node_data.client_version.clone(),
+        ip: node_data.local_p2p_node.ip.to_string(),
         ports: Ports {
-            discovery: local_node.udp_port,
-            listener: local_node.tcp_port,
+            discovery: node_data.local_p2p_node.udp_port,
+            listener: node_data.local_p2p_node.tcp_port,
         },
         protocols,
     };

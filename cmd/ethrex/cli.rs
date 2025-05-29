@@ -1,7 +1,7 @@
 use std::{
     fs::{metadata, read_dir},
     io::{self, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
@@ -12,18 +12,16 @@ use tracing::{info, warn, Level};
 
 use crate::{
     initializers::{init_blockchain, init_store},
-    utils::{self, set_datadir},
+    utils::{self, get_client_version, set_datadir},
     DEFAULT_DATADIR,
 };
 
-#[cfg(any(feature = "l2", feature = "based"))]
+#[cfg(feature = "l2")]
 use crate::l2;
-
-pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author = "Lambdaclass", version=VERSION_STRING, about, about = "ethrex Execution client")]
+#[command(name="ethrex", author = "Lambdaclass", version=get_client_version(), about = "ethrex Execution client")]
 pub struct CLI {
     #[command(flatten)]
     pub opts: Options,
@@ -97,7 +95,7 @@ pub struct Options {
     pub dev: bool,
     #[arg(
         long = "evm",
-        default_value = "levm",
+        default_value_t = EvmEngine::default(),
         value_name = "EVM_BACKEND",
         help = "Has to be `levm` or `revm`",
         value_parser = utils::parse_evm_engine,
@@ -237,7 +235,20 @@ pub enum Subcommand {
         #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
     },
-    #[cfg(any(feature = "l2", feature = "based"))]
+    #[command(
+        name = "compute-state-root",
+        about = "Compute the state root from a genesis file"
+    )]
+    ComputeStateRoot {
+        #[arg(
+            required = true,
+            long = "path",
+            value_name = "GENESIS_FILE_PATH",
+            help = "Path to the genesis json file"
+        )]
+        genesis_path: PathBuf,
+    },
+    #[cfg(feature = "l2")]
     #[command(subcommand)]
     L2(l2::Command),
 }
@@ -268,7 +279,10 @@ impl Subcommand {
 
                 import_blocks(&path, &opts.datadir, network, opts.evm).await;
             }
-            #[cfg(any(feature = "l2", feature = "based"))]
+            Subcommand::ComputeStateRoot { genesis_path } => {
+                compute_state_root(genesis_path.to_str().expect("Invalid genesis path"));
+            }
+            #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
         }
         Ok(())
@@ -354,4 +368,10 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
     }
 
     info!("Added {size} blocks to blockchain");
+}
+
+pub fn compute_state_root(genesis_path: &str) {
+    let genesis = utils::read_genesis_file(genesis_path);
+    let state_root = genesis.compute_state_root();
+    println!("{:#x}", state_root);
 }

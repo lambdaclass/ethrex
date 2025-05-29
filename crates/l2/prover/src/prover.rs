@@ -1,7 +1,6 @@
-use crate::{prove, to_calldata};
+use crate::{config::ProverConfig, prove, to_calldata};
 use ethrex_l2::{
-    sequencer::proof_coordinator::ProofData,
-    utils::{config::prover::ProverConfig, prover::proving_systems::ProofCalldata},
+    sequencer::proof_coordinator::ProofData, utils::prover::proving_systems::ProofCalldata,
 };
 use std::time::Duration;
 use tokio::{
@@ -18,7 +17,7 @@ pub async fn start_prover(config: ProverConfig) {
 }
 
 struct ProverData {
-    block_number: u64,
+    batch_number: u64,
     input: ProgramInput,
 }
 
@@ -45,7 +44,7 @@ impl Prover {
                     match prove(prover_data.input).and_then(to_calldata) {
                         Ok(proving_output) => {
                             if let Err(e) = self
-                                .submit_proof(prover_data.block_number, proving_output)
+                                .submit_proof(prover_data.batch_number, proving_output)
                                 .await
                             {
                                 // TODO: Retry?
@@ -65,31 +64,32 @@ impl Prover {
     }
 
     async fn request_new_input(&self) -> Result<ProverData, String> {
-        // Request the input with the correct block_number
-        let request = ProofData::block_request();
+        // Request the input with the correct batch_number
+        let request = ProofData::batch_request();
         let response = connect_to_prover_server_wr(&self.prover_server_endpoint, &request)
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
 
         match response {
-            ProofData::BlockResponse {
-                block_number,
+            ProofData::BatchResponse {
+                batch_number,
                 input,
-            } => match (block_number, input) {
-                (Some(block_number), Some(input)) => {
-                    info!("Received Response for block_number: {block_number}");
+            } => match (batch_number, input) {
+                (Some(batch_number), Some(input)) => {
+                    info!("Received Response for batch_number: {batch_number}");
                     let prover_data = ProverData{
-                        block_number,
+                        batch_number,
                         input:  ProgramInput {
-                            block: input.block,
+                            blocks: input.blocks,
                             parent_block_header: input.parent_block_header,
-                            db: input.db
+                            db: input.db,
+                            elasticity_multiplier: input.elasticity_multiplier,
                         }
                     };
                     Ok(prover_data)
                 }
                 _ => Err(
-                    "Received Empty Response, meaning that the ProverServer doesn't have blocks to prove.\nThe Prover may be advancing faster than the Proposer."
+                    "Received Empty Response, meaning that the ProverServer doesn't have batches to prove.\nThe Prover may be advancing faster than the Proposer."
                         .to_owned(),
                 ),
             },
@@ -99,18 +99,18 @@ impl Prover {
 
     async fn submit_proof(
         &self,
-        block_number: u64,
+        batch_number: u64,
         proving_output: ProofCalldata,
     ) -> Result<(), String> {
-        let submit = ProofData::proof_submit(block_number, proving_output);
+        let submit = ProofData::proof_submit(batch_number, proving_output);
 
         let submit_ack = connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)
             .await
             .map_err(|e| format!("Failed to get SubmitAck: {e}"))?;
 
         match submit_ack {
-            ProofData::ProofSubmitACK { block_number } => {
-                info!("Received submit ack for block_number: {}", block_number);
+            ProofData::ProofSubmitACK { batch_number } => {
+                info!("Received submit ack for batch_number: {}", batch_number);
                 Ok(())
             }
             _ => Err("Expecting ProofData::SubmitAck".to_owned()),

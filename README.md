@@ -1,6 +1,6 @@
 # ethrex
 
-Ethereum Rust Execution L1 and L2 client.
+Minimalist, stable, modular and fast implementation of the Ethereum protocol in Rust.
 
 [![Telegram Chat][tg-badge]][tg-url]
 [![license](https://img.shields.io/github/license/lambdaclass/ethrex)](/LICENSE)
@@ -13,7 +13,7 @@ Ethereum Rust Execution L1 and L2 client.
 This client supports running in two different modes:
 
 - As a regular Ethereum execution client
-- As a ZK-Rollup, where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security.
+- As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.
 
 We call the first one ethrex L1 and the second one ethrex L2.
 
@@ -194,6 +194,7 @@ Usage: ethrex [OPTIONS] [COMMAND]
 Commands:
   removedb  Remove the database
   import    Import blocks to the database
+  compute-state-root  Compute the state root from a genesis file
   help      Print this message or the help of the given subcommand(s)
 
 Options:
@@ -357,8 +358,8 @@ In this mode, the ethrex code is repurposed to run a rollup that settles on Ethe
 
 The main differences between this mode and regular ethrex are:
 
-- There is no consensus, the node is turned into a sequencer that proposes blocks for the network.
-- Block execution is proven using a RISC-V zkVM and its proofs are sent to L1 for verification.
+- In regular rollup mode, there is no consensus; the node is turned into a sequencer that proposes blocks for the network. In based rollup mode, consensus is achieved by a mechanism that rotates sequencers, enforced by the L1.
+- Block execution is proven using a RISC-V zkVM (or attested to using TDX, a Trusted Execution Environment) and its proofs (or signatures/attestations) are sent to L1 for verification.
 - A set of Solidity contracts to be deployed to the L1 are included as part of network initialization.
 - Two new types of transactions are included: deposits (native token mints) and withdrawals.
 
@@ -386,7 +387,6 @@ At a high level, the following new parts are added to the node:
 >
 > 1. Make sure you are inside the `crates/l2` directory.
 > 2. Make sure the Docker daemon is running.
-> 3. Make sure you have created a `sequencer_config.toml` file following the `sequencer_config_example.toml` file.
 
 ```
 make init

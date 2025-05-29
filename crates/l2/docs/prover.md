@@ -18,11 +18,11 @@
   - [How it works](#how-it-works)
     - [Program inputs](#program-inputs)
       - [Execution witness](#execution-witness)
-    - [Block execution program](#block-execution-program)
+    - [Blocks execution program](#block-execution-program)
       - [Prelude 1: state trie basics](#prelude-1-state-trie-basics)
       - [Prelude 2: deposits, withdrawals and state diffs](#prelude-2-deposits-withdrawals-and-state-diffs)
       - [Step 1: initial state validation](#step-1-initial-state-validation)
-      - [Step 2: block execution](#step-2-block-execution)
+      - [Step 2: blocks execution](#step-2-block-execution)
       - [Step 3: final state validation](#step-3-final-state-validation)
       - [Step 4: deposit hash calculation](#step-4-deposit-hash-calculation)
       - [Step 5: withdrawals Merkle root calculation](#step-5-withdrawals-merkle-root-calculation)
@@ -48,11 +48,11 @@ sequenceDiagram
     participant Prover
     participant ProofCoordinator
     Prover->>+ProofCoordinator: ProofData::Request
-    ProofCoordinator-->>-Prover: ProofData::Response(block_number, ProverInputs)
+    ProofCoordinator-->>-Prover: ProofData::Response(batch_number, ProverInputs)
     Prover->>+zkVM: Prove(ProverInputs)
     zkVM-->>-Prover: Creates zkProof
-    Prover->>+ProofCoordinator: ProofData::Submit(block_number, zkProof)
-    ProofCoordinator-->>-Prover: ProofData::SubmitAck(block_number)
+    Prover->>+ProofCoordinator: ProofData::Submit(batch_number, zkProof)
+    ProofCoordinator-->>-Prover: ProofData::SubmitAck(batch_number)
 ```
 
 ## How
@@ -64,7 +64,7 @@ sequenceDiagram
   2. `rzup install cargo-risczero 1.2.0`
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
   1. `curl -L https://sp1up.succinct.xyz | bash`
-  2. `sp1up --version 4.1.0`
+  2. `sp1up --version 4.1.7`
 - [Pico](https://docs.brevis.network/)
   1. `cargo +nightly install --git https://github.com/brevis-network/pico pico-cli`
   2. `rustup install nightly-2024-11-27`
@@ -107,14 +107,12 @@ make init-prover T="prover_type (pico,risc0,sp1) G=true"
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
-3. `cp configs/sequencer_config_example.toml configs/sequencer_config.toml` &rarr; check if you want to change any config.
-4. `cp configs/prover_client_config_example.toml configs/prover_client_config.toml` &rarr; check if you want to change any config.
-5. `make init`
+3. `make init`
    - Make sure you have the `solc` compiler installed in your system.
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
    - Start the L2 locally on port `1729`.
-6. In a new terminal &rarr; `make init-prover T=(sp1,risc0,pico)`.
+4. In a new terminal &rarr; `make init-prover T=(sp1,risc0,pico)`.
 
 After this initialization we should have the prover running in `dev_mode` &rarr; No real proofs.
 
@@ -161,36 +159,41 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
 
 1. `Prover`/`zkvm` &rarr; prover with gpu, make sure to have all the required dependencies described at the beginning of [Gpu Mode](#gpu-mode) section.
    1. `cd ethrex/crates/l2`
-   2. `cp configs/prover_client_config_example.toml configs/prover_client_config.toml` and change the `prover_server_endpoint` with machine's `2` ip and make sure the port matches the one defined in machine 2.
-
-The important variables are:
-
-```sh
-[prover_client]
-prover_server_endpoint=<ip-address>:3900
-```
+   2. You can set the following environment variables to configure the prover:
+      - PROVER_CLIENT_PROVER_SERVER_ENDPOINT: The address of the server where the client will request the proofs from
+      - PROVER_CLIENT_PROVING_TIME_MS: The amount of time to wait before requesting new data to prove
 
 - `Finally`, to start the `Prover`/`zkvm`, run:
   - `make init-prover T=(sp1,risc0,pico) G=true`
 
 2. `ProofCoordinator`/`sequencer` &rarr; this server just needs rust installed.
    1. `cd ethrex/crates/l2`
-   2. `cp configs/sequencer_config_example.toml configs/sequencer_config.toml` and change the addresses and the following fields:
-      - [prover_server]
-        - `listen_ip=0.0.0.0` &rarr; Used to handle TCP communication with other servers from any network interface.
-      - The `COMMITTER` and `PROVER_SERVER_VERIFIER` must be different accounts, the `DEPLOYER_ADDRESS` as well as the `L1_WATCHER` may be the same account used by the `COMMITTER`.
-      - [deployer]
-        - `salt_is_zero=false` &rarr; set to false to randomize the salt.
-      - `sp1_deploy_verifier = true` overwrites `sp1_contract_verifier`. Check if the contract is deployed in your preferred network or set to `true` to deploy it.
-      - `risc0_contract_verifier`
-        - Check the if the contract is present on your preferred network.
-      - `sp1_contract_verifier`
-        - It can be deployed.
-        - Check the if the contract is present on your preferred network.
-      - `pico_contract_verifier`
-        - It can be deployed.
-        - Check the if the contract is present on your preferred network.
-      - Set the [eth] `rpc_url` to any L1 endpoint.
+   2. Create a `.env` file with the following content:
+   ```env
+   // Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
+   ETHREX_DEPLOYER_L1_PRIVATE_KEY=<private_key>
+   // Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
+   ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY=<private_key>
+   // Should be the same as ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
+   ETHREX_COMMITTER_L1_PRIVATE_KEY=<private_key>
+   // Should be different from ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
+   ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=<private_key>
+   // Used to handle TCP communication with other servers from any network interface.
+   ETHREX_PROOF_COORDINATOR_LISTEN_IP=0.0.0.0
+   // Set to true to randomize the salt.
+   ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
+   // Check if the contract is deployed in your preferred network or set to `true` to deploy it.
+   ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true
+   // Check the if the contract is present on your preferred network.
+   ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>
+   // It can be deployed. Check the if the contract is present on your preferred network.
+   ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=<address>
+   // It can be deployed. Check the if the contract is present on your preferred network.
+   ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER=<address>
+   // Set to any L1 endpoint.
+   ETHREX_ETH_RPC_URL=<url>
+   ```
+   3. `source .env`
 
 > [!NOTE]
 > Make sure to have funds, if you want to perform a quick test `0.2[ether]` on each account should be enough.
@@ -222,41 +225,41 @@ The following environment variables are used by the ProverServer:
 
 ## How it works
 
-The prover's sole purpose is to generate a block execution proof. For this, ethrex-prover implements a block execution program and generates a proof of it using different RISC-V zkVMs (Pico, SP1, Risc0).
+The prover's sole purpose is to generate a block (or batch of blocks) execution proof. For this, ethrex-prover implements a blocks execution program and generates a proof of it using different RISC-V zkVMs (Pico, SP1, Risc0).
 
 The prover runs a process that polls another for new jobs. The job must provide the program inputs. A proof of the program's execution with the provided inputs is generated by the prover and sent back.
 
 ### Program inputs
 
-The inputs for the block execution program (also called program inputs or prover inputs) are:
-- the block to prove (header and body)
-- the block's parent header
+The inputs for the blocks execution program (also called program inputs or prover inputs) are:
+- the blocks to prove (header and body)
+- the first block's parent header
 - an execution witness
-- the block's deposits hash
-- the block's withdrawals Merkle root
-- the block's state diff hash
+- the blocks' deposits hash
+- the blocks' withdrawals Merkle root
+- the blocks' state diff hash
 
 The last three inputs are L2 specific.
 
 These inputs are required for proof generation, but not all of them are committed as public inputs, which are needed for proof verification. The proof's public inputs (also called program outputs) will be:
 
-- the initial state hash (from the parent block header)
-- the final state hash (from the current block header)
-- the block's deposits hash
-- the block's withdrawals Merkle root
-- the block's state diff hash
+- the initial state hash (from the first block's parent header)
+- the final state hash (from the last block's header)
+- the blocks' deposits hash
+- the blocks' withdrawals Merkle root
+- the blocks' state diff hash
 
 #### Execution witness
-The purpose of the execution witness is to allow executing a block without having access to the whole Ethereum state, as it wouldn't fit in a zkVM program. It contains only the state values needed during the execution.
+The purpose of the execution witness is to allow executing the blocks without having access to the whole Ethereum state, as it wouldn't fit in a zkVM program. It contains only the state values needed during the execution.
 
-An execution witness (represented by the `ExecutionDB` type) contains:
-1. all the initial state values (accounts, code, storage, block hashes) that will be read or written to during the block's execution.
+An execution witness (represented by the `ProverDB` type) contains:
+1. all the initial state values (accounts, code, storage, block hashes) that will be read or written to during the blocks' execution.
 2. Merkle Patricia Trie (MPT) proofs that prove the inclusion or exclusion of each initial value in the initial world state trie.
 
-An execution witness is created from a prior execution of the block. Before proving, we need to:
-1. execute the block (also called "pre-execution").
+An execution witness is created from a prior execution of the blocks. Before proving, we need to:
+1. execute the blocks (also called "pre-execution").
 2. log every initial state value accessed or updated during this execution.
-3. store each logged value in an in-memory key-value database (`ExecutionDB`, implemented just using hash maps).
+3. store each logged value in an in-memory key-value database (`ProverDB`, implemented just using hash maps).
 4. retrieve an MPT proof for each value, linking it (or its non-existence) to the initial state root hash.
 
 Steps 1-3 are straightforward. Step 4 involves more complex logic due to potential issues when restructuring the pruned state trie after value removals. In sections [initial state validation](#step-1-initial-state-validation) and [final state validation](#step-3-final-state-validation) we explain what are pruned tries and in which case they get restructured.
@@ -285,8 +288,8 @@ The solution is to fetch the missing node directly using a `debug` JSON-RPC meth
 > [!NOTE]
 > These problems arise when creating the execution witness solely from state proofs fetched via standard JSON-RPC. In the L2 context, where we control the sequencer, we could develop a protocol to easily retrieve all necessary data more directly. However, the problems remain relevant when proving L1 blocks (e.g., for testing/benchmarking).
 
-### Block execution program
-The program leverages ethrex-common primitives and ethrex-vm methods. ethrex-prover implements a program that uses the existing execution logic and generates a proof of its execution using a zkVM. Some L2-specific logic and input validation are added on top of the basic block execution.
+### Blocks execution program
+The program leverages ethrex-common primitives and ethrex-vm methods. ethrex-prover implements a program that uses the existing execution logic and generates a proof of its execution using a zkVM. Some L2-specific logic and input validation are added on top of the basic blocks execution.
 
 The following sections outline the steps taken by the execution program.
 
@@ -310,25 +313,25 @@ These three components are specific additions for ethrex's L2 protocol, layered 
 For more details, refer to [Overview](overview.md), [Withdrawals](withdrawals.md), and [State diffs](state_diffs.md).
 
 #### Step 1: initial state validation
-The program validates the `ExecutionDB` by iterating over each provided state value (stored in hash maps) and verifying its MPT proof against the initial state hash (obtained from the parent block header input). This is the role of the `verify_db()` function (to link the values with the proofs). We could instead directly decode the data from the MPT proofs on each EVM read/write, although this would incur performance costs.
+The program validates the `ProverDB` by iterating over each provided state value (stored in hash maps) and verifying its MPT proof against the initial state hash (obtained from the first block's parent block header input). This is the role of the `verify_db()` function (to link the values with the proofs). We could instead directly decode the data from the MPT proofs on each EVM read/write, although this would incur performance costs.
 
 Having the initial state proofs (paths from the root to each relevant leaf) is equivalent to having a relevant subset of the world state trie and storage tries – a set of "pruned tries". This allows operating directly on these pruned tries (adding, removing, modifying values) during execution.
 
-#### Step 2: block execution
-After validating the initial state, the program executes the block. This leverages the existing ethrex execution logic used by the L2 client itself.
+#### Step 2: blocks execution
+After validating the initial state, the program executes the blocks. This leverages the existing ethrex execution logic used by the L2 client itself.
 
 #### Step 3: final state validation
 During execution, state values are updated (modified, created, or removed). After execution, the program calculates the final state by applying these state updates to the initial pruned tries.
 
-Applying the updates results in a new world state root node for the pruned tries. Hashing this node yields the calculated final state hash. The program then verifies that this calculated hash matches the expected final state hash (from the block header), thus validating the final state.
+Applying the updates results in a new world state root node for the pruned tries. Hashing this node yields the calculated final state hash. The program then verifies that this calculated hash matches the expected final state hash (from the last block header), thus validating the final state.
 
 As mentioned earlier, removing values can sometimes require information not present in the initial witness to correctly restructure the pruned tries. The [Execution witness](#execution-witness) section details this problem and its solution.
 
 #### Step 4: deposit hash calculation
-After execution and final state validation, the program calculates a hash encompassing all deposits made within the block (extracting deposit info from `PrivilegedL2Transaction` type transactions). This hash is committed as a public input, required for verification on the L1 bridge contract.
+After execution and final state validation, the program calculates a hash encompassing all deposits made within the blocks (extracting deposit info from `PrivilegedL2Transaction` type transactions). This hash is committed as a public input, required for verification on the L1 bridge contract.
 
 #### Step 5: withdrawals Merkle root calculation
-Similarly, the program constructs a binary Merkle tree of all withdrawals initiated in the block and calculates its root hash. This hash is also committed as a public input. Later, L1 accounts can claim their withdrawals by providing a Merkle proof of inclusion that validates against this root hash on the L1 bridge contract.
+Similarly, the program constructs a binary Merkle tree of all withdrawals initiated in the blocks and calculates its root hash. This hash is also committed as a public input. Later, L1 accounts can claim their withdrawals by providing a Merkle proof of inclusion that validates against this root hash on the L1 bridge contract.
 
 #### Step 6: state diff calculation and commitment
 Finally, the program calculates the state diffs (changes between initial and final state) intended for publication to L1 as blob data. It creates a commitment to this data (a Merkle root hash), which is committed as a public input. Using proof of equivalence logic within the L1 bridge contract, this Merkle commitment can be verified against the KZG commitment of the corresponding blob data.

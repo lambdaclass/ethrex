@@ -2520,6 +2520,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_builder"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "507dfb09ea8b7fa618fcf76e953f4f5e192547945816d5358edffe39f6f94947"
+dependencies = [
+ "derive_builder_macro",
+]
+
+[[package]]
+name = "derive_builder_core"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d5bcf7b024d6835cfb3d473887cd966994907effbe9227e8c8219824d06c4e8"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
+name = "derive_builder_macro"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab63b0e2bf4d5928aff72e83a7dace85d7bba5fe12dcc3c5a572d78caffd3f3c"
+dependencies = [
+ "derive_builder_core",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "derive_more"
 version = "0.99.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2996,45 +3027,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethereum_hashing"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c853bd72c9e5787f8aafc3df2907c2ed03cff3150c3acd94e2e53a98ab70a8ab"
-dependencies = [
- "cpufeatures",
- "ring",
- "sha2 0.10.8",
-]
-
-[[package]]
-name = "ethereum_serde_utils"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70cbccfccf81d67bff0ab36e591fa536c8a935b078a7b0e58c1d00d418332fc9"
-dependencies = [
- "alloy-primitives 0.8.25",
- "hex",
- "serde",
- "serde_derive",
- "serde_json",
-]
-
-[[package]]
-name = "ethereum_ssz"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86da3096d1304f5f28476ce383005385459afeaf0eea08592b65ddbc9b258d16"
-dependencies = [
- "alloy-primitives 0.8.25",
- "ethereum_serde_utils",
- "itertools 0.13.0",
- "serde",
- "serde_derive",
- "smallvec",
- "typenum",
-]
-
-[[package]]
 name = "ethrex"
 version = "0.1.0"
 dependencies = [
@@ -3054,6 +3046,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-storage",
+ "ethrex-storage-rollup",
  "ethrex-vm",
  "eyre",
  "hex",
@@ -3065,11 +3058,13 @@ dependencies = [
  "redb",
  "reqwest",
  "secp256k1",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
+ "vergen 9.0.6",
 ]
 
 [[package]]
@@ -3156,20 +3151,23 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-sdk",
  "ethrex-storage",
+ "ethrex-storage-rollup",
  "ethrex-trie",
  "ethrex-vm",
  "hex",
  "jsonwebtoken",
  "keccak-hash",
+ "lazy_static",
  "rand 0.8.5",
  "reqwest",
  "secp256k1",
  "serde",
  "serde_json",
+ "spawned-concurrency",
+ "spawned-rt",
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
- "toml 0.8.20",
  "tracing",
  "zkvm_interface",
 ]
@@ -3254,6 +3252,7 @@ name = "ethrex-prover"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "clap 4.5.36",
  "ethereum-types",
  "ethrex-blockchain",
  "ethrex-common",
@@ -3279,7 +3278,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-prover-bench"
+name = "ethrex-replay"
 version = "0.1.0"
 dependencies = [
  "again",
@@ -3295,6 +3294,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "eyre",
  "futures-util",
  "hex",
  "lazy_static",
@@ -3306,6 +3306,8 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-utils",
+ "tracing",
+ "tracing-subscriber 0.3.19",
  "zkvm_interface",
 ]
 
@@ -3337,6 +3339,7 @@ dependencies = [
  "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-storage",
+ "ethrex-storage-rollup",
  "ethrex-vm",
  "hex",
  "hex-literal",
@@ -3351,16 +3354,12 @@ dependencies = [
  "serde_json",
  "sha2 0.10.8",
  "sha3",
- "ssz_types",
- "strum_macros 0.24.3",
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
  "tower-http",
  "tracing",
  "tracing-subscriber 0.3.19",
- "tree_hash",
- "tree_hash_derive",
 ]
 
 [[package]]
@@ -3376,6 +3375,7 @@ dependencies = [
  "hex",
  "itertools 0.13.0",
  "keccak-hash",
+ "lazy_static",
  "reqwest",
  "secp256k1",
  "serde",
@@ -3405,6 +3405,22 @@ dependencies = [
  "sha3",
  "tempdir",
  "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "ethrex-storage-rollup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "ethereum-types",
+ "ethrex-common",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "libmdbx",
+ "redb",
  "tokio",
  "tracing",
 ]
@@ -3444,6 +3460,7 @@ dependencies = [
  "bytes",
  "cfg-if",
  "derive_more 1.0.0",
+ "dyn-clone",
  "ethereum-types",
  "ethrex-common",
  "ethrex-levm",
@@ -3461,25 +3478,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex_l2-deployer"
+name = "ethrex_l2-contracts"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "clap 4.5.36",
+ "clap_complete",
  "colored",
  "ethereum-types",
  "ethrex-common",
  "ethrex-l2",
  "ethrex-rpc",
  "ethrex-sdk",
+ "eyre",
  "hex",
  "keccak-hash",
  "lazy_static",
  "secp256k1",
  "serde_json",
- "spinoff",
  "thiserror 2.0.12",
  "tokio",
+ "tools",
  "tracing",
+ "tracing-subscriber 0.3.19",
 ]
 
 [[package]]
@@ -3500,6 +3521,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-sdk",
  "ethrex-storage",
+ "ethrex-storage-rollup",
  "eyre",
  "hex",
  "itertools 0.13.0",
@@ -6691,7 +6713,7 @@ dependencies = [
  "pico-vm 1.0.1 (git+https://github.com/brevis-network/pico)",
  "serde",
  "serde_json",
- "vergen",
+ "vergen 8.3.2",
  "yansi",
 ]
 
@@ -9420,6 +9442,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "spawned-concurrency"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/spawned.git?tag=v0.1.0-alpha#abd5476b7cc0feeafd96ca79c6844e87702c7f83"
+dependencies = [
+ "futures",
+ "spawned-rt",
+ "tracing",
+]
+
+[[package]]
+name = "spawned-rt"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/spawned.git?tag=v0.1.0-alpha#abd5476b7cc0feeafd96ca79c6844e87702c7f83"
+dependencies = [
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+]
+
+[[package]]
 name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9454,22 +9496,6 @@ checksum = "16bf457036c0a778140ce4c3bcf9ff30c5c70a9d9c0bb04fe513af025b647b2c"
 dependencies = [
  "cc",
  "which",
-]
-
-[[package]]
-name = "ssz_types"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dad0fa7e9a85c06d0a6ba5100d733fff72e231eb6db2d86078225cf716fd2d95"
-dependencies = [
- "ethereum_serde_utils",
- "ethereum_ssz",
- "itertools 0.13.0",
- "serde",
- "serde_derive",
- "smallvec",
- "tree_hash",
- "typenum",
 ]
 
 [[package]]
@@ -9528,19 +9554,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f64def088c51c9510a8579e3c5d67c65349dcf755e5479ad3d010aa6454e2c32"
 dependencies = [
  "strum_macros 0.27.1",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.24.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e385be0d24f186b4ce2f9982191e7101bb737312ad61c1f2f984f34bcf85d59"
-dependencies = [
- "heck 0.4.1",
- "proc-macro2",
- "quote",
- "rustversion",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -10120,6 +10133,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tools"
+version = "0.0.0"
+dependencies = [
+ "ethrex-common",
+ "serde_json",
+]
+
+[[package]]
 name = "tower"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10285,31 +10306,6 @@ checksum = "1ad61aed86bc3faea4300c7aee358b4c6d0c8d6ccc36524c96e4c92ccf26e77e"
 dependencies = [
  "num-integer",
  "strength_reduce",
-]
-
-[[package]]
-name = "tree_hash"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c58eb0f518840670270d90d97ffee702d8662d9c5494870c9e1e9e0fa00f668"
-dependencies = [
- "alloy-primitives 0.8.25",
- "ethereum_hashing",
- "ethereum_ssz",
- "smallvec",
- "typenum",
-]
-
-[[package]]
-name = "tree_hash_derive"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "699e7fb6b3fdfe0c809916f251cf5132d64966858601695c3736630a87e7166a"
-dependencies = [
- "darling",
- "proc-macro2",
- "quote",
- "syn 2.0.100",
 ]
 
 [[package]]
@@ -10601,6 +10597,30 @@ dependencies = [
  "git2",
  "rustversion",
  "time",
+]
+
+[[package]]
+name = "vergen"
+version = "9.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b2bf58be11fc9414104c6d3a2e464163db5ef74b12296bda593cac37b6e4777"
+dependencies = [
+ "anyhow",
+ "derive_builder",
+ "rustc_version 0.4.1",
+ "rustversion",
+ "vergen-lib",
+]
+
+[[package]]
+name = "vergen-lib"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b07e6010c0f3e59fcb164e0163834597da68d1f864e2b8ca49f74de01e9c166"
+dependencies = [
+ "anyhow",
+ "derive_builder",
+ "rustversion",
 ]
 
 [[package]]
@@ -11394,12 +11414,14 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "keccak-hash",
  "pico-cli",
  "risc0-build",
  "serde",
  "serde_json",
  "serde_with",
  "sp1-build",
+ "sp1-sdk",
  "thiserror 2.0.12",
 ]
 

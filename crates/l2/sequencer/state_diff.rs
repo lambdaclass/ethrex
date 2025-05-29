@@ -2,14 +2,33 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::{code_hash, AccountInfo, AccountState, BlockHeader, BlockNumber};
+use ethrex_common::types::{
+    code_hash, AccountInfo, AccountState, AccountUpdate, BlockHeader, BlockNumber,
+};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_storage::{error::StoreError, hash_address, AccountUpdate, Store};
+use ethrex_storage::{error::StoreError, hash_address, Store};
 use ethrex_trie::Trie;
 
 use super::errors::StateDiffError;
 
-#[derive(Clone)]
+use lazy_static::lazy_static;
+
+lazy_static! {
+    /// The serialized length of a default withdrawal log
+    pub static ref WITHDRAWAL_LOG_LEN: usize = WithdrawalLog::default().encode().len();
+
+    /// The serialized length of a default deposit log
+    pub static ref DEPOSITS_LOG_LEN: usize = DepositLog::default().encode().len();
+
+    /// The serialized lenght of a default block header
+    pub static ref BLOCK_HEADER_LEN: usize = encode_block_header(&BlockHeader::default()).len();
+}
+
+// State diff size for a simple transfer.
+// Two `AccountUpdates` with new_balance, one of which also has nonce_diff.
+pub const SIMPLE_TX_STATE_DIFF_SIZE: usize = 116;
+
+#[derive(Clone, Debug)]
 pub struct AccountStateDiff {
     pub new_balance: Option<U256>,
     pub nonce_diff: u16,
@@ -27,24 +46,43 @@ pub enum AccountStateDiffType {
     BytecodeHash = 16,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct WithdrawalLog {
     pub address: Address,
     pub amount: U256,
     pub tx_hash: H256,
 }
 
-#[derive(Clone)]
+impl WithdrawalLog {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        encoded.extend(self.address.0);
+        encoded.extend_from_slice(&self.amount.to_big_endian());
+        encoded.extend(&self.tx_hash.0);
+        encoded
+    }
+}
+
+#[derive(Clone, Default)]
 pub struct DepositLog {
     pub address: Address,
     pub amount: U256,
     pub nonce: u64,
 }
 
+impl DepositLog {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        encoded.extend(self.address.0);
+        encoded.extend_from_slice(&self.amount.to_big_endian());
+        encoded
+    }
+}
+
 #[derive(Clone)]
 pub struct StateDiff {
     pub version: u8,
-    pub header: BlockHeader,
+    pub last_header: BlockHeader,
     pub modified_accounts: HashMap<Address, AccountStateDiff>,
     pub withdrawal_logs: Vec<WithdrawalLog>,
     pub deposit_logs: Vec<DepositLog>,
@@ -88,12 +126,26 @@ impl Default for StateDiff {
     fn default() -> Self {
         StateDiff {
             version: 1,
-            header: BlockHeader::default(),
+            last_header: BlockHeader::default(),
             modified_accounts: HashMap::new(),
             withdrawal_logs: Vec::new(),
             deposit_logs: Vec::new(),
         }
     }
+}
+
+pub fn encode_block_header(block_header: &BlockHeader) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    encoded.extend(block_header.transactions_root.0);
+    encoded.extend(block_header.receipts_root.0);
+    encoded.extend(block_header.parent_hash.0);
+    encoded.extend(block_header.gas_limit.to_be_bytes());
+    encoded.extend(block_header.gas_used.to_be_bytes());
+    encoded.extend(block_header.timestamp.to_be_bytes());
+    encoded.extend(block_header.number.to_be_bytes());
+    encoded.extend(block_header.base_fee_per_gas.unwrap_or(0).to_be_bytes());
+
+    encoded
 }
 
 impl StateDiff {
@@ -105,13 +157,8 @@ impl StateDiff {
         let mut encoded: Vec<u8> = Vec::new();
         encoded.push(self.version);
 
-        // Header fields
-        encoded.extend(self.header.transactions_root.0);
-        encoded.extend(self.header.receipts_root.0);
-        encoded.extend(self.header.gas_limit.to_be_bytes());
-        encoded.extend(self.header.gas_used.to_be_bytes());
-        encoded.extend(self.header.timestamp.to_be_bytes());
-        encoded.extend(self.header.base_fee_per_gas.unwrap_or(0).to_be_bytes());
+        let header_encoded = encode_block_header(&self.last_header);
+        encoded.extend(header_encoded);
 
         let modified_accounts_len: u16 = self
             .modified_accounts
@@ -121,25 +168,22 @@ impl StateDiff {
         encoded.extend(modified_accounts_len.to_be_bytes());
 
         for (address, diff) in &self.modified_accounts {
-            let (r#type, diff_encoded) = diff.encode()?;
-            encoded.extend(r#type.to_be_bytes());
-            encoded.extend(address.0);
-            encoded.extend(diff_encoded);
+            let account_encoded = diff.encode(address)?;
+            encoded.extend(account_encoded);
         }
 
         let withdrawal_len: u16 = self.withdrawal_logs.len().try_into()?;
         encoded.extend(withdrawal_len.to_be_bytes());
         for withdrawal in self.withdrawal_logs.iter() {
-            encoded.extend(withdrawal.address.0);
-            encoded.extend_from_slice(&withdrawal.amount.to_big_endian());
-            encoded.extend(&withdrawal.tx_hash.0);
+            let withdrawal_encoded = withdrawal.encode();
+            encoded.extend(withdrawal_encoded);
         }
 
         let deposits_len: u16 = self.deposit_logs.len().try_into()?;
         encoded.extend(deposits_len.to_be_bytes());
         for deposit in self.deposit_logs.iter() {
-            encoded.extend(deposit.address.0);
-            encoded.extend_from_slice(&deposit.amount.to_big_endian());
+            let deposit_encoded = deposit.encode();
+            encoded.extend(deposit_encoded);
         }
 
         Ok(Bytes::from(encoded))
@@ -153,13 +197,18 @@ impl StateDiff {
             return Err(StateDiffError::UnsupportedVersion(version));
         }
 
-        // Header fields
-        let transactions_root = decoder.get_h256()?;
-        let receipts_root = decoder.get_h256()?;
-        let gas_limit = decoder.get_u64()?;
-        let gas_used = decoder.get_u64()?;
-        let timestamp = decoder.get_u64()?;
-        let base_fee_per_gas = decoder.get_u64()?;
+        // Last header fields
+        let last_header = BlockHeader {
+            transactions_root: decoder.get_h256()?,
+            receipts_root: decoder.get_h256()?,
+            parent_hash: decoder.get_h256()?,
+            gas_limit: decoder.get_u64()?,
+            gas_used: decoder.get_u64()?,
+            timestamp: decoder.get_u64()?,
+            number: decoder.get_u64()?,
+            base_fee_per_gas: Some(decoder.get_u64()?),
+            ..Default::default()
+        };
 
         // Accounts diff
         let modified_accounts_len = decoder.get_u16()?;
@@ -204,16 +253,8 @@ impl StateDiff {
         }
 
         Ok(Self {
-            header: BlockHeader {
-                transactions_root,
-                receipts_root,
-                gas_limit,
-                gas_used,
-                timestamp,
-                base_fee_per_gas: Some(base_fee_per_gas),
-                ..Default::default()
-            },
             version,
+            last_header,
             modified_accounts,
             withdrawal_logs,
             deposit_logs,
@@ -270,7 +311,7 @@ impl StateDiff {
 }
 
 impl AccountStateDiff {
-    pub fn encode(&self) -> Result<(u8, Bytes), StateDiffError> {
+    pub fn encode(&self, address: &Address) -> Result<Vec<u8>, StateDiffError> {
         if self.bytecode.is_some() && self.bytecode_hash.is_some() {
             return Err(StateDiffError::BytecodeAndBytecodeHashSet);
         }
@@ -323,7 +364,12 @@ impl AccountStateDiff {
             return Err(StateDiffError::EmptyAccountDiff);
         }
 
-        Ok((r#type, Bytes::from(encoded)))
+        let mut result = Vec::with_capacity(1 + address.0.len() + encoded.len());
+        result.extend(r#type.to_be_bytes());
+        result.extend(address.0);
+        result.extend(encoded);
+
+        Ok(result)
     }
 
     /// Returns a tuple of the number of bytes read, the address of the account

@@ -1,4 +1,3 @@
-use crate::utils::config::errors::ConfigError;
 use crate::utils::error::UtilsError;
 use crate::utils::prover::errors::SaveStateError;
 use crate::utils::prover::proving_systems::ProverType;
@@ -14,6 +13,24 @@ use ethrex_vm::EvmError;
 use tokio::task::JoinError;
 
 #[derive(Debug, thiserror::Error)]
+pub enum SequencerError {
+    #[error("Failed to start L1Watcher: {0}")]
+    L1WatcherError(#[from] L1WatcherError),
+    #[error("Failed to start ProverServer: {0}")]
+    ProverServerError(#[from] ProverServerError),
+    #[error("Failed to start BlockProducer: {0}")]
+    BlockProducerError(#[from] BlockProducerError),
+    #[error("Failed to start Committer: {0}")]
+    CommitterError(#[from] CommitterError),
+    #[error("Failed to start ProofSender: {0}")]
+    ProofSenderError(#[from] ProofSenderError),
+    #[error("Failed to start MetricsGatherer: {0}")]
+    MetricsGathererError(#[from] MetricsGathererError),
+    #[error("Sequencer error: {0}")]
+    EthClientError(#[from] EthClientError),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum L1WatcherError {
     #[error("L1Watcher error: {0}")]
     EthClientError(#[from] EthClientError),
@@ -23,8 +40,6 @@ pub enum L1WatcherError {
     FailedToDeserializePrivateKey(String),
     #[error("L1Watcher failed to retrieve chain config: {0}")]
     FailedToRetrieveChainConfig(String),
-    #[error("L1Watcher failed to get config: {0}")]
-    FailedToGetConfig(#[from] ConfigError),
     #[error("L1Watcher failed to access Store: {0}")]
     FailedAccessingStore(#[from] StoreError),
     #[error("{0}")]
@@ -61,6 +76,8 @@ pub enum ProverServerError {
     InternalError(String),
     #[error("ProverServer failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
+    #[error("Failed to execute command: {0}")]
+    ComandError(std::io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -75,6 +92,8 @@ pub enum ProofSenderError {
     ProofNotPresent(ProverType),
     #[error("Unexpected Error: {0}")]
     InternalError(String),
+    #[error("Failed to parse OnChainProposer response: {0}")]
+    FailedToParseOnChainProposerResponse(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -93,7 +112,7 @@ pub enum BlockProducerError {
     FailedToGetSystemTime(#[from] std::time::SystemTimeError),
     #[error("Block Producer failed because of a store error: {0}")]
     StoreError(#[from] StoreError),
-    #[error("Block Producer failed retrieve block from storaga, data is None.")]
+    #[error("Block Producer failed retrieve block from storage, data is None.")]
     StorageDataIsNone,
     #[error("Block Producer failed to read jwt_secret: {0}")]
     FailedToReadJWT(#[from] std::io::Error),
@@ -107,6 +126,10 @@ pub enum BlockProducerError {
     Custom(String),
     #[error("Failed to parse withdrawal: {0}")]
     FailedToParseWithdrawal(#[from] UtilsError),
+    #[error("Failed to encode AccountStateDiff: {0}")]
+    FailedToEncodeAccountStateDiff(#[from] StateDiffError),
+    #[error("Failed to get data from: {0}")]
+    FailedToGetDataFrom(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -116,7 +139,7 @@ pub enum CommitterError {
     #[error("Committer failed to  {0}")]
     FailedToParseLastCommittedBlock(#[from] FromStrRadixErr),
     #[error("Committer failed retrieve block from storage: {0}")]
-    FailedToRetrieveBlockFromStorage(#[from] StoreError),
+    StoreError(#[from] StoreError),
     #[error("Committer failed because of an execution cache error")]
     ExecutionCache(#[from] ExecutionCacheError),
     #[error("Committer failed retrieve data from storage")]
@@ -169,8 +192,6 @@ pub enum StateDiffError {
     FailedToDeserializeStateDiff(String),
     #[error("StateDiff failed to serialize: {0}")]
     FailedToSerializeStateDiff(String),
-    #[error("StateDiff failed to get config: {0}")]
-    FailedToGetConfig(#[from] ConfigError),
     #[error("StateDiff invalid account state diff type: {0}")]
     InvalidAccountStateDiffType(u8),
     #[error("StateDiff unsupported version: {0}")]
@@ -195,6 +216,8 @@ pub enum MetricsGathererError {
     MetricsError(#[from] ethrex_metrics::MetricsError),
     #[error("MetricsGatherer failed because of an EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("MetricsGatherer: {0}")]
+    TryInto(String),
 }
 
 #[derive(Debug, thiserror::Error)]

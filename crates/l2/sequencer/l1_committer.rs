@@ -3,40 +3,53 @@ use crate::{
         errors::CommitterError,
         state_diff::{get_nonce_diff, AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
     },
-    utils::{
-        config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
-        helpers::is_withdrawal_l2,
-    },
+    utils::helpers::is_withdrawal_l2,
+    CommitterConfig, EthConfig, SequencerConfig,
 };
 
+use ethrex_blockchain::vm::StoreVmDatabase;
+#[cfg(feature = "metrics")]
+use ethrex_common::types::BYTES_PER_BLOB;
 use ethrex_common::{
     types::{
-        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block,
-        PrivilegedL2Transaction, Receipt, Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION,
-        MIN_BASE_FEE_PER_BLOB_GAS,
+        blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, BlobsBundleError,
+        Block, BlockHeader, BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
+        BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
 };
-use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::{get_withdrawal_hash, merkle_tree::merkelize};
-use ethrex_rpc::clients::eth::{
-    eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
+use ethrex_l2_sdk::{
+    calldata::{encode_calldata, Value},
+    merkle_tree::merkelize,
 };
-use ethrex_storage::{AccountUpdate, Store};
-use ethrex_vm::Evm;
+use ethrex_metrics::metrics;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};
+use ethrex_rpc::{
+    clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
+    utils::get_withdrawal_hash,
+};
+use ethrex_storage::Store;
+use ethrex_storage_rollup::StoreRollup;
+use ethrex_vm::{Evm, EvmEngine};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
-use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::sleep_random};
+use super::{
+    errors::{BlobEstimationError, SequencerError},
+    execution_cache::ExecutionCache,
+    utils::sleep_random,
+};
 
-const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
 
 pub struct Committer {
     eth_client: EthClient,
     on_chain_proposer_address: Address,
     store: Store,
+    rollup_store: StoreRollup,
     l1_address: Address,
     l1_private_key: SecretKey,
     commit_time_ms: u64,
@@ -47,13 +60,17 @@ pub struct Committer {
 
 pub async fn start_l1_committer(
     store: Store,
+    rollup_store: StoreRollup,
     execution_cache: Arc<ExecutionCache>,
-) -> Result<(), ConfigError> {
-    let eth_config = EthConfig::from_env()?;
-    let committer_config = CommitterConfig::from_env()?;
-
-    let mut committer =
-        Committer::new_from_config(&committer_config, eth_config, store, execution_cache);
+    cfg: SequencerConfig,
+) -> Result<(), SequencerError> {
+    let mut committer = Committer::new_from_config(
+        &cfg.l1_committer,
+        &cfg.eth,
+        store,
+        rollup_store,
+        execution_cache,
+    )?;
     committer.run().await;
     Ok(())
 }
@@ -61,21 +78,31 @@ pub async fn start_l1_committer(
 impl Committer {
     pub fn new_from_config(
         committer_config: &CommitterConfig,
-        eth_config: EthConfig,
+        eth_config: &EthConfig,
         store: Store,
+        rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
-    ) -> Self {
-        Self {
-            eth_client: EthClient::new(&eth_config.rpc_url),
+    ) -> Result<Self, CommitterError> {
+        Ok(Self {
+            eth_client: EthClient::new_with_config(
+                eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
+                eth_config.max_number_of_retries,
+                eth_config.backoff_factor,
+                eth_config.min_retry_delay,
+                eth_config.max_retry_delay,
+                Some(eth_config.maximum_allowed_max_fee_per_gas),
+                Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
+            )?,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             store,
+            rollup_store,
             l1_address: committer_config.l1_address,
             l1_private_key: committer_config.l1_private_key,
             commit_time_ms: committer_config.commit_time_ms,
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
             validium: committer_config.validium,
-        }
+        })
     }
 
     pub async fn run(&mut self) {
@@ -89,106 +116,47 @@ impl Committer {
     }
 
     async fn main_logic(&mut self) -> Result<(), CommitterError> {
-        let block_number = 1 + EthClient::get_last_committed_block(
-            &self.eth_client,
-            self.on_chain_proposer_address,
-        )
-        .await?;
+        // Get the batch to commit
+        let last_committed_batch_number = self
+            .eth_client
+            .get_last_committed_batch(self.on_chain_proposer_address)
+            .await?;
+        let batch_to_commit = last_committed_batch_number + 1;
 
-        let Some(block_to_commit_body) = self
-            .store
-            .get_block_body(block_number)
-            .await
-            .map_err(CommitterError::from)?
-        else {
-            debug!("No new block to commit, skipping..");
+        // Get the last committed block_number
+        let last_committed_block_number = self
+            .rollup_store
+            .get_block_numbers_by_batch(last_committed_batch_number)
+            .await?
+            .and_then(|blocks| blocks.last().copied())
+            .ok_or_else(|| CommitterError::InternalError("Invalid rollup_storage state".into()))?;
+
+        let first_block_to_commit = last_committed_block_number + 1;
+
+        // Try to prepare batch
+        let (
+            blobs_bundle,
+            new_state_root,
+            withdrawal_hashes,
+            deposit_logs_hash,
+            last_block_of_batch,
+        ) = self
+            .prepare_batch_from_block(last_committed_block_number)
+            .await?;
+
+        if last_committed_block_number == last_block_of_batch {
+            debug!("No new blocks to commit, skipping");
             return Ok(());
-        };
-
-        let block_to_commit_header = self
-            .store
-            .get_block_header(block_number)
-            .map_err(CommitterError::from)?
-            .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                "Failed to get_block_header() after get_block_body()".to_owned(),
-            ))?;
-
-        let mut txs_and_receipts = vec![];
-        for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
-            let receipt = self
-                .store
-                .get_receipt(block_number, index.try_into()?)
-                .await?
-                .ok_or(CommitterError::InternalError(
-                    "Transactions in a block should have a receipt".to_owned(),
-                ))?;
-            txs_and_receipts.push((tx.clone(), receipt));
         }
 
-        let block_to_commit = Block::new(block_to_commit_header, block_to_commit_body);
+        let withdrawal_logs_merkle_root =
+            self.get_withdrawals_merkle_root(withdrawal_hashes.clone())?;
 
-        let withdrawals = self.get_block_withdrawals(&txs_and_receipts)?;
-        let deposits = self.get_block_deposits(&block_to_commit);
+        info!("Sending commitment for batch {batch_to_commit}. first_block: {first_block_to_commit}, last_block: {last_block_of_batch}");
 
-        let mut withdrawal_hashes = vec![];
-
-        for (_, tx) in &withdrawals {
-            let hash =
-                get_withdrawal_hash(tx).ok_or(CommitterError::InvalidWithdrawalTransaction)?;
-            withdrawal_hashes.push(hash);
-        }
-
-        let withdrawal_logs_merkle_root = self.get_withdrawals_merkle_root(withdrawal_hashes)?;
-        let deposit_logs_hash = self.get_deposit_hash(
-            deposits
-                .iter()
-                .filter_map(|tx| tx.get_deposit_hash())
-                .collect(),
-        )?;
-
-        let account_updates = match self.execution_cache.get(block_to_commit.hash())? {
-            Some(account_updates) => account_updates,
-            None => {
-                warn!(
-                            "Could not find execution cache result for block {block_number}, falling back to re-execution"
-                        );
-                let mut vm = Evm::default(self.store.clone(), block_to_commit.header.parent_hash);
-                vm.execute_block(&block_to_commit)?;
-                let fork = self
-                    .store
-                    .get_chain_config()?
-                    .fork(block_to_commit.header.timestamp);
-                vm.get_state_transitions(fork)?
-            }
-        };
-
-        let new_state_root = self
-            .store
-            .state_trie(block_to_commit.hash())?
-            .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                "Failed to get state root from storage".to_owned(),
-            ))?
-            .hash_no_commit();
-
-        let blobs_bundle = if !self.validium {
-            let state_diff = self
-                .prepare_state_diff(
-                    &block_to_commit,
-                    self.store.clone(),
-                    withdrawals,
-                    deposits,
-                    &account_updates,
-                )
-                .await?;
-            self.generate_blobs_bundle(&state_diff)?
-        } else {
-            BlobsBundle::default()
-        };
-
-        let head_block_hash = block_to_commit.hash();
         match self
             .send_commitment(
-                block_to_commit.header.number,
+                batch_to_commit,
                 new_state_root,
                 withdrawal_logs_merkle_root,
                 deposit_logs_hash,
@@ -197,13 +165,204 @@ impl Committer {
             .await
         {
             Ok(commit_tx_hash) => {
-                info!("Sent commitment to block {head_block_hash:#x}, with transaction hash {commit_tx_hash:#x}");
+                metrics!(
+                let _ = METRICS_L2
+                    .set_block_type_and_block_number(
+                        MetricsL2BlockType::LastCommittedBlock,
+                        last_block_of_batch,
+                    )
+                    .inspect_err(|e| {
+                        tracing::error!(
+                            "Failed to set metric: last committed block {}",
+                            e.to_string()
+                        )
+                    });
+                );
+
+                info!(
+                    "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}.",
+                );
+                self.rollup_store.store_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes).await?;
                 Ok(())
             }
             Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
-                "Failed to send commitment to block {head_block_hash:#x}: {error}"
+                "Failed to send commitment for batch {batch_to_commit}. first_block: {first_block_to_commit} last_block: {last_block_of_batch}: {error}"
             ))),
         }
+    }
+
+    async fn prepare_batch_from_block(
+        &self,
+        mut last_added_block_number: BlockNumber,
+    ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
+        let first_block_of_batch = last_added_block_number + 1;
+        let mut blobs_bundle = BlobsBundle::default();
+
+        let mut acc_withdrawals = vec![];
+        let mut acc_deposits = vec![];
+        let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
+        let mut withdrawal_hashes = vec![];
+        let mut deposit_logs_hashes = vec![];
+        let mut new_state_root = H256::default();
+
+        #[cfg(feature = "metrics")]
+        let mut tx_count = 0_u64;
+        let mut _blob_size = 0_usize;
+
+        info!("Preparing state diff from block {first_block_of_batch}");
+
+        loop {
+            // Get a block to add to the batch
+            let Some(block_to_commit_body) = self
+                .store
+                .get_block_body(last_added_block_number + 1)
+                .await
+                .map_err(CommitterError::from)?
+            else {
+                debug!("No new block to commit, skipping..");
+                break;
+            };
+            let block_to_commit_header = self
+                .store
+                .get_block_header(last_added_block_number + 1)
+                .map_err(CommitterError::from)?
+                .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                    "Failed to get_block_header() after get_block_body()".to_owned(),
+                ))?;
+
+            // Get block transactions and receipts
+            let mut txs_and_receipts = vec![];
+            for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
+                let receipt = self
+                    .store
+                    .get_receipt(last_added_block_number + 1, index.try_into()?)
+                    .await?
+                    .ok_or(CommitterError::InternalError(
+                        "Transactions in a block should have a receipt".to_owned(),
+                    ))?;
+                txs_and_receipts.push((tx.clone(), receipt));
+            }
+
+            metrics!(
+                tx_count += txs_and_receipts
+                    .len()
+                    .try_into()
+                    .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
+                    .unwrap_or(0)
+            );
+            // Get block withdrawals and deposits
+            let withdrawals = self.get_block_withdrawals(&txs_and_receipts)?;
+            let deposits = self.get_block_deposits(&txs_and_receipts);
+
+            // Get block account updates.
+            let block_to_commit = Block::new(block_to_commit_header.clone(), block_to_commit_body);
+            let account_updates = match self.execution_cache.get(block_to_commit.hash())? {
+                Some(account_updates) => account_updates,
+                None => {
+                    warn!(
+                            "Could not find execution cache result for block {}, falling back to re-execution", last_added_block_number + 1
+                        );
+
+                    let vm_db = StoreVmDatabase::new(
+                        self.store.clone(),
+                        block_to_commit.header.parent_hash,
+                    );
+                    let mut vm = Evm::new(EvmEngine::default(), vm_db);
+                    vm.execute_block(&block_to_commit)?;
+                    vm.get_state_transitions()?
+                }
+            };
+
+            // Accumulate block data with the rest of the batch.
+            acc_withdrawals.extend(withdrawals.clone());
+            acc_deposits.extend(deposits.clone());
+            for account in account_updates {
+                let address = account.address;
+                if let Some(existing) = acc_account_updates.get_mut(&address) {
+                    existing.merge(account);
+                } else {
+                    acc_account_updates.insert(address, account);
+                }
+            }
+
+            let result = if !self.validium {
+                // Prepare current state diff.
+                let state_diff = self
+                    .prepare_state_diff(
+                        first_block_of_batch,
+                        block_to_commit_header,
+                        self.store.clone(),
+                        &acc_withdrawals,
+                        &acc_deposits,
+                        acc_account_updates.clone().into_values().collect(),
+                    )
+                    .await?;
+                self.generate_blobs_bundle(&state_diff)
+            } else {
+                Ok((BlobsBundle::default(), 0_usize))
+            };
+
+            match result {
+                Ok((bundle, latest_blob_size)) => {
+                    // Save current blobs_bundle and continue to add more blocks.
+                    blobs_bundle = bundle;
+                    _blob_size = latest_blob_size;
+                    for (_, tx) in &withdrawals {
+                        let hash = get_withdrawal_hash(tx)
+                            .ok_or(CommitterError::InvalidWithdrawalTransaction)?;
+                        withdrawal_hashes.push(hash);
+                    }
+
+                    deposit_logs_hashes.extend(
+                        deposits
+                            .iter()
+                            .filter_map(|tx| tx.get_deposit_hash())
+                            .collect::<Vec<H256>>(),
+                    );
+
+                    new_state_root = self
+                        .store
+                        .state_trie(block_to_commit.hash())?
+                        .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                            "Failed to get state root from storage".to_owned(),
+                        ))?
+                        .hash_no_commit();
+
+                    last_added_block_number += 1;
+                }
+                Err(_) => {
+                    warn!("Batch size limit reached. Any remaining blocks will be processed in the next batch.");
+                    // Break loop. Use the previous generated blobs_bundle.
+                    break;
+                }
+            }
+        }
+
+        metrics!(if let (Ok(deposits_count), Ok(withdrawals_count)) = (
+                deposit_logs_hashes.len().try_into(),
+                withdrawal_hashes.len().try_into()
+            ) {
+                let _ = self
+                    .rollup_store
+                    .update_operations_count(tx_count, deposits_count, withdrawals_count)
+                    .await
+                    .inspect_err(|e| {
+                        tracing::error!("Failed to update operations metric: {}", e.to_string())
+                    });
+            }
+            #[allow(clippy::as_conversions)]
+            METRICS_L2
+                .set_blob_usage_percentage((_blob_size as f64 / BYTES_PER_BLOB as f64) * 100_f64);
+        );
+
+        let deposit_logs_hash = self.get_deposit_hash(deposit_logs_hashes)?;
+        Ok((
+            blobs_bundle,
+            new_state_root,
+            withdrawal_hashes,
+            deposit_logs_hash,
+            last_added_block_number,
+        ))
     }
 
     fn get_block_withdrawals(
@@ -231,12 +390,13 @@ impl Committer {
         }
     }
 
-    fn get_block_deposits(&self, block: &Block) -> Vec<PrivilegedL2Transaction> {
-        let deposits = block
-            .body
-            .transactions
+    fn get_block_deposits(
+        &self,
+        txs_and_receipts: &[(Transaction, Receipt)],
+    ) -> Vec<PrivilegedL2Transaction> {
+        let deposits = txs_and_receipts
             .iter()
-            .filter_map(|tx| match tx {
+            .filter_map(|(tx, _)| match tx {
                 Transaction::PrivilegedL2Transaction(tx) => Some(tx.clone()),
                 _ => None,
             })
@@ -276,20 +436,19 @@ impl Committer {
     /// Prepare the state diff for the block.
     async fn prepare_state_diff(
         &self,
-        block: &Block,
+        first_block_number: BlockNumber,
+        last_header: BlockHeader,
         store: Store,
-        withdrawals: Vec<(H256, Transaction)>,
-        deposits: Vec<PrivilegedL2Transaction>,
-        account_updates: &[AccountUpdate],
+        withdrawals: &[(H256, Transaction)],
+        deposits: &[PrivilegedL2Transaction],
+        account_updates: Vec<AccountUpdate>,
     ) -> Result<StateDiff, CommitterError> {
-        info!("Preparing state diff for block {}", block.header.number);
-
         let mut modified_accounts = HashMap::new();
         for account_update in account_updates {
             // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
             // and we may have to keep track of the latestCommittedBlock (last block of the batch),
             // the batch_size and the latestCommittedBatch in the contract.
-            let nonce_diff = get_nonce_diff(account_update, &store, None, block.header.number)
+            let nonce_diff = get_nonce_diff(&account_update, &store, None, first_block_number)
                 .await
                 .map_err(CommitterError::from)?;
 
@@ -308,7 +467,7 @@ impl Committer {
         let state_diff = StateDiff {
             modified_accounts,
             version: StateDiff::default().version,
-            header: block.header.clone(),
+            last_header,
             withdrawal_logs: withdrawals
                 .iter()
                 .map(|(hash, tx)| WithdrawalLog {
@@ -337,24 +496,30 @@ impl Committer {
     }
 
     /// Generate the blob bundle necessary for the EIP-4844 transaction.
-    fn generate_blobs_bundle(&self, state_diff: &StateDiff) -> Result<BlobsBundle, CommitterError> {
+    fn generate_blobs_bundle(
+        &self,
+        state_diff: &StateDiff,
+    ) -> Result<(BlobsBundle, usize), CommitterError> {
         let blob_data = state_diff.encode().map_err(CommitterError::from)?;
+
+        let blob_size = blob_data.len();
 
         let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
 
-        BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)
+        Ok((
+            BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)?,
+            blob_size,
+        ))
     }
 
     async fn send_commitment(
         &self,
-        block_number: u64,
+        batch_number: u64,
         new_state_root: H256,
         withdrawal_logs_merkle_root: H256,
         deposit_logs_hash: H256,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, CommitterError> {
-        info!("Sending commitment for block {block_number}");
-
         let state_diff_kzg_versioned_hash = if !self.validium {
             let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
             *blob_versioned_hashes
@@ -367,7 +532,7 @@ impl Committer {
         };
 
         let calldata_values = vec![
-            Value::Uint(U256::from(block_number)),
+            Value::Uint(U256::from(batch_number)),
             Value::FixedBytes(new_state_root.0.to_vec().into()),
             Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
             Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
