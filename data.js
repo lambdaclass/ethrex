@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748528254441,
+  "lastUpdate": 1748528535745,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9745,6 +9745,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 223415255708,
             "range": "± 967108631",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e92653e6221c9219c08c492d43445f60b31f409e",
+          "message": "refactor(core): Refactor Patricia Merkle Trie (avoid compulsive hashing) (#2687)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nRefactor the Patricia Merkle Trie to avoid rehashing the affected part\nof the trie every time it is modified. Delay hashing until its hash is\nrequired.\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\nReplaces node hash references by either a `NodeHash` as before (for\nunbuffered nodes) or a node itself (for modified nodes).\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-29T13:31:57Z",
+          "tree_id": "db2d27a8af9c14b50d7a7c1e019e0f1822b3cc95",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e92653e6221c9219c08c492d43445f60b31f409e"
+        },
+        "date": 1748528531915,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 198251261355,
+            "range": "± 1480316691",
             "unit": "ns/iter"
           }
         ]
