@@ -158,7 +158,7 @@ impl Blockchain {
         // Check if the block is already in the blockchain, if it is do nothing, if not add it
         match self.storage.get_block_number(block.hash()).await {
             Ok(Some(_)) => {
-                info!("Block {} has already been added", block.hash());
+                info!("Block {} is already in the blockchain", block.hash());
                 Ok(())
             }
             Ok(None) => self.add_block(block).await,

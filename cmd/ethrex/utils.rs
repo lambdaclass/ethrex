@@ -81,13 +81,13 @@ pub fn read_block_file(block_file_path: &str) -> Block {
         .unwrap_or_else(|_| panic!("Failed to decode block file {}", block_file_path))
 }
 
-pub fn read_genesis_file(genesis_file_path:&Path) -> Genesis {
+pub fn read_genesis_file(genesis_file_path: &Path) -> Genesis {
     let genesis_file = std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
     decode::genesis_file(genesis_file).expect("Failed to decode genesis file")
 }
 // If genesis_file_path is one of the public networks return the path to its genesis.json file, if not return the inputed path
 pub fn get_genesis_path(network: &str) -> &Path {
-    let string_path =match network {
+    let string_path = match network {
         "holesky" => networks::HOLESKY_GENESIS_PATH,
         "hoodi" => networks::HOODI_GENESIS_PATH,
         "mainnet" => networks::MAINNET_GENESIS_PATH,

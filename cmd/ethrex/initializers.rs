@@ -2,11 +2,11 @@ use crate::{
     cli::Options,
     networks::{self, Networks, PublicNetworkType},
     utils::{
-        get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file, read_node_config_file
+        get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
+        read_node_config_file,
     },
 };
 use ethrex_blockchain::Blockchain;
-use ethrex_common::Public;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{public_key_from_signing_key, P2PContext},
@@ -64,7 +64,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub async fn init_store(data_dir: &str, network: Networks) -> Store {
+pub async fn init_store(data_dir: &str, network: &Networks) -> Store {
     let path = PathBuf::from(data_dir);
     let store = if path.ends_with("memory") {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
@@ -240,24 +240,8 @@ pub fn get_network(opts: &Options) -> Networks {
         .network
         .clone()
         .expect("--network is required and it was not provided");
-    
-    Networks::from(network.as_str())
-    /* 
-    // Set preset genesis from known networks
-    if network == "holesky" {
-        network = String::from(networks::HOLESKY_GENESIS_PATH);
-    }
-    if network == "sepolia" {
-        network = String::from(networks::SEPOLIA_GENESIS_PATH);
-    }
-    if network == "hoodi" {
-        network = String::from(networks::HOODI_GENESIS_PATH);
-    }
-    if network == "mainnet" {
-        network = String::from(networks::MAINNET_GENESIS_PATH);
-    }
 
-    network*/
+    Networks::from(network.as_str())
 }
 
 #[allow(dead_code)]
@@ -268,22 +252,22 @@ pub fn get_bootnodes(opts: &Options, network: &Networks, data_dir: &str) -> Vec<
         Networks::PublicNetwork(PublicNetworkType::Holesky) => {
             info!("Adding holesky preset bootnodes");
             bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
-        },
+        }
         Networks::PublicNetwork(PublicNetworkType::Hoodi) => {
             info!("Addig hoodi preset bootnodes");
             bootnodes.extend(networks::HOODI_BOOTNODES.clone());
-        },
-        Networks::PublicNetwork(PublicNetworkType::Mainnet) =>{
+        }
+        Networks::PublicNetwork(PublicNetworkType::Mainnet) => {
             info!("Adding mainnet preset bootnodes");
             bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
-        }, 
+        }
         Networks::PublicNetwork(PublicNetworkType::Sepolia) => {
             info!("Adding sepolia preset bootnodes");
             bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
-        },
+        }
         _ => {}
     }
-    
+
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }

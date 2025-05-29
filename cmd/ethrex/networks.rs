@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use ethrex_p2p::types::Node;
-use k256::elliptic_curve::ff::derive;
 use lazy_static::lazy_static;
 
 pub const HOLESKY_GENESIS_PATH: &str = "cmd/ethrex/networks/holesky/genesis.json";
@@ -36,30 +35,30 @@ lazy_static! {
 }
 pub enum Networks {
     PublicNetwork(PublicNetworkType),
-    Path(String)
+    Path(String),
 }
 
 pub enum PublicNetworkType {
     Hoodi,
     Holesky,
     Sepolia,
-    Mainnet
+    Mainnet,
 }
 
-impl From<&str> for Networks{
+impl From<&str> for Networks {
     fn from(value: &str) -> Self {
         match value {
             "hoodi" => Networks::PublicNetwork(PublicNetworkType::Hoodi),
             "holesky" => Networks::PublicNetwork(PublicNetworkType::Holesky),
             "mainnet" => Networks::PublicNetwork(PublicNetworkType::Mainnet),
             "sepolia" => Networks::PublicNetwork(PublicNetworkType::Sepolia),
-            s => Networks::Path(String::from(s))
+            s => Networks::Path(String::from(s)),
         }
     }
 }
 
-impl Networks{
-    pub fn get_path(&self) -> &Path{
+impl Networks {
+    pub fn get_path(&self) -> &Path {
         match self {
             Networks::PublicNetwork(PublicNetworkType::Holesky) => Path::new(HOLESKY_GENESIS_PATH),
             Networks::PublicNetwork(PublicNetworkType::Hoodi) => Path::new(HOODI_GENESIS_PATH),

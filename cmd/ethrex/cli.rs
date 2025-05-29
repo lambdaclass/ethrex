@@ -11,7 +11,10 @@ use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
-    initializers::{init_blockchain, init_store}, networks::Networks, utils::{self, get_client_version, set_datadir}, DEFAULT_DATADIR
+    initializers::{init_blockchain, init_store},
+    networks::Networks,
+    utils::{self, get_client_version, set_datadir},
+    DEFAULT_DATADIR,
 };
 
 #[cfg(feature = "l2")]
@@ -317,7 +320,7 @@ pub fn remove_db(datadir: &str, force: bool) {
 pub async fn import_blocks(path: &str, data_dir: &str, network: Networks, evm: EvmEngine) {
     let data_dir = set_datadir(data_dir);
 
-    let store = init_store(&data_dir, network).await;
+    let store = init_store(&data_dir, &network).await;
 
     let blockchain = init_blockchain(evm, store.clone());
 
