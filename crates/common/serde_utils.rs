@@ -404,7 +404,7 @@ pub mod duration {
 }
 
 /// Parses a Duration in string format
-/// The acceptable formar is a concatentation of positive numeric values (with decimals allowed) followed by a time unit of measurement.
+/// The acceptable format is a concatentation of positive numeric values (with decimals allowed) followed by a time unit of measurement.
 /// The units accepted are: Hours(h), Minutes(m), Senconds(s), Milliseconds(ms), Microseconds (us|µs) and Nanoseconds(ns)
 /// For example, a duration such as "1h30m" or "1.6m" will be accepted but "-1s" or "30mh" will not
 /// Some imprecision can be expected when using milliseconds/microseconds/nanoseconds with significant decimal components
