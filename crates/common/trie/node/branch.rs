@@ -1,41 +1,40 @@
 use ethrex_rlp::structs::Encoder;
 
-use crate::{error::TrieError, nibbles::Nibbles, node_hash::NodeHash, state::TrieState, ValueRLP};
+use crate::{error::TrieError, nibbles::Nibbles, node_hash::NodeHash, TrieDB, ValueRLP};
 
-use super::{ExtensionNode, LeafNode, Node};
+use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 
 /// Branch Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's value and the hash of its children nodes
 #[derive(Debug, Clone, PartialEq)]
 pub struct BranchNode {
-    // TODO: check if switching to hashmap is a better solution
-    pub choices: Box<[NodeHash; 16]>,
+    pub choices: [NodeRef; 16],
     pub value: ValueRLP,
 }
 
 impl BranchNode {
     /// Empty choice array for more convenient node-building
-    pub const EMPTY_CHOICES: [NodeHash; 16] = [
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
+    pub const EMPTY_CHOICES: [NodeRef; 16] = [
+        NodeRef::const_default(),
+        NodeRef::const_default(),
+        NodeRef::const_default(),
+        NodeRef::const_default(),
+        NodeRef::const_default(),
+        NodeRef::const_default(),
+        NodeRef::const_default(),
+        NodeRef::const_default(),
+        NodeRef::const_default(),
+        NodeRef::const_default(),
+        NodeRef::const_default(),
+        NodeRef::const_default(),
+        NodeRef::const_default(),
+        NodeRef::const_default(),
+        NodeRef::const_default(),
+        NodeRef::const_default(),
     ];
 
     /// Creates a new branch node given its children, without any stored value
-    pub fn new(choices: Box<[NodeHash; 16]>) -> Self {
+    pub fn new(choices: [NodeRef; 16]) -> Self {
         Self {
             choices,
             value: Default::default(),
@@ -43,7 +42,7 @@ impl BranchNode {
     }
 
     /// Creates a new branch node given its children and value
-    pub const fn new_with_value(choices: Box<[NodeHash; 16]>, value: ValueRLP) -> Self {
+    pub const fn new_with_value(choices: [NodeRef; 16], value: ValueRLP) -> Self {
         Self { choices, value }
     }
 
@@ -53,17 +52,15 @@ impl BranchNode {
     }
 
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, state: &TrieState, mut path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(&self, db: &dyn TrieDB, mut path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
         // If path is at the end, return to its own value if present.
         // Otherwise, check the corresponding choice and delegate accordingly if present.
         if let Some(choice) = path.next_choice() {
             // Delegate to children if present
-            let child_hash = &self.choices[choice];
-            if child_hash.is_valid() {
-                let child_node = state
-                    .get_node(*child_hash)?
-                    .ok_or(TrieError::InconsistentTree)?;
-                child_node.get(state, path)
+            let child_ref = &self.choices[choice];
+            if child_ref.is_valid() {
+                let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                child_node.get(db, path)
             } else {
                 Ok(None)
             }
@@ -76,33 +73,49 @@ impl BranchNode {
     /// Inserts a value into the subtrie originating from this node and returns the new root of the subtrie
     pub fn insert(
         mut self,
-        state: &mut TrieState,
+        db: &dyn TrieDB,
         mut path: Nibbles,
-        value: ValueRLP,
+        value: ValueOrHash,
     ) -> Result<Node, TrieError> {
         // If path is at the end, insert or replace its own value.
         // Otherwise, check the corresponding choice and insert or delegate accordingly.
         if let Some(choice) = path.next_choice() {
-            match &mut self.choices[choice] {
+            match (&mut self.choices[choice], value) {
                 // Create new child (leaf node)
-                choice_hash if !choice_hash.is_valid() => {
+                (choice_ref, ValueOrHash::Value(value)) if !choice_ref.is_valid() => {
                     let new_leaf = LeafNode::new(path, value);
-                    let child_hash = new_leaf.insert_self(state)?;
-                    *choice_hash = child_hash;
+                    *choice_ref = Node::from(new_leaf).into();
                 }
                 // Insert into existing child and then update it
-                choice_hash => {
-                    let child_node = state
-                        .get_node(*choice_hash)?
+                (choice_ref, ValueOrHash::Value(value)) => {
+                    let child_node = choice_ref
+                        .get_node(db)?
                         .ok_or(TrieError::InconsistentTree)?;
 
-                    let child_node = child_node.insert(state, path, value)?;
-                    *choice_hash = child_node.insert_self(state)?;
+                    *choice_ref = child_node.insert(db, path, value)?.into();
+                }
+                // Insert external node hash if there are no overrides.
+                (choice_ref, value @ ValueOrHash::Hash(hash)) => {
+                    if !choice_ref.is_valid() {
+                        *choice_ref = hash.into();
+                    } else if path.is_empty() {
+                        return Err(TrieError::Verify(
+                            "attempt to override proof node with external hash".to_string(),
+                        ));
+                    } else {
+                        *choice_ref = choice_ref
+                            .get_node(db)?
+                            .ok_or(TrieError::InconsistentTree)?
+                            .insert(db, path, value)?
+                            .into();
+                    }
                 }
             }
-        } else {
+        } else if let ValueOrHash::Value(value) = value {
             // Insert into self
             self.update(value);
+        } else {
+            todo!("handle override case (error?)")
         }
 
         Ok(self.into())
@@ -112,7 +125,7 @@ impl BranchNode {
     /// Returns the new root of the subtrie (if any) and the removed value if it existed in the subtrie
     pub fn remove(
         mut self,
-        state: &mut TrieState,
+        db: &dyn TrieDB,
         mut path: Nibbles,
     ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
         /* Possible flow paths:
@@ -137,17 +150,17 @@ impl BranchNode {
         // Check if the value is located in a child subtrie
         let value = if let Some(choice_index) = path.next_choice() {
             if self.choices[choice_index].is_valid() {
-                let child_node = state
-                    .get_node(self.choices[choice_index])?
+                let child_node = self.choices[choice_index]
+                    .get_node(db)?
                     .ok_or(TrieError::InconsistentTree)?;
                 // Remove value from child node
-                let (child_node, old_value) = child_node.remove(state, path.clone())?;
+                let (child_node, old_value) = child_node.remove(db, path.clone())?;
                 if let Some(child_node) = child_node {
                     // Update child node
-                    self.choices[choice_index] = child_node.insert_self(state)?;
+                    self.choices[choice_index] = child_node.into();
                 } else {
                     // Remove child hash if the child subtrie was removed in the process
-                    self.choices[choice_index] = NodeHash::default();
+                    self.choices[choice_index] = NodeHash::default().into();
                 }
                 old_value
             } else {
@@ -177,16 +190,15 @@ impl BranchNode {
             (0, true) => LeafNode::new(Nibbles::from_hex(vec![16]), self.value).into(),
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
-                let (choice_index, child_hash) = children[0];
-                let child = state
-                    .get_node(*child_hash)?
-                    .ok_or(TrieError::InconsistentTree)?;
+                let (choice_index, child_ref) = children[0];
+                let child = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
                 match child {
                     // Replace self with an extension node leading to the child
-                    Node::Branch(_) => {
-                        ExtensionNode::new(Nibbles::from_hex(vec![choice_index as u8]), *child_hash)
-                            .into()
-                    }
+                    Node::Branch(_) => ExtensionNode::new(
+                        Nibbles::from_hex(vec![choice_index as u8]),
+                        child_ref.clone(),
+                    )
+                    .into(),
                     // Replace self with the child extension node, updating its path in the process
                     Node::Extension(mut extension_node) => {
                         extension_node.prefix.prepend(choice_index as u8);
@@ -214,9 +226,11 @@ impl BranchNode {
         let mut buf = vec![];
         let mut encoder = Encoder::new(&mut buf);
         for child in self.choices.iter() {
-            match child {
+            match child.compute_hash() {
                 NodeHash::Hashed(hash) => encoder = encoder.encode_bytes(&hash.0),
-                NodeHash::Inline(raw) if raw.1 != 0 => encoder = encoder.encode_raw(child.as_ref()),
+                child @ NodeHash::Inline(raw) if raw.1 != 0 => {
+                    encoder = encoder.encode_raw(child.as_ref())
+                }
                 _ => encoder = encoder.encode_bytes(&[]),
             }
         }
@@ -225,19 +239,12 @@ impl BranchNode {
         buf
     }
 
-    /// Inserts the node into the state and returns its hash
-    pub fn insert_self(self, state: &mut TrieState) -> Result<NodeHash, TrieError> {
-        let hash = self.compute_hash();
-        state.insert_node(self.into(), hash);
-        Ok(hash)
-    }
-
     /// Traverses own subtrie until reaching the node containing `path`
     /// Appends all encoded nodes traversed to `node_path` (including self)
     /// Only nodes with encoded len over or equal to 32 bytes are included
     pub fn get_path(
         &self,
-        state: &TrieState,
+        db: &dyn TrieDB,
         mut path: Nibbles,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
@@ -249,12 +256,10 @@ impl BranchNode {
         // Check the corresponding choice and delegate accordingly if present.
         if let Some(choice) = path.next_choice() {
             // Continue to child
-            let child_hash = &self.choices[choice];
-            if child_hash.is_valid() {
-                let child_node = state
-                    .get_node(*child_hash)?
-                    .ok_or(TrieError::InconsistentTree)?;
-                child_node.get_path(state, path, node_path)?;
+            let child_ref = &self.choices[choice];
+            if child_ref.is_valid() {
+                let child_node = child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                child_node.get_path(db, path, node_path)?;
             }
         }
         Ok(())
@@ -274,21 +279,21 @@ mod test {
         let node = BranchNode::new({
             let mut choices = BranchNode::EMPTY_CHOICES;
 
-            choices[2] = NodeHash::Hashed(H256([2; 32]));
-            choices[5] = NodeHash::Hashed(H256([5; 32]));
+            choices[2] = NodeHash::Hashed(H256([2; 32])).into();
+            choices[5] = NodeHash::Hashed(H256([5; 32])).into();
 
-            Box::new(choices)
+            choices
         });
 
         assert_eq!(
-            *node.choices,
+            node.choices,
             [
                 Default::default(),
                 Default::default(),
-                NodeHash::Hashed(H256([2; 32])),
+                NodeHash::Hashed(H256([2; 32])).into(),
                 Default::default(),
                 Default::default(),
-                NodeHash::Hashed(H256([5; 32])),
+                NodeHash::Hashed(H256([5; 32])).into(),
                 Default::default(),
                 Default::default(),
                 Default::default(),
@@ -305,7 +310,7 @@ mod test {
 
     #[test]
     fn get_some() {
-        let mut trie = Trie::new_temp();
+        let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0,16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -314,18 +319,20 @@ mod test {
         };
 
         assert_eq!(
-            node.get(&trie.state, Nibbles::from_bytes(&[0x00])).unwrap(),
+            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
+                .unwrap(),
             Some(vec![0x12, 0x34, 0x56, 0x78]),
         );
         assert_eq!(
-            node.get(&trie.state, Nibbles::from_bytes(&[0x10])).unwrap(),
+            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x10]))
+                .unwrap(),
             Some(vec![0x34, 0x56, 0x78, 0x9A]),
         );
     }
 
     #[test]
     fn get_none() {
-        let mut trie = Trie::new_temp();
+        let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0,16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -334,14 +341,15 @@ mod test {
         };
 
         assert_eq!(
-            node.get(&trie.state, Nibbles::from_bytes(&[0x20])).unwrap(),
+            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x20]))
+                .unwrap(),
             None,
         );
     }
 
     #[test]
     fn insert_self() {
-        let mut trie = Trie::new_temp();
+        let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -352,16 +360,16 @@ mod test {
         let value = vec![0x3];
 
         let node = node
-            .insert(&mut trie.state, path.clone(), value.clone())
+            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
             .unwrap();
 
         assert!(matches!(node, Node::Branch(_)));
-        assert_eq!(node.get(&trie.state, path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
     }
 
     #[test]
     fn insert_choice() {
-        let mut trie = Trie::new_temp();
+        let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -373,16 +381,16 @@ mod test {
         let value = vec![0x21];
 
         let node = node
-            .insert(&mut trie.state, path.clone(), value.clone())
+            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
             .unwrap();
 
         assert!(matches!(node, Node::Branch(_)));
-        assert_eq!(node.get(&trie.state, path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
     }
 
     #[test]
     fn insert_passthrough() {
-        let mut trie = Trie::new_temp();
+        let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -396,7 +404,7 @@ mod test {
 
         let new_node = node
             .clone()
-            .insert(&mut trie.state, path.clone(), value.clone())
+            .insert(trie.db.as_ref(), path.clone(), value.clone().into())
             .unwrap();
 
         let new_node = match new_node {
@@ -410,7 +418,7 @@ mod test {
 
     #[test]
     fn remove_choice_into_inner() {
-        let mut trie = Trie::new_temp();
+        let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x00] },
@@ -419,7 +427,7 @@ mod test {
         };
 
         let (node, value) = node
-            .remove(&mut trie.state, Nibbles::from_bytes(&[0x00]))
+            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
             .unwrap();
 
         assert!(matches!(node, Some(Node::Leaf(_))));
@@ -428,7 +436,7 @@ mod test {
 
     #[test]
     fn remove_choice() {
-        let mut trie = Trie::new_temp();
+        let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x00] },
@@ -438,7 +446,7 @@ mod test {
         };
 
         let (node, value) = node
-            .remove(&mut trie.state, Nibbles::from_bytes(&[0x00]))
+            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
             .unwrap();
 
         assert!(matches!(node, Some(Node::Branch(_))));
@@ -447,7 +455,7 @@ mod test {
 
     #[test]
     fn remove_choice_into_value() {
-        let mut trie = Trie::new_temp();
+        let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x00] },
@@ -455,7 +463,7 @@ mod test {
         };
 
         let (node, value) = node
-            .remove(&mut trie.state, Nibbles::from_bytes(&[0x00]))
+            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
             .unwrap();
 
         assert!(matches!(node, Some(Node::Leaf(_))));
@@ -464,7 +472,7 @@ mod test {
 
     #[test]
     fn remove_value_into_inner() {
-        let mut trie = Trie::new_temp();
+        let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x00] },
@@ -472,7 +480,7 @@ mod test {
         };
 
         let (node, value) = node
-            .remove(&mut trie.state, Nibbles::from_bytes(&[]))
+            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[]))
             .unwrap();
 
         assert!(matches!(node, Some(Node::Leaf(_))));
@@ -481,7 +489,7 @@ mod test {
 
     #[test]
     fn remove_value() {
-        let mut trie = Trie::new_temp();
+        let trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x00] },
@@ -490,7 +498,7 @@ mod test {
         };
 
         let (node, value) = node
-            .remove(&mut trie.state, Nibbles::from_bytes(&[]))
+            .remove(trie.db.as_ref(), Nibbles::from_bytes(&[]))
             .unwrap();
 
         assert!(matches!(node, Some(Node::Branch(_))));
@@ -499,7 +507,6 @@ mod test {
 
     #[test]
     fn compute_hash_two_choices() {
-        let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
                 2 => leaf { vec![0, 16] => vec![0x20] },
@@ -518,7 +525,6 @@ mod test {
 
     #[test]
     fn compute_hash_all_choices() {
-        let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0x0 => leaf { vec![0, 16] => vec![0x00] },
@@ -552,7 +558,6 @@ mod test {
 
     #[test]
     fn compute_hash_one_choice_with_value() {
-        let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
                 2 => leaf { vec![0, 16] => vec![0x20] },
@@ -571,7 +576,6 @@ mod test {
 
     #[test]
     fn compute_hash_all_choices_with_value() {
-        let mut trie = Trie::new_temp();
         let node = pmt_node! { @(trie)
             branch {
                 0x0 => leaf { vec![0, 16] => vec![0x00] },
@@ -605,7 +609,6 @@ mod test {
 
     #[test]
     fn symmetric_encoding_a() {
-        let mut trie = Trie::new_temp();
         let node: Node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0,16] => vec![0x12, 0x34, 0x56, 0x78] },
@@ -618,7 +621,6 @@ mod test {
 
     #[test]
     fn symmetric_encoding_b() {
-        let mut trie = Trie::new_temp();
         let node: Node = pmt_node! { @(trie)
             branch {
                 0 => leaf { vec![0, 16] => vec![0x00] },
@@ -635,7 +637,6 @@ mod test {
 
     #[test]
     fn symmetric_encoding_c() {
-        let mut trie = Trie::new_temp();
         let node: Node = pmt_node! { @(trie)
             branch {
                 0x0 => leaf { vec![0, 16] => vec![0x00] },
