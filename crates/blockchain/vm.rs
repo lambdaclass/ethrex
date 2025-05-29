@@ -32,13 +32,23 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
-        match self.store.get_block_header(block_number) {
-            Ok(Some(header)) => Ok(H256::from(header.compute_block_hash().0)),
-            Ok(None) => Err(EvmError::DB(format!(
-                "Block header not found for block number {block_number}"
-            ))),
-            Err(e) => Err(EvmError::DB(e.to_string())),
+        for ancestor_res in self.store.ancestors(self.block_hash) {
+            match ancestor_res {
+                Ok((hash, ancestor)) => {
+                    if ancestor.number < block_number {
+                        return Err(EvmError::DB(format!(
+                            "[VM DB] Block hash not found for block number {block_number}"
+                        )));
+                    } else if ancestor.number == block_number {
+                        return Ok(hash);
+                    }
+                }
+                Err(e) => return Err(EvmError::DB(e.to_string())),
+            }
         }
+        Err(EvmError::DB(format!(
+            "[VM DB] Block hash not found for block number {block_number}"
+        )))
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
