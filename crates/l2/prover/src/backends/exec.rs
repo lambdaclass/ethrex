@@ -114,12 +114,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
                 }
             }
             withdrawal_hashes.extend(block_withdrawal_hashes);
-            deposits_hashes.extend(
-                block_deposits
-                    .iter()
-                    .filter_map(|tx| tx.get_deposit_hash())
-                    .collect::<Vec<_>>(),
-            );
+            deposits_hashes.extend(block_deposits_hashes);
         }
 
         // Update db for the next block

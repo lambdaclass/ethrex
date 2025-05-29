@@ -10,10 +10,6 @@ use ethrex_common::{types::AccountUpdate, Address, Bytes};
 use ethrex_l2_sdk::calldata::{encode_tuple, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_vm::Evm;
-#[cfg(feature = "l2")]
-use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
-#[cfg(feature = "l2")]
-use zkvm_interface::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
 use zkvm_interface::{
     io::ProgramInput,
     trie::{update_tries, verify_db},
@@ -23,6 +19,11 @@ use keccak_hash::keccak;
 use secp256k1::{generate_keypair, rand, Message, SecretKey};
 mod sender;
 use sender::{get_batch, submit_proof, submit_quote};
+
+#[cfg(feature = "l2")]
+use ethrex_l2_common::{
+    get_block_deposits, get_block_withdrawals, compute_deposit_logs_hash, compute_withdrawals_merkle_root,
+};
 
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 
@@ -54,6 +55,12 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
         parent_block_header,
         mut db,
         elasticity_multiplier,
+        #[cfg(feature = "l2")]
+        state_diff,
+        #[cfg(feature = "l2")]
+        blob_commitment,
+        #[cfg(feature = "l2")]
+        blob_proof,
     } = input;
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
@@ -77,7 +84,7 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
 
     #[cfg(feature = "l2")]
-    let mut withdrawals = vec![];
+    let mut withdrawal_hashes = vec![];
     #[cfg(feature = "l2")]
     let mut deposits_hashes = vec![];
 
@@ -104,9 +111,12 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
         // Get L2 withdrawals and deposits for this block
         #[cfg(feature = "l2")]
         {
-            let block_withdrawals = get_block_withdrawals(&block.body.transactions, &receipts)
-                .map_err(|e| format!("Error getting block withdrawls: {e}"))?;
-            let block_deposits = get_block_deposits(&block.body.transactions);
+            let txs = block.body.transactions;
+            let block_deposits = get_block_deposits(&txs);
+
+            let txs_and_receipts: Vec<_> = txs.into_iter().zip(receipts.clone().into_iter()).collect();
+            let block_withdrawal_hashes = get_block_withdrawal_hashes(&txs_and_receipts).expect("failed to retrieve withdrawal hashes");
+
             let mut block_deposits_hashes = Vec::with_capacity(block_deposits.len());
             for deposit in block_deposits {
                 if let Some(hash) = deposit.get_deposit_hash() {
@@ -137,22 +147,34 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
         parent_header = block.header;
     }
 
+    // Calculate account updates based on state diff
+    #[cfg(feature = "l2")]
+    let Ok(state_diff_updates) = state_diff.to_account_updates(&state_trie) else {
+        return Err("Failed to calculate account updates from state diffs"
+            .to_string()
+            .into());
+    };
+
     // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
-    let Ok(withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
-        return Err("Failed to calculate withdrawals merkle root".to_string());
+    let Ok(withdrawals_merkle_root) = compute_withdrawals_merkle_root(withdrawal_hashes) else {
+        return Err("Failed to calculate withdrawals merkle root"
+            .to_string()
+            .into());
     };
 
     // Calculate L2 deposits logs root
     #[cfg(feature = "l2")]
-    let Ok(deposit_logs_hash) = get_deposit_hash(deposits_hashes) else {
-        return Err("Failed to calculate deposits logs hash".to_string());
+    let Ok(deposit_logs_hash) = compute_deposit_logs_hash(deposits_hashes) else {
+        return Err("Failed to calculate deposits logs hash".to_string().into());
     };
 
     // Update state trie
-    let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
-    update_tries(&mut state_trie, &mut storage_tries, &acc_account_updates)
-        .map_err(|e| format!("Error updating tries: {e}"))?;
+    update_tries(
+        &mut state_trie,
+        &mut storage_tries,
+        &acc_account_updates.values().cloned().collect::<Vec<_>>(),
+    )?;
 
     // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
@@ -160,12 +182,55 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
         return Err("invalid final state trie".to_string());
     }
 
+    // Check state diffs are valid
+    #[cfg(feature = "l2")]
+    if state_diff_updates != acc_account_updates {
+        return Err("invalid state diffs".to_string().into());
+    }
+
+    // Verify KZG blob proof
+    #[cfg(feature = "l2")]
+    let blob_versioned_hash = {
+        use kzg_rs::{get_kzg_settings, Blob, Bytes48, KzgProof};
+
+        let encoded_state_diff = state_diff
+            .encode()
+            .map_err(|e| format!("failed to encode state diff: {}", e))?;
+        let blob_data = blob_from_bytes(encoded_state_diff)
+            .map_err(|e| format!("failed to convert encoded state diff into blob data: {}", e))?;
+        let blob = Blob::from_slice(&blob_data)
+            .map_err(|_| "failed to convert blob data into Blob".to_string())?;
+
+        let blob_proof_valid = KzgProof::verify_blob_kzg_proof(
+            blob,
+            &Bytes48::from_slice(&blob_commitment)
+                .map_err(|_| "failed type conversion for blob commitment".to_string())?,
+            &Bytes48::from_slice(&blob_proof)
+                .map_err(|_| "failed type conversion for blob proof".to_string())?,
+            &get_kzg_settings(),
+        )
+        .map_err(|e| {
+            format!(
+                "failed to verify blob proof (neither valid or invalid proof): {}",
+                e
+            )
+        })?;
+
+        if !blob_proof_valid {
+            return Err("invalid blob proof".into());
+        }
+
+        kzg_commitment_to_versioned_hash(&blob_commitment)
+    };
+
     let initial_hash_bytes = initial_state_hash.0.to_vec();
     let final_hash_bytes = final_state_hash.0.to_vec();
     #[cfg(feature = "l2")]
     let withdrawals_merkle_root_bytes = withdrawals_merkle_root.0.to_vec();
     #[cfg(feature = "l2")]
     let deposit_logs_hash_bytes = deposit_logs_hash.0.to_vec();
+    #[cfg(feature = "l2")]
+    let blob_versioned_hash_bytes = blob_versioned_hash.0.to_vec();
 
     let data = vec![
         Value::FixedBytes(initial_hash_bytes.into()),

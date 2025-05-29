@@ -9,7 +9,6 @@ use ethrex_common::{
 };
 use ethrex_common::types::AccountUpdate;
 use ethrex_vm::Evm;
-use kzg_rs::{dtypes::Blob, kzg_proof::KzgProof, trusted_setup::get_kzg_settings};
 use std::collections::HashMap;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
@@ -98,12 +97,7 @@ pub fn main() {
                 );
             }
             withdrawal_hashes.extend(block_withdrawal_hashes);
-            deposits_hashes.extend(
-                block_deposits
-                    .iter()
-                    .filter_map(|tx| tx.get_deposit_hash())
-                    .collect::<Vec<_>>(),
-            );
+            deposits_hashes.extend(block_deposit_hashes);
         }
 
         cumulative_gas_used += receipts
@@ -169,6 +163,8 @@ pub fn main() {
     // Verify KZG blob proof
     #[cfg(feature = "l2")]
     let blob_versioned_hash = {
+        use kzg_rs::{dtypes::Blob, kzg_proof::KzgProof, trusted_setup::get_kzg_settings};
+
         let encoded_state_diff = state_diff.encode().expect("failed to encode state diff");
         let blob_data = blob_from_bytes(encoded_state_diff)
             .expect("failed to convert encoded state diff into blob data");
