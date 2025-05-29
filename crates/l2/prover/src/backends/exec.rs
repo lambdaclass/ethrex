@@ -105,16 +105,16 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
                 txs.into_iter().zip(receipts.clone().into_iter()).collect();
             let block_withdrawal_hashes = get_block_withdrawal_hashes(&txs_and_receipts)?;
 
-            let mut block_deposits_hashes = Vec::with_capacity(block_deposits.len());
+            let mut block_deposit_hashes = Vec::with_capacity(block_deposits.len());
             for deposit in &block_deposits {
                 if let Some(hash) = deposit.get_deposit_hash() {
-                    block_deposits_hashes.push(hash);
+                    block_deposit_hashes.push(hash);
                 } else {
                     return Err("Failed to get deposit hash for tx".to_string().into());
                 }
             }
             withdrawal_hashes.extend(block_withdrawal_hashes);
-            deposits_hashes.extend(block_deposits_hashes);
+            deposits_hashes.extend(block_deposit_hashes);
         }
 
         // Update db for the next block

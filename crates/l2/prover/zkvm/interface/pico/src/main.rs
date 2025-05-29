@@ -88,9 +88,9 @@ pub fn main() {
             let txs_and_receipts: Vec<_> = txs.into_iter().zip(receipts.clone().into_iter()).collect();
             let block_withdrawal_hashes = get_block_withdrawal_hashes(&txs_and_receipts).expect("failed to retrieve withdrawal hashes");
 
-            let mut block_deposits_hashes = Vec::with_capacity(block_deposits.len());
+            let mut block_deposit_hashes = Vec::with_capacity(block_deposits.len());
             for deposit in &block_deposits {
-                block_deposits_hashes.push(
+                block_deposit_hashes.push(
                     deposit
                         .get_deposit_hash()
                         .expect("Failed to get deposit hash for tx"),
