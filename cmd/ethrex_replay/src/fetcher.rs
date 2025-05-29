@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::hash::RandomState;
 
 use crate::cache::{load_cache, load_cache_batch, write_cache, write_cache_batch, Cache};
 use crate::rpc::{db::RpcDB, get_block, get_latest_block_number};
@@ -95,6 +96,10 @@ pub async fn get_rangedata(
             entry.1.extend(proofs.1.clone());
         }
     }
+    dedup_proofs(&mut proverdb.state_proofs.1);
+    for (_, proofs) in proverdb.storage_proofs.iter_mut() {
+        dedup_proofs(&mut proofs.1);
+    }
     let cache = Cache {
         blocks: blocks.iter().map(|cache| cache.blocks[0].clone()).collect(),
         parent_block_header: blocks[0].parent_block_header.clone(),
@@ -102,4 +107,9 @@ pub async fn get_rangedata(
     };
     write_cache_batch(&cache)?;
     Ok(cache)
+}
+
+fn dedup_proofs(proofs: &mut Vec<Vec<u8>>) {
+    let mut seen: HashSet<Vec<u8>, RandomState> = HashSet::from_iter(proofs.drain(..));
+    *proofs = seen.drain().collect();
 }
