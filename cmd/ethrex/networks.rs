@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ethrex_p2p::types::Node;
 use lazy_static::lazy_static;
@@ -35,7 +35,7 @@ lazy_static! {
 }
 pub enum Networks {
     PublicNetwork(PublicNetworkType),
-    GenesisPath(String),
+    GenesisPath(PathBuf),
 }
 
 pub enum PublicNetworkType {
@@ -52,8 +52,14 @@ impl From<&str> for Networks {
             "holesky" => Networks::PublicNetwork(PublicNetworkType::Holesky),
             "mainnet" => Networks::PublicNetwork(PublicNetworkType::Mainnet),
             "sepolia" => Networks::PublicNetwork(PublicNetworkType::Sepolia),
-            s => Networks::GenesisPath(String::from(s)),
+            s => Networks::GenesisPath(PathBuf::from(s)),
         }
+    }
+}
+
+impl From<PathBuf> for Networks {
+    fn from(value: PathBuf) -> Self {
+        Networks::GenesisPath(value)
     }
 }
 
@@ -64,17 +70,7 @@ impl Networks {
             Networks::PublicNetwork(PublicNetworkType::Hoodi) => Path::new(HOODI_GENESIS_PATH),
             Networks::PublicNetwork(PublicNetworkType::Mainnet) => Path::new(MAINNET_GENESIS_PATH),
             Networks::PublicNetwork(PublicNetworkType::Sepolia) => Path::new(SEPOLIA_GENESIS_PATH),
-            Networks::GenesisPath(s) => Path::new(s),
-        }
-    }
-
-    pub fn get_bootnodes(&self) -> &Path {
-        match self {
-            Networks::PublicNetwork(PublicNetworkType::Holesky) => Path::new(HOLESKY_GENESIS_PATH),
-            Networks::PublicNetwork(PublicNetworkType::Hoodi) => Path::new(HOODI_GENESIS_PATH),
-            Networks::PublicNetwork(PublicNetworkType::Mainnet) => Path::new(MAINNET_GENESIS_PATH),
-            Networks::PublicNetwork(PublicNetworkType::Sepolia) => Path::new(SEPOLIA_GENESIS_PATH),
-            Networks::GenesisPath(s) => Path::new(s),
+            Networks::GenesisPath(s) => s,
         }
     }
 }

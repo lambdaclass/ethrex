@@ -281,7 +281,8 @@ impl Subcommand {
                 import_blocks(&path, &opts.datadir, network, opts.evm).await;
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
-                compute_state_root(genesis_path.to_str().expect("Invalid genesis path"));
+                let network = Networks::from(genesis_path);
+                compute_state_root(&network);
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
@@ -371,9 +372,8 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: Networks, evm: E
     info!("Added {size} blocks to blockchain");
 }
 
-pub fn compute_state_root(genesis_path: &str) {
-    let genesis_path = utils::get_genesis_path(genesis_path);
-    let genesis = utils::read_genesis_file(genesis_path);
+pub fn compute_state_root(network: &Networks) {
+    let genesis = utils::read_genesis_file(network.get_path());
     let state_root = genesis.compute_state_root();
     println!("{:#x}", state_root);
 }
