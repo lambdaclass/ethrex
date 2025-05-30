@@ -8,6 +8,7 @@ use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
@@ -407,13 +408,26 @@ pub async fn export_blocks(
     let store = open_store(&data_dir);
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
-    let end = last_number.unwrap_or(store.get_latest_block_number().await.unwrap_or_default());
-    // Check that the range makes sense
+    let latest_number = match store.get_latest_block_number().await {
+        Ok(number) => number,
+        Err(StoreError::MissingLatestBlockNumber) => {
+            warn!("No blocks in the current chain, nothing to write!");
+            return
+        }
+        Err(_) => panic!("Internal DB Error"),
+    };
+    // Check that the requested range doesn't exceed our current chain length
+    if last_number.is_some_and(|number| number > latest_number) {
+        warn!("The requested block range exceeds the current amount of blocks in the chain {latest_number}");
+        return
+    }
+    let end = last_number.unwrap_or(latest_number);
+    // Check that the requested range makes sense
     if start > end {
         warn!("Cannot export block range [{start}..{end}], please input a valid range");
         return;
     }
-    /// Fetch blocks from the store and export them to the file
+    // Fetch blocks from the store and export them to the file
     let mut file = File::create(path).expect("Failed to open file");
     let mut buffer = vec![];
     for n in start..=end {
