@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748630233214,
+  "lastUpdate": 1748633273674,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9895,6 +9895,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 195626365478,
             "range": "± 809355537",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c261305cc61426bd6ecd135e147c49f274743225",
+          "message": "refactor(levm): simplified shift functions to improve readability and performance (#2933)\n\n**Motivation**\n\nMake the VM code that handles bitwise shifts both easier to read and\nbetter performing.\n\n**Description**\n\nThis PR removes the checked shift right and shift left functions. The\nEVM spec for the SHL, SHR and SAR opcodes doesn't require checking for\noverflow or underflow; and doing the shifts by multiplying or dividing\nsignificantly degraded performance. This PR changes those for the bit\nshift operator.\n\nCloses #2930",
+          "timestamp": "2025-05-30T18:40:42Z",
+          "tree_id": "d9fe91da3b3ac3288b3fbe1b1545601848b353b7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c261305cc61426bd6ecd135e147c49f274743225"
+        },
+        "date": 1748633267829,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181524678283,
+            "range": "± 1080828235",
             "unit": "ns/iter"
           }
         ]
