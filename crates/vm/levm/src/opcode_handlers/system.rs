@@ -823,6 +823,9 @@ impl<'a> VM<'a> {
 
     /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
     pub fn handle_return(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
+        if !tx_report.is_success() {
+            self.restore_cache_state()?;
+        }
         let executed_call_frame = self.pop_call_frame()?;
 
         // Here happens the interaction between child (executed) and parent (caller) callframe.
