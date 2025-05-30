@@ -203,10 +203,6 @@ jobs:
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true \
           docker compose -f docker-compose-l2.yaml up contract_deployer
-          echo "Showing env seq registry?"
-          echo $ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS
-          echo "showing .env file"
-          cat .env
 
       - name: Install rex
         run: |
