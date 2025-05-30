@@ -225,7 +225,7 @@ fn map_call(
             .status()
             .is_revert()
             .then(|| revert_reason_or_error.clone()),
-        calls: Box::new(vec![]),
+        calls: subcalls,
         logs: with_log.then(|| revm_call.logs.into_iter().map(map_log).collect()),
     }
 }
