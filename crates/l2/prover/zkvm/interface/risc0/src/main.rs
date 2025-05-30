@@ -1,10 +1,7 @@
 use risc0_zkvm::guest::env;
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::{
-    types::blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash},
-    Address,
-};
+use ethrex_common::Address;
 use ethrex_common::types::AccountUpdate;
 use ethrex_vm::Evm;
 use std::collections::HashMap;
@@ -18,6 +15,8 @@ use ethrex_l2_common::{
     get_block_deposits, get_block_withdrawal_hashes, compute_deposit_logs_hash, 
     compute_withdrawals_merkle_root, StateDiff
 };
+#[cfg(feature = "l2")]
+use ethrex_common::types::blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash};
 
 pub fn main() {
     let ProgramInput {
@@ -144,7 +143,7 @@ pub fn main() {
         panic!("invalid final state trie");
     }
 
-    // This could be replaced with something like a ProverConfig.
+    // TODO: this could be replaced with something like a ProverConfig.
     let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
 
     // Check state diffs are valid

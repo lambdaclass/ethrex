@@ -33,6 +33,7 @@ pub fn main() {
         #[cfg(feature = "l2")]
         blob_proof,
     } = sp1_zkvm::io::read::<ProgramInput>();
+
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
         .get_tries()
@@ -146,7 +147,7 @@ pub fn main() {
         panic!("invalid final state trie");
     }
 
-    // This could be replaced with something like a ProverConfig.
+    // TODO: this could be replaced with something like a ProverConfig in the future.
     #[cfg(feature = "l2")]
     let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
 

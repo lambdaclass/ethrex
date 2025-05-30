@@ -1,5 +1,4 @@
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::types::{blob_from_bytes, kzg_commitment_to_versioned_hash};
 use ethrex_common::{types::AccountUpdate, Address};
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
@@ -16,6 +15,8 @@ use ethrex_l2_common::{
     compute_deposit_logs_hash, compute_withdrawals_merkle_root, get_block_deposits,
     get_block_withdrawal_hashes,
 };
+#[cfg(feature = "l2")]
+use ethrex_common::types::blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash};
 
 pub struct ProveOutput(pub ProgramOutput);
 
@@ -56,7 +57,6 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
         #[cfg(feature = "l2")]
         blob_proof,
     } = input;
-    // TODO: add blob thingy
 
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db.get_tries()?;
@@ -134,14 +134,6 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
         parent_header = block.header;
     }
 
-    // Calculate account updates based on state diff
-    #[cfg(feature = "l2")]
-    let Ok(state_diff_updates) = state_diff.to_account_updates(&state_trie) else {
-        return Err("Failed to calculate account updates from state diffs"
-            .to_string()
-            .into());
-    };
-
     // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
     let Ok(withdrawals_merkle_root) = compute_withdrawals_merkle_root(withdrawal_hashes) else {
@@ -169,10 +161,20 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
         return Err("invalid final state trie".to_string().into());
     }
 
+    // TODO: this could be replaced with something like a ProverConfig in the future.
+    #[cfg(feature = "l2")]
+    let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
+
     // Check state diffs are valid
     #[cfg(feature = "l2")]
-    if state_diff_updates != acc_account_updates {
-        return Err("invalid state diffs".to_string().into());
+    if !validium {
+        let state_diff_updates = state_diff
+            .to_account_updates(&state_trie)
+            .expect("failed to calculate account updates from state diffs");
+
+        if state_diff_updates != acc_account_updates {
+            panic!("invalid state diffs")
+        }
     }
 
     // Verify KZG blob proof
