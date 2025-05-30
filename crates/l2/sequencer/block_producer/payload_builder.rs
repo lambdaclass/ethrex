@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use ethrex_blockchain::{
@@ -24,14 +24,12 @@ use tokio::time::Instant;
 use tracing::{debug, error};
 
 use crate::{
-    sequencer::{
-        errors::{BlockProducerError, StateDiffError},
-        state_diff::{
-            AccountStateDiff, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN, SIMPLE_TX_STATE_DIFF_SIZE,
-            WITHDRAWAL_LOG_LEN,
-        },
-    },
+    sequencer::errors::BlockProducerError,
     utils::helpers::{is_deposit_l2, is_withdrawal_l2},
+};
+use ethrex_l2_common::{
+    AccountStateDiff, StateDiffError, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN,
+    SIMPLE_TX_STATE_DIFF_SIZE, WITHDRAWAL_LOG_LEN,
 };
 
 /// L2 payload builder
@@ -301,7 +299,7 @@ fn get_account_diffs_in_tx(
                 let account_state_diff = AccountStateDiff {
                     new_balance,
                     nonce_diff,
-                    storage: HashMap::new(), // We add the storage later
+                    storage: BTreeMap::new(), // We add the storage later
                     bytecode,
                     bytecode_hash: None,
                 };
@@ -320,7 +318,7 @@ fn get_account_diffs_in_tx(
                             "DB Cache".to_owned(),
                         ))?;
 
-                let mut added_storage = HashMap::new();
+                let mut added_storage = BTreeMap::new();
                 for key in original_storage_slots.keys() {
                     added_storage.insert(
                         *key,

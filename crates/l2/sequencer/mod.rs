@@ -1,6 +1,8 @@
+pub mod blobs_bundle_cache;
 use std::sync::Arc;
 
 use crate::SequencerConfig;
+use blobs_bundle_cache::BlobsBundleCache;
 use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -18,7 +20,6 @@ mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
-pub mod state_diff;
 
 pub mod execution_cache;
 
@@ -37,12 +38,14 @@ pub async fn start_l2(
     info!("Starting Proposer");
 
     let execution_cache = Arc::new(ExecutionCache::default());
+    let blobs_bundle_cache = Arc::new(BlobsBundleCache::default());
 
     L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone()).await;
     if let Err(err) = L1Committer::spawn(
         store.clone(),
         rollup_store.clone(),
         execution_cache.clone(),
+        blobs_bundle_cache.clone(),
         cfg.clone(),
     )
     .await
@@ -55,13 +58,14 @@ pub async fn start_l2(
         store.clone(),
         rollup_store.clone(),
         cfg.clone(),
+        blobs_bundle_cache.clone(),
     ));
     task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
     task_set.spawn(start_block_producer(
         store.clone(),
         blockchain,
-        execution_cache,
         cfg.clone(),
+        execution_cache,
     ));
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
