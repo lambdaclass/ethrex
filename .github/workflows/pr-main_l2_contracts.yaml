@@ -5,6 +5,7 @@ on:
   pull_request:
     branches: ["**"]
     paths:
+      - "Cargo.toml"
       - "crates/l2/**"
       - ".github/workflows/pr-main_l2_contracts.yaml"
 

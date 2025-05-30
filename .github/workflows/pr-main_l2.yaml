@@ -5,6 +5,7 @@ on:
   pull_request:
     branches: ["**"]
     paths:
+      - "Cargo.toml"
       - "crates/l2/**"
       - "test_data/**"
       - "crates/blockchain/dev/**"
