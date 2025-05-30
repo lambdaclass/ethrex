@@ -128,34 +128,6 @@ make load-test-io
 
 The first one sends regular transfers between accounts, the second runs an EVM-heavy contract that computes fibonacci numbers, the third a heavy IO contract that writes to 100 storage slots per transaction.
 
-### CLI
-
-To have more control over the load tests and its parameters, you can use the CLI (the Makefile targets use the CLI underneath).
-
-The tests take a list of private keys and send a bunch of transactions from each of them to some address (either the address of some account to send eth to or the address of the contract that we're interacting with). 
-
-The CLI can be installed with the `cli` target:
-
-```sh
-make cli
-```
-
-To run the load-test, use the following command on the root of this repo:
-
-```bash
-ethrex_l2 test load --path ./test_data/private_keys.txt -i 1000 -v  --value 1
-```
-
-The command will, for each private key in the `private_keys.txt` file, send 1000 transactions with a value of `1` to a random account. If you want to send all transfers to the same account, pass
-
-```
---to <account_address>
-```
-
-The `private_keys.txt` file contains the private key of every account we use for load tests.
-
-Use `--help` to see more available options.
-
 ## Load test comparison against Reth
 
 To run a load test on Reth, clone the repo, then run
