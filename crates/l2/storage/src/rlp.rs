@@ -1,3 +1,6 @@
+// TODO: Remove this after `l2` feature is gone.
+#![allow(dead_code)]
+
 #[cfg(feature = "redb")]
 use std::any::type_name;
 use std::{fmt::Debug, marker::PhantomData};
