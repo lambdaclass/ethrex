@@ -691,22 +691,12 @@ impl<'a> VM<'a> {
         }
 
         // FOURTH: Changes to the state
-        // 1. Creating contract.
-
-        // If the address has balance but there is no account associated with it, we need to add the value to it
-        let new_balance = value_in_wei_to_send
-            .checked_add(new_account.info.balance)
-            .ok_or(VMError::BalanceOverflow)?;
-
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-161.md
-        let new_account = Account::new(new_balance, Bytes::new(), 1, Default::default());
-
-        self.insert_account(new_address, new_account)?;
-
-        // 2. Increment sender's nonce.
+        // Increment nonces of sender and contract
         self.increment_account_nonce(deployer_address)?;
+        self.increment_account_nonce(new_address)?; // 0 -> 1
 
-        // 3. Decrease sender's balance.
+        // Transfer value
+        self.increase_account_balance(new_address, value_in_wei_to_send)?;
         self.decrease_account_balance(deployer_address, value_in_wei_to_send)?;
 
         let new_call_frame = CallFrame::new(
