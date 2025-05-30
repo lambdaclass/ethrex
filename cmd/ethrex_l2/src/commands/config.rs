@@ -15,7 +15,7 @@ use ethereum_types::Address;
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    #[clap(about = "Edit an existing config.")]
+    #[command(about = "Edit an existing config.")]
     Edit {
         config_name: Option<String>,
         #[arg(
@@ -28,13 +28,13 @@ pub(crate) enum Command {
         #[command(flatten)]
         opts: Box<EditConfigOpts>,
     },
-    #[clap(about = "Create a new config.")]
+    #[command(about = "Create a new config.")]
     Create {
         config_name: String,
         #[arg(long = "default", required = false)]
         default: bool,
     },
-    #[clap(about = "Set the config to use.")]
+    #[command(about = "Set the config to use.")]
     Set {
         #[arg(
             long,
@@ -45,11 +45,11 @@ pub(crate) enum Command {
         show: bool,
         config_name: Option<String>,
     },
-    #[clap(about = "Display a config.")]
+    #[command(about = "Display a config.")]
     Display { config_name: Option<String> },
-    #[clap(about = "List all configs.")]
+    #[command(about = "List all configs.")]
     List,
-    #[clap(about = "Delete a config.")]
+    #[command(about = "Delete a config.")]
     Delete { config_name: Option<String> },
 }
 
