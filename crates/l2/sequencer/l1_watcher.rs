@@ -180,12 +180,8 @@ impl L1Watcher {
                 continue;
             }
 
-            // info!(
-            //     "Initiating mint transaction for {:x} with value {:x} and depositId: {:#}",
-            //     deposit_data.recipient, deposit_data.mint_value, deposit_data.deposit_id
-            // );
             info!(
-                "Initiating mint transaction (to: {:x}, value: {:x}, depositId: {:#}), skipping.",
+                "Initiating mint transaction for {:x} with value {:x} and depositId: {:#}",
                 deposit_data.recipient, deposit_data.mint_value, deposit_data.deposit_id
             );
 

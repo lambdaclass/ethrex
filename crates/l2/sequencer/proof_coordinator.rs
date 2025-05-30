@@ -315,10 +315,7 @@ impl ProofCoordinator {
             self.on_chain_proposer_address,
         )
         .await
-        .map_err(|err| {
-            error!("Failed to get next batch to verify: {}", err);
-            ProverServerError::InternalError(err.to_string())
-        })?;
+        .map_err(|err| ProverServerError::InternalError(err.to_string()))?;
 
         let response = if !self.rollup_store.contains_batch(&batch_to_verify).await? {
             let response = ProofData::empty_batch_response();

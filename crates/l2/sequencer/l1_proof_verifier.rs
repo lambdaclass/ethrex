@@ -6,7 +6,7 @@ use ethrex_common::{Address, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::EthClient;
 use secp256k1::SecretKey;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::{
     sequencer::errors::ProofVerifierError,

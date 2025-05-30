@@ -53,9 +53,7 @@ impl ProverType {
                 vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
             }
             ProverType::Exec => unimplemented!("Doesn't need to generate an empty calldata."),
-            ProverType::Aligned => {
-                panic!("We don't need this method for Aligned");
-            }
+            ProverType::Aligned => unimplemented!("Doesn't need to generate an empty calldata."),
         }
     }
 
