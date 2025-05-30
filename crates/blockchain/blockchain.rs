@@ -550,7 +550,7 @@ pub fn validate_receipts_root(
 pub async fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> {
     let latest_block_number = storage.get_latest_block_number().await?;
     if let Some(latest_valid_header) = storage.get_block_header(latest_block_number)? {
-        let latest_valid_hash = latest_valid_header.compute_block_hash();
+        let latest_valid_hash = latest_valid_header.hash();
         return Ok(latest_valid_hash);
     }
     Err(ChainError::StoreError(StoreError::Custom(
