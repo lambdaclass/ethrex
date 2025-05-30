@@ -118,7 +118,7 @@ async fn main() -> eyre::Result<()> {
             if opts.p2p_enabled {
                 init_network(
                     &opts,
-                    &network,
+                    network,
                     &data_dir,
                     local_p2p_node,
                     local_node_record.clone(),
