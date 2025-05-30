@@ -55,7 +55,7 @@ impl RpcHandler for TraceTransactionRequest {
         let trace_config = if params.len() == 2 {
             serde_json::from_value(params[1].clone())?
         } else {
-            TracerConfig::default()
+            TraceConfig::default()
         };
 
         Ok(TraceTransactionRequest {
@@ -69,16 +69,16 @@ impl RpcHandler for TraceTransactionRequest {
         context: crate::rpc::RpcApiContext,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         // This match will make more sense once we support other tracers
-        match self.tracer_config.tracer {
+        match self.trace_config.tracer {
             TracerType::CallTracer => {
                 // Parse tracer config now that we know the type
-                let config = if let Some(value) = &self.tracer_config.tracer_config {
+                let config = if let Some(value) = &self.trace_config.tracer_config {
                     serde_json::from_value(value.clone())?
                 } else {
                     CallTracerConfig::default()
                 };
-                let reexec = self.tracer_config.reexec.unwrap_or(DEFAULT_REEXEC);
-                let timeout = self.tracer_config.timeout.unwrap_or(DEFAULT_TIMEOUT);
+                let reexec = self.trace_config.reexec.unwrap_or(DEFAULT_REEXEC);
+                let timeout = self.trace_config.timeout.unwrap_or(DEFAULT_TIMEOUT);
                 let call_trace = context
                     .blockchain
                     .trace_transaction_calls(
