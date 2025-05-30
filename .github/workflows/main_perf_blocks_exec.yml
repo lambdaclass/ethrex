@@ -22,6 +22,8 @@ jobs:
           lfs: true
       - name: Checkout LFS objects
         run: git lfs checkout
+      - name: Update package lists
+        run: sudo apt-get update
       - name: Install gnuplot
         run: sudo apt-get install -y gnuplot
       - name: Run benchmark
