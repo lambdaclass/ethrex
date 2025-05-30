@@ -230,11 +230,7 @@ async fn handle_forkchoice(
             context.blockchain.set_synced();
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
-            match context
-                .storage
-                .get_block_by_hash(head.compute_block_hash())
-                .await
-            {
+            match context.storage.get_block_by_hash(head.hash()).await {
                 Ok(Some(block)) => {
                     for tx in &block.body.transactions {
                         context
