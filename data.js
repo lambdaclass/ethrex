@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748535093179,
+  "lastUpdate": 1748629063387,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9835,6 +9835,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 199713409136,
             "range": "± 1301003774",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "113ee57434372ddf1663b0010b53515dd2ba5b58",
+          "message": "fix(core): fix bench gnuplot install (#2987)\n\n**Motivation**\n\ngnuplot install step was failing in main:\nhttps://github.com/lambdaclass/ethrex/actions/runs/15350283590/job/43196495347\n\n**Description**\n\nProbably related to change of packages, added an update just before.",
+          "timestamp": "2025-05-30T17:28:49Z",
+          "tree_id": "5a43197e639bb03e0999ae4053a63086160142c9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/113ee57434372ddf1663b0010b53515dd2ba5b58"
+        },
+        "date": 1748629059420,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 191546986266,
+            "range": "± 346654406",
             "unit": "ns/iter"
           }
         ]
