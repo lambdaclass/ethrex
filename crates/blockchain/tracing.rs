@@ -100,7 +100,7 @@ impl Blockchain {
     ) -> Result<Evm, ChainError> {
         // Check if we need to re-execute parent blocks
         let blocks_to_re_execute =
-            get_missing_state_parents(block.header.parent_hash, &self.storage, reexec).await?;
+            get_missing_state_parents(parent_hash, &self.storage, reexec).await?;
         let parent_hash = blocks_to_re_execute
             .last()
             .map(|b| b.header.parent_hash)
