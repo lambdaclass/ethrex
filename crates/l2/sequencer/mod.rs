@@ -8,7 +8,7 @@ use ethrex_storage_rollup::StoreRollup;
 use execution_cache::ExecutionCache;
 use l1_committer::L1Committer;
 use l1_watcher::L1Watcher;
-use tokio::task::JoinSet;
+use tokio::{sync::Mutex, task::JoinSet};
 use tracing::{error, info};
 
 pub mod block_producer;
@@ -19,6 +19,9 @@ mod l1_watcher;
 pub mod metrics;
 pub mod proof_coordinator;
 pub mod state_diff;
+
+pub mod block_fetcher;
+pub mod state_updater;
 
 pub mod execution_cache;
 
@@ -34,16 +37,31 @@ pub async fn start_l2(
     cfg: SequencerConfig,
     #[cfg(feature = "metrics")] l2_url: String,
 ) {
-    info!("Starting Proposer");
+    let initial_state = if cfg.based.based {
+        SequencerState::default()
+    } else {
+        SequencerState::Sequencing
+    };
+
+    info!("Starting Sequencer in {initial_state} mode");
+
+    let shared_state = Arc::new(Mutex::new(initial_state));
 
     let execution_cache = Arc::new(ExecutionCache::default());
 
-    L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone()).await;
+    L1Watcher::spawn(
+        store.clone(),
+        blockchain.clone(),
+        cfg.clone(),
+        shared_state.clone(),
+    )
+    .await;
     if let Err(err) = L1Committer::spawn(
         store.clone(),
         rollup_store.clone(),
         execution_cache.clone(),
         cfg.clone(),
+        shared_state.clone(),
     )
     .await
     {
@@ -56,13 +74,33 @@ pub async fn start_l2(
         rollup_store.clone(),
         cfg.clone(),
     ));
-    task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
+    task_set.spawn(l1_proof_sender::start_l1_proof_sender(
+        cfg.clone(),
+        shared_state.clone(),
+    ));
     task_set.spawn(start_block_producer(
         store.clone(),
-        blockchain,
-        execution_cache,
+        blockchain.clone(),
+        execution_cache.clone(),
         cfg.clone(),
+        shared_state.clone(),
     ));
+    if cfg.based.based {
+        task_set.spawn(state_updater::start_state_updater(
+            cfg.clone(),
+            shared_state.clone(),
+            store.clone(),
+            rollup_store.clone(),
+        ));
+
+        task_set.spawn(block_fetcher::start_block_fetcher(
+            store.clone(),
+            blockchain,
+            shared_state.clone(),
+            rollup_store.clone(),
+            cfg.clone(),
+        ));
+    }
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
 
@@ -80,5 +118,21 @@ pub async fn start_l2(
                 break;
             }
         };
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub enum SequencerState {
+    Sequencing,
+    #[default]
+    Following,
+}
+
+impl std::fmt::Display for SequencerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SequencerState::Sequencing => write!(f, "Sequencing"),
+            SequencerState::Following => write!(f, "Following"),
+        }
     }
 }
