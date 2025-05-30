@@ -11,7 +11,7 @@ use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
-    initializers::{init_blockchain, init_store},
+    initializers::{get_network, init_blockchain, init_store},
     utils::{self, get_client_version, set_datadir},
     DEFAULT_DATADIR,
 };
