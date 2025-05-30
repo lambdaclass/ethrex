@@ -8,8 +8,8 @@ use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::BYTES_PER_BLOB;
 use ethrex_common::{
     types::{
-        blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, BlobsBundleError,
-        Block, BlockNumber, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
+        blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, Block, BlockNumber,
+        BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
 };
