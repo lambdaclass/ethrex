@@ -15,21 +15,21 @@ pub struct EthrexL2CLI {
 
 #[derive(Subcommand)]
 enum EthrexL2Command {
-    #[clap(subcommand, about = "Stack related commands.")]
+    #[command(subcommand, about = "Stack related commands.")]
     Stack(stack::Command),
-    #[clap(
+    #[command(
         subcommand,
         about = "Wallet interaction commands. The configured wallet could operate both with the L1 and L2 networks.",
         visible_alias = "w"
     )]
     Wallet(wallet::Command),
-    #[clap(subcommand, about = "CLI config commands.")]
+    #[command(subcommand, about = "CLI config commands.")]
     Config(config::Command),
-    #[clap(subcommand, about = "Generate shell completion scripts.")]
+    #[command(subcommand, about = "Generate shell completion scripts.")]
     Autocomplete(autocomplete::Command),
-    #[clap(subcommand, about = "Gets L2's information.")]
+    #[command(subcommand, about = "Gets L2's information.")]
     Info(info::Command),
-    #[clap(subcommand, about = "Utils commands.")]
+    #[command(subcommand, about = "Utils commands.")]
     Utils(utils::Command),
 }
 

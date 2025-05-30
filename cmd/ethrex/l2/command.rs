@@ -27,31 +27,33 @@ use tracing::info;
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub enum Command {
-    #[clap(about = "Initialize an ethrex L2 node", visible_alias = "i")]
+    #[command(about = "Initialize an ethrex L2 node", visible_alias = "i")]
     Init {
         #[command(flatten)]
         opts: Options,
     },
-    #[clap(name = "removedb", about = "Remove the database", visible_aliases = ["rm", "clean"])]
+    #[command(name = "removedb", about = "Remove the database", visible_aliases = ["rm", "clean"])]
     RemoveDB {
         #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_L2_DATADIR, required = false)]
         datadir: String,
-        #[clap(long = "force", required = false, action = clap::ArgAction::SetTrue)]
+        #[arg(long = "force", required = false, action = clap::ArgAction::SetTrue)]
         force: bool,
     },
-    #[clap(about = "Launch a server that listens for Blobs submissions and saves them offline.")]
+    #[command(
+        about = "Launch a server that listens for Blobs submissions and saves them offline."
+    )]
     BlobsSaver {
-        #[clap(
+        #[arg(
             short = 'c',
             long = "contract",
             help = "The contract address to listen to."
         )]
         contract_address: Address,
-        #[clap(short = 'd', long, help = "The directory to save the blobs.")]
+        #[arg(short = 'd', long, help = "The directory to save the blobs.")]
         data_dir: PathBuf,
-        #[clap(short = 'e', long)]
+        #[arg(short = 'e', long)]
         l1_eth_rpc: Url,
-        #[clap(short = 'b', long)]
+        #[arg(short = 'b', long)]
         l1_beacon_rpc: Url,
     },
 }
