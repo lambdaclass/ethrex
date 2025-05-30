@@ -5,7 +5,7 @@ use ethrex::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
         init_metrics, init_rpc_api, init_store, init_tracing,
     },
-    utils::{get_datadir, store_node_config_file, NodeConfigFile},
+    utils::{set_data_sub_dir, set_datadir, store_node_config_file, NodeConfigFile},
 };
 use ethrex_p2p::network::peer_table;
 #[cfg(feature = "sync-test")]
@@ -58,11 +58,11 @@ async fn main() -> eyre::Result<()> {
         .clone()
         .expect("--network is required and it was not provided");
 
-    let data_dir = get_datadir(&opts.datadir, network);
+    let data_dir = set_datadir(&set_data_sub_dir(&opts.datadir, &opts.network));
 
-    let network = &get_network(network.clone());
+    let network = get_network(&opts);
 
-    let store = init_store(&data_dir, network).await;
+    let store = init_store(&data_dir, &network).await;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;

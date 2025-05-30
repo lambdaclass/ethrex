@@ -5,7 +5,7 @@ use crate::{
         init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
     },
     l2::options::Options,
-    utils::{get_datadir, store_node_config_file, NodeConfigFile},
+    utils::{set_data_sub_dir, set_datadir, store_node_config_file, NodeConfigFile},
     DEFAULT_L2_DATADIR,
 };
 use clap::Subcommand;
@@ -60,16 +60,11 @@ impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             Command::Init { opts } => {
-                let network = &opts
-                    .node_opts
-                    .network
-                    .clone()
-                    .expect("--network is required and it was not provided");
-
-                let data_dir = get_datadir(&opts.node_opts.datadir, network);
+                let data_path = set_data_sub_dir(&opts.node_opts.datadir, &opts.node_opts.network);
+                let data_dir = set_datadir(&data_path);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
-                let network = get_network(network.clone());
+                let network = get_network(&opts.node_opts);
 
                 let store = init_store(&data_dir, &network).await;
                 let rollup_store = init_rollup_store(&rollup_store_dir).await;
