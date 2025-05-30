@@ -78,7 +78,7 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
 /// Opens a Pre-exsisting Store or creates a new one
 pub fn open_store(data_dir: &str) -> Store {
     let path = PathBuf::from(data_dir);
-    let store = if path.ends_with("memory") {
+    if path.ends_with("memory") {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
@@ -92,7 +92,7 @@ pub fn open_store(data_dir: &str) -> Store {
             }
         }
         Store::new(data_dir, engine_type).expect("Failed to create Store")
-    };
+    }
 }
 
 #[cfg(feature = "l2")]

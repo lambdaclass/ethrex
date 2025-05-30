@@ -305,7 +305,7 @@ impl Subcommand {
                 import_blocks(&path, &opts.datadir, network, opts.evm).await;
             }
             Subcommand::Export { path, first, last } => {
-                export_blocks(&path, &opts.datadir, first_number, last_number).await
+                export_blocks(&path, &opts.datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 compute_state_root(genesis_path.to_str().expect("Invalid genesis path"));
@@ -414,7 +414,8 @@ pub async fn export_blocks(
         return;
     }
     /// Fetch blocks from the store and export them to the file
-    let file = File::open(path).expect("Failed to open file");
+    let mut file = File::create(path).expect("Failed to open file");
+    let mut buffer = vec![];
     for n in start..=end {
         let block = store
             .get_block_by_number(n)
@@ -422,7 +423,9 @@ pub async fn export_blocks(
             .ok()
             .flatten()
             .expect("Failed to read block from DB");
-        block.encode(file);
+        block.encode(&mut buffer);
+        file.write_all(&buffer).expect("Failed to write to file");
+        buffer.clear();
     }
     info!("Wrote {} blocks to file {path}", end - start);
 }
