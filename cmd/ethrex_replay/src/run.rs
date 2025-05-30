@@ -1,8 +1,10 @@
 use crate::cache::Cache;
 use ethrex_common::types::{AccountUpdate, Receipt, ELASTICITY_MULTIPLIER};
-use ethrex_vm::Evm;
+use ethrex_levm::db::{gen_db::GeneralizedDatabase, CacheDB};
+use ethrex_vm::{backends::levm::LEVM, Evm};
 use eyre::Ok;
 use zkvm_interface::io::ProgramInput;
+use std::sync::Arc;
 
 pub async fn exec(cache: Cache) -> eyre::Result<String> {
     let Cache {
@@ -48,14 +50,20 @@ pub async fn prove(cache: Cache) -> eyre::Result<String> {
     Ok(serde_json::to_string(&out.0)?)
 }
 
-pub async fn run_tx(mut cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
+pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
     let block = cache.blocks[0].clone();
     let mut remaining_gas = block.header.gas_limit;
+    let mut store = {
+        let store = Arc::new(cache.db);
+        let mut db = GeneralizedDatabase::new(store.clone(), CacheDB::new());
+        LEVM::prepare_block(&block, &mut db)?;
+        Arc::into_inner(store).ok_or(eyre::Error::msg("couldn't get store out of Arc<>"))?
+    };
     for (tx, tx_sender) in block.body.get_transactions_with_sender() {
-        let mut vm = Evm::from_prover_db(cache.db.clone());
+        let mut vm = Evm::from_prover_db(store.clone());
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
-        cache.db.apply_account_updates(&account_updates);
+        store.apply_account_updates(&account_updates);
         if format!("0x{:x}", tx.compute_hash()) == tx_id {
             return Ok((receipt, account_updates));
         }
