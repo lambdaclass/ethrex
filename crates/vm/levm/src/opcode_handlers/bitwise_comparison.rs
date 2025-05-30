@@ -264,6 +264,7 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
+    #[expect(clippy::arithmetic_side_effects)]
     // SAR operation (arithmetic shift right)
     pub fn op_sar(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
