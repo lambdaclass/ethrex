@@ -1,13 +1,12 @@
-use std::{fmt::Debug, sync::LazyLock};
-
-#[cfg(feature = "aligned")]
-use ethrex_l2::utils::prover::proving_systems::ProofBytes;
-use ethrex_l2::utils::prover::proving_systems::{BatchProof, ProofCalldata, ProverType};
+use ethrex_l2::utils::prover::proving_systems::{
+    BatchProof, ProofBytes, ProofCalldata, ProverType,
+};
 use ethrex_l2_sdk::calldata::Value;
 use sp1_sdk::{
     EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
 };
+use std::{fmt::Debug, sync::LazyLock};
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 

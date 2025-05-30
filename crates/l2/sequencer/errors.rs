@@ -100,6 +100,12 @@ pub enum ProofSenderError {
     FailedToParseOnChainProposerResponse(String),
     #[error("Proof Sender failed because of a store error: {0}")]
     StoreError(#[from] StoreError),
+    #[error("Proof Sender failed to estimate Aligned fee: {0}")]
+    AlignedFeeEstimateError(String),
+    #[error("Proof Sender failed to get nonce from batcher: {0}")]
+    AlignedGetNonceError(String),
+    #[error("Proof Sender failed to submit proof: {0}")]
+    AlignedSubmitProofError(String),
 }
 
 #[derive(Debug, thiserror::Error)]

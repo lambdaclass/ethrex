@@ -1,6 +1,6 @@
 use aligned_sdk::{
     common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
-    verification_layer::{estimate_fee, get_nonce_from_ethereum, submit},
+    verification_layer::{estimate_fee, get_nonce_from_batcher, submit},
 };
 use ethers::signers::{Signer, Wallet};
 use ethrex_common::{Address, U256};
@@ -55,6 +55,7 @@ struct L1ProofSender {
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
     rollup_storage: StoreRollup,
+    l1_chain_id: u64,
 }
 
 impl L1ProofSender {
@@ -66,6 +67,9 @@ impl L1ProofSender {
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
+        let l1_chain_id = eth_client.get_chain_id().await?.try_into().map_err(|_| {
+            ProofSenderError::InternalError("Failed to convert chain ID to U256".to_owned())
+        })?;
 
         Ok(Self {
             eth_client,
@@ -75,6 +79,7 @@ impl L1ProofSender {
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
             rollup_storage,
+            l1_chain_id,
         })
     }
 
@@ -136,39 +141,43 @@ impl L1ProofSender {
             pub_input: None,
         };
 
-        // TODO: remove unwrap
-        let fee_estimation_default = estimate_fee(
-            self.eth_client.urls.first().unwrap().as_str(),
-            FeeEstimationType::Instant,
-        )
-        .await
-        .unwrap();
+        let rpc_url = self
+            .eth_client
+            .urls
+            .first()
+            .ok_or_else(|| {
+                ProofSenderError::InternalError("No Ethereum RPC URL configured".to_owned())
+            })?
+            .as_str();
 
-        let nonce = get_nonce_from_ethereum(
-            self.eth_client.urls.first().unwrap().as_str(), // TODO: remove unwrap
-            self.l1_address.0.into(),
-            Network::Devnet,
-        )
-        .await
-        .unwrap();
+        let instant_fee_estimation = estimate_fee(rpc_url, FeeEstimationType::Instant)
+            .await
+            .map_err(|err| ProofSenderError::AlignedFeeEstimateError(err.to_string()))?;
+
+        let nonce = get_nonce_from_batcher(Network::Devnet, self.l1_address.0.into())
+            .await
+            .map_err(|err| {
+                ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {:?}", err))
+            })?;
 
         let wallet = Wallet::from_bytes(self.l1_private_key.as_ref())
             .map_err(|_| ProofSenderError::InternalError("Failed to create wallet".to_owned()))?;
 
-        // TODO: remove hardcoded chain id
-        let wallet = wallet.with_chain_id(31337u64);
+        let wallet = wallet.with_chain_id(self.l1_chain_id);
 
         debug!("Sending proof to Aligned");
 
         submit(
             Network::Devnet, //TODO: remove hardcoded network
             &verification_data,
-            fee_estimation_default,
+            instant_fee_estimation,
             wallet,
             nonce,
         )
         .await
-        .unwrap();
+        .map_err(|err| {
+            ProofSenderError::AlignedSubmitProofError(format!("Failed to submit proof: {err}"))
+        })?;
 
         info!("Proof for batch {batch_number} sent to Aligned");
 
