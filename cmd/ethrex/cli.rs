@@ -11,7 +11,7 @@ use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
-    initializers::{init_blockchain, init_store},
+    initializers::{get_network, init_blockchain, init_store},
     utils::{self, get_client_version, set_datadir},
     DEFAULT_DATADIR,
 };
@@ -272,12 +272,9 @@ impl Subcommand {
                     .await?;
                 }
 
-                let network = opts
-                    .network
-                    .as_ref()
-                    .expect("--network is required and it was not provided");
+                let network = get_network(opts);
 
-                import_blocks(&path, &opts.datadir, network, opts.evm).await;
+                import_blocks(&path, &opts.datadir, &network, opts.evm).await;
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 compute_state_root(genesis_path.to_str().expect("Invalid genesis path"));
