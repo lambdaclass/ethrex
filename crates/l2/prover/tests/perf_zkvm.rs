@@ -49,13 +49,18 @@ async fn setup() -> (ProgramInput, Block) {
     info!("Number of blocks to insert: {}", blocks.len());
 
     let blockchain = Blockchain::default_with_store(store.clone());
+    let mut state_trie = blockchain
+        .storage
+        .state_trie(blocks.first().unwrap().header.parent_hash)
+        .unwrap()
+        .unwrap();
     for block in &blocks {
         info!(
             "txs {} in block{}",
             block.body.transactions.len(),
             block.header.number
         );
-        blockchain.add_block(block).await.unwrap();
+        blockchain.add_block(block, &mut state_trie).await.unwrap();
     }
     let block_to_prove = blocks.get(3).unwrap();
 

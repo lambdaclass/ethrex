@@ -316,24 +316,21 @@ impl Store {
     /// and returns the new state root after the updates have been applied.
     pub async fn apply_account_updates(
         &self,
-        block_hash: BlockHash,
+        state_trie: &mut Trie,
         account_updates: &[AccountUpdate],
-    ) -> Result<Option<H256>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-
-        let mut state_trie = self
-            .apply_account_updates_from_trie(state_trie, account_updates)
+    ) -> Result<H256, StoreError> {
+        self.apply_account_updates_from_trie(state_trie, account_updates)
             .await?;
-        Ok(Some(state_trie.hash()?))
+
+        // Commit and hash.
+        Ok(state_trie.hash()?)
     }
 
     pub async fn apply_account_updates_from_trie(
         &self,
-        mut state_trie: Trie,
+        state_trie: &mut Trie,
         account_updates: &[AccountUpdate],
-    ) -> Result<Trie, StoreError> {
+    ) -> Result<(), StoreError> {
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
             if update.removed {
@@ -375,7 +372,7 @@ impl Store {
             }
         }
 
-        Ok(state_trie)
+        Ok(())
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root

@@ -22,6 +22,7 @@ use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
 use ethrex_common::{Address, H256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
+use ethrex_trie::Trie;
 use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use mempool::Mempool;
 use std::collections::HashMap;
@@ -36,7 +37,7 @@ use vm::StoreVmDatabase;
 #[derive(Debug)]
 pub struct Blockchain {
     pub evm_engine: EvmEngine,
-    storage: Store,
+    pub storage: Store,
     pub mempool: Mempool,
     /// Whether the node's chain is in or out of sync with the current chain
     /// This will be set to true once the initial sync has taken place and wont be set to false after
@@ -132,15 +133,15 @@ impl Blockchain {
     pub async fn store_block(
         &self,
         block: &Block,
+        state_trie: &mut Trie,
         execution_result: BlockExecutionResult,
         account_updates: &[AccountUpdate],
     ) -> Result<(), ChainError> {
         // Apply the account updates over the last block's state and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(block.header.parent_hash, account_updates)
-            .await?
-            .ok_or(ChainError::ParentStateNotFound)?;
+            .apply_account_updates(state_trie, account_updates)
+            .await?;
 
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
@@ -155,11 +156,11 @@ impl Blockchain {
             .map_err(ChainError::StoreError)
     }
 
-    pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+    pub async fn add_block(&self, block: &Block, state_trie: &mut Trie) -> Result<(), ChainError> {
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();
-        let result = self.store_block(block, res, &updates).await;
+        let result = self.store_block(block, state_trie, res, &updates).await;
         let stored = Instant::now();
         Self::print_add_block_logs(block, since, executed, stored);
         result
@@ -282,10 +283,16 @@ impl Blockchain {
         // Apply the account updates over all blocks and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(first_block_header.parent_hash, &account_updates)
+            .apply_account_updates(
+                &mut self
+                    .storage
+                    .state_trie(first_block_header.parent_hash)
+                    .map_err(|e| (e.into(), None))?
+                    .ok_or((ChainError::ParentStateNotFound, None))?,
+                &account_updates,
+            )
             .await
-            .map_err(|e| (e.into(), None))?
-            .ok_or((ChainError::ParentStateNotFound, None))?;
+            .map_err(|e| (e.into(), None))?;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;

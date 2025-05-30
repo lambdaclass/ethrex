@@ -332,13 +332,16 @@ impl Syncer {
                 store_bodies_handle.await??;
                 // For all blocks before the pivot: Store the bodies and fetch the receipts (TODO)
                 // For all blocks after the pivot: Process them fully
+                let mut state_trie = store
+                    .state_trie(all_block_hashes[pivot_idx])?
+                    .ok_or(SyncError::Chain(ChainError::ParentStateNotFound))?;
                 for hash in &all_block_hashes[pivot_idx + 1..] {
                     let block = store
                         .get_block_by_hash(*hash)
                         .await?
                         .ok_or(SyncError::CorruptDB)?;
                     let block_number = block.header.number;
-                    self.blockchain.add_block(&block).await?;
+                    self.blockchain.add_block(&block, &mut state_trie).await?;
                     store.set_canonical_block(block_number, *hash).await?;
                     store.update_latest_block_number(block_number).await?;
                 }
@@ -501,15 +504,25 @@ impl Syncer {
         if sync_head_found {
             let mut last_valid_hash = H256::default();
             for block in blocks {
-                blockchain.add_block(&block).await.map_err(|e| {
-                    (
-                        e,
-                        Some(BatchBlockProcessingFailure {
-                            last_valid_hash,
-                            failed_block_hash: block.hash(),
-                        }),
+                blockchain
+                    .add_block(
+                        &block,
+                        &mut blockchain
+                            .storage
+                            .state_trie(block.header.parent_hash)
+                            .map_err(|e| (e.into(), None))?
+                            .ok_or((ChainError::ParentStateNotFound, None))?,
                     )
-                })?;
+                    .await
+                    .map_err(|e| {
+                        (
+                            e,
+                            Some(BatchBlockProcessingFailure {
+                                last_valid_hash,
+                                failed_block_hash: block.hash(),
+                            }),
+                        )
+                    })?;
                 last_valid_hash = block.hash();
             }
             Ok(())

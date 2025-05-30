@@ -640,7 +640,17 @@ async fn try_execute_payload(
     // Execute and store the block
     info!("Executing payload with block hash: {block_hash:#x}");
 
-    match context.blockchain.add_block(block).await {
+    match context
+        .blockchain
+        .add_block(
+            block,
+            &mut storage
+                .state_trie(block.header.parent_hash)
+                .map_err(|e| RpcErr::Internal(e.to_string()))?
+                .ok_or_else(|| RpcErr::Internal(ChainError::ParentStateNotFound.to_string()))?,
+        )
+        .await
+    {
         Err(ChainError::ParentNotFound) => {
             // Start sync
             context.syncer.sync_to_head(block_hash);

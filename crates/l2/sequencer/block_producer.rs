@@ -5,6 +5,7 @@ use std::{
 };
 
 use ethrex_blockchain::{
+    error::ChainError,
     fork_choice::apply_fork_choice,
     payload::{create_payload, BuildPayloadArgs},
     validate_block, Blockchain,
@@ -141,7 +142,17 @@ impl BlockProducer {
         };
 
         blockchain
-            .store_block(&block, execution_result.clone(), &account_updates)
+            .store_block(
+                &block,
+                &mut blockchain
+                    .storage
+                    .state_trie(block.header.parent_hash)?
+                    .ok_or(BlockProducerError::ChainError(
+                        ChainError::ParentStateNotFound,
+                    ))?,
+                execution_result.clone(),
+                &account_updates,
+            )
             .await?;
         info!("Stored new block {:x}", block.hash());
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.

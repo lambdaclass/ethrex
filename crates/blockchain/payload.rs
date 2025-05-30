@@ -538,9 +538,14 @@ impl Blockchain {
 
         context.payload.header.state_root = context
             .store
-            .apply_account_updates(context.parent_hash(), &account_updates)
-            .await?
-            .unwrap_or_default();
+            .apply_account_updates(
+                &mut self
+                    .storage
+                    .state_trie(context.parent_hash())?
+                    .ok_or(ChainError::ParentStateNotFound)?,
+                &account_updates,
+            )
+            .await?;
         context.payload.header.transactions_root =
             compute_transactions_root(&context.payload.body.transactions);
         context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
