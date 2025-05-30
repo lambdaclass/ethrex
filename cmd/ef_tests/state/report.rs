@@ -382,9 +382,31 @@ impl Display for EFTestsReport {
                                     levm_gas_refunded.abs_diff(*revm_gas_refunded)
                                 )?;
                             }
-                            if let Some(logs_diff) = &execution_report.logs_mismatch {
-                                writeln!(f, "\t\t\tLogs mismatch with diff: {}", logs_diff)?;
+                            if let Some((levm_logs, revm_logs)) = &execution_report.logs_mismatch {
+                                writeln!(f, "\t\t\tLogs mismatch:")?;
+                                writeln!(f, "\t\t\t\tLevm Logs: ")?;
+                                let levm_log_report = format!(
+                                    "{}",
+                                    levm_logs
+                                        .iter()
+                                        .map(|log| format!(
+                                            "\t\t\t\t Log {{ address: {:#x}, topic: {:?}, data: {:#x} }} \n",
+                                            log.address, log.topics, log.data
+                                        ))
+                                        .fold(String::new(), |acc, arg| acc + arg.as_str())
+                                );
+                                writeln!(f, "{} ", levm_log_report);
+                                writeln!(f, "\t\t\t\tRevm Logs: ");
+                                let revm_log_report = format!(
+                                    "{}",
+                                    revm_logs
+                                        .iter()
+                                        .map(|log| format!("\t\t\t\t {:?} \n", log))
+                                        .fold(String::new(), |acc, arg| acc + arg.as_str())
+                                );
+                                writeln!(f, "{} ", revm_log_report);
                             }
+
                             if let Some((levm_result, revm_error)) =
                                 &execution_report.re_runner_error
                             {
@@ -760,7 +782,7 @@ pub struct TestReRunExecutionReport {
     pub execution_result_mismatch: Option<(TxResult, RevmExecutionResult)>,
     pub gas_used_mismatch: Option<(u64, u64)>,
     pub gas_refunded_mismatch: Option<(u64, u64)>,
-    pub logs_mismatch: Option<String>,
+    pub logs_mismatch: Option<(Vec<ethrex_common::types::Log>, Vec<revm::primitives::Log>)>,
     pub re_runner_error: Option<(TxResult, String)>,
 }
 
@@ -839,67 +861,7 @@ impl TestReRunReport {
         revm_logs: Vec<revm::primitives::Log>,
         fork: Fork,
     ) {
-        let mut diff = String::new();
-
-        for (i, (levm_log, revm_log)) in levm_logs.iter().zip(revm_logs.iter()).enumerate() {
-            let mut levm_log_rlp = Vec::new();
-            levm_log.encode(&mut levm_log_rlp);
-
-            let mut revm_log_rlp = Vec::new();
-            revm_log.encode(&mut revm_log_rlp);
-
-            if levm_log_rlp != revm_log_rlp {
-                diff += &format!(
-                    r#"
-                        number {i} logs don't match:"#
-                );
-                if levm_log.address != Address::from_slice(&revm_log.address[..]) {
-                    diff += &format!(
-                        r#"             
-                                Address missmatch:
-                                        Levm log address: {:x}  
-                                        Revm log address: {:x}"#,
-                        levm_log.address,
-                        Address::from_slice(&revm_log.address[..])
-                    );
-                }
-                if levm_logs[i].data != *revm_logs[i].data.data {
-                    diff += &format!(
-                        r#"                
-                                Data missmatch: 
-                                        Levm log data: {:x} 
-                                        Revm log data: {:x}"#,
-                        levm_log.data, *revm_log.data.data
-                    );
-                }
-
-                if levm_log.topics
-                    != (*revm_log.data.topics().to_vec())
-                        .iter()
-                        .map(|x| H256::from_slice(x.as_ref()))
-                        .collect::<Vec<H256>>()
-                {
-                    diff += &format!(
-                        r#"
-                                Topics missmatch: 
-                                        Levm log topic: {:?} 
-                                        Revm log topic: {:?}"#,
-                        levm_log.topics,
-                        revm_log.data.topics()
-                    );
-                }
-                diff += r#"
-                "#;
-            } else {
-                diff += &format!(
-                    r#"
-                        number {i} logs match.
-                        "#
-                );
-            }
-        }
-
-        let value = Some(diff);
+        let value = Some((levm_logs, revm_logs));
         self.execution_report
             .entry((vector, fork))
             .and_modify(|report| {
