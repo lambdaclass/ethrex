@@ -6,8 +6,8 @@ pub(crate) mod filter;
 pub(crate) mod logs;
 pub(crate) mod transaction;
 
-pub(crate) mod fee_calculator;
 pub(crate) mod gas_price;
+pub(crate) mod gas_tip_estimator;
 pub(crate) mod max_priority_fee;
 
 #[cfg(test)]
@@ -174,6 +174,12 @@ pub mod test_utils {
                 }
             }
             add_blocks_with_transactions(storage, block_num, txs).await;
+        }
+    }
+
+    pub async fn add_empty_blocks(storage: &Store, block_count: u64) {
+        for block_num in 1..=block_count {
+            add_blocks_with_transactions(storage, block_num, vec![]).await;
         }
     }
 }
