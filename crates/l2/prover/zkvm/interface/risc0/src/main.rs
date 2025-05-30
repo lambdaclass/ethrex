@@ -145,7 +145,7 @@ pub fn main() {
     }
 
     // This could be replaced with something like a ProverConfig.
-    let validium = (state_diff, blob_commitment, blob_proof) == (StateDiff::default(), [0; 48], [0; 48]);
+    let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
 
     // Check state diffs are valid
     #[cfg(feature = "l2")]

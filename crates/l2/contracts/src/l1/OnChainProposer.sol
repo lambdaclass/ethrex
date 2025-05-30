@@ -12,7 +12,6 @@ import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
 import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
 
-
 /// @title OnChainProposer contract.
 /// @author LambdaClass
 contract OnChainProposer is
@@ -241,9 +240,12 @@ contract OnChainProposer is
                 withdrawalsLogsMerkleRoot
             );
         }
+        // TODO: remove stateDIffKZGVersionedHash
+        bytes32 blobHash = blobhash(0);
+        require(blobHash == stateDiffKZGVersionedHash, "incorrect blob hash");
         batchCommitments[batchNumber] = BatchCommitmentInfo(
             newStateRoot,
-            blobhash(0),
+            blobHash,
             processedDepositLogsRollingHash,
             withdrawalsLogsMerkleRoot
         );
