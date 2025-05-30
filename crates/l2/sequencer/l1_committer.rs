@@ -8,8 +8,6 @@ use crate::{
 };
 
 use ethrex_blockchain::vm::StoreVmDatabase;
-#[cfg(feature = "metrics")]
-use ethrex_common::types::BYTES_PER_BLOB;
 use ethrex_common::{
     types::{
         blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, BlobsBundleError,
@@ -151,9 +149,9 @@ impl GenServer for L1Committer {
         // Right now we only have the Commit message, so we ignore the message
         let check_interval = random_duration(state.commit_time_ms);
         send_after(check_interval, tx.clone(), Self::InMsg::Commit);
-        if let Err(err) = commit_next_batch_to_l1(state).await {
-            error!("L1 Committer Error: {}", err);
-        }
+        let _ = commit_next_batch_to_l1(state)
+            .await
+            .inspect_err(|err| error!("L1 Committer Error: {err}"));
         CastResponse::NoReply
     }
 }
@@ -189,7 +187,7 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
 
     info!("Sending commitment for batch {batch_to_commit}. first_block: {first_block_to_commit}, last_block: {last_block_of_batch}");
 
-    match send_commitment(
+    let commit_tx_hash = send_commitment(
                 state,
                 batch_to_commit,
                 new_state_root,
@@ -198,32 +196,35 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                 blobs_bundle,
             )
             .await
-        {
-            Ok(commit_tx_hash) => {
-                metrics!(
-                let _ = METRICS_L2
-                    .set_block_type_and_block_number(
-                        MetricsL2BlockType::LastCommittedBlock,
-                        last_block_of_batch,
-                    )
-                    .inspect_err(|e| {
-                        tracing::error!(
-                            "Failed to set metric: last committed block {}",
-                            e.to_string()
-                        )
-                    });
-                );
-
-                info!(
-                    "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}.",
-                );
-                state.rollup_store.store_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes).await?;
-                Ok(())
-            }
-            Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
+            .map_err(|error| CommitterError::FailedToSendCommitment(format!(
                 "Failed to send commitment for batch {batch_to_commit}. first_block: {first_block_to_commit} last_block: {last_block_of_batch}: {error}"
-            ))),
-        }
+            )))?;
+
+    metrics!(
+    let _ = METRICS_L2
+        .set_block_type_and_block_number(
+            MetricsL2BlockType::LastCommittedBlock,
+            last_block_of_batch,
+        )
+        .inspect_err(|e| {
+            tracing::error!(
+                "Failed to set metric: last committed block {}",
+                e.to_string()
+            )
+        });
+    );
+
+    info!("Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}.",);
+    state
+        .rollup_store
+        .store_batch(
+            batch_to_commit,
+            first_block_to_commit,
+            last_block_of_batch,
+            withdrawal_hashes,
+        )
+        .await?;
+    Ok(())
 }
 
 async fn prepare_batch_from_block(
@@ -291,20 +292,21 @@ async fn prepare_batch_from_block(
 
         // Get block account updates.
         let block_to_commit = Block::new(block_to_commit_header.clone(), block_to_commit_body);
-        let account_updates = match state.execution_cache.get(block_to_commit.hash())? {
-            Some(account_updates) => account_updates,
-            None => {
+        let account_updates =
+            if let Some(account_updates) = state.execution_cache.get(block_to_commit.hash())? {
+                account_updates
+            } else {
                 warn!(
-                            "Could not find execution cache result for block {}, falling back to re-execution", last_added_block_number + 1
-                        );
+                "Could not find execution cache result for block {}, falling back to re-execution",
+                last_added_block_number + 1
+            );
 
                 let vm_db =
                     StoreVmDatabase::new(state.store.clone(), block_to_commit.header.parent_hash);
                 let mut vm = Evm::new(EvmEngine::default(), vm_db);
                 vm.execute_block(&block_to_commit)?;
                 vm.get_state_transitions()?
-            }
-        };
+            };
 
         // Accumulate block data with the rest of the batch.
         acc_withdrawals.extend(withdrawals.clone());
@@ -334,40 +336,37 @@ async fn prepare_batch_from_block(
             Ok((BlobsBundle::default(), 0_usize))
         };
 
-        match result {
-            Ok((bundle, latest_blob_size)) => {
-                // Save current blobs_bundle and continue to add more blocks.
-                blobs_bundle = bundle;
-                _blob_size = latest_blob_size;
-                for (_, tx) in &withdrawals {
-                    let hash = get_withdrawal_hash(tx)
-                        .ok_or(CommitterError::InvalidWithdrawalTransaction)?;
-                    withdrawal_hashes.push(hash);
-                }
+        let Ok((bundle, latest_blob_size)) = result else {
+            warn!("Batch size limit reached. Any remaining blocks will be processed in the next batch.");
+            // Break loop. Use the previous generated blobs_bundle.
+            break;
+        };
 
-                deposit_logs_hashes.extend(
-                    deposits
-                        .iter()
-                        .filter_map(|tx| tx.get_deposit_hash())
-                        .collect::<Vec<H256>>(),
-                );
-
-                new_state_root = state
-                    .store
-                    .state_trie(block_to_commit.hash())?
-                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                        "Failed to get state root from storage".to_owned(),
-                    ))?
-                    .hash_no_commit();
-
-                last_added_block_number += 1;
-            }
-            Err(_) => {
-                warn!("Batch size limit reached. Any remaining blocks will be processed in the next batch.");
-                // Break loop. Use the previous generated blobs_bundle.
-                break;
-            }
+        // Save current blobs_bundle and continue to add more blocks.
+        blobs_bundle = bundle;
+        _blob_size = latest_blob_size;
+        for (_, tx) in &withdrawals {
+            let hash =
+                get_withdrawal_hash(tx).ok_or(CommitterError::InvalidWithdrawalTransaction)?;
+            withdrawal_hashes.push(hash);
         }
+
+        deposit_logs_hashes.extend(
+            deposits
+                .iter()
+                .filter_map(|tx| tx.get_deposit_hash())
+                .collect::<Vec<H256>>(),
+        );
+
+        new_state_root = state
+            .store
+            .state_trie(block_to_commit.hash())?
+            .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                "Failed to get state root from storage".to_owned(),
+            ))?
+            .hash_no_commit();
+
+        last_added_block_number += 1;
     }
 
     metrics!(if let (Ok(deposits_count), Ok(withdrawals_count)) = (
@@ -383,8 +382,8 @@ async fn prepare_batch_from_block(
                 });
         }
         #[allow(clippy::as_conversions)]
-        METRICS_L2
-            .set_blob_usage_percentage((_blob_size as f64 / BYTES_PER_BLOB as f64) * 100_f64);
+        let blob_usage_percentage = _blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
+        METRICS_L2.set_blob_usage_percentage(blob_usage_percentage);
     );
 
     let deposit_logs_hash = get_deposit_hash(deposit_logs_hashes)?;
@@ -406,19 +405,21 @@ fn get_block_withdrawals(txs_and_receipts: &[(Transaction, Receipt)]) -> Vec<(H2
 }
 
 fn get_withdrawals_merkle_root(withdrawals_hashes: Vec<H256>) -> Result<H256, CommitterError> {
-    if !withdrawals_hashes.is_empty() {
-        merkelize(withdrawals_hashes).map_err(CommitterError::FailedToMerkelize)
-    } else {
-        Ok(H256::zero())
+    if withdrawals_hashes.is_empty() {
+        return Ok(H256::zero());
     }
+    merkelize(withdrawals_hashes).map_err(CommitterError::FailedToMerkelize)
 }
 
 fn get_block_deposits(txs_and_receipts: &[(Transaction, Receipt)]) -> Vec<PrivilegedL2Transaction> {
     let deposits = txs_and_receipts
         .iter()
-        .filter_map(|(tx, _)| match tx {
-            Transaction::PrivilegedL2Transaction(tx) => Some(tx.clone()),
-            _ => None,
+        .filter_map(|(tx, _)| {
+            if let Transaction::PrivilegedL2Transaction(tx) = tx {
+                Some(tx.clone())
+            } else {
+                None
+            }
         })
         .collect();
 
@@ -426,31 +427,30 @@ fn get_block_deposits(txs_and_receipts: &[(Transaction, Receipt)]) -> Vec<Privil
 }
 
 fn get_deposit_hash(deposit_hashes: Vec<H256>) -> Result<H256, CommitterError> {
-    if !deposit_hashes.is_empty() {
-        let deposit_hashes_len: u16 = deposit_hashes
-            .len()
-            .try_into()
-            .map_err(CommitterError::from)?;
-        Ok(H256::from_slice(
-            [
-                &deposit_hashes_len.to_be_bytes(),
-                keccak(
-                    deposit_hashes
-                        .iter()
-                        .map(H256::as_bytes)
-                        .collect::<Vec<&[u8]>>()
-                        .concat(),
-                )
-                .as_bytes()
-                .get(2..32)
-                .ok_or(CommitterError::FailedToDecodeDepositHash)?,
-            ]
-            .concat()
-            .as_slice(),
-        ))
-    } else {
-        Ok(H256::zero())
+    if deposit_hashes.is_empty() {
+        return Ok(H256::zero());
     }
+    let deposit_hashes_len: u16 = deposit_hashes
+        .len()
+        .try_into()
+        .map_err(CommitterError::from)?;
+    Ok(H256::from_slice(
+        [
+            &deposit_hashes_len.to_be_bytes(),
+            keccak(
+                deposit_hashes
+                    .iter()
+                    .map(H256::as_bytes)
+                    .collect::<Vec<&[u8]>>()
+                    .concat(),
+            )
+            .as_bytes()
+            .get(2..32)
+            .ok_or(CommitterError::FailedToDecodeDepositHash)?,
+        ]
+        .concat()
+        .as_slice(),
+    ))
 }
 
 /// Prepare the state diff for the block.
@@ -671,10 +671,9 @@ async fn estimate_blob_gas(
     // def fake_exponential(factor: int, numerator: int, denominator: int) -> int:
 
     // Check if adding the blob gas used and excess blob gas would overflow
-    let total_blob_gas = match excess_blob_gas.checked_add(blob_gas_used) {
-        Some(total) => total,
-        None => return Err(BlobEstimationError::OverflowError.into()),
-    };
+    let total_blob_gas = excess_blob_gas
+        .checked_add(blob_gas_used)
+        .ok_or(BlobEstimationError::OverflowError)?;
 
     // If the blob's market is in high demand, the equation may give a really big number.
     // This function doesn't panic, it performs checked/saturating operations.
@@ -688,10 +687,9 @@ async fn estimate_blob_gas(
     let gas_with_headroom = (blob_gas * (100 + headroom)) / 100;
 
     // Check if we have an overflow when we take the headroom into account.
-    let blob_gas = match arbitrary_base_blob_gas_price.checked_add(gas_with_headroom) {
-        Some(gas) => gas,
-        None => return Err(BlobEstimationError::OverflowError.into()),
-    };
+    let blob_gas = arbitrary_base_blob_gas_price
+        .checked_add(gas_with_headroom)
+        .ok_or(BlobEstimationError::OverflowError)?;
 
     Ok(blob_gas)
 }
