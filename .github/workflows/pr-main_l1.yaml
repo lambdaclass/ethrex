@@ -35,7 +35,8 @@ jobs:
       - name: Run cargo clippy
         run: |
           cargo clippy --workspace -- -D warnings
-          make lint
+          cargo clippy -- -D warnings
+          cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
 
       - name: Run cargo fmt
         run: |
@@ -281,7 +282,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client-file test_data/hive_clients.yml --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 8 
+        run: chmod +x hive && ./hive --client-file test_data/hive_clients.yml --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 8
         # We use 8 here instead of 16 due to performance issues in some tests
         # Notably the tests "Invalid Missing Ancestor Syncing ReOrG" in engine cancun
 
