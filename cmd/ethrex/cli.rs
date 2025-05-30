@@ -249,13 +249,13 @@ pub enum Subcommand {
         )]
         path: String,
         #[arg(
-            required = false,
+            long = "first",
             value_name = "NUMBER",
             help = "First block number to export"
         )]
         first: Option<u64>,
         #[arg(
-            required = false,
+            long = "last",
             value_name = "NUMBER",
             help = "Last block numer to export"
         )]
@@ -405,6 +405,7 @@ pub async fn export_blocks(
     first_number: Option<u64>,
     last_number: Option<u64>,
 ) {
+    let data_dir = set_datadir(data_dir);
     let store = open_store(&data_dir);
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
@@ -438,6 +439,8 @@ pub async fn export_blocks(
             .flatten()
             .expect("Failed to read block from DB");
         block.encode(&mut buffer);
+        // Exporting the whole chain can take a while, so we need to show some output in the meantime
+        info!("Exporting block {n}/{end}");
         file.write_all(&buffer).expect("Failed to write to file");
         buffer.clear();
     }
