@@ -4,9 +4,6 @@ members = [
   "cmd/ef_tests/state",
   "cmd/ethrex",
   "cmd/ethrex_l2",
-  "cmd/hive_report",
-  "cmd/loc",
-  "cmd/load_test",
   "cmd/ethrex_replay",
   "crates/blockchain",
   "crates/blockchain/dev",
@@ -25,6 +22,10 @@ members = [
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/bench/revm_comparison",
+  "tooling/genesis",
+  "tooling/hive_report",
+  "tooling/load_test",
+  "tooling/loc"
 ]
 resolver = "2"
 
@@ -85,7 +86,9 @@ secp256k1 = { version = "0.29.1", default-features = false, features = [
 ] }
 keccak-hash = "0.11.0"
 axum = "0.8.1"
-libsecp256k1 = "0.7.2"
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
+
+[patch.crates-io]
+secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-4.0.0" }
