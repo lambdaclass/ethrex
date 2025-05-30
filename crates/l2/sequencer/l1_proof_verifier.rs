@@ -100,8 +100,6 @@ impl L1ProofVerifier {
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, ProofVerifierError> {
-        debug!("L1 proof verifier: Verifying proof in aggregation mode");
-
         let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
         let public_inputs = proof.public_values();
         // TODO: use a hardcoded vk
@@ -114,17 +112,20 @@ impl L1ProofVerifier {
             public_inputs: public_inputs.clone(),
         };
 
+        let rpc_url = self.eth_client.urls.first().ok_or_else(|| {
+            ProofVerifierError::InternalError("No Ethereum RPC URL configured".to_owned())
+        })?;
+
         let proof_status = check_proof_verification(
             &verification_data,
             Network::Devnet,
-            self.eth_client.urls.first().unwrap().as_str().into(),
+            rpc_url.as_str().into(),
             "http://127.0.0.1:58801".to_string(), // beacon_client
             None,
         )
         .await
         .map_err(|e| ProofVerifierError::InternalError(format!("{:?}", e)))?;
 
-        // We can make this prettier. Aligned updated their API and this was just a quick fix.
         let (merkle_root, merkle_path) = match proof_status {
             ProofStatus::Verified {
                 merkle_root,
@@ -141,9 +142,8 @@ impl L1ProofVerifier {
             }
         };
 
-        let commitment = verification_data.commitment();
+        let commitment = H256(verification_data.commitment());
         let merkle_root = H256(merkle_root);
-        let commitment = H256(commitment);
 
         info!(
             "Proof for batch {batch_number} aggregated by Aligned with commitment {commitment:#x} and Merkle root {merkle_root:#x}"

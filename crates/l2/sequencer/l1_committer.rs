@@ -104,6 +104,7 @@ impl Committer {
             if let Err(err) = self.main_logic().await {
                 error!("L1 Committer Error: {}", err);
             }
+
             sleep_random(self.commit_time_ms).await;
         }
     }
