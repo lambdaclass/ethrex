@@ -1,7 +1,7 @@
 use std::{
     fs::{metadata, read_dir, File},
     io::{self, Write},
-    path::{Path, PathBuf},
+    path::{Path, PathBuf}, time::{Duration, Instant},
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
@@ -431,6 +431,7 @@ pub async fn export_blocks(
     // Fetch blocks from the store and export them to the file
     let mut file = File::create(path).expect("Failed to open file");
     let mut buffer = vec![];
+    let mut last_output = Instant::now();
     for n in start..=end {
         let block = store
             .get_block_by_number(n)
@@ -440,7 +441,10 @@ pub async fn export_blocks(
             .expect("Failed to read block from DB");
         block.encode(&mut buffer);
         // Exporting the whole chain can take a while, so we need to show some output in the meantime
-        info!("Exporting block {n}/{end}");
+        if last_output.elapsed() > Duration::from_secs(5) {
+            info!("Exporting block {n}/{end}, {}% done", n*100/end);
+            last_output = Instant::now();
+        }
         file.write_all(&buffer).expect("Failed to write to file");
         buffer.clear();
     }
