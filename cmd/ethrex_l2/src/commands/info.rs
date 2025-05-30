@@ -8,19 +8,19 @@ use std::str::FromStr;
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    #[clap(
+    #[command(
         about = "Get latestCommittedBatch and latestVerifiedBatch from the OnChainProposer.",
         short_flag = 'l'
     )]
     LatestBatches,
-    #[clap(about = "Get the current block_number.", alias = "bl")]
+    #[command(about = "Get the current block_number.", alias = "bl")]
     BlockNumber {
         #[arg(long = "l2", required = false)]
         l2: bool,
         #[arg(long = "l1", required = false)]
         l1: bool,
     },
-    #[clap(about = "Get the transaction's info.", short_flag = 't')]
+    #[command(about = "Get the transaction's info.", short_flag = 't')]
     Transaction {
         #[arg(long = "l2", required = false)]
         l2: bool,
@@ -29,7 +29,7 @@ pub(crate) enum Command {
         #[arg(short = 'h', required = true)]
         tx_hash: String,
     },
-    #[clap(about = "Get the account's balance info.", short_flag = 'b')]
+    #[command(about = "Get the account's balance info.", short_flag = 'b')]
     Balance {
         #[arg(long = "l2", required = false)]
         l2: bool,
