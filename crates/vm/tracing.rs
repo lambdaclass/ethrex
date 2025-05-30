@@ -49,6 +49,7 @@ pub struct Call {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum CallType {
     Call,
+    CallCode,
     StaticCall,
     DelegateCall,
     Create,

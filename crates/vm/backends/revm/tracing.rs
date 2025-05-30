@@ -234,7 +234,7 @@ fn map_call_type(revm_call_type: CallKind) -> CallType {
     match revm_call_type {
         CallKind::Call => CallType::Call,
         CallKind::StaticCall => CallType::StaticCall,
-        CallKind::CallCode => CallType::Call, //TODO: check this
+        CallKind::CallCode => CallType::CallCode,
         CallKind::DelegateCall => CallType::DelegateCall,
         CallKind::AuthCall => CallType::Call, //TODO: check this
         CallKind::Create => CallType::Create,
