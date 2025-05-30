@@ -4,19 +4,21 @@ use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
-    errors::{ExecutionReport, OpcodeResult, VMError},
+    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     hooks::hook::Hook,
+    opcodes::Opcode,
     precompiles::execute_precompile,
     TransientStorage,
 };
 use bytes::Bytes;
+use derive_more::derive::Debug;
 use ethrex_common::{
     types::{Transaction, TxKind},
     Address, H256, U256,
 };
+use serde::Serialize;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    fmt::Debug,
     sync::Arc,
 };
 
@@ -33,6 +35,164 @@ pub struct Substate {
     pub transient_storage: TransientStorage,
 }
 
+fn u64_to_hex<S>(x: &u64, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    s.serialize_str(&format!("0x{:x}", x))
+}
+
+fn u256_to_hex<S>(x: &U256, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    s.serialize_str(&format!("0x{:x}", x))
+}
+
+fn bytes_to_hex<S>(x: &Bytes, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    s.serialize_str(&format!("0x{:x}", x))
+}
+
+fn option_string_empty_as_str<S>(x: &Option<String>, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    s.serialize_str(x.as_deref().unwrap_or(""))
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TracerCallFrame {
+    #[serde(rename = "type")]
+    pub call_type: Opcode,
+    pub from: Address,
+    pub to: Address,
+    #[serde(serialize_with = "u256_to_hex")]
+    pub value: U256,
+    #[serde(serialize_with = "u64_to_hex")]
+    pub gas: u64,
+    #[serde(rename = "gasUsed", serialize_with = "u64_to_hex")]
+    pub gas_used: u64,
+    #[serde(serialize_with = "bytes_to_hex")]
+    pub input: Bytes,
+    #[serde(serialize_with = "bytes_to_hex")]
+    pub output: Bytes,
+    #[serde(serialize_with = "option_string_empty_as_str")]
+    pub error: Option<String>,
+    #[serde(rename = "revertReason", serialize_with = "option_string_empty_as_str")]
+    pub revert_reason: Option<String>,
+    pub calls: Vec<TracerCallFrame>,
+}
+
+impl TracerCallFrame {
+    pub fn new(
+        call_type: Opcode,
+        from: Address,
+        to: Address,
+        value: U256,
+        gas: u64,
+        input: Bytes,
+    ) -> Self {
+        Self {
+            call_type,
+            from,
+            to,
+            value,
+            gas,
+            gas_used: 0,
+            input,
+            output: Bytes::new(),
+            error: None,
+            revert_reason: None,
+            calls: Vec::new(),
+        }
+    }
+
+    pub fn process_output(
+        &mut self,
+        gas_used: u64,
+        output: Bytes,
+        error: Option<String>,
+        revert_reason: Option<String>,
+    ) {
+        self.gas_used = gas_used;
+        self.output = output;
+        self.error = error;
+        self.revert_reason = revert_reason;
+    }
+}
+
+#[derive(Default, Debug)]
+/// Geth's callTracer (https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers)
+pub struct CallTracer {
+    pub callframes: Vec<TracerCallFrame>,
+}
+
+impl CallTracer {
+    /// Starts trace call.
+    pub fn enter(
+        &mut self,
+        call_type: Opcode,
+        from: Address,
+        to: Address,
+        value: U256,
+        gas: u64,
+        input: Bytes,
+    ) {
+        let callframe = TracerCallFrame::new(call_type, from, to, value, gas, input);
+        self.callframes.push(callframe);
+    }
+
+    /// Exits trace call.
+    fn exit(
+        &mut self,
+        gas_used: u64,
+        output: Bytes,
+        error: Option<String>,
+        revert_reason: Option<String>,
+    ) -> Result<(), InternalError> {
+        let mut executed_callframe = self
+            .callframes
+            .pop()
+            .ok_or(InternalError::CouldNotPopCallframe)?;
+
+        executed_callframe.process_output(gas_used, output, error, revert_reason);
+
+        // Append executed callframe to parent callframe if appropriate.
+        if let Some(parent_callframe) = self.callframes.last_mut() {
+            parent_callframe.calls.push(executed_callframe);
+        } else {
+            self.callframes.push(executed_callframe);
+        };
+        Ok(())
+    }
+
+    /// Exits trace call using the ExecutionReport.
+    pub fn exit_report(&mut self, report: &ExecutionReport) -> Result<(), InternalError> {
+        let (gas_used, output) = (report.gas_used, report.output.clone());
+
+        let (error, revert_reason) = if let TxResult::Revert(ref err) = report.result {
+            let reason = String::from_utf8(report.output.to_vec()).ok();
+            (Some(err.to_string()), reason)
+        } else {
+            (None, None)
+        };
+
+        self.exit(gas_used, output, error, revert_reason)
+    }
+
+    /// Exits trace call when CALL or CREATE opcodes return early or in case SELFDESTRUCT is called.
+    pub fn exit_early(
+        &mut self,
+        gas_used: u64,
+        error: Option<String>,
+    ) -> Result<(), InternalError> {
+        self.exit(gas_used, Bytes::new(), error, None)
+    }
+}
+
 pub struct VM<'a> {
     pub call_frames: Vec<CallFrame>,
     pub env: Environment,
@@ -43,6 +203,7 @@ pub struct VM<'a> {
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
+    pub tracer: CallTracer,
 }
 
 impl<'a> VM<'a> {
@@ -58,6 +219,7 @@ impl<'a> VM<'a> {
             hooks,
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
+            tracer: CallTracer::default(),
         }
     }
 
@@ -84,6 +246,20 @@ impl<'a> VM<'a> {
         );
 
         self.call_frames.push(initial_call_frame);
+
+        let call_type = if self.is_create() {
+            Opcode::CREATE
+        } else {
+            Opcode::CALL
+        };
+        self.tracer.enter(
+            call_type,
+            self.env.origin,
+            callee,
+            self.tx.value(),
+            self.env.gas_limit,
+            self.tx.data().clone(),
+        );
 
         Ok(())
     }
@@ -158,6 +334,7 @@ impl<'a> VM<'a> {
 
             // Return the ExecutionReport if the executed callframe was the first one.
             if self.is_initial_call_frame() {
+                self.handle_state_backup(&result)?;
                 return Ok(result);
             }
 
@@ -182,12 +359,6 @@ impl<'a> VM<'a> {
         let report = self.handle_precompile_result(precompile_result)?;
 
         Ok(report)
-    }
-
-    pub fn restore_state(&mut self, backup: Substate) -> Result<(), VMError> {
-        self.restore_cache_state()?;
-        self.substate = backup;
-        Ok(())
     }
 
     /// True if external transaction is a contract creation
@@ -221,6 +392,12 @@ impl<'a> VM<'a> {
         for hook in self.hooks.clone() {
             hook.finalize_execution(self, report)?;
         }
+
+        self.tracer.exit_report(report)?;
+
+        //TODO: Remove this
+        // let a = serde_json::to_string_pretty(&self.tracer.callframes.pop().unwrap()).unwrap();
+        // println!("{a}");
 
         Ok(())
     }
