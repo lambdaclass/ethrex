@@ -796,6 +796,7 @@ pub(super) mod tests {
             blockchain,
             broadcast,
             client_version: "ethrex/test".to_string(),
+            based: false,
         };
 
         let discv4 = Discv4Server::try_new(ctx.clone()).await?;

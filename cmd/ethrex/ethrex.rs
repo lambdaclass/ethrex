@@ -121,6 +121,7 @@ async fn main() -> eyre::Result<()> {
                     store.clone(),
                     tracker.clone(),
                     blockchain.clone(),
+                    false,
                 )
                 .await;
             } else {

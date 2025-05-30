@@ -12,7 +12,8 @@ use crate::{
         message::Message,
         p2p::{
             self, Capability, DisconnectMessage, PingMessage, PongMessage,
-            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
+            SUPPORTED_BASED_CAPABILITIES, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES,
+            SUPPORTED_SNAP_CAPABILITIES,
         },
         utils::{log_peer_debug, log_peer_error},
     },
@@ -148,6 +149,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         &mut self,
         table: Arc<Mutex<crate::kademlia::KademliaTable>>,
         inbound: bool,
+        based: bool,
     ) {
         log_peer_debug(&self.node, "Starting RLPx connection");
 
@@ -161,7 +163,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             return;
         }
 
-        if let Err(e) = self.exchange_hello_messages().await {
+        if let Err(e) = self.exchange_hello_messages(based).await {
             self.connection_failed("Hello messages exchange failed", e, table)
                 .await;
         } else {
@@ -245,13 +247,18 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
-    async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
-        let supported_capabilities: Vec<Capability> = [
+    async fn exchange_hello_messages(&mut self, based: bool) -> Result<(), RLPxError> {
+        let mut supported_capabilities: Vec<Capability> = [
             &SUPPORTED_ETH_CAPABILITIES[..],
             &SUPPORTED_SNAP_CAPABILITIES[..],
             &SUPPORTED_P2P_CAPABILITIES[..],
         ]
         .concat();
+        if based {
+            println!("=================");
+            println!("Based sync enabled");
+            supported_capabilities.push(SUPPORTED_BASED_CAPABILITIES);
+        }
         let hello_msg = Message::Hello(p2p::HelloMessage::new(
             supported_capabilities,
             PublicKey::from(self.signer.verifying_key()),
@@ -277,6 +284,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         "Hello message capabilities {:?}",
                         hello_message.capabilities
                     ),
+                );
+
+                println!("+++++++++++++++++++++");
+                println!(
+                    "Hello message capabilities: {:?}",
+                    &hello_message.capabilities
                 );
 
                 // Check if we have any capability in common and store the highest version

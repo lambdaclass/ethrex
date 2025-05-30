@@ -108,6 +108,8 @@ impl Command {
                     init_metrics(&opts.node_opts, tracker.clone());
                 }
 
+                let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
+
                 if opts.node_opts.p2p_enabled {
                     init_network(
                         &opts.node_opts,
@@ -120,13 +122,12 @@ impl Command {
                         store.clone(),
                         tracker.clone(),
                         blockchain.clone(),
+                        l2_sequencer_cfg.based.based,
                     )
                     .await;
                 } else {
                     info!("P2P is disabled");
                 }
-
-                let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
 
                 let l2_sequencer = ethrex_l2::start_l2(
                     store,

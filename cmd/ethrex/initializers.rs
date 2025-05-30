@@ -174,6 +174,7 @@ pub async fn init_network(
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
+    based: bool,
 ) {
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -193,6 +194,7 @@ pub async fn init_network(
         store,
         blockchain,
         get_client_version(),
+        based,
     );
 
     context.set_fork_id().await.expect("Set fork id");

@@ -49,6 +49,7 @@ pub struct P2PContext {
     pub local_node: Node,
     pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
+    pub based: bool,
 }
 
 impl P2PContext {
@@ -62,6 +63,7 @@ impl P2PContext {
         storage: Store,
         blockchain: Arc<Blockchain>,
         client_version: String,
+        based: bool,
     ) -> Self {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
@@ -78,6 +80,7 @@ impl P2PContext {
             blockchain,
             broadcast: channel_broadcast_send_end,
             client_version,
+            based,
         }
     }
 
@@ -147,8 +150,9 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 
 async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
     let table = context.table.clone();
+    let based = context.based;
     match handshake::as_receiver(context, peer_addr, stream).await {
-        Ok(mut conn) => conn.start(table, true).await,
+        Ok(mut conn) => conn.start(table, true, based).await,
         Err(e) => {
             debug!("Error creating tcp connection with peer at {peer_addr}: {e}")
         }
@@ -166,8 +170,9 @@ pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
         }
     };
     let table = context.table.clone();
+    let based = context.based;
     match handshake::as_initiator(context, node.clone(), stream).await {
-        Ok(mut conn) => conn.start(table, false).await,
+        Ok(mut conn) => conn.start(table, false, based).await,
         Err(e) => {
             log_peer_debug(&node, &format!("Error creating tcp connection {e}"));
             table.lock().await.replace_peer(node.node_id());
