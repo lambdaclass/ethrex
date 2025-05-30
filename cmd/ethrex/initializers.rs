@@ -246,11 +246,7 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
     }
 }
 
-pub fn get_network(opts: &Options) -> String {
-    let network = opts
-        .network
-        .clone()
-        .expect("--network is required and it was not provided");
+pub fn get_network(network: String) -> String {
     // Set preset genesis from known networks
     match network.to_lowercase().as_str() {
         "holesky" => String::from(networks::HOLESKY_GENESIS_PATH),
