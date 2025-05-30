@@ -63,20 +63,22 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn prove(input: ProgramInput) -> Result<ProveOutput, Box<dyn std::error::Error>> {
+pub fn prove(
+    input: ProgramInput,
+    aligned_mode: bool,
+) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     let mut stdin = SP1Stdin::new();
     stdin.write(&input);
 
     let setup = &*PROVER_SETUP;
 
     // contains the receipt along with statistics about execution of the guest
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "aligned")] {
-            let proof = setup.client.prove(&setup.pk, &stdin).compressed().run()?;
-        }
-        else {
-            let proof = setup.client.prove(&setup.pk, &stdin).groth16().run()?;
-        }
+    let proof;
+
+    if aligned_mode {
+        proof = setup.client.prove(&setup.pk, &stdin).compressed().run()?;
+    } else {
+        proof = setup.client.prove(&setup.pk, &stdin).groth16().run()?;
     }
     info!("Successfully generated SP1Proof.");
     Ok(ProveOutput::new(proof, setup.vk.clone()))
@@ -89,18 +91,18 @@ pub fn verify(output: &ProveOutput) -> Result<bool, Box<dyn std::error::Error>> 
     Ok(true)
 }
 
-pub fn to_batch_proof(proof: ProveOutput) -> Result<BatchProof, Box<dyn std::error::Error>> {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "aligned")] {
-            Ok(BatchProof::ProofBytes(ProofBytes {
-                proof: bincode::serialize(&proof.proof)?,
-                public_values: proof.proof.public_values.to_vec(),
-                vk: proof.vk.hash_bytes().into(),
-            }))
-        }
-        else {
-            Ok(BatchProof::ProofCalldata(to_calldata(proof)))
-        }
+pub fn to_batch_proof(
+    proof: ProveOutput,
+    aligned_mode: bool,
+) -> Result<BatchProof, Box<dyn std::error::Error>> {
+    if aligned_mode {
+        Ok(BatchProof::ProofBytes(ProofBytes {
+            proof: bincode::serialize(&proof.proof)?,
+            public_values: proof.proof.public_values.to_vec(),
+            vk: proof.vk.hash_bytes().into(),
+        }))
+    } else {
+        Ok(BatchProof::ProofCalldata(to_calldata(proof)))
     }
 }
 

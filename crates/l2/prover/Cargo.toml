@@ -68,7 +68,6 @@ l2 = [
   "ethrex-blockchain/l2",
   "ethrex-l2/l2",
 ] # the prover can work with either l1 or l2 blocks
-aligned = ["sp1"]
 
 [lints.clippy]
 unwrap_used = "deny"

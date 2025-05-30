@@ -22,7 +22,10 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn prove(input: ProgramInput) -> Result<ProveOutput, Box<dyn std::error::Error>> {
+pub fn prove(
+    input: ProgramInput,
+    _aligned_mode: bool,
+) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     warn!("\"exec\" prover backend generates no proof, only executes");
     let output = execution_program(input)?;
     Ok(ProveOutput(output))
@@ -41,7 +44,10 @@ fn to_calldata(proof: ProveOutput) -> ProofCalldata {
     }
 }
 
-pub fn to_batch_proof(proof: ProveOutput) -> Result<BatchProof, Box<dyn std::error::Error>> {
+pub fn to_batch_proof(
+    proof: ProveOutput,
+    _aligned_mode: bool,
+) -> Result<BatchProof, Box<dyn std::error::Error>> {
     Ok(BatchProof::ProofCalldata(to_calldata(proof)))
 }
 

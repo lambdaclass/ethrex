@@ -24,6 +24,7 @@ struct ProverData {
 struct Prover {
     prover_server_endpoint: String,
     proving_time_ms: u64,
+    aligned_mode: bool,
 }
 
 impl Prover {
@@ -31,6 +32,7 @@ impl Prover {
         Self {
             prover_server_endpoint: config.prover_server_endpoint,
             proving_time_ms: config.proving_time_ms,
+            aligned_mode: config.aligned_mode,
         }
     }
 
@@ -41,7 +43,9 @@ impl Prover {
                 // If we get the input
                 Ok(prover_data) => {
                     // Generate the Proof
-                    match prove(prover_data.input).and_then(to_batch_proof) {
+                    match prove(prover_data.input, self.aligned_mode)
+                        .and_then(|proof| to_batch_proof(proof, self.aligned_mode))
+                    {
                         Ok(batch_proof) => {
                             if let Err(e) = self
                                 .submit_proof(prover_data.batch_number, batch_proof)

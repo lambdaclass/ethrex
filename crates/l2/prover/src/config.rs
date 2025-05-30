@@ -4,4 +4,5 @@ use serde::Deserialize;
 pub struct ProverConfig {
     pub prover_server_endpoint: String,
     pub proving_time_ms: u64,
+    pub aligned_mode: bool,
 }

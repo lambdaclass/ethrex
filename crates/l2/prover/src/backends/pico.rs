@@ -38,7 +38,10 @@ impl ProveOutput {
     }
 }
 
-pub fn prove(input: ProgramInput) -> Result<ProveOutput, Box<dyn std::error::Error>> {
+pub fn prove(
+    input: ProgramInput,
+    _aligned_mode: bool,
+) -> Result<ProveOutput, Box<dyn std::error::Error>> {
     // TODO: Determine which field is better for our use case: KoalaBear or BabyBear
     let client = KoalaBearProveVKClient::new(ZKVM_PICO_PROGRAM_ELF);
 
@@ -73,7 +76,10 @@ pub fn verify(_output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn to_batch_proof(proof: ProveOutput) -> Result<BatchProof, Box<dyn std::error::Error>> {
+pub fn to_batch_proof(
+    proof: ProveOutput,
+    _aligned_mode: bool,
+) -> Result<BatchProof, Box<dyn std::error::Error>> {
     Ok(BatchProof::ProofCalldata(to_calldata(proof)))
 }
 

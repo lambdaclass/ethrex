@@ -80,12 +80,15 @@ async fn main() {
     let gas_used = block.header.gas_used as f64;
     if prove {
         println!("proving");
-        ethrex_prover_lib::prove(ProgramInput {
-            blocks: vec![block],
-            parent_block_header,
-            db,
-            elasticity_multiplier: ELASTICITY_MULTIPLIER,
-        })
+        ethrex_prover_lib::prove(
+            ProgramInput {
+                blocks: vec![block],
+                parent_block_header,
+                db,
+                elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            },
+            false,
+        )
         .expect("proving failed");
     } else {
         println!("executing");
