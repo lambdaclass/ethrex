@@ -33,7 +33,7 @@ impl Blockchain {
             return Err(ChainError::Custom("Block not Found".to_string()));
         };
         // Check if we need to re-execute parent blocks
-        let mut blocks_to_re_execute =
+        let blocks_to_re_execute =
             get_missing_state_parents(block.header.parent_hash, &self.storage, reexec).await?;
         let parent_hash = blocks_to_re_execute
             .last()
