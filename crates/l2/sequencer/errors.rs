@@ -30,6 +30,8 @@ pub enum SequencerError {
     MetricsGathererError(#[from] MetricsGathererError),
     #[error("Sequencer error: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("Failed to access Store: {0}")]
+    FailedAccessingStore(#[from] StoreError),
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -57,7 +57,6 @@ unnecessary_cast = "warn"
 panic = "deny"
 
 [features]
-default = ["l2", "aligned"]
+default = ["l2"]
 metrics = ["ethrex-metrics/l2"]
 l2 = ["ethrex-blockchain/l2", "ethrex-vm/l2", "zkvm_interface/l2"]
-aligned = []

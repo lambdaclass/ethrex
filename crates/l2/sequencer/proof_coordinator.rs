@@ -1,5 +1,6 @@
 use crate::sequencer::errors::ProverServerError;
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
+use crate::sequencer::utils::get_latest_sent_batch;
 use crate::utils::prover::proving_systems::{BatchProof, ProverType};
 use crate::utils::prover::save_state::{
     batch_number_has_state_file, write_state, StateFileType, StateType,
@@ -48,6 +49,7 @@ struct ProofCoordinator {
     rollup_store: StoreRollup,
     rpc_url: String,
     l1_private_key: SecretKey,
+    needed_proof_types: Vec<ProverType>,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -143,6 +145,7 @@ pub async fn start_proof_coordinator(
     store: Store,
     rollup_store: StoreRollup,
     cfg: SequencerConfig,
+    needed_proof_types: Vec<ProverType>,
 ) -> Result<(), SequencerError> {
     let proof_coordinator = ProofCoordinator::new_from_config(
         &cfg.proof_coordinator,
@@ -151,6 +154,7 @@ pub async fn start_proof_coordinator(
         &cfg.block_producer,
         store,
         rollup_store,
+        needed_proof_types,
     )
     .await?;
     proof_coordinator.run().await;
@@ -166,6 +170,7 @@ impl ProofCoordinator {
         proposer_config: &BlockProducerConfig,
         store: Store,
         rollup_store: StoreRollup,
+        needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, SequencerError> {
         let eth_client = EthClient::new_with_config(
             eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
@@ -196,6 +201,7 @@ impl ProofCoordinator {
             rollup_store,
             rpc_url,
             l1_private_key: config.l1_private_key,
+            needed_proof_types,
         })
     }
 
@@ -302,7 +308,17 @@ impl ProofCoordinator {
     async fn handle_request(&self, stream: &mut TcpStream) -> Result<(), ProverServerError> {
         info!("BatchRequest received");
 
-        let batch_to_verify = 1 + self.get_latest_sent_batch().await?;
+        let batch_to_verify = 1 + get_latest_sent_batch(
+            self.needed_proof_types.clone(),
+            &self.rollup_store,
+            &self.eth_client,
+            self.on_chain_proposer_address,
+        )
+        .await
+        .map_err(|err| {
+            error!("Failed to get next batch to verify: {}", err);
+            ProverServerError::InternalError(err.to_string())
+        })?;
 
         let response = if !self.rollup_store.contains_batch(&batch_to_verify).await? {
             let response = ProofData::empty_batch_response();
@@ -321,20 +337,6 @@ impl ProofCoordinator {
             .await
             .map_err(ProverServerError::ConnectionError)
             .map(|_| info!("BatchResponse sent for batch number: {batch_to_verify}"))
-    }
-
-    async fn get_latest_sent_batch(&self) -> Result<u64, ProverServerError> {
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "aligned")] {
-                Ok(self.rollup_store.get_lastest_sent_batch_proof().await?)
-            }
-            else {
-                Ok(self
-                    .eth_client
-                    .get_last_verified_batch(self.on_chain_proposer_address)
-                    .await?)
-            }
-        }
     }
 
     async fn handle_submit(

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::SequencerConfig;
+use crate::{utils::prover::proving_systems::ProverType, SequencerConfig};
 use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -8,11 +8,11 @@ use ethrex_storage_rollup::StoreRollup;
 use execution_cache::ExecutionCache;
 use tokio::task::JoinSet;
 use tracing::{error, info};
+use utils::get_needed_proof_types;
 
 pub mod block_producer;
 pub mod l1_committer;
 pub mod l1_proof_sender;
-#[cfg(feature = "aligned")]
 pub mod l1_proof_verifier;
 pub mod l1_watcher;
 #[cfg(feature = "metrics")]
@@ -37,6 +37,16 @@ pub async fn start_l2(
 
     let execution_cache = Arc::new(ExecutionCache::default());
 
+    let Ok(needed_proof_types) = get_needed_proof_types(
+        cfg.proof_coordinator.dev_mode,
+        cfg.eth.rpc_url.clone(),
+        cfg.l1_committer.on_chain_proposer_address,
+    )
+    .await
+    .inspect_err(|e| error!("Error starting Proposer: {e}")) else {
+        return;
+    };
+
     let mut task_set = JoinSet::new();
     task_set.spawn(l1_watcher::start_l1_watcher(
         store.clone(),
@@ -53,13 +63,16 @@ pub async fn start_l2(
         store.clone(),
         rollup_store.clone(),
         cfg.clone(),
+        needed_proof_types.clone(),
     ));
     task_set.spawn(l1_proof_sender::start_l1_proof_sender(
         cfg.clone(),
         rollup_store,
+        needed_proof_types.clone(),
     ));
-    #[cfg(feature = "aligned")]
-    task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(cfg.clone()));
+    if needed_proof_types.contains(&ProverType::Aligned) {
+        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(cfg.clone()));
+    }
     task_set.spawn(start_block_producer(
         store.clone(),
         blockchain,

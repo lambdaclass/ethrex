@@ -3,13 +3,12 @@ use aligned_sdk::{
     verification_layer::{estimate_fee, get_nonce_from_ethereum, submit},
 };
 use ethers::signers::{Signer, Wallet};
-use ethrex_common::{Address, H160, U256};
+use ethrex_common::{Address, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_rpc::{clients::Overrides, EthClient};
+use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
-use keccak_hash::keccak;
 use secp256k1::SecretKey;
-use std::{collections::HashMap, str::FromStr};
+use std::collections::HashMap;
 use tracing::{debug, error, info};
 
 static ELF: &[u8] = include_bytes!("../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf");
@@ -25,25 +24,23 @@ use crate::{
 
 use super::{
     errors::SequencerError,
-    utils::{send_verify_tx, sleep_random},
+    utils::{get_latest_sent_batch, send_verify_tx, sleep_random},
 };
 
-const DEV_MODE_ADDRESS: H160 = H160([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0xAA,
-]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
 
 pub async fn start_l1_proof_sender(
     cfg: SequencerConfig,
     rollup_store: StoreRollup,
+    needed_proof_types: Vec<ProverType>,
 ) -> Result<(), SequencerError> {
     let proof_sender = L1ProofSender::new(
         &cfg.proof_coordinator,
         &cfg.l1_committer,
         &cfg.eth,
         rollup_store,
+        needed_proof_types,
     )
     .await?;
     proof_sender.run().await;
@@ -66,40 +63,9 @@ impl L1ProofSender {
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
         rollup_storage: StoreRollup,
+        needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
-
-        let mut needed_proof_types = vec![];
-        if !cfg.dev_mode {
-            for prover_type in ProverType::all() {
-                let Some(getter) = prover_type.verifier_getter() else {
-                    continue;
-                };
-                let calldata = keccak(getter)[..4].to_vec();
-
-                let response = eth_client
-                    .call(
-                        committer_cfg.on_chain_proposer_address,
-                        calldata.into(),
-                        Overrides::default(),
-                    )
-                    .await?;
-                // trim to 20 bytes, also removes 0x prefix
-                let trimmed_response = &response[26..];
-
-                let address =
-                    Address::from_str(&format!("0x{trimmed_response}")).map_err(|_| {
-                        ProofSenderError::FailedToParseOnChainProposerResponse(response)
-                    })?;
-
-                if address != DEV_MODE_ADDRESS {
-                    info!("{prover_type} proof needed");
-                    needed_proof_types.push(prover_type);
-                }
-            }
-        } else {
-            needed_proof_types.push(ProverType::Exec);
-        }
 
         Ok(Self {
             eth_client,
@@ -125,7 +91,14 @@ impl L1ProofSender {
     }
 
     async fn main_logic(&self) -> Result<(), ProofSenderError> {
-        let batch_to_send = 1 + self.get_latest_sent_batch().await.map_err(|err| {
+        let batch_to_send = 1 + get_latest_sent_batch(
+            self.needed_proof_types.clone(),
+            &self.rollup_storage,
+            &self.eth_client,
+            self.on_chain_proposer_address,
+        )
+        .await
+        .map_err(|err| {
             error!("Failed to get next batch to send: {}", err);
             ProofSenderError::InternalError(err.to_string())
         })?;
@@ -134,22 +107,14 @@ impl L1ProofSender {
             .is_ok_and(|has_all_proofs| has_all_proofs)
         {
             self.send_proof(batch_to_send).await?;
+            self.rollup_storage
+                .set_lastest_sent_batch_proof(batch_to_send)
+                .await?;
         } else {
             info!("Missing proofs for batch {batch_to_send}, skipping sending");
         }
 
         Ok(())
-    }
-
-    async fn get_latest_sent_batch(&self) -> Result<u64, ProofSenderError> {
-        if self.needed_proof_types.contains(&ProverType::Aligned) {
-            Ok(self.rollup_storage.get_lastest_sent_batch_proof().await?)
-        } else {
-            Ok(self
-                .eth_client
-                .get_last_verified_batch(self.on_chain_proposer_address)
-                .await?)
-        }
     }
 
     pub async fn send_proof(&self, batch_number: u64) -> Result<(), ProofSenderError> {
@@ -204,10 +169,6 @@ impl L1ProofSender {
         )
         .await
         .unwrap();
-
-        self.rollup_storage
-            .set_lastest_sent_batch_proof(batch_number)
-            .await?;
 
         info!("Proof for batch {batch_number} sent to Aligned");
 
