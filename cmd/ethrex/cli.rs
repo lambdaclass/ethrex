@@ -412,7 +412,7 @@ pub async fn export_blocks(
     let latest_number = match store.get_latest_block_number().await {
         Ok(number) => number,
         Err(StoreError::MissingLatestBlockNumber) => {
-            warn!("No blocks in the current chain, nothing to write!");
+            warn!("No blocks in the current chain, nothing to export!");
             return
         }
         Err(_) => panic!("Internal DB Error"),
@@ -448,7 +448,7 @@ pub async fn export_blocks(
         file.write_all(&buffer).expect("Failed to write to file");
         buffer.clear();
     }
-    info!("Wrote {} blocks to file {path}", end - start);
+    info!("Exported {} blocks to file {path}", end - start);
 }
 
 pub fn compute_state_root(genesis_path: &str) {
