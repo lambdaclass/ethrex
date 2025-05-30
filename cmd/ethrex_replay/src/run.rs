@@ -3,8 +3,8 @@ use ethrex_common::types::{AccountUpdate, Receipt, ELASTICITY_MULTIPLIER};
 use ethrex_levm::db::{gen_db::GeneralizedDatabase, CacheDB};
 use ethrex_vm::{backends::levm::LEVM, Evm};
 use eyre::Ok;
-use zkvm_interface::io::ProgramInput;
 use std::sync::Arc;
+use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(cache: Cache) -> eyre::Result<String> {
     let Cache {
