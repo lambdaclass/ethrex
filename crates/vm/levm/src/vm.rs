@@ -158,9 +158,7 @@ impl<'a> VM<'a> {
 
             // Return the ExecutionReport if the executed callframe was the first one.
             if self.is_initial_call_frame() {
-                if !result.is_success() {
-                    self.restore_cache_state()?;
-                }
+                self.handle_state_backup(&result)?;
                 return Ok(result);
             }
 

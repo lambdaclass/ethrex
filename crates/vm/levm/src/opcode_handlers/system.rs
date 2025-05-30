@@ -802,22 +802,32 @@ impl<'a> VM<'a> {
             self.transfer(msg_sender, to, value)?;
         }
 
+        self.backup_substate();
+
         if self.is_precompile(&code_address) && !is_delegation_7702 {
             let report = self.execute_precompile()?;
             self.handle_return(&report)?;
-        } else {
-            // Backup Substate before executing opcodes of new callframe.
-            self.backup_substate();
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
-    /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
-    pub fn handle_return(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
+    /// Pop backup from stack and restore substate and cache if transaction reverted.
+    pub fn handle_state_backup(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
+        let backup = self
+            .substate_backups
+            .pop()
+            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         if !tx_report.is_success() {
+            self.substate = backup;
             self.restore_cache_state()?;
         }
+        Ok(())
+    }
+
+    /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
+    pub fn handle_return(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
+        self.handle_state_backup(tx_report)?;
         let executed_call_frame = self.pop_call_frame()?;
 
         // Here happens the interaction between child (executed) and parent (caller) callframe.
