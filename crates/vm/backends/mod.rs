@@ -6,7 +6,6 @@ use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
-use crate::ProverDB;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
@@ -86,14 +85,6 @@ impl Evm {
     pub fn new_from_db(store: Arc<impl LevmDatabase + 'static>) -> Self {
         Evm::LEVM {
             db: GeneralizedDatabase::new(store, CacheDB::new()),
-        }
-    }
-
-    pub fn from_prover_db(db: ProverDB) -> Self {
-        let wrapped_db: DynVmDatabase = Box::new(db);
-
-        Evm::LEVM {
-            db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
         }
     }
 
