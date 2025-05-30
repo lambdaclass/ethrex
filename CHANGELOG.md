@@ -4,6 +4,8 @@
 
 ### 2025-05-27
 
+- Improved the performance of shift instructions. [2933](https://github.com/lambdaclass/ethrex/pull/2933)
+
 - Refactor Patricia Merkle Trie to avoid rehashing the entire path on every insert [2687](https://github.com/lambdaclass/ethrex/pull/2687)
 
 ### 2025-05-22
