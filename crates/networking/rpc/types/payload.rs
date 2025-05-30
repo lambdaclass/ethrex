@@ -50,28 +50,8 @@ pub struct ExecutionPayload {
     pub excess_blob_gas: Option<u64>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct EncodedTransaction(pub Vec<u8>);
-
-impl<'de> Deserialize<'de> for EncodedTransaction {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(EncodedTransaction(serde_utils::bytes::deserialize(
-            deserializer,
-        )?))
-    }
-}
-
-impl Serialize for EncodedTransaction {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serde_utils::bytes::serialize(&self.0, serializer)
-    }
-}
 
 impl EncodedTransaction {
     /// Based on [EIP-2718]
@@ -83,7 +63,7 @@ impl EncodedTransaction {
     }
 
     fn encode(tx: &Transaction) -> Self {
-        Self(Bytes::from(tx.encode_canonical_to_vec()))
+        Self(tx.encode_canonical_to_vec())
     }
 }
 

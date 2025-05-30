@@ -5,7 +5,6 @@ use crate::{
     },
     utils::{RpcRequest, RpcRequestId},
 };
-use bytes::Bytes;
 use ethrex_common::types::{GenericTransaction, TxKind};
 use ethrex_common::H256;
 use ethrex_common::{Address, U256};
@@ -35,7 +34,7 @@ impl EthClient {
     pub async fn call(
         &self,
         to: Address,
-        calldata: Bytes,
+        calldata: Vec<u8>,
         overrides: Overrides,
     ) -> Result<String, EthClientError> {
         let tx = GenericTransaction {
@@ -88,7 +87,7 @@ impl EthClient {
         &self,
         deployer: Address,
         deployer_private_key: SecretKey,
-        init_code: Bytes,
+        init_code: Vec<u8>,
         overrides: Overrides,
     ) -> Result<(H256, Address), EthClientError> {
         let mut deploy_overrides = overrides;
