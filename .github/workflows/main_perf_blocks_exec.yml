@@ -3,7 +3,7 @@ name: Block Import Benchmark
 on:
   workflow_call:
   push:
-    branches: [fix-bench-gnuplot-install]
+    branches: [main]
 
 permissions:
   # deployments permission to deploy GitHub pages website
@@ -26,17 +26,17 @@ jobs:
         run: sudo apt-get update
       - name: Install gnuplot
         run: sudo apt-get install -y gnuplot
-      # - name: Run benchmark
-      #   run: cd cmd/ethrex && cargo bench --bench import_blocks_benchmark -- --output-format bencher |sed 2d | tee output.txt
-      # - name: Store benchmark result
-      #   uses: benchmark-action/github-action-benchmark@v1
-      #   with:
-      #     tool: "cargo"
-      #     output-file-path: cmd/ethrex/output.txt
-      #     benchmark-data-dir-path: "."
-      #     # Access token to deploy GitHub Pages branch
-      #     github-token: ${{ secrets.GITHUB_TOKEN }}
-      #     # Push and deploy GitHub pages branch automatically
-      #     auto-push: true
-      #     alert-threshold: "130%"
-      #     comment-on-alert: true
+      - name: Run benchmark
+        run: cd cmd/ethrex && cargo bench --bench import_blocks_benchmark -- --output-format bencher |sed 2d | tee output.txt
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: "cargo"
+          output-file-path: cmd/ethrex/output.txt
+          benchmark-data-dir-path: "."
+          # Access token to deploy GitHub Pages branch
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Push and deploy GitHub pages branch automatically
+          auto-push: true
+          alert-threshold: "130%"
+          comment-on-alert: true
