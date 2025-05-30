@@ -19,7 +19,10 @@ use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{EvmError, ProverDB};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
+use spawned_concurrency::{CallResponse, CastResponse, GenServer};
+use std::net::SocketAddr;
 use std::{fmt::Debug, net::IpAddr};
+use tokio::sync::OwnedSemaphorePermit;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -163,7 +166,9 @@ impl ProofCoordinatorState {
         let rpc_url = eth_config
             .rpc_url
             .first()
-            .ok_or(ProverServerError::Custom("no rpc urls present!".to_string()))?
+            .ok_or(ProverServerError::Custom(
+                "no rpc urls present!".to_string(),
+            ))?
             .to_string();
 
         Ok(Self {
@@ -178,7 +183,6 @@ impl ProofCoordinatorState {
             l1_private_key: config.l1_private_key,
         })
     }
-
 }
 
 pub async fn start_proof_coordinator(
@@ -194,8 +198,11 @@ pub async fn start_proof_coordinator(
         store,
         rollup_store,
     )
-    .await.map_err(SequencerError::ProverServerError)?;
-    run(proof_coordinator).await.map_err(SequencerError::ProverServerError)?;
+    .await
+    .map_err(SequencerError::ProverServerError)?;
+    run(proof_coordinator)
+        .await
+        .map_err(SequencerError::ProverServerError)?;
 
     Ok(())
 }
@@ -225,15 +232,14 @@ async fn main_logic(state: &ProofCoordinatorState, listener: TcpListener) {
                         // The important fields are `Store` and `EthClient`
                         // Both fields are wrapped with an Arc, making it possible to clone
                         // the entire structure.
-                        let self_clone = state.clone();
-                        tokio::task::spawn(async move {
-                            if let Err(e) = handle_connection(&self_clone, stream).await {
-                                error!("Error handling connection from {addr}: {e}");
-                            } else {
-                                debug!("Connection from {addr} handled successfully");
-                            }
-                            drop(permit);
-                        });
+                        let mut connection_handler = ConnectionHandler::start(state.clone());
+                        let _ = connection_handler
+                            .cast(InMessage::Connection {
+                                stream,
+                                addr,
+                                permit,
+                            })
+                            .await;
                     }
                     Err(e) => match e {
                         TryAcquireError::Closed => {
@@ -252,9 +258,71 @@ async fn main_logic(state: &ProofCoordinatorState, listener: TcpListener) {
     }
 }
 
+struct ConnectionHandler;
 
+pub enum InMessage {
+    Connection {
+        stream: TcpStream,
+        addr: SocketAddr,
+        permit: OwnedSemaphorePermit,
+    },
+}
 
-async fn handle_connection(state: &ProofCoordinatorState, mut stream: TcpStream) -> Result<(), ProverServerError> {
+#[allow(dead_code)]
+#[derive(Clone, PartialEq)]
+pub enum OutMessage {
+    Done,
+    Error,
+}
+
+impl GenServer for ConnectionHandler {
+    type InMsg = InMessage;
+    type OutMsg = OutMessage;
+    type State = ProofCoordinatorState;
+    type Error = ProverServerError;
+
+    fn new() -> Self {
+        ConnectionHandler {}
+    }
+
+    async fn handle_call(
+        &mut self,
+        _message: Self::InMsg,
+        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
+        _state: &mut Self::State,
+    ) -> CallResponse<Self::OutMsg> {
+        CallResponse::Reply(OutMessage::Done)
+    }
+
+    async fn handle_cast(
+        &mut self,
+        message: Self::InMsg,
+        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
+        state: &mut Self::State,
+    ) -> CastResponse {
+        info!("Receiving message");
+        match message {
+            InMessage::Connection {
+                stream,
+                addr,
+                permit,
+            } => {
+                if let Err(err) = handle_connection(state, stream).await {
+                    error!("Error handling connection from {addr}: {err}");
+                } else {
+                    debug!("Connection from {addr} handled successfully");
+                }
+                drop(permit);
+            }
+        }
+        CastResponse::Stop
+    }
+}
+
+async fn handle_connection(
+    state: &ProofCoordinatorState,
+    mut stream: TcpStream,
+) -> Result<(), ProverServerError> {
     let mut buffer = Vec::new();
     stream.read_to_end(&mut buffer).await?;
 
@@ -269,10 +337,7 @@ async fn handle_connection(state: &ProofCoordinatorState, mut stream: TcpStream)
             batch_number,
             calldata,
         }) => {
-            if let Err(e) = 
-                handle_submit(&mut stream, batch_number, calldata)
-                .await
-            {
+            if let Err(e) = handle_submit(&mut stream, batch_number, calldata).await {
                 error!("Failed to handle ProofSubmit: {e}");
             }
         }
@@ -296,7 +361,10 @@ async fn handle_connection(state: &ProofCoordinatorState, mut stream: TcpStream)
     Ok(())
 }
 
-async fn handle_request(state: &ProofCoordinatorState, stream: &mut TcpStream) -> Result<(), ProverServerError> {
+async fn handle_request(
+    state: &ProofCoordinatorState,
+    stream: &mut TcpStream,
+) -> Result<(), ProverServerError> {
     info!("BatchRequest received");
 
     let batch_to_verify = 1 + state
@@ -434,7 +502,10 @@ async fn create_prover_input(
     })
 }
 
-async fn fetch_blocks(state: &ProofCoordinatorState, block_numbers: Vec<u64>) -> Result<Vec<Block>, ProverServerError> {
+async fn fetch_blocks(
+    state: &ProofCoordinatorState,
+    block_numbers: Vec<u64>,
+) -> Result<Vec<Block>, ProverServerError> {
     let mut blocks = vec![];
     for block_number in block_numbers {
         let header = state
