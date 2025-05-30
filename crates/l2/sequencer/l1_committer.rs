@@ -373,9 +373,11 @@ async fn prepare_batch_from_block(
         }
     }
 
-    state
-        .blobs_bundle_cache
-        .push(batch_number, blobs_bundle.clone())?;
+    if !state.validium {
+        state
+            .blobs_bundle_cache
+            .push(batch_number, blobs_bundle.clone())?;
+    }
 
     metrics!(if let (Ok(deposits_count), Ok(withdrawals_count)) = (
             deposit_logs_hashes.len().try_into(),
