@@ -664,7 +664,7 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    pub fn get_hooks(tx: &Transaction) -> Vec<Arc<dyn Hook + 'static>> {
+    pub fn get_hooks(_tx: &Transaction) -> Vec<Arc<dyn Hook + 'static>> {
         #[cfg(not(feature = "l2"))]
         let hooks: Vec<Arc<dyn Hook>> = vec![Arc::new(DefaultHook)];
         #[cfg(feature = "l2")]
@@ -672,7 +672,7 @@ impl<'a> VM<'a> {
             let recipient = if let Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
                 recipient,
                 ..
-            }) = tx
+            }) = _tx
             {
                 Some(*recipient)
             } else {
