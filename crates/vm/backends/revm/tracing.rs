@@ -147,8 +147,11 @@ fn result_to_err_or_revert_string(result: RevmExecutionResult) -> String {
         } => String::new(),
         RevmExecutionResult::Revert {
             gas_used: _,
-            output: _,
-        } => String::from("Transaction reverted due to revert opcode"),
+            output,
+        } => format!(
+            "Transaction reverted due to: {}",
+            std::str::from_utf8(&output).unwrap_or("unknown")
+        ),
         RevmExecutionResult::Halt {
             reason,
             gas_used: _,
