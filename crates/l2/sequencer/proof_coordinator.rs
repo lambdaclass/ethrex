@@ -30,8 +30,6 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-use super::errors::SequencerError;
-
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
@@ -131,7 +129,7 @@ impl ProofData {
 }
 
 #[derive(Clone)]
-struct ProofCoordinatorState {
+pub struct ProofCoordinatorState {
     listen_ip: IpAddr,
     port: u16,
     store: Store,
@@ -185,35 +183,79 @@ impl ProofCoordinatorState {
     }
 }
 
-pub async fn start_proof_coordinator(
-    store: Store,
-    rollup_store: StoreRollup,
-    cfg: SequencerConfig,
-) -> Result<(), SequencerError> {
-    let proof_coordinator = ProofCoordinatorState::new(
-        &cfg.proof_coordinator,
-        &cfg.l1_committer,
-        &cfg.eth,
-        &cfg.block_producer,
-        store,
-        rollup_store,
-    )
-    .await
-    .map_err(SequencerError::ProverServerError)?;
-    run(proof_coordinator)
-        .await
-        .map_err(SequencerError::ProverServerError)?;
-
-    Ok(())
+pub enum ProofCordInMessage {
+    Listen { listener: TcpListener },
 }
 
-async fn run(state: ProofCoordinatorState) -> Result<(), ProverServerError> {
-    let listener = TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?;
-    main_logic(&state, listener).await;
-    Ok(())
+#[allow(dead_code)]
+#[derive(Clone, PartialEq)]
+pub enum ProofCordOutMessage {
+    Done,
+    Error,
 }
 
-async fn main_logic(state: &ProofCoordinatorState, listener: TcpListener) {
+pub struct ProofCoordinator;
+
+impl ProofCoordinator {
+    pub async fn spawn(
+        store: Store,
+        rollup_store: StoreRollup,
+        cfg: SequencerConfig,
+    ) -> Result<(), ProverServerError> {
+        let state = ProofCoordinatorState::new(
+            &cfg.proof_coordinator,
+            &cfg.l1_committer,
+            &cfg.eth,
+            &cfg.block_producer,
+            store,
+            rollup_store,
+        )
+        .await?;
+        let listener = TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?;
+        let mut proof_coordinator = ProofCoordinator::start(state);
+        let _ = proof_coordinator
+            .cast(ProofCordInMessage::Listen { listener })
+            .await;
+        Ok(())
+    }
+}
+
+impl GenServer for ProofCoordinator {
+    type InMsg = ProofCordInMessage;
+    type OutMsg = ProofCordOutMessage;
+    type State = ProofCoordinatorState;
+    type Error = ProverServerError;
+
+    fn new() -> Self {
+        Self {}
+    }
+
+    async fn handle_call(
+        &mut self,
+        _message: Self::InMsg,
+        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
+        _state: &mut Self::State,
+    ) -> CallResponse<Self::OutMsg> {
+        CallResponse::Reply(ProofCordOutMessage::Done)
+    }
+
+    async fn handle_cast(
+        &mut self,
+        message: Self::InMsg,
+        _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
+        state: &mut Self::State,
+    ) -> CastResponse {
+        info!("Receiving message");
+        match message {
+            ProofCordInMessage::Listen { listener } => {
+                handle_listens(state, listener).await;
+            }
+        }
+        CastResponse::Stop
+    }
+}
+
+async fn handle_listens(state: &ProofCoordinatorState, listener: TcpListener) {
     let concurent_clients = 3;
     let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurent_clients));
     info!(
@@ -227,14 +269,14 @@ async fn main_logic(state: &ProofCoordinatorState, listener: TcpListener) {
             Ok((stream, addr)) => {
                 match sem.clone().try_acquire_owned() {
                     Ok(permit) => {
-                        // Cloning the ProofCoordinator structure to use the handle_connection() fn
+                        // Cloning the ProofCoordinatorState structure to use the handle_connection() fn
                         // in every spawned task.
                         // The important fields are `Store` and `EthClient`
                         // Both fields are wrapped with an Arc, making it possible to clone
                         // the entire structure.
                         let mut connection_handler = ConnectionHandler::start(state.clone());
                         let _ = connection_handler
-                            .cast(InMessage::Connection {
+                            .cast(ConnInMessage::Connection {
                                 stream,
                                 addr,
                                 permit,
@@ -260,7 +302,7 @@ async fn main_logic(state: &ProofCoordinatorState, listener: TcpListener) {
 
 struct ConnectionHandler;
 
-pub enum InMessage {
+pub enum ConnInMessage {
     Connection {
         stream: TcpStream,
         addr: SocketAddr,
@@ -270,19 +312,19 @@ pub enum InMessage {
 
 #[allow(dead_code)]
 #[derive(Clone, PartialEq)]
-pub enum OutMessage {
+pub enum ConnOutMessage {
     Done,
     Error,
 }
 
 impl GenServer for ConnectionHandler {
-    type InMsg = InMessage;
-    type OutMsg = OutMessage;
+    type InMsg = ConnInMessage;
+    type OutMsg = ConnOutMessage;
     type State = ProofCoordinatorState;
     type Error = ProverServerError;
 
     fn new() -> Self {
-        ConnectionHandler {}
+        Self {}
     }
 
     async fn handle_call(
@@ -291,7 +333,7 @@ impl GenServer for ConnectionHandler {
         _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
         _state: &mut Self::State,
     ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
+        CallResponse::Reply(ConnOutMessage::Done)
     }
 
     async fn handle_cast(
@@ -302,7 +344,7 @@ impl GenServer for ConnectionHandler {
     ) -> CastResponse {
         info!("Receiving message");
         match message {
-            InMessage::Connection {
+            ConnInMessage::Connection {
                 stream,
                 addr,
                 permit,
