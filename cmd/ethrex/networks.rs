@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use ethrex_p2p::types::Node;
 use lazy_static::lazy_static;
 
@@ -30,4 +32,46 @@ lazy_static! {
         std::fs::File::open(MAINNET_BOOTNODES_PATH).expect("Failed to open mainnet bootnodes file")
     )
     .expect("Failed to parse mainnet bootnodes file");
+}
+#[derive(Debug, Clone)]
+pub enum Network {
+    PublicNetwork(PublicNetworkType),
+    GenesisPath(PathBuf),
+}
+#[derive(Debug, Clone)]
+pub enum PublicNetworkType {
+    Hoodi,
+    Holesky,
+    Sepolia,
+    Mainnet,
+}
+
+impl From<&str> for Network {
+    fn from(value: &str) -> Self {
+        match value {
+            "hoodi" => Network::PublicNetwork(PublicNetworkType::Hoodi),
+            "holesky" => Network::PublicNetwork(PublicNetworkType::Holesky),
+            "mainnet" => Network::PublicNetwork(PublicNetworkType::Mainnet),
+            "sepolia" => Network::PublicNetwork(PublicNetworkType::Sepolia),
+            s => Network::GenesisPath(PathBuf::from(s)),
+        }
+    }
+}
+
+impl From<PathBuf> for Network {
+    fn from(value: PathBuf) -> Self {
+        Network::GenesisPath(value)
+    }
+}
+
+impl Network {
+    pub fn get_path(&self) -> &Path {
+        match self {
+            Network::PublicNetwork(PublicNetworkType::Holesky) => Path::new(HOLESKY_GENESIS_PATH),
+            Network::PublicNetwork(PublicNetworkType::Hoodi) => Path::new(HOODI_GENESIS_PATH),
+            Network::PublicNetwork(PublicNetworkType::Mainnet) => Path::new(MAINNET_GENESIS_PATH),
+            Network::PublicNetwork(PublicNetworkType::Sepolia) => Path::new(SEPOLIA_GENESIS_PATH),
+            Network::GenesisPath(s) => s,
+        }
+    }
 }
