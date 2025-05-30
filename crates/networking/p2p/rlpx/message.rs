@@ -18,6 +18,7 @@ use ethrex_rlp::encode::RLPEncode;
 
 const ETH_CAPABILITY_OFFSET: u8 = 0x10;
 const SNAP_CAPABILITY_OFFSET: u8 = 0x21;
+const BASED_CAPABILITY_OFFSET: u8 = 0x30;
 
 pub trait RLPxMessage: Sized {
     const CODE: u8;
@@ -55,6 +56,8 @@ pub(crate) enum Message {
     ByteCodes(ByteCodes),
     GetTrieNodes(GetTrieNodes),
     TrieNodes(TrieNodes),
+    // based capability
+    NewBlock(String),
 }
 
 impl Message {
@@ -91,6 +94,9 @@ impl Message {
             Message::ByteCodes(_) => SNAP_CAPABILITY_OFFSET + ByteCodes::CODE,
             Message::GetTrieNodes(_) => SNAP_CAPABILITY_OFFSET + GetTrieNodes::CODE,
             Message::TrieNodes(_) => SNAP_CAPABILITY_OFFSET + TrieNodes::CODE,
+
+            // based capability
+            Message::NewBlock(_) => BASED_CAPABILITY_OFFSET + 0x01, // Placeholder for NewBlock
         }
     }
     pub fn decode(msg_id: u8, data: &[u8]) -> Result<Message, RLPDecodeError> {
@@ -128,7 +134,7 @@ impl Message {
                 Receipts::CODE => Ok(Message::Receipts(Receipts::decode(data)?)),
                 _ => Err(RLPDecodeError::MalformedData),
             }
-        } else {
+        } else if msg_id < BASED_CAPABILITY_OFFSET {
             // snap capability
             match msg_id - SNAP_CAPABILITY_OFFSET {
                 GetAccountRange::CODE => {
@@ -145,6 +151,8 @@ impl Message {
                 TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
                 _ => Err(RLPDecodeError::MalformedData),
             }
+        } else {
+            return Ok(Message::NewBlock("DECODED".to_string()));
         }
     }
 
@@ -174,6 +182,10 @@ impl Message {
             Message::ByteCodes(msg) => msg.encode(buf),
             Message::GetTrieNodes(msg) => msg.encode(buf),
             Message::TrieNodes(msg) => msg.encode(buf),
+            Message::NewBlock(s) => {
+                s.encode(buf);
+                Ok(())
+            }
         }
     }
 }
@@ -204,6 +216,7 @@ impl Display for Message {
             Message::ByteCodes(_) => "snap:ByteCodes".fmt(f),
             Message::GetTrieNodes(_) => "snap:GetTrieNodes".fmt(f),
             Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
+            Message::NewBlock(_) => "based:NewBlock".fmt(f),
         }
     }
 }

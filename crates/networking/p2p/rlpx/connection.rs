@@ -84,7 +84,9 @@ pub(crate) struct RLPxConnection<S> {
     negotiated_snap_capability: Option<Capability>,
     next_periodic_ping: Instant,
     next_tx_broadcast: Instant,
+    next_block_broadcast: Instant,
     broadcasted_txs: HashSet<H256>,
+    broadcasted_blocks: HashSet<H256>,
     client_version: String,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
@@ -120,7 +122,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             negotiated_snap_capability: None,
             next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
             next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
+            next_block_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL, // CHANGE
             broadcasted_txs: HashSet::new(),
+            broadcasted_blocks: HashSet::new(),
             client_version,
             connection_broadcast_send: connection_broadcast,
         }
@@ -416,6 +420,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             self.send_new_pooled_tx_hashes().await?;
             self.next_tx_broadcast = Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL;
         }
+        if Instant::now() >= self.next_block_broadcast {
+            self.send_new_block().await?;
+            // CHANGE CONSTANT
+            self.next_block_broadcast = Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL;
+        }
         Ok(())
     }
 
@@ -448,6 +457,15 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     &format!("Sent {} transactions to peer", tx_count),
                 );
             }
+        }
+        Ok(())
+    }
+
+    async fn send_new_block(&mut self) -> Result<(), RLPxError> {
+        if self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
+            self.send(Message::NewBlock("Hello, based sync!".to_string()))
+                .await?;
+            self.broadcasted_blocks.insert(H256::zero());
         }
         Ok(())
     }
@@ -550,6 +568,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::GetTrieNodes(req) => {
                 let response = process_trie_nodes_request(req, self.storage.clone())?;
                 self.send(Message::TrieNodes(response)).await?
+            }
+            Message::NewBlock(req) => {
+                println!("New block received: {req}");
             }
             // Send response messages to the backend
             message @ Message::AccountRange(_)
