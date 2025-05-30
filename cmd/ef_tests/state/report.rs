@@ -385,25 +385,17 @@ impl Display for EFTestsReport {
                             if let Some((levm_logs, revm_logs)) = &execution_report.logs_mismatch {
                                 writeln!(f, "\t\t\tLogs mismatch:")?;
                                 writeln!(f, "\t\t\t\tLevm Logs: ")?;
-                                let levm_log_report = format!(
-                                    "{}",
-                                    levm_logs
-                                        .iter()
-                                        .map(|log| format!(
+                                let levm_log_report = levm_logs.iter().map(|log| format!(
                                             "\t\t\t\t Log {{ address: {:#x}, topic: {:?}, data: {:#x} }} \n",
                                             log.address, log.topics, log.data
                                         ))
-                                        .fold(String::new(), |acc, arg| acc + arg.as_str())
-                                );
+                                        .fold(String::new(), |acc, arg| acc + arg.as_str());
                                 writeln!(f, "{}", levm_log_report)?;
                                 writeln!(f, "\t\t\t\tRevm Logs: ")?;
-                                let revm_log_report = format!(
-                                    "{}",
-                                    revm_logs
-                                        .iter()
-                                        .map(|log| format!("\t\t\t\t {:?} \n", log))
-                                        .fold(String::new(), |acc, arg| acc + arg.as_str())
-                                );
+                                let revm_log_report = revm_logs
+                                    .iter()
+                                    .map(|log| format!("\t\t\t\t {:?} \n", log))
+                                    .fold(String::new(), |acc, arg| acc + arg.as_str());
                                 writeln!(f, "{}", revm_log_report)?;
                             }
                             if let Some((levm_result, revm_error)) =
