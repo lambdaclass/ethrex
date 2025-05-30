@@ -449,27 +449,25 @@ impl ProofCoordinator {
             .ok_or(ProverServerError::StorageDataIsNone)?;
 
         // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
-        let cached_blobs_bundle = self.blobs_bundle_cache.get(batch_number)?;
-        let (state_diff, blob_commitment, blob_proof) = match cached_blobs_bundle {
-            Some(mut bundle) => {
-                let (Some(blob), Some(commitment), Some(proof)) = (
-                    bundle.blobs.pop(),
-                    bundle.commitments.pop(),
-                    bundle.proofs.pop(),
-                ) else {
-                    return Err(ProverServerError::Custom(format!(
-                        "Cached BlobsBundle for batch {batch_number} is empty"
-                    )));
-                };
-                let state_diff = StateDiff::decode(&bytes_from_blob(blob.to_vec().into()))?;
-                (state_diff, commitment, proof)
-            }
-            None if self.validium => (StateDiff::default(), [0; 48], [0; 48]),
-            None => {
+        let (state_diff, blob_commitment, blob_proof) = if self.validium {
+            (StateDiff::default(), [0; 48], [0; 48])
+        } else {
+            let Some(mut bundle) = self.blobs_bundle_cache.get(batch_number)? else {
                 return Err(ProverServerError::Custom(format!(
                 "BlobsBundle for batch {batch_number} not found in cache and coordinator is in rollup mode (no validium). Prover input cannot be created."
             )));
-            }
+            };
+            let (Some(blob), Some(commitment), Some(proof)) = (
+                bundle.blobs.pop(),
+                bundle.commitments.pop(),
+                bundle.proofs.pop(),
+            ) else {
+                return Err(ProverServerError::Custom(format!(
+                    "Cached BlobsBundle for batch {batch_number} is empty"
+                )));
+            };
+            let state_diff = StateDiff::decode(&bytes_from_blob(blob.to_vec().into()))?;
+            (state_diff, commitment, proof)
         };
 
         debug!("Created prover input for batch {batch_number}");
