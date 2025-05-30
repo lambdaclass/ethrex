@@ -36,7 +36,7 @@ use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils:
 use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
 use spawned_rt::mpsc::Sender;
 
-const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32)";
 
 #[derive(Clone)]
 pub struct CommitterState {
@@ -426,21 +426,9 @@ async fn send_commitment(
     deposit_logs_hash: H256,
     blobs_bundle: BlobsBundle,
 ) -> Result<H256, CommitterError> {
-    let state_diff_kzg_versioned_hash = if !state.validium {
-        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
-        *blob_versioned_hashes
-            .first()
-            .ok_or(BlobsBundleError::BlobBundleEmptyError)
-            .map_err(CommitterError::from)?
-            .as_fixed_bytes()
-    } else {
-        [0u8; 32] // Validium doesn't send state_diff_kzg_versioned_hash.
-    };
-
     let calldata_values = vec![
         Value::Uint(U256::from(batch_number)),
         Value::FixedBytes(new_state_root.0.to_vec().into()),
-        Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
         Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
         Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
     ];
