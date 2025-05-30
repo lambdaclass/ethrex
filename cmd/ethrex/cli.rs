@@ -221,7 +221,7 @@ pub enum Subcommand {
     RemoveDB {
         #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_DATADIR, required = false)]
         datadir: String,
-        #[clap(long = "force", help = "Force remove the database without confirmation", action = clap::ArgAction::SetTrue)]
+        #[arg(long = "force", help = "Force remove the database without confirmation", action = clap::ArgAction::SetTrue)]
         force: bool,
     },
     #[command(name = "import", about = "Import blocks to the database")]
