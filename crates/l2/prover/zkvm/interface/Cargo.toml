@@ -11,6 +11,7 @@ thiserror = "2.0.9"
 keccak-hash.workspace = true
 
 ethrex-common = { path = "../../../../common/", default-features = false }
+ethrex-blockchain = { path = "../../../../blockchain/", default-features = false }
 ethrex-vm = { path = "../../../../vm", default-features = false }
 ethrex-rlp = { path = "../../../../common/rlp", default-features = false }
 ethrex-storage = { path = "../../../../storage", default-features = false }
