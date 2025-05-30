@@ -48,7 +48,7 @@ async fn setup() -> (ProgramInput, Block) {
     let blocks = ethrex_l2::utils::test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
     info!("Number of blocks to insert: {}", blocks.len());
 
-    let blockchain = Blockchain::default_with_store(store.clone());
+    let blockchain = Blockchain::default_with_store(store.clone()).await;
     for block in &blocks {
         info!(
             "txs {} in block{}",

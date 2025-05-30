@@ -321,7 +321,7 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
 
     let store = init_store(&data_dir, network).await;
 
-    let blockchain = init_blockchain(evm, store.clone());
+    let blockchain = init_blockchain(evm, store.clone()).await;
 
     let path_metadata = metadata(path).expect("Failed to read path");
     let blocks = if path_metadata.is_dir() {

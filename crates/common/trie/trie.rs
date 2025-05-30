@@ -11,7 +11,10 @@ mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::nibbles::Nibbles;
@@ -395,6 +398,14 @@ impl Trie {
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
         Trie::new(Box::new(db))
+    }
+}
+
+impl fmt::Debug for Trie {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Trie")
+            .field("root", &self.root)
+            .finish_non_exhaustive()
     }
 }
 

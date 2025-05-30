@@ -24,7 +24,7 @@ mod blockchain_integration_test {
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()).await;
 
         // Add first block. We'll make it canonical.
         let block_1a = new_block(&store, &genesis_header).await;
@@ -83,7 +83,7 @@ mod blockchain_integration_test {
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()).await;
 
         // Build a single valid block.
         let block_1 = new_block(&store, &genesis_header).await;
@@ -118,7 +118,7 @@ mod blockchain_integration_test {
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()).await;
 
         // Add first block. Not canonical.
         let block_1a = new_block(&store, &genesis_header).await;
@@ -190,7 +190,7 @@ mod blockchain_integration_test {
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()).await;
 
         // Add block at height 1.
         let block_1 = new_block(&store, &genesis_header).await;
@@ -243,7 +243,7 @@ mod blockchain_integration_test {
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone());
+        let blockchain = Blockchain::default_with_store(store.clone()).await;
 
         // Add block at height 1.
         let block_1 = new_block(&store, &genesis_header).await;
@@ -305,7 +305,7 @@ mod blockchain_integration_test {
         };
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone().clone());
+        let blockchain = Blockchain::default_with_store(store.clone().clone()).await;
 
         let block = create_payload(&args, store).unwrap();
         let result = blockchain.build_payload(block).await.unwrap();

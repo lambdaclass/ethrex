@@ -34,7 +34,7 @@ async fn main() -> eyre::Result<()> {
 
     let store = init_store(&data_dir, &network).await;
 
-    let blockchain = init_blockchain(opts.evm, store.clone());
+    let blockchain = init_blockchain(opts.evm, store.clone()).await;
 
     let signer = get_signer(&data_dir);
 

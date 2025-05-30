@@ -776,7 +776,7 @@ pub(super) mod tests {
             blocks => setup_storage(blocks).await.expect("Storage setup"),
         };
 
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()).await);
         let table = Arc::new(Mutex::new(KademliaTable::new(local_node.node_id())));
         let (broadcast, _) = tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<RLPxMessage>)>(
             MAX_MESSAGES_TO_BROADCAST,
@@ -1016,7 +1016,7 @@ pub(super) mod tests {
     async fn discovery_eth_pair_validation() -> Result<(), DiscoveryError> {
         let mut server_a = start_discovery_server(8086, 10, true).await?;
         let mut server_b = start_discovery_server(8087, 10, true).await?;
-        let mut server_c = start_discovery_server(8088, 0, true).await?;
+        let mut server_c = start_discovery_server(8088, 1, true).await?;
 
         let config = ChainConfig {
             ..Default::default()

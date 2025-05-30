@@ -109,7 +109,7 @@ impl Syncer {
 
     /// Creates a dummy Syncer for tests where syncing is not needed
     /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub fn dummy() -> Self {
+    pub async fn dummy() -> Self {
         Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
             peers: PeerHandler::dummy(),
@@ -117,9 +117,9 @@ impl Syncer {
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
-            blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).unwrap(),
-            )),
+            blockchain: Arc::new(
+                Blockchain::default_with_store(Store::new("", EngineType::InMemory).unwrap()).await,
+            ),
         }
     }
 

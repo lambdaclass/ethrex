@@ -22,11 +22,13 @@ use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
 use ethrex_common::{Address, H256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
+use ethrex_trie::Trie;
 use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
+use tokio::sync::RwLock;
 use tracing::info;
 use vm::StoreVmDatabase;
 
@@ -42,6 +44,8 @@ pub struct Blockchain {
     /// This will be set to true once the initial sync has taken place and wont be set to false after
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
+
+    state_trie: RwLock<Trie>,
 }
 
 #[derive(Debug, Clone)]
@@ -51,21 +55,33 @@ pub struct BatchBlockProcessingFailure {
 }
 
 impl Blockchain {
-    pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
+    pub async fn new(evm_engine: EvmEngine, store: Store) -> Self {
+        let block_number = store.get_latest_block_number().await.unwrap();
+        let block_header = store.get_block_header(block_number).unwrap().unwrap();
+        let state_trie = store.open_state_trie(block_header.state_root);
+
         Self {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
+
+            state_trie: RwLock::new(state_trie),
         }
     }
 
-    pub fn default_with_store(store: Store) -> Self {
+    pub async fn default_with_store(store: Store) -> Self {
+        let block_number = store.get_latest_block_number().await.unwrap();
+        let block_header = store.get_block_header(block_number).unwrap().unwrap();
+        let state_trie = store.open_state_trie(block_header.state_root);
+
         Self {
             evm_engine: EvmEngine::default(),
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
+
+            state_trie: RwLock::new(state_trie),
         }
     }
 
@@ -138,9 +154,8 @@ impl Blockchain {
         // Apply the account updates over the last block's state and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(block.header.parent_hash, account_updates)
-            .await?
-            .ok_or(ChainError::ParentStateNotFound)?;
+            .apply_account_updates(&mut *self.state_trie.write().await, account_updates)
+            .await?;
 
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
@@ -282,10 +297,9 @@ impl Blockchain {
         // Apply the account updates over all blocks and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(first_block_header.parent_hash, &account_updates)
+            .apply_account_updates(&mut *self.state_trie.write().await, &account_updates)
             .await
-            .map_err(|e| (e.into(), None))?
-            .ok_or((ChainError::ParentStateNotFound, None))?;
+            .map_err(|e| (e.into(), None))?;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;

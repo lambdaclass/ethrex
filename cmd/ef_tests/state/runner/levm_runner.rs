@@ -403,9 +403,12 @@ pub async fn ensure_post_state(
 
 pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
     let (_initial_state, block_hash, store) = utils::load_initial_state(test).await;
+
+    let block_header = store.get_block_header_by_hash(block_hash).unwrap().unwrap();
+    let mut state_trie = store.open_state_trie(block_header.state_root);
+
     store
-        .apply_account_updates(block_hash, account_updates)
+        .apply_account_updates(&mut state_trie, account_updates)
         .await
-        .unwrap()
         .unwrap()
 }
