@@ -463,8 +463,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn send_new_block(&mut self) -> Result<(), RLPxError> {
         if self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
-            self.send(Message::NewBlock("Hello, based sync!".to_string()))
-                .await?;
+            self.send(Message::NewBlock(format!(
+                "Hello, based sync! {}",
+                self.storage.get_latest_block_number().await?
+            )))
+            .await?;
             self.broadcasted_blocks.insert(H256::zero());
         }
         Ok(())
@@ -571,6 +574,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::NewBlock(req) => {
                 println!("New block received: {req}");
+                // broadcast here the new block
             }
             // Send response messages to the backend
             message @ Message::AccountRange(_)

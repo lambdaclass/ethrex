@@ -1,4 +1,5 @@
 use bytes::BufMut;
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
@@ -152,7 +153,13 @@ impl Message {
                 _ => Err(RLPDecodeError::MalformedData),
             }
         } else {
-            return Ok(Message::NewBlock("DECODED".to_string()));
+            if msg_id == BASED_CAPABILITY_OFFSET + 0x01 {
+                // based capability
+                let str = String::decode(data)?;
+                println!("{}", &str);
+                return Ok(Message::NewBlock(str));
+            }
+            Err(RLPDecodeError::MalformedData)
         }
     }
 
