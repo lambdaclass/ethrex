@@ -414,10 +414,7 @@ impl LEVM {
         Ok((report.into(), access_list))
     }
 
-    pub fn prepare_block(
-        block: &Block,
-        db: &mut GeneralizedDatabase,
-    ) -> Result<(), EvmError> {
+    pub fn prepare_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let block_header = &block.header;
         let fork = chain_config.fork(block_header.timestamp);
