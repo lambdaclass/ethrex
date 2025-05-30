@@ -1,4 +1,4 @@
-# Node code quick-guide by example
+# Quickstart guide
 
 This document covers how the code in the node is organized by looking at different end to end flows. If we start too high level we’ll need to start at consensus, and if we start too low level, we’ll need to start at the EVM. Let’s start somewhere in the middle: importing blocks.
 
@@ -41,7 +41,7 @@ Adding a block is performed in `crates/blockchain/blockchain.rs:add_block`, and 
    4. The VM execution does not mutate the store itself. It returns a list of all changes that happened in execution so they can be applied in any custom way.
 2. Post-state storage (`store_block`)
    1. `apply_account_updates` gets the pre-state from the store, applies the updates to get an updated post-transition-state, calculates the root and commits the new state to disk.
-   2. The state root is a merkle root, a cryptographic summary of a state. The one we just calculated is compared with the one in the block header. If it matches, it prooves that your node's post state is the same as the one the block producer reached after executing that same block.
+   2. The state root is a merkle root, a cryptographic summary of a state. The one we just calculated is compared with the one in the block header. If it matches, it proves that your node's post-state is the same as the one the block producer reached after executing that same block.
    3. The block and the receipts are saved to disk.
 
 ### States
@@ -85,7 +85,7 @@ flowchart LR
     S2b -- "f(S2', B3')" --> S3b
 ```
 
-This means that for a single block number we actually have different post states, depending on which block we executed. In turn, this means that using a block number is not a reliable way of getting a state. To fix this, what we do is calculate the hash of a block, which is unique, and use that as an identifier for both the block and its corresponding block state. In that way, if I request the DB the state for `hash(B1)` it understands that I'm looking for `S1`, whereas if I request the DB the state for `hash(B1')` I'm looking for `S1'`.
+This means that for a single block number we actually have different post-states, depending on which block we executed. In turn, this means that using a block number is not a reliable way of getting a state. To fix this, what we do is calculate the hash of a block, which is unique, and use that as an identifier for both the block and its corresponding block state. In that way, if I request the DB the state for `hash(B1)` it understands that I'm looking for `S1`, whereas if I request the DB the state for `hash(B1')` I'm looking for `S1'`.
 
 How we determine which is the right fork is called **Fork choice**, which is not done by the execution client, but by the consensus client. What concerns to us is that if we currently think we are on `S3` and the consensus client notifies us that actually `S3'` is the current fork, we need to change our current state to that one. That means that we need to save every post-state in case we need to change forks. This changing of the nodes perception of the correct soft fork to a different one is called **reorg**.
 
@@ -104,7 +104,7 @@ let account_updates = vm.get_state_transitions()?;
 
 The VM is a transient object. It is created with an engine/backend (LEVM or REVM) and a db reference. It is discarded after executing each block. 
 
-The `StoreVmDatabase` is just an implementation of the `VmDatabase` trait, using our `Store` (reference to a key-value store). It's an adapter between the the store and the vm and allows the VM to not depend on a concrete DB. 
+The `StoreVmDatabase` is just an implementation of the `VmDatabase` trait, using our `Store` (reference to a key-value store). It's an adapter between the store and the vm and allows the VM to not depend on a concrete DB.
 
 The main piece of context a VM DB needs to be created is the `parent_hash`, which is the hash of the parent's block. As we mentioned previously, this hash uniquely identifies an ethereum state, so we are basically telling the VM what it's pre-state is. If we give it that, plus the block, the VM can execute the state-transition function $S' = f(S, B)$ previously mentioned.
 
