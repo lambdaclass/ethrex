@@ -187,12 +187,6 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
-    pub fn restore_state(&mut self, backup: Substate) -> Result<(), VMError> {
-        self.restore_cache_state()?;
-        self.substate = backup;
-        Ok(())
-    }
-
     /// True if external transaction is a contract creation
     pub fn is_create(&self) -> bool {
         matches!(self.tx.to(), TxKind::Create)

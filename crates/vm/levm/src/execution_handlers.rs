@@ -196,7 +196,6 @@ impl<'a> VM<'a> {
                 Err(error) => {
                     // Revert if error
                     self.current_call_frame_mut()?.gas_used = self.current_call_frame()?.gas_limit;
-                    // self.restore_state(backup)?;
                     self.substate = backup;
 
                     return Ok(ExecutionReport {
@@ -242,7 +241,6 @@ impl<'a> VM<'a> {
         let output = std::mem::take(&mut self.current_call_frame_mut()?.output); // Bytes::new() if error is not RevertOpcode
         let gas_used = self.current_call_frame()?.gas_used;
 
-        // self.restore_state(backup)?;
         self.substate = backup;
 
         Ok(ExecutionReport {
