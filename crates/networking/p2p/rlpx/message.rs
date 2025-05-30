@@ -1,6 +1,7 @@
 use bytes::BufMut;
-use ethrex_rlp::decode::RLPDecode;
+use ethrex_common::types::Block;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
+use ethrex_rlp::structs::{Decoder, Encoder};
 use std::fmt::Display;
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
@@ -14,6 +15,7 @@ use super::snap::{
     AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
     StorageRanges, TrieNodes,
 };
+use super::utils::{snappy_compress, snappy_decompress};
 
 use ethrex_rlp::encode::RLPEncode;
 
@@ -58,7 +60,7 @@ pub(crate) enum Message {
     GetTrieNodes(GetTrieNodes),
     TrieNodes(TrieNodes),
     // based capability
-    NewBlock(String),
+    NewBlock(NewBlockMessage),
 }
 
 impl Message {
@@ -97,7 +99,7 @@ impl Message {
             Message::TrieNodes(_) => SNAP_CAPABILITY_OFFSET + TrieNodes::CODE,
 
             // based capability
-            Message::NewBlock(_) => BASED_CAPABILITY_OFFSET + 0x01, // Placeholder for NewBlock
+            Message::NewBlock(_) => BASED_CAPABILITY_OFFSET + NewBlockMessage::CODE,
         }
     }
     pub fn decode(msg_id: u8, data: &[u8]) -> Result<Message, RLPDecodeError> {
@@ -153,11 +155,11 @@ impl Message {
                 _ => Err(RLPDecodeError::MalformedData),
             }
         } else {
-            if msg_id == BASED_CAPABILITY_OFFSET + 0x01 {
+            if msg_id == BASED_CAPABILITY_OFFSET + NewBlockMessage::CODE {
                 // based capability
-                let str = String::decode(data)?;
-                println!("{}", &str);
-                return Ok(Message::NewBlock(str));
+                let block = NewBlockMessage::decode(data)?;
+                println!("{:?}", &block.block.hash());
+                return Ok(Message::NewBlock(block));
             }
             Err(RLPDecodeError::MalformedData)
         }
@@ -189,10 +191,7 @@ impl Message {
             Message::ByteCodes(msg) => msg.encode(buf),
             Message::GetTrieNodes(msg) => msg.encode(buf),
             Message::TrieNodes(msg) => msg.encode(buf),
-            Message::NewBlock(s) => {
-                s.encode(buf);
-                Ok(())
-            }
+            Message::NewBlock(msg) => msg.encode(buf),
         }
     }
 }
@@ -225,5 +224,32 @@ impl Display for Message {
             Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
             Message::NewBlock(_) => "based:NewBlock".fmt(f),
         }
+    }
+}
+
+// MOVE THIS TO BASED MOD
+#[derive(Debug)]
+pub struct NewBlockMessage {
+    pub block: Block,
+}
+
+impl RLPxMessage for NewBlockMessage {
+    const CODE: u8 = 0x0;
+
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.block)
+            .finish();
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (block, _) = decoder.decode_field("block")?;
+        Ok(NewBlockMessage { block })
     }
 }

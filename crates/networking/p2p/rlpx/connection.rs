@@ -25,7 +25,7 @@ use crate::{
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
-    types::{MempoolTransaction, Transaction},
+    types::{Block, MempoolTransaction, Transaction},
     H256, H512,
 };
 use ethrex_storage::Store;
@@ -47,7 +47,8 @@ use tokio_util::codec::Framed;
 use tracing::debug;
 
 use super::{
-    eth::transactions::NewPooledTransactionHashes, p2p::DisconnectReason, utils::log_peer_warn,
+    eth::transactions::NewPooledTransactionHashes, message::NewBlockMessage, p2p::DisconnectReason,
+    utils::log_peer_warn,
 };
 
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
@@ -86,7 +87,7 @@ pub(crate) struct RLPxConnection<S> {
     next_tx_broadcast: Instant,
     next_block_broadcast: Instant,
     broadcasted_txs: HashSet<H256>,
-    broadcasted_blocks: HashSet<H256>,
+    broadcasted_blocks: u64,
     client_version: String,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
@@ -124,7 +125,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
             next_block_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL, // CHANGE
             broadcasted_txs: HashSet::new(),
-            broadcasted_blocks: HashSet::new(),
+            broadcasted_blocks: 0,
             client_version,
             connection_broadcast_send: connection_broadcast,
         }
@@ -259,8 +260,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         ]
         .concat();
         if based {
-            println!("=================");
-            println!("Based sync enabled");
             supported_capabilities.push(SUPPORTED_BASED_CAPABILITIES);
         }
         let hello_msg = Message::Hello(p2p::HelloMessage::new(
@@ -288,12 +287,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         "Hello message capabilities {:?}",
                         hello_message.capabilities
                     ),
-                );
-
-                println!("+++++++++++++++++++++");
-                println!(
-                    "Hello message capabilities: {:?}",
-                    &hello_message.capabilities
                 );
 
                 // Check if we have any capability in common and store the highest version
@@ -463,12 +456,28 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn send_new_block(&mut self) -> Result<(), RLPxError> {
         if self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
-            self.send(Message::NewBlock(format!(
-                "Hello, based sync! {}",
-                self.storage.get_latest_block_number().await?
-            )))
-            .await?;
-            self.broadcasted_blocks.insert(H256::zero());
+            let a = self.storage.get_latest_block_number().await?;
+            if a == self.broadcasted_blocks {
+                return Ok(());
+            }
+            println!(
+                "Broadcasting new block, current: {}, last broadcasted: {}",
+                a, self.broadcasted_blocks
+            );
+            let new_block_body = self.storage.get_block_body(a).await?.unwrap();
+            let new_block_header = self.storage.get_block_header(a)?.unwrap();
+            let new_block = Block {
+                header: new_block_header,
+                body: new_block_body,
+            };
+            self.blockchain
+                .add_block(&new_block)
+                .await
+                .map_err(|_| RLPxError::BadRequest("INVALID BLOCK".to_owned()))?;
+
+            self.send(Message::NewBlock(NewBlockMessage { block: new_block }))
+                .await?;
+            self.broadcasted_blocks = a;
         }
         Ok(())
     }
@@ -573,7 +582,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::TrieNodes(response)).await?
             }
             Message::NewBlock(req) => {
-                println!("New block received: {req}");
+                println!("New block received: {:?}", req.block.hash());
                 // broadcast here the new block
             }
             // Send response messages to the backend
