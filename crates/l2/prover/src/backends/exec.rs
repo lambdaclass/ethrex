@@ -11,12 +11,12 @@ use zkvm_interface::{
 };
 
 #[cfg(feature = "l2")]
+use ethrex_common::types::blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash};
+#[cfg(feature = "l2")]
 use ethrex_l2_common::{
     compute_deposit_logs_hash, compute_withdrawals_merkle_root, get_block_deposits,
     get_block_withdrawal_hashes,
 };
-#[cfg(feature = "l2")]
-use ethrex_common::types::blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash};
 
 pub struct ProveOutput(pub ProgramOutput);
 
@@ -170,10 +170,10 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
     if !validium {
         let state_diff_updates = state_diff
             .to_account_updates(&state_trie)
-            .expect("failed to calculate account updates from state diffs");
+            .map_err(|_| "Failed to calculate account updates from state diffs".to_string())?;
 
         if state_diff_updates != acc_account_updates {
-            panic!("invalid state diffs")
+            return Err("Invalid state diffs".to_string().into());
         }
     }
 
