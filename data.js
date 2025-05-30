@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748633273674,
+  "lastUpdate": 1748635963685,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9925,6 +9925,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181524678283,
             "range": "± 1080828235",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2e1274841a3e6ac334c7c2497c54ec3dbc7c3d46",
+          "message": "refactor(l2): split zkvm-interface into files (#2969)\n\n**Motivation**\n\nA single lib.rs file defining several independent modules is harder to\nfollow. When new modules are added, this will become worse.\n\n**Description**\n\nThis simply moves the modules of lib.rs into separate files. Since they\nwere already split up, there are no other changes required.",
+          "timestamp": "2025-05-30T19:25:50Z",
+          "tree_id": "a3bf91434a268a1e1dfea890e6ad2ac40d3e8a93",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2e1274841a3e6ac334c7c2497c54ec3dbc7c3d46"
+        },
+        "date": 1748635959607,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181321515272,
+            "range": "± 1079993103",
             "unit": "ns/iter"
           }
         ]
