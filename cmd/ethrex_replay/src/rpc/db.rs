@@ -412,7 +412,7 @@ impl RpcDB {
 }
 
 impl LevmDatabase for RpcDB {
-    fn account_exists(&self, address: Address) -> bool {
+    fn account_exists(&self, address: Address) -> Result<bool, DatabaseError> {
         // look into the cache
         {
             if self
@@ -422,11 +422,12 @@ impl LevmDatabase for RpcDB {
                 .get(&address)
                 .is_some_and(|account| matches!(account, Account::Existing { .. }))
             {
-                return true;
+                return Ok(true);
             }
         }
-        self.fetch_account_blocking(address, &[], false)
-            .is_ok_and(|account| matches!(account, Account::Existing { .. }))
+        Ok(self
+            .fetch_account_blocking(address, &[], false)
+            .is_ok_and(|account| matches!(account, Account::Existing { .. })))
     }
 
     fn get_account_code(&self, _code_hash: H256) -> Result<Bytes, DatabaseError> {
