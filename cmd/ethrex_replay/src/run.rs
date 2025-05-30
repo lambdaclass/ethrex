@@ -1,5 +1,7 @@
 use crate::cache::Cache;
-use ethrex_common::types::ELASTICITY_MULTIPLIER;
+use ethrex_common::types::{AccountUpdate, Receipt, ELASTICITY_MULTIPLIER};
+use ethrex_vm::Evm;
+use eyre::Ok;
 use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(cache: Cache) -> eyre::Result<String> {
@@ -44,4 +46,19 @@ pub async fn prove(cache: Cache) -> eyre::Result<String> {
     return Ok(format!("{out:#?}"));
     #[cfg(not(feature = "sp1"))]
     Ok(serde_json::to_string(&out.0)?)
+}
+
+pub async fn run_tx(mut cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
+    let block = cache.blocks[0].clone();
+    let mut remaining_gas = block.header.gas_limit;
+    for (tx, tx_sender) in block.body.get_transactions_with_sender() {
+        let mut vm = Evm::from_prover_db(cache.db.clone());
+        let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
+        let account_updates = vm.get_state_transitions()?;
+        cache.db.apply_account_updates(&account_updates);
+        if format!("0x{:x}", tx.compute_hash()) == tx_id {
+            return Ok((receipt, account_updates));
+        }
+    }
+    Err(eyre::Error::msg("transaction not found inside block"))
 }

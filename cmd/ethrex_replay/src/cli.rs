@@ -1,9 +1,11 @@
 use clap::{Parser, Subcommand};
+use ethrex_common::types::{AccountUpdate, Receipt};
 
 use crate::bench::run_and_measure;
 use crate::constants::get_chain_config;
 use crate::fetcher::{get_blockdata, get_rangedata, or_latest};
-use crate::run::{exec, prove};
+use crate::rpc::get_tx_block;
+use crate::run::{exec, prove, run_tx};
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 pub const BINARY_NAME: &str = env!("CARGO_BIN_NAME");
@@ -53,6 +55,21 @@ enum SubcommandExecute {
         #[arg(long, required = false)]
         bench: bool,
     },
+    #[command(about = "Execute and return transaction info.")]
+    Tx {
+        #[arg(help = "ID of the transaction")]
+        tx: String,
+        #[arg(long, env = "RPC_URL", required = true)]
+        rpc_url: String,
+        #[arg(
+            long,
+            default_value = "mainnet",
+            env = "NETWORK",
+            required = false,
+            help = "Name or ChainID of the network to use"
+        )]
+        network: String,
+    },
 }
 
 impl SubcommandExecute {
@@ -96,6 +113,20 @@ impl SubcommandExecute {
                 };
                 let res = run_and_measure(bench, body).await?;
                 println!("{}", res);
+            }
+            SubcommandExecute::Tx {
+                tx,
+                rpc_url,
+                network,
+            } => {
+                let chain_config = get_chain_config(&network)?;
+                let block_number = get_tx_block(&tx, &rpc_url).await?;
+                let cache = get_blockdata(&rpc_url, chain_config, block_number).await?;
+                let (receipt, transitions) = run_tx(cache, &tx).await?;
+                print_receipt(receipt);
+                for transition in transitions {
+                    print_transition(transition);
+                }
             }
         }
         Ok(())
@@ -211,4 +242,48 @@ pub async fn start() -> eyre::Result<()> {
         EthrexReplayCommand::Prove(cmd) => cmd.run().await?,
     };
     Ok(())
+}
+
+fn print_transition(update: AccountUpdate) {
+    println!("Account {:x}", update.address);
+    if update.removed {
+        println!("  Account deleted.");
+    }
+    if let Some(info) = update.info {
+        println!("  Updated AccountInfo:");
+        println!("    New balance: {}", info.balance);
+        println!("    New nonce: {}", info.nonce);
+        println!("    New codehash: 0x{:x}", info.code_hash);
+        if let Some(code) = update.code {
+            println!("    New code: {}", hex::encode(code));
+        }
+    }
+    if !update.added_storage.is_empty() {
+        println!("  Updated Storage:");
+    }
+    for (key, value) in update.added_storage {
+        println!("    0x{:x} = 0x{:x}", key, value);
+    }
+}
+
+fn print_receipt(receipt: Receipt) {
+    if receipt.succeeded {
+        println!("Transaction succeeded.")
+    } else {
+        println!("Transaction failed.")
+    }
+    println!("  Transaction type: {:?}", receipt.tx_type);
+    println!("  Gas used: {}", receipt.cumulative_gas_used);
+    if !receipt.logs.is_empty() {
+        println!("  Logs: ");
+    }
+    for log in receipt.logs {
+        let formatted_topics = log.topics.iter().map(|v| format!("0x{v:x}"));
+        println!(
+            "    - 0x{:x} ({}) => 0x{:x}",
+            log.address,
+            formatted_topics.collect::<Vec<String>>().join(", "),
+            log.data
+        );
+    }
 }
