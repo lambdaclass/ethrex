@@ -1,6 +1,6 @@
 use crate::{
     constants::STACK_LIMIT,
-    errors::{ExecutionReport, InternalError, OutOfGasError, VMError},
+    errors::{InternalError, OutOfGasError, VMError},
     memory::Memory,
     opcodes::Opcode,
     utils::{get_valid_jump_destinations, restore_cache_state},
