@@ -28,7 +28,8 @@ struct TracerConfig {
     reexec: Option<usize>,
 }
 
-#[derive(Default)]
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 enum TracerType {
     #[default]
     CallTracer,
@@ -41,21 +42,6 @@ struct CallTracerConfig {
     only_top_call: bool,
     #[serde(default)]
     with_log: bool,
-}
-
-impl<'de> Deserialize<'de> for TracerType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let tracer_name = String::deserialize(deserializer)?;
-        match &*tracer_name {
-            "callTracer" => Ok(TracerType::CallTracer),
-            s => Err(D::Error::custom(format!(
-                "Unknown tracer {s}. Supported tracers: callTracer"
-            ))),
-        }
-    }
 }
 
 impl RpcHandler for TraceTransactionRequest {
