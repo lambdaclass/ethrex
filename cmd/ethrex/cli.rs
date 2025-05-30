@@ -1,7 +1,8 @@
 use std::{
     fs::{metadata, read_dir, File},
     io::{self, Write},
-    path::{Path, PathBuf}, time::{Duration, Instant},
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
@@ -413,14 +414,14 @@ pub async fn export_blocks(
         Ok(number) => number,
         Err(StoreError::MissingLatestBlockNumber) => {
             warn!("No blocks in the current chain, nothing to export!");
-            return
+            return;
         }
         Err(_) => panic!("Internal DB Error"),
     };
     // Check that the requested range doesn't exceed our current chain length
     if last_number.is_some_and(|number| number > latest_number) {
         warn!("The requested block range exceeds the current amount of blocks in the chain {latest_number}");
-        return
+        return;
     }
     let end = last_number.unwrap_or(latest_number);
     // Check that the requested range makes sense
@@ -442,7 +443,7 @@ pub async fn export_blocks(
         block.encode(&mut buffer);
         // Exporting the whole chain can take a while, so we need to show some output in the meantime
         if last_output.elapsed() > Duration::from_secs(5) {
-            info!("Exporting block {n}/{end}, {}% done", n*100/end);
+            info!("Exporting block {n}/{end}, {}% done", n * 100 / end);
             last_output = Instant::now();
         }
         file.write_all(&buffer).expect("Failed to write to file");
