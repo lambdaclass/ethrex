@@ -52,12 +52,15 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         elasticity_multiplier,
     } = input;
     if cfg!(feature = "l2") {
-        stateless_validation_l2(
+        #[cfg(feature = "l2")]
+        return stateless_validation_l2(
             &blocks,
             &parent_block_header,
             &mut db,
             elasticity_multiplier,
-        )
+        );
+        #[expect(unreachable_code)]
+        unreachable!();
     } else {
         stateless_validation_l1(
             &blocks,
