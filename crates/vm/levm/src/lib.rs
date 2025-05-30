@@ -13,3 +13,4 @@ pub mod precompiles;
 pub mod utils;
 pub mod vm;
 pub use environment::*;
+pub mod instruction_table;

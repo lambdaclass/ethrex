@@ -6,6 +6,7 @@ use crate::{
     environment::Environment,
     errors::{ExecutionReport, OpcodeResult, VMError},
     hooks::hook::Hook,
+    instruction_table::build_opcode_handler_map,
     precompiles::execute_precompile,
     TransientStorage,
 };
@@ -143,9 +144,7 @@ impl<'a> VM<'a> {
         }
 
         loop {
-            let opcode = self.current_call_frame()?.next_opcode();
-
-            let op_result = self.execute_opcode(opcode);
+            let op_result = self.execute_next_instruction();
 
             let result = match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => {
