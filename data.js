@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748629063387,
+  "lastUpdate": 1748630233214,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9865,6 +9865,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 191546986266,
             "range": "± 346654406",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "tomas.arjovsky@lambdaclass.com",
+            "name": "Tomás Arjovsky",
+            "username": "Arkenan"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8afd194f55e86194a9305b5817346d2acd709f73",
+          "message": "Add a quick guide (#2962)\n\n**Motivation**\n\nThere are many repeated high-level questions among the newcomers to the\nproject. This may be useful as a quick guide/code walkthrough of the\ncode.\n\n---------\n\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>",
+          "timestamp": "2025-05-30T17:47:34Z",
+          "tree_id": "b92063604fdc32e78b3c6c8eb454d1574007a6db",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8afd194f55e86194a9305b5817346d2acd709f73"
+        },
+        "date": 1748630229128,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 195626365478,
+            "range": "± 809355537",
             "unit": "ns/iter"
           }
         ]
