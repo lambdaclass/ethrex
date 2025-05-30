@@ -9,7 +9,7 @@ use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_common::{types::AccountUpdate, Address, Bytes};
 use ethrex_l2_sdk::calldata::{encode_tuple, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
-use ethrex_vm::Evm;
+use ethrex_vm::{Evm, EvmEngine};
 #[cfg(feature = "l2")]
 use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
 #[cfg(feature = "l2")]
@@ -92,7 +92,7 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("Error validating block: {e}"))?;
 
         // Execute block
-        let mut vm = Evm::from_prover_db(db.clone());
+        let mut vm = Evm::new(EvmEngine::LEVM, db.clone());
         let result = vm
             .execute_block(&block)
             .map_err(|e| format!("Error executing block: {e}"))?;

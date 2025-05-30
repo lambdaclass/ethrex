@@ -3,7 +3,7 @@ use ethrex_common::types::AccountUpdate;
 use ethrex_common::Address;
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
-use ethrex_vm::Evm;
+use ethrex_vm::{Evm, EvmEngine};
 use std::collections::HashMap;
 use tracing::warn;
 #[cfg(feature = "l2")]
@@ -81,7 +81,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
         )?;
 
         // Execute block
-        let mut vm = Evm::from_prover_db(db.clone());
+        let mut vm = Evm::new(EvmEngine::LEVM, db.clone());
         let result = vm.execute_block(&block)?;
         let receipts = result.receipts;
         let account_updates = vm.get_state_transitions()?;

@@ -3,7 +3,7 @@ use risc0_zkvm::guest::env;
 use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_common::Address;
 use ethrex_storage::AccountUpdate;
-use ethrex_vm::Evm;
+use ethrex_vm::{Evm, EvmEngine};
 use std::collections::HashMap;
 #[cfg(feature = "l2")]
 use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
@@ -53,7 +53,7 @@ fn main() {
         validate_block(&block, &parent_header, &db.chain_config).expect("invalid block");
 
         // Execute block
-        let mut vm = Evm::from_prover_db(db.clone());
+        let mut vm = Evm::new(EvmEngine::LEVM, db.clone());
         let result = vm.execute_block(&block).expect("failed to execute block");
         let receipts = result.receipts;
         let account_updates = vm

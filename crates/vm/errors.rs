@@ -1,7 +1,6 @@
 use ethereum_types::{H160, H256};
 use ethrex_common::{types::BlockHash, Address};
 use ethrex_levm::{db::error::DatabaseError, errors::VMError};
-use ethrex_storage::error::StoreError;
 use ethrex_trie::TrieError;
 use revm::primitives::{
     result::EVMError as RevmError, Address as RevmAddress, B256 as RevmB256, U256 as RevmU256,
@@ -96,18 +95,6 @@ pub enum StateProofsError {
     StorageProofNotFound(RevmAddress, RevmU256),
 }
 
-impl From<RevmError<StoreError>> for EvmError {
-    fn from(value: RevmError<StoreError>) -> Self {
-        match value {
-            RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
-            RevmError::Header(err) => EvmError::Header(err.to_string()),
-            RevmError::Database(err) => EvmError::DB(err.to_string()),
-            RevmError::Custom(err) => EvmError::Custom(err),
-            RevmError::Precompile(err) => EvmError::Precompile(err),
-        }
-    }
-}
-
 impl From<RevmError<EvmError>> for EvmError {
     fn from(value: RevmError<EvmError>) -> Self {
         match value {
@@ -140,11 +127,5 @@ impl From<VMError> for EvmError {
             // If an error is not internal it means it is a transaction validation error.
             EvmError::Transaction(value.to_string())
         }
-    }
-}
-
-impl From<StoreError> for ProverDBError {
-    fn from(err: StoreError) -> Self {
-        ProverDBError::Store(err.to_string())
     }
 }
