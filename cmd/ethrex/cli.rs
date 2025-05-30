@@ -236,7 +236,10 @@ pub enum Subcommand {
         #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
     },
-    #[command(name = "export", about = "Export blocks in the current chain into a file in rlp encoding")]
+    #[command(
+        name = "export",
+        about = "Export blocks in the current chain into a file in rlp encoding"
+    )]
     Export {
         #[arg(
             required = true,
@@ -255,7 +258,7 @@ pub enum Subcommand {
             value_name = "NUMBER",
             help = "Last block numer to export"
         )]
-        latst: Option<u64>,
+        last: Option<u64>,
     },
     #[command(
         name = "compute-state-root",
@@ -279,35 +282,37 @@ impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         match self {
             Subcommand::RemoveDB { datadir, force } => {
-                        remove_db(&datadir, force);
-                    }
+                remove_db(&datadir, force);
+            }
             Subcommand::Import { path, removedb } => {
-                        if removedb {
-                            Box::pin(async {
-                                Self::RemoveDB {
-                                    datadir: opts.datadir.clone(),
-                                    force: opts.force,
-                                }
-                                .run(opts)
-                                .await
-                            })
-                            .await?;
+                if removedb {
+                    Box::pin(async {
+                        Self::RemoveDB {
+                            datadir: opts.datadir.clone(),
+                            force: opts.force,
                         }
-
-                        let network = opts
-                            .network
-                            .as_ref()
-                            .expect("--network is required and it was not provided");
-
-                        import_blocks(&path, &opts.datadir, network, opts.evm).await;
-                    }
-            Subcommand::Export { path, first, latst } => todo!(),
-            Subcommand::ComputeStateRoot { genesis_path } => {
-                        compute_state_root(genesis_path.to_str().expect("Invalid genesis path"));
-                    }
-            #[cfg(feature = "l2")]
-                    Subcommand::L2(command) => command.run().await?,
+                        .run(opts)
+                        .await
+                    })
+                    .await?;
                 }
+
+                let network = opts
+                    .network
+                    .as_ref()
+                    .expect("--network is required and it was not provided");
+
+                import_blocks(&path, &opts.datadir, network, opts.evm).await;
+            }
+            Subcommand::Export { path, first, last } => {
+                export_blocks(&path, &opts.datadir, first_number, last_number).await
+            }
+            Subcommand::ComputeStateRoot { genesis_path } => {
+                compute_state_root(genesis_path.to_str().expect("Invalid genesis path"));
+            }
+            #[cfg(feature = "l2")]
+            Subcommand::L2(command) => command.run().await?,
+        }
         Ok(())
     }
 }
@@ -393,7 +398,12 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
     info!("Added {size} blocks to blockchain");
 }
 
-pub async fn export_blocks(path: &str, data_dir: &str, first_number: Option<u64>, last_number: Option<u64>) {
+pub async fn export_blocks(
+    path: &str,
+    data_dir: &str,
+    first_number: Option<u64>,
+    last_number: Option<u64>,
+) {
     let store = open_store(&data_dir);
     let start = first_number.unwrap_or_default();
     // If we have no latest block then we don't have any blocks to export
@@ -401,12 +411,17 @@ pub async fn export_blocks(path: &str, data_dir: &str, first_number: Option<u64>
     // Check that the range makes sense
     if start > end {
         warn!("Cannot export block range [{start}..{end}], please input a valid range");
-        return
+        return;
     }
     /// Fetch blocks from the store and export them to the file
     let file = File::open(path).expect("Failed to open file");
     for n in start..=end {
-        let block = store.get_block_by_number(n).await.ok().flatten().expect("Failed to read block from DB");
+        let block = store
+            .get_block_by_number(n)
+            .await
+            .ok()
+            .flatten()
+            .expect("Failed to read block from DB");
         block.encode(file);
     }
     info!("Wrote {} blocks to file {path}", end - start);
