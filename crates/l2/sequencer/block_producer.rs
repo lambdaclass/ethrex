@@ -90,7 +90,7 @@ impl BlockProducer {
                 .get_block_header(current_block_number)?
                 .ok_or(BlockProducerError::StorageDataIsNone)?
         };
-        let head_hash = head_header.compute_block_hash();
+        let head_hash = head_header.hash();
         let head_beacon_block_root = H256::zero();
 
         // The proposer leverages the execution payload framework used for the engine API,
