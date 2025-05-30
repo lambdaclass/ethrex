@@ -16,7 +16,7 @@ use ethrex_l2_common::{
     compute_withdrawals_merkle_root, StateDiff
 };
 #[cfg(feature = "l2")]
-use ethrex_common::types::blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash},
+use ethrex_common::types::blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash};
 
 sp1_zkvm::entrypoint!(main);
 
