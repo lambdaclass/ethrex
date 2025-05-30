@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use ethrex_common::serde_utils;
 use keccak_hash::H256;
-use serde::{de::Error, Deserialize};
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{rpc::RpcHandler, utils::RpcErr};
@@ -14,12 +14,12 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct TraceTransactionRequest {
     tx_hash: H256,
-    tracer_config: TracerConfig,
+    trace_config: TraceConfig,
 }
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct TracerConfig {
+struct TraceConfig {
     tracer: TracerType,
     // This differs for each different tracer so we will parse it afterwards when we know the type
     tracer_config: Option<Value>,
@@ -52,7 +52,7 @@ impl RpcHandler for TraceTransactionRequest {
         if params.len() != 1 && params.len() != 2 {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
-        let tracer_config = if params.len() == 2 {
+        let trace_config = if params.len() == 2 {
             serde_json::from_value(params[1].clone())?
         } else {
             TracerConfig::default()
@@ -60,7 +60,7 @@ impl RpcHandler for TraceTransactionRequest {
 
         Ok(TraceTransactionRequest {
             tx_hash: serde_json::from_value(params[0].clone())?,
-            tracer_config,
+            trace_config,
         })
     }
 
