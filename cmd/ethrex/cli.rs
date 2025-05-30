@@ -1,5 +1,5 @@
 use std::{
-    fs::{metadata, read_dir},
+    fs::{metadata, read_dir, File},
     io::{self, Write},
     path::{Path, PathBuf},
 };
@@ -7,11 +7,12 @@ use std::{
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_p2p::{sync::SyncMode, types::Node};
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
-    initializers::{init_blockchain, init_store},
+    initializers::{init_blockchain, init_store, open_store},
     utils::{self, get_client_version, set_datadir},
     DEFAULT_DATADIR,
 };
@@ -235,6 +236,27 @@ pub enum Subcommand {
         #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
     },
+    #[command(name = "export", about = "Export blocks in the current chain into a file in rlp encoding")]
+    Export {
+        #[arg(
+            required = true,
+            value_name = "FILE_PATH",
+            help = "Path to the file where the rlp blocks will be written to"
+        )]
+        path: String,
+        #[arg(
+            required = false,
+            value_name = "NUMBER",
+            help = "First block number to export"
+        )]
+        first: Option<u64>,
+        #[arg(
+            required = false,
+            value_name = "NUMBER",
+            help = "Last block numer to export"
+        )]
+        latst: Option<u64>,
+    },
     #[command(
         name = "compute-state-root",
         about = "Compute the state root from a genesis file"
@@ -257,34 +279,35 @@ impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         match self {
             Subcommand::RemoveDB { datadir, force } => {
-                remove_db(&datadir, force);
-            }
+                        remove_db(&datadir, force);
+                    }
             Subcommand::Import { path, removedb } => {
-                if removedb {
-                    Box::pin(async {
-                        Self::RemoveDB {
-                            datadir: opts.datadir.clone(),
-                            force: opts.force,
+                        if removedb {
+                            Box::pin(async {
+                                Self::RemoveDB {
+                                    datadir: opts.datadir.clone(),
+                                    force: opts.force,
+                                }
+                                .run(opts)
+                                .await
+                            })
+                            .await?;
                         }
-                        .run(opts)
-                        .await
-                    })
-                    .await?;
-                }
 
-                let network = opts
-                    .network
-                    .as_ref()
-                    .expect("--network is required and it was not provided");
+                        let network = opts
+                            .network
+                            .as_ref()
+                            .expect("--network is required and it was not provided");
 
-                import_blocks(&path, &opts.datadir, network, opts.evm).await;
-            }
+                        import_blocks(&path, &opts.datadir, network, opts.evm).await;
+                    }
+            Subcommand::Export { path, first, latst } => todo!(),
             Subcommand::ComputeStateRoot { genesis_path } => {
-                compute_state_root(genesis_path.to_str().expect("Invalid genesis path"));
-            }
+                        compute_state_root(genesis_path.to_str().expect("Invalid genesis path"));
+                    }
             #[cfg(feature = "l2")]
-            Subcommand::L2(command) => command.run().await?,
-        }
+                    Subcommand::L2(command) => command.run().await?,
+                }
         Ok(())
     }
 }
@@ -368,6 +391,25 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
     }
 
     info!("Added {size} blocks to blockchain");
+}
+
+pub async fn export_blocks(path: &str, data_dir: &str, first_number: Option<u64>, last_number: Option<u64>) {
+    let store = open_store(&data_dir);
+    let start = first_number.unwrap_or_default();
+    // If we have no latest block then we don't have any blocks to export
+    let end = last_number.unwrap_or(store.get_latest_block_number().await.unwrap_or_default());
+    // Check that the range makes sense
+    if start > end {
+        warn!("Cannot export block range [{start}..{end}], please input a valid range");
+        return
+    }
+    /// Fetch blocks from the store and export them to the file
+    let file = File::open(path).expect("Failed to open file");
+    for n in start..=end {
+        let block = store.get_block_by_number(n).await.ok().flatten().expect("Failed to read block from DB");
+        block.encode(file);
+    }
+    info!("Wrote {} blocks to file {path}", end - start);
 }
 
 pub fn compute_state_root(genesis_path: &str) {
