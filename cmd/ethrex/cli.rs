@@ -272,12 +272,9 @@ impl Subcommand {
                     .await?;
                 }
 
-                let network = opts
-                    .network
-                    .as_ref()
-                    .expect("--network is required and it was not provided");
+                let network = get_network(opts);
 
-                import_blocks(&path, &opts.datadir, network, opts.evm).await;
+                import_blocks(&path, &opts.datadir, &network, opts.evm).await;
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 compute_state_root(genesis_path.to_str().expect("Invalid genesis path"));
