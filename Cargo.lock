@@ -3045,6 +3045,7 @@ dependencies = [
  "ethrex-vm",
  "eyre",
  "hex",
+ "itertools 0.14.0",
  "k256",
  "keccak-hash",
  "lazy_static",
