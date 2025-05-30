@@ -57,6 +57,8 @@ pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<Acc
         let store = Arc::new(cache.db);
         let mut db = GeneralizedDatabase::new(store.clone(), CacheDB::new());
         LEVM::prepare_block(&block, &mut db)?;
+        drop(db);
+        // TODO: refactor GeneralizedDatabase and Database to avoid this
         Arc::into_inner(store).ok_or(eyre::Error::msg("couldn't get store out of Arc<>"))?
     };
     for (tx, tx_sender) in block.body.get_transactions_with_sender() {
