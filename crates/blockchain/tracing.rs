@@ -33,14 +33,8 @@ impl Blockchain {
             return Err(ChainError::Custom("Block not Found".to_string()));
         };
         // Check if we need to re-execute parent blocks
-        let mut blocks_to_re_execute = Vec::new();
-        fill_missing_state_parents(
-            block.header.parent_hash,
-            &mut blocks_to_re_execute,
-            &self.storage,
-            reexec,
-        )
-        .await?;
+        let mut blocks_to_re_execute =
+            get_missing_state_parents(block.header.parent_hash, &self.storage, reexec).await?;
         let parent_hash = blocks_to_re_execute
             .last()
             .unwrap_or(&block)
@@ -64,15 +58,16 @@ impl Blockchain {
     }
 }
 
-/// Fills the `missing_state_parents` vector with all the parent blocks (starting from parent hash) who's state we don't have stored.
+/// Returns a list of all the parent blocks (starting from parent hash) who's state we don't have stored.
+/// The list will be sorted from newer to older
 /// We might be missing this state due to using batch execute or other methods while syncing the chain
 /// If we are not able to find a parent block with state after going through the amount of blocks given by `reexec` an error will be returned
-async fn fill_missing_state_parents(
+async fn get_missing_state_parents(
     mut parent_hash: H256,
-    missing_state_parents: &mut Vec<Block>,
     store: &Store,
     reexec: usize,
-) -> Result<(), ChainError> {
+) -> Result<Vec<Block>, ChainError> {
+    let mut missing_state_parents = Vec::new();
     loop {
         if missing_state_parents.len() > reexec {
             return Err(ChainError::Custom(
@@ -83,12 +78,13 @@ async fn fill_missing_state_parents(
             return Err(ChainError::Custom("Parent Block not Found".to_string()));
         };
         if store.contains_state_node(parent_block.header.state_root)? {
-            return Ok(());
+            break;
         }
         parent_hash = parent_block.header.parent_hash;
         // Add parent to re-execute list
         missing_state_parents.push(parent_block);
     }
+    Ok(missing_state_parents)
 }
 
 /// Runs the given evm trace operation, aborting if it takes more than the time given by `tiemout`
