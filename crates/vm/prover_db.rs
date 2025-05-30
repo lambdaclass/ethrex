@@ -111,7 +111,8 @@ impl VmDatabase for ProverDB {
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        Ok(self.storage
+        Ok(self
+            .storage
             .get(&address)
             .and_then(|storage| storage.get(&key).cloned()))
     }
@@ -120,9 +121,11 @@ impl VmDatabase for ProverDB {
         self.block_hashes
             .get(&block_number)
             .cloned()
-            .ok_or_else(|| EvmError::DB(format!(
-                "Block hash not found for block number {block_number}"
-            )))
+            .ok_or_else(|| {
+                EvmError::DB(format!(
+                    "Block hash not found for block number {block_number}"
+                ))
+            })
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
@@ -136,9 +139,6 @@ impl VmDatabase for ProverDB {
         self.code
             .get(&code_hash)
             .cloned()
-            .ok_or_else(|| EvmError::DB(format!(
-                "Code not found for hash: {:?}",
-                code_hash
-            )))
+            .ok_or_else(|| EvmError::DB(format!("Code not found for hash: {:?}", code_hash)))
     }
 }

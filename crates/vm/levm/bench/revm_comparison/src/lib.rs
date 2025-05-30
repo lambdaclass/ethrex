@@ -10,7 +10,6 @@ use ethrex_levm::{
     Environment,
 };
 use ethrex_vm::{DynVmDatabase, ProverDB};
-// use ethrex_vm::ProverDB;
 use revm::{
     db::BenchmarkDB,
     primitives::{address, Address, Bytecode, TransactTo},
