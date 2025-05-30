@@ -19,14 +19,14 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      #- name: Rustup toolchain install
-      #  uses: dtolnay/rust-toolchain@stable
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
 
-      #- name: Set up Rust cache
-      #  if: ${{ always() }}
-      #  uses: Swatinem/rust-cache@v2
-      #  with:
-      #    cache-on-failure: "true"
+      - name: Set up Rust cache
+        if: ${{ always() }}
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
 
       - name: Check sp1 is installed
         id: sp1_check
