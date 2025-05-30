@@ -43,8 +43,11 @@ impl LevmDatabase for DatabaseLogger {
             .get_account(address)
     }
 
-    fn account_exists(&self, address: CoreAddress) -> bool {
-        self.store.lock().unwrap().account_exists(address)
+    fn account_exists(&self, address: CoreAddress) -> Result<bool, DatabaseError> {
+        self.store
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .account_exists(address)
     }
 
     fn get_storage_value(
@@ -113,9 +116,10 @@ impl LevmDatabase for DynVmDatabase {
         ))
     }
 
-    fn account_exists(&self, address: CoreAddress) -> bool {
-        let acc_info = <dyn VmDatabase>::get_account_info(self.as_ref(), address).unwrap();
-        acc_info.is_some()
+    fn account_exists(&self, address: CoreAddress) -> Result<bool, DatabaseError> {
+        let acc_info = <dyn VmDatabase>::get_account_info(self.as_ref(), address)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?;
+        Ok(acc_info.is_some())
     }
 
     fn get_storage_value(
