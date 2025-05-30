@@ -3,7 +3,7 @@ use std::time::Duration;
 use ethrex_common::{serde_utils, types::BlockNumber};
 use ethrex_vm::tracing::CallTrace;
 use keccak_hash::H256;
-use serde::{de::Error, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{rpc::RpcHandler, utils::RpcErr};
@@ -15,7 +15,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct TraceTransactionRequest {
     tx_hash: H256,
-    trace_config: TracerConfig,
+    trace_config: TraceConfig,
 }
 
 pub struct TraceBlockByNumberRequest {
@@ -134,7 +134,7 @@ impl RpcHandler for TraceBlockByNumberRequest {
         let trace_config = if params.len() == 2 {
             serde_json::from_value(params[1].clone())?
         } else {
-            TracerConfig::default()
+            TraceConfig::default()
         };
 
         Ok(TraceBlockByNumberRequest {
