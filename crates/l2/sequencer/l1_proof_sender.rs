@@ -59,6 +59,7 @@ struct L1ProofSender {
     rollup_storage: StoreRollup,
     l1_chain_id: u64,
     network: Network,
+    fee_estimate: FeeEstimationType,
 }
 
 impl L1ProofSender {
@@ -77,6 +78,7 @@ impl L1ProofSender {
         })?;
 
         let network = resolve_network(&aligned_cfg.network)?;
+        let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
 
         Ok(Self {
             eth_client,
@@ -88,6 +90,7 @@ impl L1ProofSender {
             rollup_storage,
             l1_chain_id,
             network,
+            fee_estimate,
         })
     }
 
@@ -158,7 +161,7 @@ impl L1ProofSender {
             })?
             .as_str();
 
-        let instant_fee_estimation = estimate_fee(rpc_url, FeeEstimationType::Instant)
+        let fee_estimation = estimate_fee(rpc_url, self.fee_estimate.clone())
             .await
             .map_err(|err| ProofSenderError::AlignedFeeEstimateError(err.to_string()))?;
 
@@ -178,7 +181,7 @@ impl L1ProofSender {
         submit(
             self.network.clone(),
             &verification_data,
-            instant_fee_estimation,
+            fee_estimation,
             wallet,
             nonce,
         )
@@ -244,5 +247,15 @@ impl L1ProofSender {
         info!("Sent proof for batch {batch_number}, with transaction hash {verify_tx_hash:#x}");
 
         Ok(())
+    }
+}
+
+fn resolve_fee_estimate(fee_estimate: &str) -> Result<FeeEstimationType, ProofSenderError> {
+    match fee_estimate {
+        "instant" => Ok(FeeEstimationType::Instant),
+        "default" => Ok(FeeEstimationType::Default),
+        _ => Err(ProofSenderError::AlignedFeeEstimateError(
+            "Unsupported fee estimation type".to_string(),
+        )),
     }
 }
