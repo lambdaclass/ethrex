@@ -5,6 +5,7 @@ use aligned_sdk::{
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::EthClient;
+use reqwest::Url;
 use secp256k1::SecretKey;
 use tracing::{error, info};
 
@@ -26,14 +27,15 @@ const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatchAligned(uint256,bytes,bytes32,bytes32[])";
 
 pub async fn start_l1_proof_verifier(cfg: SequencerConfig) -> Result<(), SequencerError> {
-    let proof_sender =
+    let l1_proof_verifier =
         L1ProofVerifier::new(&cfg.proof_coordinator, &cfg.l1_committer, &cfg.eth).await?;
-    proof_sender.run().await;
+    l1_proof_verifier.run().await;
     Ok(())
 }
 
 struct L1ProofVerifier {
     eth_client: EthClient,
+    beacon_url: Url,
     l1_address: Address,
     l1_private_key: SecretKey,
     on_chain_proposer_address: Address,
@@ -48,8 +50,12 @@ impl L1ProofVerifier {
     ) -> Result<Self, ProofVerifierError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
 
+        let beacon_url = Url::parse(&eth_cfg.beacon_url)
+            .map_err(|e| ProofVerifierError::ParseBeaconUrl(format!("Invalid beacon URL: {e}")))?;
+
         Ok(Self {
             eth_client,
+            beacon_url,
             l1_address: cfg.l1_address,
             l1_private_key: cfg.l1_private_key,
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
@@ -120,7 +126,7 @@ impl L1ProofVerifier {
             &verification_data,
             Network::Devnet,
             rpc_url.as_str().into(),
-            "http://127.0.0.1:58801".to_string(), // beacon_client
+            self.beacon_url.as_str().into(),
             None,
         )
         .await

@@ -61,6 +61,7 @@ impl From<SequencerOptions> for SequencerConfig {
             },
             eth: EthConfig {
                 rpc_url: opts.eth_opts.rpc_url,
+                beacon_url: opts.eth_opts.beacon_url,
                 max_number_of_retries: opts.eth_opts.max_number_of_retries,
                 backoff_factor: opts.eth_opts.backoff_factor,
                 min_retry_delay: opts.eth_opts.min_retry_delay,
@@ -104,6 +105,15 @@ pub struct EthOptions {
         num_args = 1..10
     )]
     pub rpc_url: Vec<String>,
+    #[arg(
+        long = "eth-beacon-url",
+        default_value = "http://127.0.0.1:58801",
+        value_name = "BEACON_URL",
+        env = "ETHREX_ETH_BEACON_URL",
+        help = "Beacon url to use.",
+        help_heading = "Eth options"
+    )]
+    pub beacon_url: String,
     #[arg(
         long = "eth-maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",

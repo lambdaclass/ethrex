@@ -114,6 +114,8 @@ pub enum ProofVerifierError {
     EthClientError(#[from] EthClientError),
     #[error("Unexpected Error: {0}")]
     InternalError(String),
+    #[error("ProofVerifier failed to parse beacon url")]
+    ParseBeaconUrl(String),
     #[error("ProofVerifier decoding error: {0}")]
     DecodingError(String),
     #[error("Failed with a SaveStateError: {0}")]
