@@ -32,6 +32,8 @@ pub enum SequencerError {
     EthClientError(#[from] EthClientError),
     #[error("Failed to access Store: {0}")]
     FailedAccessingStore(#[from] StoreError),
+    #[error("Failed to resolve network")]
+    AlignedNetworkError(String),
 }
 
 #[derive(Debug, thiserror::Error)]

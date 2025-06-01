@@ -24,7 +24,7 @@ use crate::{
 
 use super::{
     errors::SequencerError,
-    utils::{get_latest_sent_batch, send_verify_tx, sleep_random},
+    utils::{get_latest_sent_batch, resolve_network, send_verify_tx, sleep_random},
 };
 
 const VERIFY_FUNCTION_SIGNATURE: &str =
@@ -56,6 +56,7 @@ struct L1ProofSender {
     proof_send_interval_ms: u64,
     rollup_storage: StoreRollup,
     l1_chain_id: u64,
+    network: Network,
 }
 
 impl L1ProofSender {
@@ -65,11 +66,14 @@ impl L1ProofSender {
         eth_cfg: &EthConfig,
         rollup_storage: StoreRollup,
         needed_proof_types: Vec<ProverType>,
-    ) -> Result<Self, ProofSenderError> {
+    ) -> Result<Self, SequencerError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
+
         let l1_chain_id = eth_client.get_chain_id().await?.try_into().map_err(|_| {
             ProofSenderError::InternalError("Failed to convert chain ID to U256".to_owned())
         })?;
+
+        let network = resolve_network(&eth_cfg.network)?;
 
         Ok(Self {
             eth_client,
@@ -80,6 +84,7 @@ impl L1ProofSender {
             proof_send_interval_ms: cfg.proof_send_interval_ms,
             rollup_storage,
             l1_chain_id,
+            network,
         })
     }
 
@@ -154,7 +159,7 @@ impl L1ProofSender {
             .await
             .map_err(|err| ProofSenderError::AlignedFeeEstimateError(err.to_string()))?;
 
-        let nonce = get_nonce_from_batcher(Network::Devnet, self.l1_address.0.into())
+        let nonce = get_nonce_from_batcher(self.network.clone(), self.l1_address.0.into())
             .await
             .map_err(|err| {
                 ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {:?}", err))
@@ -168,7 +173,7 @@ impl L1ProofSender {
         debug!("Sending proof to Aligned");
 
         submit(
-            Network::Devnet, //TODO: remove hardcoded network
+            self.network.clone(),
             &verification_data,
             instant_fee_estimation,
             wallet,

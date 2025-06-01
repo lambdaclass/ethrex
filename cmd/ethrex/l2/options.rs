@@ -62,6 +62,7 @@ impl From<SequencerOptions> for SequencerConfig {
             eth: EthConfig {
                 rpc_url: opts.eth_opts.rpc_url,
                 beacon_url: opts.eth_opts.beacon_url,
+                network: opts.eth_opts.network,
                 max_number_of_retries: opts.eth_opts.max_number_of_retries,
                 backoff_factor: opts.eth_opts.backoff_factor,
                 min_retry_delay: opts.eth_opts.min_retry_delay,
@@ -114,6 +115,15 @@ pub struct EthOptions {
         help_heading = "Eth options"
     )]
     pub beacon_url: String,
+    #[arg(
+        long = "eth-network",
+        default_value = "devnet",
+        value_name = "NETWORK",
+        env = "ETHREX_ETH_NETWORK",
+        help = "L1 network name for Aligned sdk",
+        help_heading = "Eth options"
+    )]
+    pub network: String,
     #[arg(
         long = "eth-maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",

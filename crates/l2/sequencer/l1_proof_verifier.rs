@@ -20,7 +20,7 @@ use crate::{
 
 use super::{
     errors::SequencerError,
-    utils::{send_verify_tx, sleep_random},
+    utils::{resolve_network, send_verify_tx, sleep_random},
 };
 
 const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
@@ -40,6 +40,7 @@ struct L1ProofVerifier {
     l1_private_key: SecretKey,
     on_chain_proposer_address: Address,
     proof_send_interval_ms: u64,
+    network: Network,
 }
 
 impl L1ProofVerifier {
@@ -47,15 +48,18 @@ impl L1ProofVerifier {
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
-    ) -> Result<Self, ProofVerifierError> {
+    ) -> Result<Self, SequencerError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
 
         let beacon_url = Url::parse(&eth_cfg.beacon_url)
             .map_err(|e| ProofVerifierError::ParseBeaconUrl(format!("Invalid beacon URL: {e}")))?;
 
+        let network = resolve_network(&eth_cfg.network)?;
+
         Ok(Self {
             eth_client,
             beacon_url,
+            network,
             l1_address: cfg.l1_address,
             l1_private_key: cfg.l1_private_key,
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
@@ -124,7 +128,7 @@ impl L1ProofVerifier {
 
         let proof_status = check_proof_verification(
             &verification_data,
-            Network::Devnet,
+            self.network.clone(),
             rpc_url.as_str().into(),
             self.beacon_url.as_str().into(),
             None,

@@ -33,6 +33,7 @@ pub struct CommitterConfig {
 pub struct EthConfig {
     pub rpc_url: Vec<String>,
     pub beacon_url: String,
+    pub network: String,
     pub maximum_allowed_max_fee_per_gas: u64,
     pub maximum_allowed_max_fee_per_blob_gas: u64,
     pub max_number_of_retries: u64,

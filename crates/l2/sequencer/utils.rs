@@ -1,3 +1,4 @@
+use aligned_sdk::common::types::Network;
 use ethrex_common::{Address, H160, H256};
 use ethrex_rpc::{
     clients::{eth::WrappedTransaction, EthClientError, Overrides},
@@ -122,5 +123,17 @@ pub async fn get_latest_sent_batch(
         Ok(eth_client
             .get_last_verified_batch(on_chain_proposer_address)
             .await?)
+    }
+}
+
+pub fn resolve_network(network: &str) -> Result<Network, SequencerError> {
+    match network {
+        "devnet" => Ok(Network::Devnet),
+        "holesky" => Ok(Network::Holesky),
+        "holesky-stage" => Ok(Network::HoleskyStage),
+        "mainnet" => Ok(Network::Mainnet),
+        _ => Err(SequencerError::AlignedNetworkError(format!(
+            "Unsupported network: {network}"
+        ))),
     }
 }
