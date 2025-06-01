@@ -2,8 +2,8 @@ use crate::{cli::Options as NodeOptions, utils};
 use clap::Parser;
 use ethrex_common::Address;
 use ethrex_l2::{
-    BlockProducerConfig, CommitterConfig, EthConfig, L1WatcherConfig, ProofCoordinatorConfig,
-    SequencerConfig,
+    sequencer::configs::AlignedConfig, BlockProducerConfig, CommitterConfig, EthConfig,
+    L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use ethrex_rpc::clients::eth::get_address_from_secret_key;
 use secp256k1::SecretKey;
@@ -38,6 +38,8 @@ pub struct SequencerOptions {
     pub committer_opts: CommitterOptions,
     #[command(flatten)]
     pub proof_coordinator_opts: ProofCoordinatorOptions,
+    #[command(flatten)]
+    pub aligned_opts: AlignedOptions,
 }
 
 impl From<SequencerOptions> for SequencerConfig {
@@ -61,8 +63,6 @@ impl From<SequencerOptions> for SequencerConfig {
             },
             eth: EthConfig {
                 rpc_url: opts.eth_opts.rpc_url,
-                beacon_url: opts.eth_opts.beacon_url,
-                network: opts.eth_opts.network,
                 max_number_of_retries: opts.eth_opts.max_number_of_retries,
                 backoff_factor: opts.eth_opts.backoff_factor,
                 min_retry_delay: opts.eth_opts.min_retry_delay,
@@ -90,6 +90,12 @@ impl From<SequencerOptions> for SequencerConfig {
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
                 dev_mode: opts.proof_coordinator_opts.dev_mode,
             },
+            aligned: AlignedConfig {
+                aligned_verifier_interval_ms: opts.aligned_opts.aligned_verifier_interval_ms,
+                beacon_url: opts.aligned_opts.beacon_url,
+                network: opts.aligned_opts.network,
+                fee_estimate: opts.aligned_opts.fee_estimate,
+            },
         }
     }
 }
@@ -106,24 +112,6 @@ pub struct EthOptions {
         num_args = 1..10
     )]
     pub rpc_url: Vec<String>,
-    #[arg(
-        long = "eth-beacon-url",
-        default_value = "http://127.0.0.1:58801",
-        value_name = "BEACON_URL",
-        env = "ETHREX_ETH_BEACON_URL",
-        help = "Beacon url to use.",
-        help_heading = "Eth options"
-    )]
-    pub beacon_url: String,
-    #[arg(
-        long = "eth-network",
-        default_value = "devnet",
-        value_name = "NETWORK",
-        env = "ETHREX_ETH_NETWORK",
-        help = "L1 network name for Aligned sdk",
-        help_heading = "Eth options"
-    )]
-    pub network: String,
     #[arg(
         long = "eth-maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",
@@ -386,6 +374,56 @@ impl Default for ProofCoordinatorOptions {
             listen_port: 3900,
             proof_send_interval_ms: 5000,
             dev_mode: true,
+        }
+    }
+}
+
+#[derive(Parser)]
+pub struct AlignedOptions {
+    #[arg(
+        long,
+        default_value = "5000",
+        value_name = "UINT64",
+        env = "ALIGNED_VERIFIER_INTERVAL_MS",
+        help_heading = "Aligned options"
+    )]
+    pub aligned_verifier_interval_ms: u64,
+    #[arg(
+        long = "beacon-url",
+        default_value = "http://127.0.0.1:58801",
+        value_name = "BEACON_URL",
+        env = "BEACON_URL",
+        help = "Beacon url to use.",
+        help_heading = "Aligned options"
+    )]
+    pub beacon_url: String,
+    #[arg(
+        long = "Aligned-network",
+        default_value = "devnet",
+        value_name = "NETWORK",
+        env = "ALIGNED_NETWORK",
+        help = "L1 network name for Aligned sdk",
+        help_heading = "Aligned options"
+    )]
+    pub network: String,
+    #[arg(
+        long = "Aligned-fee-estimate",
+        default_value = "instant",
+        value_name = "FEE_ESTIMATE",
+        env = "ALIGNED_FEE_ESTIMATE",
+        help = "Fee estimate for Aligned sdk",
+        help_heading = "Aligned options"
+    )]
+    pub fee_estimate: String,
+}
+
+impl Default for AlignedOptions {
+    fn default() -> Self {
+        Self {
+            aligned_verifier_interval_ms: 5000,
+            beacon_url: "http://127.0.0.1:58801".to_string(),
+            network: "devnet".to_string(),
+            fee_estimate: "instant".to_string(),
         }
     }
 }

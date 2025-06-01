@@ -23,6 +23,7 @@ use crate::{
 };
 
 use super::{
+    configs::AlignedConfig,
     errors::SequencerError,
     utils::{get_latest_sent_batch, resolve_network, send_verify_tx, sleep_random},
 };
@@ -39,6 +40,7 @@ pub async fn start_l1_proof_sender(
         &cfg.proof_coordinator,
         &cfg.l1_committer,
         &cfg.eth,
+        &cfg.aligned,
         rollup_store,
         needed_proof_types,
     )
@@ -64,6 +66,7 @@ impl L1ProofSender {
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
+        aligned_cfg: &AlignedConfig,
         rollup_storage: StoreRollup,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, SequencerError> {
@@ -73,7 +76,7 @@ impl L1ProofSender {
             ProofSenderError::InternalError("Failed to convert chain ID to U256".to_owned())
         })?;
 
-        let network = resolve_network(&eth_cfg.network)?;
+        let network = resolve_network(&aligned_cfg.network)?;
 
         Ok(Self {
             eth_client,

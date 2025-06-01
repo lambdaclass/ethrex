@@ -19,6 +19,7 @@ use crate::{
 };
 
 use super::{
+    configs::AlignedConfig,
     errors::SequencerError,
     utils::{resolve_network, send_verify_tx, sleep_random},
 };
@@ -27,8 +28,13 @@ const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatchAligned(uint256,bytes,bytes32,bytes32[])";
 
 pub async fn start_l1_proof_verifier(cfg: SequencerConfig) -> Result<(), SequencerError> {
-    let l1_proof_verifier =
-        L1ProofVerifier::new(&cfg.proof_coordinator, &cfg.l1_committer, &cfg.eth).await?;
+    let l1_proof_verifier = L1ProofVerifier::new(
+        &cfg.proof_coordinator,
+        &cfg.l1_committer,
+        &cfg.eth,
+        &cfg.aligned,
+    )
+    .await?;
     l1_proof_verifier.run().await;
     Ok(())
 }
@@ -39,31 +45,32 @@ struct L1ProofVerifier {
     l1_address: Address,
     l1_private_key: SecretKey,
     on_chain_proposer_address: Address,
-    proof_send_interval_ms: u64,
+    proof_verify_interval_ms: u64,
     network: Network,
 }
 
 impl L1ProofVerifier {
     async fn new(
-        cfg: &ProofCoordinatorConfig,
+        proof_coordinator_cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
+        aligned_cfg: &AlignedConfig,
     ) -> Result<Self, SequencerError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
 
-        let beacon_url = Url::parse(&eth_cfg.beacon_url)
+        let beacon_url = Url::parse(&aligned_cfg.beacon_url)
             .map_err(|e| ProofVerifierError::ParseBeaconUrl(format!("Invalid beacon URL: {e}")))?;
 
-        let network = resolve_network(&eth_cfg.network)?;
+        let network = resolve_network(&aligned_cfg.network)?;
 
         Ok(Self {
             eth_client,
             beacon_url,
             network,
-            l1_address: cfg.l1_address,
-            l1_private_key: cfg.l1_private_key,
+            l1_address: proof_coordinator_cfg.l1_address,
+            l1_private_key: proof_coordinator_cfg.l1_private_key,
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
-            proof_send_interval_ms: cfg.proof_send_interval_ms,
+            proof_verify_interval_ms: aligned_cfg.aligned_verifier_interval_ms,
         })
     }
 
@@ -74,7 +81,7 @@ impl L1ProofVerifier {
                 error!("L1 Proof Verifier Error: {}", err);
             }
 
-            sleep_random(self.proof_send_interval_ms).await;
+            sleep_random(self.proof_verify_interval_ms).await;
         }
     }
 
@@ -99,7 +106,7 @@ impl L1ProofVerifier {
             None => {
                 info!(
                     "Batch {batch_to_verify} has not yet been aggregated by Aligned. Waiting for {} seconds",
-                    self.proof_send_interval_ms / 1000
+                    self.proof_verify_interval_ms / 1000
                 );
             }
         }

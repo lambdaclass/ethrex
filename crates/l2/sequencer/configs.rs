@@ -9,6 +9,7 @@ pub struct SequencerConfig {
     pub eth: EthConfig,
     pub l1_watcher: L1WatcherConfig,
     pub proof_coordinator: ProofCoordinatorConfig,
+    pub aligned: AlignedConfig,
 }
 
 // TODO: Move to blockchain/dev
@@ -32,8 +33,6 @@ pub struct CommitterConfig {
 #[derive(Clone, Debug)]
 pub struct EthConfig {
     pub rpc_url: Vec<String>,
-    pub beacon_url: String,
-    pub network: String,
     pub maximum_allowed_max_fee_per_gas: u64,
     pub maximum_allowed_max_fee_per_blob_gas: u64,
     pub max_number_of_retries: u64,
@@ -59,4 +58,12 @@ pub struct ProofCoordinatorConfig {
     pub listen_port: u16,
     pub proof_send_interval_ms: u64,
     pub dev_mode: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct AlignedConfig {
+    pub aligned_verifier_interval_ms: u64,
+    pub beacon_url: String,
+    pub network: String,
+    pub fee_estimate: String,
 }
