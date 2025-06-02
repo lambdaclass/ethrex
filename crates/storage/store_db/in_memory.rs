@@ -1,5 +1,5 @@
 use crate::{
-    api::StoreEngine,
+    api::{StoreEngine, StoreRoTx, StoreRwTx},
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
 };
@@ -86,7 +86,17 @@ impl Store {
 }
 
 #[async_trait::async_trait]
-impl StoreEngine for Store {
+impl<'st> StoreEngine<'st> for Store {
+    fn begin_ro_tx(&'st self) -> Result<Arc<dyn StoreRoTx<'st>>, StoreError> {
+        Ok(self)
+    }
+    fn begin_rw_tx(&'st self) -> Result<Arc<dyn StoreRwTx<'st>>, StoreError> {
+        Ok(self)
+    }
+}
+
+#[async_trait::async_trait]
+impl<'st> StoreRoTx<'st> for Store {
     fn get_block_header(&self, block_number: u64) -> Result<Option<BlockHeader>, StoreError> {
         let store = self.inner();
         if let Some(hash) = store.canonical_hashes.get(&block_number) {
@@ -136,13 +146,226 @@ impl StoreEngine for Store {
         Ok(res)
     }
 
+    async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
+        Ok(self.inner().pending_blocks.get(&block_hash).cloned())
+    }
+
+    async fn get_block_number(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        Ok(self.inner().block_numbers.get(&block_hash).copied())
+    }
+
+    async fn get_transaction_location(
+        &self,
+        transaction_hash: H256,
+    ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
+        let store = self.inner();
+        Ok(store
+            .transaction_locations
+            .get(&transaction_hash)
+            .and_then(|v| {
+                v.iter()
+                    .find(|(number, hash, _index)| store.canonical_hashes.get(number) == Some(hash))
+                    .copied()
+            }))
+    }
+
+    async fn get_receipt(
+        &self,
+        block_number: BlockNumber,
+        index: Index,
+    ) -> Result<Option<Receipt>, StoreError> {
+        let store = self.inner();
+        if let Some(hash) = store.canonical_hashes.get(&block_number) {
+            Ok(store
+                .receipts
+                .get(hash)
+                .and_then(|entry| entry.get(&index))
+                .cloned())
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
+        Ok(self.inner().account_codes.get(&code_hash).cloned())
+    }
+
+    fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
+        Ok(self.inner().chain_data.chain_config.unwrap())
+    }
+
+    async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        Ok(self.inner().chain_data.earliest_block_number)
+    }
+
+    async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        Ok(self.inner().chain_data.finalized_block_number)
+    }
+
+    async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        Ok(self.inner().chain_data.safe_block_number)
+    }
+    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        Ok(self.inner().chain_data.latest_block_number)
+    }
+
+    async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        Ok(self.inner().chain_data.pending_block_number)
+    }
+
+    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
+        let mut store = self.inner();
+        let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
+        let db = Box::new(InMemoryTrieDB::new(trie_backend.clone()));
+        Trie::open(db, storage_root)
+    }
+
+    fn open_state_trie(&self, state_root: H256) -> Trie {
+        let trie_backend = self.inner().state_trie_nodes.clone();
+        let db = Box::new(InMemoryTrieDB::new(trie_backend));
+        Trie::open(db, state_root)
+    }
+
+    async fn get_block_body_by_hash(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockBody>, StoreError> {
+        Ok(self.inner().bodies.get(&block_hash).cloned())
+    }
+
+    fn get_block_header_by_hash(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockHeader>, StoreError> {
+        Ok(self.inner().headers.get(&block_hash).cloned())
+    }
+
+    async fn get_canonical_block_hash(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        Ok(self.inner().canonical_hashes.get(&block_number).cloned())
+    }
+
+    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
+        Ok(self.inner().payloads.get(&payload_id).cloned())
+    }
+
+    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
+        let store = self.inner();
+        let Some(receipts_for_block) = store.receipts.get(block_hash) else {
+            return Ok(vec![]);
+        };
+        let mut receipts = receipts_for_block
+            .iter()
+            .collect::<Vec<(&Index, &Receipt)>>();
+
+        receipts.sort_by_key(|(index, _receipt)| **index);
+
+        Ok(receipts
+            .into_iter()
+            .map(|(_index, receipt)| receipt.clone())
+            .collect())
+    }
+
+    async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+        Ok(self.inner().snap_state.header_download_checkpoint)
+    }
+
+    async fn get_state_trie_key_checkpoint(
+        &self,
+    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
+        Ok(self.inner().snap_state.state_trie_key_checkpoint)
+    }
+
+    async fn take_storage_heal_paths(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
+        Ok(self
+            .inner()
+            .snap_state
+            .storage_heal_paths
+            .as_mut()
+            .map(|paths| paths.drain(..limit).collect())
+            .unwrap_or_default())
+    }
+
+    async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        Ok(self.inner().snap_state.state_heal_paths.clone())
+    }
+
+    async fn get_state_trie_rebuild_checkpoint(
+        &self,
+    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
+        Ok(self.inner().snap_state.state_trie_rebuild_checkpoint)
+    }
+
+    fn read_account_snapshot(
+        &self,
+        start: H256,
+    ) -> Result<Vec<(H256, ethrex_common::types::AccountState)>, StoreError> {
+        Ok(self
+            .inner()
+            .state_snapshot
+            .iter()
+            .filter(|(hash, _)| **hash < start)
+            .take(MAX_SNAPSHOT_READS)
+            .map(|(h, a)| (*h, a.clone()))
+            .collect())
+    }
+
+    async fn read_storage_snapshot(
+        &self,
+        start: H256,
+        account_hash: H256,
+    ) -> Result<Vec<(H256, U256)>, StoreError> {
+        if let Some(snapshot) = self.inner().storage_snapshot.get(&account_hash) {
+            Ok(snapshot
+                .iter()
+                .filter(|(hash, _)| **hash < start)
+                .take(MAX_SNAPSHOT_READS)
+                .map(|(k, v)| (*k, *v))
+                .collect())
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    async fn get_storage_trie_rebuild_pending(
+        &self,
+    ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
+        Ok(self.inner().snap_state.storage_trie_rebuild_pending.clone())
+    }
+
+    async fn get_latest_valid_ancestor(
+        &self,
+        block: BlockHash,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        Ok(self.inner().invalid_ancestors.get(&block).cloned())
+    }
+}
+
+#[async_trait::async_trait]
+impl StoreRwTx<'_> for Store {
+    async fn commit(self) -> Result<(), StoreError> {
+        Ok(())
+    }
+    async fn rollback(self) -> Result<(), StoreError> {
+        Ok(())
+    }
+    fn blocking_commit(self) -> Result<(), StoreError> {
+        Ok(())
+    }
+    fn blocking_rollback(self) -> Result<(), StoreError> {
+        Ok(())
+    }
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         self.inner().pending_blocks.insert(block.hash(), block);
         Ok(())
-    }
-
-    async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
-        Ok(self.inner().pending_blocks.get(&block_hash).cloned())
     }
 
     async fn add_block_header(
@@ -214,13 +437,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn get_block_number(
-        &self,
-        block_hash: BlockHash,
-    ) -> Result<Option<BlockNumber>, StoreError> {
-        Ok(self.inner().block_numbers.get(&block_hash).copied())
-    }
-
     async fn add_transaction_location(
         &self,
         transaction_hash: H256,
@@ -236,21 +452,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn get_transaction_location(
-        &self,
-        transaction_hash: H256,
-    ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
-        let store = self.inner();
-        Ok(store
-            .transaction_locations
-            .get(&transaction_hash)
-            .and_then(|v| {
-                v.iter()
-                    .find(|(number, hash, _index)| store.canonical_hashes.get(number) == Some(hash))
-                    .copied()
-            }))
-    }
-
     async fn add_receipt(
         &self,
         block_hash: BlockHash,
@@ -263,40 +464,15 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn get_receipt(
-        &self,
-        block_number: BlockNumber,
-        index: Index,
-    ) -> Result<Option<Receipt>, StoreError> {
-        let store = self.inner();
-        if let Some(hash) = store.canonical_hashes.get(&block_number) {
-            Ok(store
-                .receipts
-                .get(hash)
-                .and_then(|entry| entry.get(&index))
-                .cloned())
-        } else {
-            Ok(None)
-        }
-    }
-
     async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         self.inner().account_codes.insert(code_hash, code);
         Ok(())
-    }
-
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
-        Ok(self.inner().account_codes.get(&code_hash).cloned())
     }
 
     async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
         // Store cancun timestamp
         self.inner().chain_data.chain_config = Some(*chain_config);
         Ok(())
-    }
-
-    fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        Ok(self.inner().chain_data.chain_config.unwrap())
     }
 
     async fn update_earliest_block_number(
@@ -310,10 +486,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        Ok(self.inner().chain_data.earliest_block_number)
-    }
-
     async fn update_finalized_block_number(
         &self,
         block_number: BlockNumber,
@@ -325,20 +497,12 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        Ok(self.inner().chain_data.finalized_block_number)
-    }
-
     async fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         self.inner()
             .chain_data
             .safe_block_number
             .replace(block_number);
         Ok(())
-    }
-
-    async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        Ok(self.inner().chain_data.safe_block_number)
     }
 
     async fn update_latest_block_number(
@@ -350,9 +514,6 @@ impl StoreEngine for Store {
             .latest_block_number
             .replace(block_number);
         Ok(())
-    }
-    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        Ok(self.inner().chain_data.latest_block_number)
     }
 
     async fn update_pending_block_number(
@@ -366,37 +527,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        Ok(self.inner().chain_data.pending_block_number)
-    }
-
-    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
-        let mut store = self.inner();
-        let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
-        let db = Box::new(InMemoryTrieDB::new(trie_backend.clone()));
-        Trie::open(db, storage_root)
-    }
-
-    fn open_state_trie(&self, state_root: H256) -> Trie {
-        let trie_backend = self.inner().state_trie_nodes.clone();
-        let db = Box::new(InMemoryTrieDB::new(trie_backend));
-        Trie::open(db, state_root)
-    }
-
-    async fn get_block_body_by_hash(
-        &self,
-        block_hash: BlockHash,
-    ) -> Result<Option<BlockBody>, StoreError> {
-        Ok(self.inner().bodies.get(&block_hash).cloned())
-    }
-
-    fn get_block_header_by_hash(
-        &self,
-        block_hash: BlockHash,
-    ) -> Result<Option<BlockHeader>, StoreError> {
-        Ok(self.inner().headers.get(&block_hash).cloned())
-    }
-
     async fn set_canonical_block(
         &self,
         number: BlockNumber,
@@ -404,13 +534,6 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         self.inner().canonical_hashes.insert(number, hash);
         Ok(())
-    }
-
-    async fn get_canonical_block_hash(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<Option<BlockHash>, StoreError> {
-        Ok(self.inner().canonical_hashes.get(&block_number).cloned())
     }
 
     async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
@@ -423,27 +546,6 @@ impl StoreEngine for Store {
             .payloads
             .insert(payload_id, PayloadBundle::from_block(block));
         Ok(())
-    }
-
-    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        Ok(self.inner().payloads.get(&payload_id).cloned())
-    }
-
-    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
-        let store = self.inner();
-        let Some(receipts_for_block) = store.receipts.get(block_hash) else {
-            return Ok(vec![]);
-        };
-        let mut receipts = receipts_for_block
-            .iter()
-            .collect::<Vec<(&Index, &Receipt)>>();
-
-        receipts.sort_by_key(|(index, _receipt)| **index);
-
-        Ok(receipts
-            .into_iter()
-            .map(|(_index, receipt)| receipt.clone())
-            .collect())
     }
 
     async fn add_receipts(
@@ -502,22 +604,12 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
-        Ok(self.inner().snap_state.header_download_checkpoint)
-    }
-
     async fn set_state_trie_key_checkpoint(
         &self,
         last_keys: [H256; STATE_TRIE_SEGMENTS],
     ) -> Result<(), StoreError> {
         self.inner().snap_state.state_trie_key_checkpoint = Some(last_keys);
         Ok(())
-    }
-
-    async fn get_state_trie_key_checkpoint(
-        &self,
-    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
-        Ok(self.inner().snap_state.state_trie_key_checkpoint)
     }
 
     async fn set_storage_heal_paths(
@@ -532,19 +624,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn take_storage_heal_paths(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
-        Ok(self
-            .inner()
-            .snap_state
-            .storage_heal_paths
-            .as_mut()
-            .map(|paths| paths.drain(..limit).collect())
-            .unwrap_or_default())
-    }
-
     async fn clear_snap_state(&self) -> Result<(), StoreError> {
         self.inner().snap_state = Default::default();
         Ok(())
@@ -553,10 +632,6 @@ impl StoreEngine for Store {
     async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
         self.inner().snap_state.state_heal_paths = Some(paths);
         Ok(())
-    }
-
-    async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
-        Ok(self.inner().snap_state.state_heal_paths.clone())
     }
 
     async fn write_snapshot_account_batch(
@@ -610,47 +685,10 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn get_state_trie_rebuild_checkpoint(
-        &self,
-    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
-        Ok(self.inner().snap_state.state_trie_rebuild_checkpoint)
-    }
-
     async fn clear_snapshot(&self) -> Result<(), StoreError> {
         self.inner().snap_state.state_trie_rebuild_checkpoint = None;
         self.inner().snap_state.storage_trie_rebuild_pending = None;
         Ok(())
-    }
-
-    fn read_account_snapshot(
-        &self,
-        start: H256,
-    ) -> Result<Vec<(H256, ethrex_common::types::AccountState)>, StoreError> {
-        Ok(self
-            .inner()
-            .state_snapshot
-            .iter()
-            .filter(|(hash, _)| **hash < start)
-            .take(MAX_SNAPSHOT_READS)
-            .map(|(h, a)| (*h, a.clone()))
-            .collect())
-    }
-
-    async fn read_storage_snapshot(
-        &self,
-        start: H256,
-        account_hash: H256,
-    ) -> Result<Vec<(H256, U256)>, StoreError> {
-        if let Some(snapshot) = self.inner().storage_snapshot.get(&account_hash) {
-            Ok(snapshot
-                .iter()
-                .filter(|(hash, _)| **hash < start)
-                .take(MAX_SNAPSHOT_READS)
-                .map(|(k, v)| (*k, *v))
-                .collect())
-        } else {
-            Ok(vec![])
-        }
     }
 
     async fn set_storage_trie_rebuild_pending(
@@ -659,19 +697,6 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         self.inner().snap_state.storage_trie_rebuild_pending = Some(pending);
         Ok(())
-    }
-
-    async fn get_storage_trie_rebuild_pending(
-        &self,
-    ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
-        Ok(self.inner().snap_state.storage_trie_rebuild_pending.clone())
-    }
-
-    async fn get_latest_valid_ancestor(
-        &self,
-        block: BlockHash,
-    ) -> Result<Option<BlockHash>, StoreError> {
-        Ok(self.inner().invalid_ancestors.get(&block).cloned())
     }
 
     async fn set_latest_valid_ancestor(

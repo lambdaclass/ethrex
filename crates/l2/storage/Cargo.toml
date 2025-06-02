@@ -13,16 +13,16 @@ ethereum-types.workspace = true
 async-trait.workspace = true
 anyhow = "1.0.86"
 tracing.workspace = true
-libmdbx = { workspace = true, optional = true }
-redb = { workspace = true, optional = true }
+libmdbx.workspace = true
+redb.workspace = true
 # NOTE: intentionally avoiding the workspace dep as it brings "full" features, breaking the provers
 # We only need the runtime for the blocking databases to spawn blocking tasks
 tokio = { version = "1.41.1", optional = true, default-features = false, features = ["rt"] }
 
 [features]
 default = []
-libmdbx = ["dep:libmdbx", "dep:tokio"]
-redb = ["dep:redb", "dep:tokio"]
+libmdbx = []
+redb = []
 l2 = []
 
 [lib]

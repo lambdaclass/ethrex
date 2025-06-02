@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
@@ -12,40 +14,21 @@ use ethrex_trie::{Nibbles, Trie};
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
 #[async_trait::async_trait]
-pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
-    /// Add a batch of blocks in a single transaction.
-    /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
-    async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError>;
+pub trait StoreEngine<'st>: Debug + Send + Sync + RefUnwindSafe {
+    fn begin_ro_tx(&'st self) -> Result<Arc<dyn StoreRoTx<'st>>, StoreError>;
+    fn begin_rw_tx(&'st self) -> Result<Arc<dyn StoreRwTx<'st>>, StoreError>;
+}
 
-    /// Sets the blocks as part of the canonical chain
-    async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError>;
-
-    /// Add block header
-    async fn add_block_header(
-        &self,
-        block_hash: BlockHash,
-        block_header: BlockHeader,
-    ) -> Result<(), StoreError>;
-
-    /// Add a batch of block headers
-    async fn add_block_headers(
-        &self,
-        block_hashes: Vec<BlockHash>,
-        block_headers: Vec<BlockHeader>,
-    ) -> Result<(), StoreError>;
+#[async_trait::async_trait]
+pub trait StoreRoTx<'st>: Debug + Send + Sync {
+    // Read-only transactions don't write to the DB, so no need for commit.
+    // You can and should close them to avoid interfering with RW transactions.
 
     /// Obtain canonical block header
     fn get_block_header(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError>;
-
-    /// Add block body
-    async fn add_block_body(
-        &self,
-        block_hash: BlockHash,
-        block_body: BlockBody,
-    ) -> Result<(), StoreError>;
 
     /// Obtain canonical block body
     async fn get_block_body(
@@ -76,16 +59,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError>;
-
-    async fn add_pending_block(&self, block: Block) -> Result<(), StoreError>;
     async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError>;
-
-    /// Add block number for a given hash
-    async fn add_block_number(
-        &self,
-        block_hash: BlockHash,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError>;
 
     /// Obtain block number for a given hash
     async fn get_block_number(
@@ -93,57 +67,17 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError>;
 
-    /// Store transaction location (block number and index of the transaction within the block)
-    async fn add_transaction_location(
-        &self,
-        transaction_hash: H256,
-        block_number: BlockNumber,
-        block_hash: BlockHash,
-        index: Index,
-    ) -> Result<(), StoreError>;
-
-    /// Store transaction locations in batch (one db transaction for all)
-    async fn add_transaction_locations(
-        &self,
-        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
-    ) -> Result<(), StoreError>;
-
     /// Obtain transaction location (block hash and index)
     async fn get_transaction_location(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError>;
-
-    /// Add receipt
-    async fn add_receipt(
-        &self,
-        block_hash: BlockHash,
-        index: Index,
-        receipt: Receipt,
-    ) -> Result<(), StoreError>;
-
-    /// Add receipts
-    async fn add_receipts(
-        &self,
-        block_hash: BlockHash,
-        receipts: Vec<Receipt>,
-    ) -> Result<(), StoreError>;
-
-    /// Adds receipts for a batch of blocks
-    async fn add_receipts_for_blocks(
-        &self,
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-    ) -> Result<(), StoreError>;
-
     /// Obtain receipt for a canonical block represented by the block number.
     async fn get_receipt(
         &self,
         block_number: BlockNumber,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError>;
-
-    /// Add account code
-    async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError>;
 
     /// Obtain account code via code hash
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError>;
@@ -193,53 +127,22 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError>;
 
-    /// Stores the chain configuration values, should only be called once after reading the genesis file
-    /// Ignores previously stored values if present
-    async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError>;
-
     /// Returns the stored chain configuration
     fn get_chain_config(&self) -> Result<ChainConfig, StoreError>;
-
-    /// Update earliest block number
-    async fn update_earliest_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError>;
-
     /// Obtain earliest block number
     async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
-
-    /// Update finalized block number
-    async fn update_finalized_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError>;
 
     /// Obtain finalized block number
     async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
-    /// Update safe block number
-    async fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError>;
-
     /// Obtain safe block number
     async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
-
-    /// Update latest block number
-    async fn update_latest_block_number(&self, block_number: BlockNumber)
-        -> Result<(), StoreError>;
 
     /// Obtain latest block number
     async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
-    /// Update pending block number
-    async fn update_pending_block_number(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError>;
-
     /// Obtain pending block number
     async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
-
     /// Obtain a storage trie from the given address and storage_root
     /// Doesn't check if the account is stored
     /// Used for internal store operations
@@ -249,7 +152,165 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     fn open_state_trie(&self, state_root: H256) -> Trie;
+    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError>;
 
+    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
+
+    // Snap State methods
+    /// Gets the hash of the last header downloaded during a snap sync
+    async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError>;
+
+    /// Gets the last key fetched from the state trie being fetched during snap sync
+    async fn get_state_trie_key_checkpoint(
+        &self,
+    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError>;
+
+    /// Gets the storage trie paths in need of healing, grouped by hashed address
+    /// Gets paths from at most `limit` storage tries and removes them from the store
+    #[allow(clippy::type_complexity)]
+    async fn take_storage_heal_paths(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError>;
+
+    /// Gets the state trie paths in need of healing
+    async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;
+
+    /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
+    async fn get_state_trie_rebuild_checkpoint(
+        &self,
+    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError>;
+
+    /// Get the accont hashes and roots of the storage tries awaiting rebuild
+    async fn get_storage_trie_rebuild_pending(
+        &self,
+    ) -> Result<Option<Vec<(H256, H256)>>, StoreError>;
+
+    /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
+    fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError>;
+
+    /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
+    async fn read_storage_snapshot(
+        &self,
+        start: H256,
+        account_hash: H256,
+    ) -> Result<Vec<(H256, U256)>, StoreError>;
+
+    /// Returns the latest valid ancestor hash for a given invalid block hash.
+    /// Used to provide `latest_valid_hash` in the Engine API when processing invalid payloads.
+    async fn get_latest_valid_ancestor(
+        &self,
+        block: BlockHash,
+    ) -> Result<Option<BlockHash>, StoreError>;
+}
+
+#[async_trait::async_trait]
+pub trait StoreRwTx<'st>: StoreRoTx<'st> {
+    async fn commit(self) -> Result<(), StoreError>;
+    async fn rollback(self) -> Result<(), StoreError>;
+
+    fn blocking_commit(self) -> Result<(), StoreError>;
+    fn blocking_rollback(self) -> Result<(), StoreError>;
+
+    /// Add a batch of blocks in a single transaction.
+    /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
+    async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError>;
+
+    /// Sets the blocks as part of the canonical chain
+    async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError>;
+
+    /// Add block header
+    async fn add_block_header(
+        &self,
+        block_hash: BlockHash,
+        block_header: BlockHeader,
+    ) -> Result<(), StoreError>;
+
+    /// Add a batch of block headers
+    async fn add_block_headers(
+        &self,
+        block_hashes: Vec<BlockHash>,
+        block_headers: Vec<BlockHeader>,
+    ) -> Result<(), StoreError>;
+
+    /// Add block body
+    async fn add_block_body(
+        &self,
+        block_hash: BlockHash,
+        block_body: BlockBody,
+    ) -> Result<(), StoreError>;
+
+    async fn add_pending_block(&self, block: Block) -> Result<(), StoreError>;
+
+    /// Add block number for a given hash
+    async fn add_block_number(
+        &self,
+        block_hash: BlockHash,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError>;
+    /// Store transaction location (block number and index of the transaction within the block)
+    async fn add_transaction_location(
+        &self,
+        transaction_hash: H256,
+        block_number: BlockNumber,
+        block_hash: BlockHash,
+        index: Index,
+    ) -> Result<(), StoreError>;
+
+    /// Store transaction locations in batch (one db transaction for all)
+    async fn add_transaction_locations(
+        &self,
+        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
+    ) -> Result<(), StoreError>;
+
+    /// Add receipt
+    async fn add_receipt(
+        &self,
+        block_hash: BlockHash,
+        index: Index,
+        receipt: Receipt,
+    ) -> Result<(), StoreError>;
+
+    /// Add receipts
+    async fn add_receipts(
+        &self,
+        block_hash: BlockHash,
+        receipts: Vec<Receipt>,
+    ) -> Result<(), StoreError>;
+
+    /// Adds receipts for a batch of blocks
+    async fn add_receipts_for_blocks(
+        &self,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+    ) -> Result<(), StoreError>;
+
+    /// Add account code
+    async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError>;
+
+    /// Stores the chain configuration values, should only be called once after reading the genesis file
+    /// Ignores previously stored values if present
+    async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError>;
+    /// Update finalized block number
+    async fn update_finalized_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError>;
+    /// Update safe block number
+    async fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError>;
+    /// Update latest block number
+    async fn update_latest_block_number(&self, block_number: BlockNumber)
+        -> Result<(), StoreError>;
+    /// Update pending block number
+    async fn update_pending_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError>;
+
+    /// Update earliest block number
+    async fn update_earliest_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError>;
     /// Set the canonical block hash for a given block number.
     async fn set_canonical_block(
         &self,
@@ -262,36 +323,22 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError>;
 
-    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError>;
-
     async fn update_payload(
         &self,
         payload_id: u64,
         payload: PayloadBundle,
     ) -> Result<(), StoreError>;
-
-    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
-
     // Snap State methods
 
     /// Sets the hash of the last header downloaded during a snap sync
     async fn set_header_download_checkpoint(&self, block_hash: BlockHash)
         -> Result<(), StoreError>;
 
-    /// Gets the hash of the last header downloaded during a snap sync
-    async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError>;
-
     /// Sets the last key fetched from the state trie being fetched during snap sync
     async fn set_state_trie_key_checkpoint(
         &self,
         last_keys: [H256; STATE_TRIE_SEGMENTS],
     ) -> Result<(), StoreError>;
-
-    /// Gets the last key fetched from the state trie being fetched during snap sync
-    async fn get_state_trie_key_checkpoint(
-        &self,
-    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError>;
-
     /// Sets storage trie paths in need of healing, grouped by hashed address
     /// This will overwite previously stored paths for the received storages but will not remove other storage's paths
     async fn set_storage_heal_paths(
@@ -299,19 +346,11 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         accounts: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError>;
 
-    /// Gets the storage trie paths in need of healing, grouped by hashed address
-    /// Gets paths from at most `limit` storage tries and removes them from the store
-    #[allow(clippy::type_complexity)]
-    async fn take_storage_heal_paths(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError>;
-
     /// Sets the state trie paths in need of healing
     async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError>;
 
-    /// Gets the state trie paths in need of healing
-    async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;
+    /// Clears the state and storage snapshots
+    async fn clear_snapshot(&self) -> Result<(), StoreError>;
 
     /// Clears all checkpoint data created during the last snap sync
     async fn clear_snap_state(&self) -> Result<(), StoreError>;
@@ -345,34 +384,11 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError>;
 
-    /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
-    async fn get_state_trie_rebuild_checkpoint(
-        &self,
-    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError>;
-
     /// Get the accont hashes and roots of the storage tries awaiting rebuild
     async fn set_storage_trie_rebuild_pending(
         &self,
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError>;
-
-    /// Get the accont hashes and roots of the storage tries awaiting rebuild
-    async fn get_storage_trie_rebuild_pending(
-        &self,
-    ) -> Result<Option<Vec<(H256, H256)>>, StoreError>;
-
-    /// Clears the state and storage snapshots
-    async fn clear_snapshot(&self) -> Result<(), StoreError>;
-
-    /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
-    fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError>;
-
-    /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
-    async fn read_storage_snapshot(
-        &self,
-        start: H256,
-        account_hash: H256,
-    ) -> Result<Vec<(H256, U256)>, StoreError>;
 
     /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
     /// when processing an invalid payload. To provide this, we must track invalid chains.
@@ -384,11 +400,4 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         bad_block: BlockHash,
         latest_valid: BlockHash,
     ) -> Result<(), StoreError>;
-
-    /// Returns the latest valid ancestor hash for a given invalid block hash.
-    /// Used to provide `latest_valid_hash` in the Engine API when processing invalid payloads.
-    async fn get_latest_valid_ancestor(
-        &self,
-        block: BlockHash,
-    ) -> Result<Option<BlockHash>, StoreError>;
 }

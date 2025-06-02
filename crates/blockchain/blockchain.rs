@@ -151,7 +151,8 @@ impl Blockchain {
         self.storage
             .add_receipts(block.hash(), execution_result.receipts)
             .await
-            .map_err(ChainError::StoreError)
+            .map_err(ChainError::StoreError)?;
+        self.storage.commit().await.map_err(ChainError::StoreError)
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {

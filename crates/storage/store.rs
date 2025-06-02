@@ -1,9 +1,7 @@
-use crate::api::StoreEngine;
+use crate::api::{StoreEngine, StoreRoTx as EngineRoTx, StoreRwTx as EngineRwTx};
 use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
-#[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
-#[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
 
@@ -29,32 +27,36 @@ pub const STATE_TRIE_SEGMENTS: usize = 2;
 pub const MAX_SNAPSHOT_READS: usize = 100;
 
 #[derive(Debug, Clone)]
-pub struct Store {
-    engine: Arc<dyn StoreEngine>,
+pub struct Store<'st> {
+    engine: Arc<dyn StoreEngine<'st>>,
+}
+
+pub struct StoreRoTx<'st> {
+    tx: &'st dyn EngineRoTx<'st>,
+}
+
+pub struct StoreRwTx<'st> {
+    tx: &'st dyn EngineRwTx<'st>,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
     InMemory,
-    #[cfg(feature = "libmdbx")]
     Libmdbx,
-    #[cfg(feature = "redb")]
     RedB,
 }
 
-impl Store {
+impl<'st> Store<'st> {
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting storage engine ({engine_type:?})");
         let store = match engine_type {
-            #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(_path)?),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
             },
-            #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
             },
@@ -74,10 +76,20 @@ impl Store {
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
         let store = Self::new(store_path, engine_type)?;
-        store.add_initial_state(genesis).await?;
+        store.begin_rw_tx()?.add_initial_state(genesis).await?;
         Ok(store)
     }
 
+    pub fn begin_ro_tx(&'st self) -> Result<&'st dyn EngineRoTx, StoreError> {
+        self.engine.begin_ro_tx()
+    }
+
+    pub fn begin_rw_tx(&'st self) -> Result<&'st dyn EngineRwTx, StoreError> {
+        self.engine.begin_rw_tx()
+    }
+}
+
+impl StoreRoTx<'_> {
     pub async fn get_account_info(
         &self,
         block_number: BlockNumber,
@@ -109,58 +121,32 @@ impl Store {
         }))
     }
 
-    pub async fn add_block_header(
-        &self,
-        block_hash: BlockHash,
-        block_header: BlockHeader,
-    ) -> Result<(), StoreError> {
-        self.engine.add_block_header(block_hash, block_header).await
-    }
-
-    pub async fn add_block_headers(
-        &self,
-        block_hashes: Vec<BlockHash>,
-        block_headers: Vec<BlockHeader>,
-    ) -> Result<(), StoreError> {
-        self.engine
-            .add_block_headers(block_hashes, block_headers)
-            .await
-    }
-
     pub fn get_block_header(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        self.engine.get_block_header(block_number)
+        self.tx.get_block_header(block_number)
     }
 
     pub fn get_block_header_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        self.engine.get_block_header_by_hash(block_hash)
+        self.tx.get_block_header_by_hash(block_hash)
     }
 
     pub async fn get_block_body_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        self.engine.get_block_body_by_hash(block_hash).await
-    }
-
-    pub async fn add_block_body(
-        &self,
-        block_hash: BlockHash,
-        block_body: BlockBody,
-    ) -> Result<(), StoreError> {
-        self.engine.add_block_body(block_hash, block_body).await
+        self.tx.get_block_body_by_hash(block_hash).await
     }
 
     pub async fn get_block_body(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError> {
-        self.engine.get_block_body(block_number).await
+        self.tx.get_block_body(block_number).await
     }
 
     pub async fn get_block_bodies(
@@ -168,19 +154,14 @@ impl Store {
         from: BlockNumber,
         to: BlockNumber,
     ) -> Result<Vec<BlockBody>, StoreError> {
-        self.engine.get_block_bodies(from, to).await
+        self.tx.get_block_bodies(from, to).await
     }
 
     pub async fn get_block_bodies_by_hash(
         &self,
         hashes: Vec<BlockHash>,
     ) -> Result<Vec<BlockBody>, StoreError> {
-        self.engine.get_block_bodies_by_hash(hashes).await
-    }
-
-    pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        info!("Adding block to pending: {}", block.hash());
-        self.engine.add_pending_block(block).await
+        self.tx.get_block_bodies_by_hash(hashes).await
     }
 
     pub async fn get_pending_block(
@@ -188,25 +169,14 @@ impl Store {
         block_hash: BlockHash,
     ) -> Result<Option<Block>, StoreError> {
         info!("get pending: {}", block_hash);
-        self.engine.get_pending_block(block_hash).await
-    }
-
-    pub async fn add_block_number(
-        &self,
-        block_hash: BlockHash,
-        block_number: BlockNumber,
-    ) -> Result<(), StoreError> {
-        self.engine
-            .clone()
-            .add_block_number(block_hash, block_number)
-            .await
+        self.tx.get_pending_block(block_hash).await
     }
 
     pub async fn get_block_number(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_block_number(block_hash).await
+        self.tx.get_block_number(block_hash).await
     }
 
     pub async fn get_fork_id(&self) -> Result<ForkId, StoreError> {
@@ -227,6 +197,528 @@ impl Store {
         ))
     }
 
+    pub async fn get_transaction_location(
+        &self,
+        transaction_hash: H256,
+    ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
+        self.tx.get_transaction_location(transaction_hash).await
+    }
+
+    pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
+        self.tx.get_account_code(code_hash)
+    }
+
+    pub async fn get_code_by_account_address(
+        &self,
+        block_number: BlockNumber,
+        address: Address,
+    ) -> Result<Option<Bytes>, StoreError> {
+        let Some(block_hash) = self.tx.get_canonical_block_hash(block_number).await? else {
+            return Ok(None);
+        };
+        let Some(state_trie) = self.state_trie(block_hash)? else {
+            return Ok(None);
+        };
+        let hashed_address = hash_address(&address);
+        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+            return Ok(None);
+        };
+        let account_state = AccountState::decode(&encoded_state)?;
+        self.get_account_code(account_state.code_hash)
+    }
+
+    pub async fn get_nonce_by_account_address(
+        &self,
+        block_number: BlockNumber,
+        address: Address,
+    ) -> Result<Option<u64>, StoreError> {
+        let Some(block_hash) = self.tx.get_canonical_block_hash(block_number).await? else {
+            return Ok(None);
+        };
+        let Some(state_trie) = self.state_trie(block_hash)? else {
+            return Ok(None);
+        };
+        let hashed_address = hash_address(&address);
+        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+            return Ok(None);
+        };
+        let account_state = AccountState::decode(&encoded_state)?;
+        Ok(Some(account_state.nonce))
+    }
+
+    pub async fn get_receipt(
+        &self,
+        block_number: BlockNumber,
+        index: Index,
+    ) -> Result<Option<Receipt>, StoreError> {
+        self.tx.get_receipt(block_number, index).await
+    }
+
+    pub async fn get_transaction_by_hash(
+        &self,
+        transaction_hash: H256,
+    ) -> Result<Option<Transaction>, StoreError> {
+        self.tx.get_transaction_by_hash(transaction_hash).await
+    }
+
+    pub async fn get_transaction_by_location(
+        &self,
+        block_hash: BlockHash,
+        index: u64,
+    ) -> Result<Option<Transaction>, StoreError> {
+        self.tx.get_transaction_by_location(block_hash, index).await
+    }
+
+    pub async fn get_block_by_hash(&self, block_hash: H256) -> Result<Option<Block>, StoreError> {
+        self.tx.get_block_by_hash(block_hash).await
+    }
+
+    pub async fn get_storage_at(
+        &self,
+        block_number: BlockNumber,
+        address: Address,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        match self.get_canonical_block_hash(block_number).await? {
+            Some(block_hash) => self.get_storage_at_hash(block_hash, address, storage_key),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_storage_at_hash(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
+            return Ok(None);
+        };
+        let hashed_key = hash_key(&storage_key);
+        storage_trie
+            .get(&hashed_key)?
+            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+            .transpose()
+    }
+
+    pub fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
+        self.tx.get_chain_config()
+    }
+
+    pub async fn get_earliest_block_number(&self) -> Result<BlockNumber, StoreError> {
+        self.tx
+            .get_earliest_block_number()
+            .await?
+            .ok_or(StoreError::MissingEarliestBlockNumber)
+    }
+
+    pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        self.tx.get_finalized_block_number().await
+    }
+
+    pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        self.tx.get_safe_block_number().await
+    }
+
+    pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
+        self.tx
+            .get_latest_block_number()
+            .await?
+            .ok_or(StoreError::MissingLatestBlockNumber)
+    }
+
+    pub async fn get_canonical_block_hash(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        self.tx.get_canonical_block_hash(block_number).await
+    }
+
+    pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
+        let latest_block_number = match self.tx.get_latest_block_number().await {
+            Ok(n) => n.ok_or(StoreError::MissingLatestBlockNumber)?,
+            Err(e) => return Err(e),
+        };
+        self.get_canonical_block_hash(latest_block_number).await
+    }
+
+    /// Obtain the storage trie for the given block
+    pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.tx.open_state_trie(header.state_root)))
+    }
+
+    /// Obtain the storage trie for the given account on the given block
+    pub fn storage_trie(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+    ) -> Result<Option<Trie>, StoreError> {
+        // Fetch Account from state_trie
+        let Some(state_trie) = self.state_trie(block_hash)? else {
+            return Ok(None);
+        };
+        let hashed_address = hash_address(&address);
+        let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+            return Ok(None);
+        };
+        let account = AccountState::decode(&encoded_account)?;
+        // Open storage_trie
+        let storage_root = account.storage_root;
+        Ok(Some(self.tx.open_storage_trie(
+            H256::from_slice(&hashed_address),
+            storage_root,
+        )))
+    }
+
+    pub async fn get_account_state(
+        &self,
+        block_number: BlockNumber,
+        address: Address,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let Some(block_hash) = self.tx.get_canonical_block_hash(block_number).await? else {
+            return Ok(None);
+        };
+        let Some(state_trie) = self.state_trie(block_hash)? else {
+            return Ok(None);
+        };
+        self.get_account_state_from_trie(&state_trie, address)
+    }
+
+    pub fn get_account_state_by_hash(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let Some(state_trie) = self.state_trie(block_hash)? else {
+            return Ok(None);
+        };
+        self.get_account_state_from_trie(&state_trie, address)
+    }
+
+    pub fn get_account_state_from_trie(
+        &self,
+        state_trie: &Trie,
+        address: Address,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let hashed_address = hash_address(&address);
+        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+            return Ok(None);
+        };
+        Ok(Some(AccountState::decode(&encoded_state)?))
+    }
+
+    pub async fn get_account_proof(
+        &self,
+        block_number: BlockNumber,
+        address: &Address,
+    ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
+        let Some(block_hash) = self.tx.get_canonical_block_hash(block_number).await? else {
+            return Ok(None);
+        };
+        let Some(state_trie) = self.state_trie(block_hash)? else {
+            return Ok(None);
+        };
+        Ok(Some(state_trie.get_proof(&hash_address(address))).transpose()?)
+    }
+
+    /// Constructs a merkle proof for the given storage_key in a storage_trie with a known root
+    pub fn get_storage_proof(
+        &self,
+        address: Address,
+        storage_root: H256,
+        storage_key: &H256,
+    ) -> Result<Vec<Vec<u8>>, StoreError> {
+        let trie = self
+            .tx
+            .open_storage_trie(hash_address_fixed(&address), storage_root);
+        Ok(trie.get_proof(&hash_key(storage_key))?)
+    }
+
+    // Returns an iterator across all accounts in the state trie given by the state_root
+    // Does not check that the state_root is valid
+    pub fn iter_accounts(&self, state_root: H256) -> impl Iterator<Item = (H256, AccountState)> {
+        self.tx
+            .open_state_trie(state_root)
+            .into_iter()
+            .content()
+            .map_while(|(path, value)| {
+                Some((H256::from_slice(&path), AccountState::decode(&value).ok()?))
+            })
+    }
+
+    // Returns an iterator across all accounts in the state trie given by the state_root
+    // Does not check that the state_root is valid
+    pub fn iter_storage(
+        &self,
+        state_root: H256,
+        hashed_address: H256,
+    ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
+        let state_trie = self.tx.open_state_trie(state_root);
+        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+            return Ok(None);
+        };
+        let storage_root = AccountState::decode(&account_rlp)?.storage_root;
+        Ok(Some(
+            self.tx
+                .open_storage_trie(hashed_address, storage_root)
+                .into_iter()
+                .content()
+                .map_while(|(path, value)| {
+                    Some((H256::from_slice(&path), U256::decode(&value).ok()?))
+                }),
+        ))
+    }
+
+    pub fn get_account_range_proof(
+        &self,
+        state_root: H256,
+        starting_hash: H256,
+        last_hash: Option<H256>,
+    ) -> Result<Vec<Vec<u8>>, StoreError> {
+        let state_trie = self.tx.open_state_trie(state_root);
+        let mut proof = state_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
+        if let Some(last_hash) = last_hash {
+            proof.extend_from_slice(&state_trie.get_proof(&last_hash.as_bytes().to_vec())?);
+        }
+        Ok(proof)
+    }
+
+    pub fn get_storage_range_proof(
+        &self,
+        state_root: H256,
+        hashed_address: H256,
+        starting_hash: H256,
+        last_hash: Option<H256>,
+    ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
+        let state_trie = self.tx.open_state_trie(state_root);
+        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+            return Ok(None);
+        };
+        let storage_root = AccountState::decode(&account_rlp)?.storage_root;
+        let storage_trie = self.tx.open_storage_trie(hashed_address, storage_root);
+        let mut proof = storage_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
+        if let Some(last_hash) = last_hash {
+            proof.extend_from_slice(&storage_trie.get_proof(&last_hash.as_bytes().to_vec())?);
+        }
+        Ok(Some(proof))
+    }
+
+    /// Receives the root of the state trie and a list of paths where the first path will correspond to a path in the state trie
+    /// (aka a hashed account address) and the following paths will be paths in the account's storage trie (aka hashed storage keys)
+    /// If only one hash (account) is received, then the state trie node containing the account will be returned.
+    /// If more than one hash is received, then the storage trie nodes where each storage key is stored will be returned
+    /// For more information check out snap capability message [`GetTrieNodes`](https://github.com/ethereum/devp2p/blob/master/caps/snap.md#gettrienodes-0x06)
+    /// The paths can be either full paths (hash) or partial paths (compact-encoded nibbles), if a partial path is given for the account this method will not return storage nodes for it
+    pub fn get_trie_nodes(
+        &self,
+        state_root: H256,
+        paths: Vec<Vec<u8>>,
+        byte_limit: u64,
+    ) -> Result<Vec<Vec<u8>>, StoreError> {
+        let Some(account_path) = paths.first() else {
+            return Ok(vec![]);
+        };
+        let state_trie = self.tx.open_state_trie(state_root);
+        // State Trie Nodes Request
+        if paths.len() == 1 {
+            // Fetch state trie node
+            let node = state_trie.get_node(account_path)?;
+            return Ok(vec![node]);
+        }
+        // Storage Trie Nodes Request
+        let Some(account_state) = state_trie
+            .get(account_path)?
+            .map(|ref rlp| AccountState::decode(rlp))
+            .transpose()?
+        else {
+            return Ok(vec![]);
+        };
+        // We can't access the storage trie without the account's address hash
+        let Ok(hashed_address) = account_path.clone().try_into().map(H256) else {
+            return Ok(vec![]);
+        };
+        let storage_trie = self
+            .tx
+            .open_storage_trie(hashed_address, account_state.storage_root);
+        // Fetch storage trie nodes
+        let mut nodes = vec![];
+        let mut bytes_used = 0;
+        for path in paths.iter().skip(1) {
+            if bytes_used >= byte_limit {
+                break;
+            }
+            let node = storage_trie.get_node(path)?;
+            bytes_used += node.len() as u64;
+            nodes.push(node);
+        }
+        Ok(nodes)
+    }
+
+    // Methods exclusive for trie management during snap-syncing
+
+    pub async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        self.tx.get_pending_block_number().await
+    }
+
+    pub async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
+        self.tx.get_payload(payload_id).await
+    }
+
+    pub fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError> {
+        self.tx.get_receipts_for_block(block_hash)
+    }
+
+    /// Obtain a state trie from the given state root.
+    /// Doesn't check if the state root is valid
+    pub fn open_state_trie(&self, state_root: H256) -> Trie {
+        self.tx.open_state_trie(state_root)
+    }
+
+    /// Obtain a storage trie from the given address and storage_root.
+    /// Doesn't check if the account is stored
+    pub fn open_storage_trie(&self, account_hash: H256, storage_root: H256) -> Trie {
+        self.tx.open_storage_trie(account_hash, storage_root)
+    }
+
+    /// Returns true if the given node is part of the state trie's internal storage
+    pub fn contains_state_node(&self, node_hash: H256) -> Result<bool, StoreError> {
+        // Root is irrelevant, we only care about the internal state
+        Ok(self
+            .open_state_trie(*EMPTY_TRIE_HASH)
+            .db()
+            .get(node_hash.into())?
+            .is_some())
+    }
+
+    /// Returns true if the given node is part of the given storage trie's internal storage
+    pub fn contains_storage_node(
+        &self,
+        hashed_address: H256,
+        node_hash: H256,
+    ) -> Result<bool, StoreError> {
+        // Root is irrelevant, we only care about the internal state
+        Ok(self
+            .open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)
+            .db()
+            .get(node_hash.into())?
+            .is_some())
+    }
+
+    /// Gets the hash of the last header downloaded during a snap sync
+    pub async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.tx.get_header_download_checkpoint().await
+    }
+
+    /// Gets the last key fetched from the state trie being fetched during snap sync
+    pub async fn get_state_trie_key_checkpoint(
+        &self,
+    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
+        self.tx.get_state_trie_key_checkpoint().await
+    }
+
+    /// Gets the storage trie paths in need of healing, grouped by hashed address
+    /// Gets paths from at most `limit` storage tries and removes them from the Store
+    #[allow(clippy::type_complexity)]
+    pub async fn take_storage_heal_paths(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
+        self.tx.take_storage_heal_paths(limit).await
+    }
+
+    /// Gets the state trie paths in need of healing
+    pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        self.tx.get_state_heal_paths().await
+    }
+
+    /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
+    pub async fn get_state_trie_rebuild_checkpoint(
+        &self,
+    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
+        self.tx.get_state_trie_rebuild_checkpoint().await
+    }
+
+    /// Get the accont hashes and roots of the storage tries awaiting rebuild
+    pub async fn get_storage_trie_rebuild_pending(
+        &self,
+    ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
+        self.tx.get_storage_trie_rebuild_pending().await
+    }
+
+    /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
+    pub fn read_account_snapshot(
+        &self,
+        start: H256,
+    ) -> Result<Vec<(H256, AccountState)>, StoreError> {
+        self.tx.read_account_snapshot(start)
+    }
+
+    /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
+    pub async fn read_storage_snapshot(
+        &self,
+        account_hash: H256,
+        start: H256,
+    ) -> Result<Vec<(H256, U256)>, StoreError> {
+        self.tx.read_storage_snapshot(account_hash, start).await
+    }
+
+    /// Fetches the latest valid ancestor for a block that was previously marked as invalid
+    /// Returns None if the block was never marked as invalid
+    pub async fn get_latest_valid_ancestor(
+        &self,
+        block: BlockHash,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        self.tx.get_latest_valid_ancestor(block).await
+    }
+}
+
+impl StoreRwTx<'_> {
+    pub async fn add_block_header(
+        &self,
+        block_hash: BlockHash,
+        block_header: BlockHeader,
+    ) -> Result<(), StoreError> {
+        self.tx.add_block_header(block_hash, block_header).await
+    }
+
+    pub async fn add_block_headers(
+        &self,
+        block_hashes: Vec<BlockHash>,
+        block_headers: Vec<BlockHeader>,
+    ) -> Result<(), StoreError> {
+        self.tx.add_block_headers(block_hashes, block_headers).await
+    }
+
+    pub async fn add_block_body(
+        &self,
+        block_hash: BlockHash,
+        block_body: BlockBody,
+    ) -> Result<(), StoreError> {
+        self.tx.add_block_body(block_hash, block_body).await
+    }
+
+    pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+        info!("Adding block to pending: {}", block.hash());
+        self.tx.add_pending_block(block).await
+    }
+
+    pub async fn add_block_number(
+        &self,
+        block_hash: BlockHash,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        self.tx
+            .clone()
+            .add_block_number(block_hash, block_number)
+            .await
+    }
+
     pub async fn add_transaction_location(
         &self,
         transaction_hash: H256,
@@ -234,7 +726,7 @@ impl Store {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<(), StoreError> {
-        self.engine
+        self.tx
             .add_transaction_location(transaction_hash, block_number, block_hash, index)
             .await
     }
@@ -256,60 +748,11 @@ impl Store {
             ));
         }
 
-        self.engine.add_transaction_locations(locations).await
-    }
-
-    pub async fn get_transaction_location(
-        &self,
-        transaction_hash: H256,
-    ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
-        self.engine.get_transaction_location(transaction_hash).await
+        self.tx.add_transaction_locations(locations).await
     }
 
     pub async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
-        self.engine.add_account_code(code_hash, code).await
-    }
-
-    pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
-        self.engine.get_account_code(code_hash)
-    }
-
-    pub async fn get_code_by_account_address(
-        &self,
-        block_number: BlockNumber,
-        address: Address,
-    ) -> Result<Option<Bytes>, StoreError> {
-        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
-            return Ok(None);
-        };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
-            return Ok(None);
-        };
-        let account_state = AccountState::decode(&encoded_state)?;
-        self.get_account_code(account_state.code_hash)
-    }
-
-    pub async fn get_nonce_by_account_address(
-        &self,
-        block_number: BlockNumber,
-        address: Address,
-    ) -> Result<Option<u64>, StoreError> {
-        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
-            return Ok(None);
-        };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
-            return Ok(None);
-        };
-        let account_state = AccountState::decode(&encoded_state)?;
-        Ok(Some(account_state.nonce))
+        self.tx.add_account_code(code_hash, code).await
     }
 
     /// Applies account updates based on the block's latest storage state
@@ -357,7 +800,7 @@ impl Store {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let mut storage_trie = self.engine.open_storage_trie(
+                    let mut storage_trie = self.tx.open_storage_trie(
                         H256::from_slice(&hashed_address),
                         account_state.storage_root,
                     );
@@ -383,7 +826,7 @@ impl Store {
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
-        let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH);
+        let mut genesis_state_trie = self.tx.open_state_trie(*EMPTY_TRIE_HASH);
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
@@ -391,7 +834,7 @@ impl Store {
             self.add_account_code(code_hash, account.code).await?;
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie = self
-                .engine
+                .tx
                 .open_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH);
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
@@ -418,7 +861,7 @@ impl Store {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        self.engine.add_receipt(block_hash, index, receipt).await
+        self.tx.add_receipt(block_hash, index, receipt).await
     }
 
     pub async fn add_receipts(
@@ -426,22 +869,14 @@ impl Store {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        self.engine.add_receipts(block_hash, receipts).await
+        self.tx.add_receipts(block_hash, receipts).await
     }
 
     pub async fn add_receipts_for_blocks(
         &self,
         receipts: HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError> {
-        self.engine.add_receipts_for_blocks(receipts).await
-    }
-
-    pub async fn get_receipt(
-        &self,
-        block_number: BlockNumber,
-        index: Index,
-    ) -> Result<Option<Receipt>, StoreError> {
-        self.engine.get_receipt(block_number, index).await
+        self.tx.add_receipts_for_blocks(receipts).await
     }
 
     pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {
@@ -449,11 +884,11 @@ impl Store {
     }
 
     pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
-        self.engine.add_blocks(blocks).await
+        self.tx.add_blocks(blocks).await
     }
 
     pub async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        self.engine.mark_chain_as_canonical(blocks).await
+        self.tx.mark_chain_as_canonical(blocks).await
     }
 
     pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
@@ -496,124 +931,43 @@ impl Store {
         self.set_chain_config(&genesis.config).await
     }
 
-    pub async fn get_transaction_by_hash(
-        &self,
-        transaction_hash: H256,
-    ) -> Result<Option<Transaction>, StoreError> {
-        self.engine.get_transaction_by_hash(transaction_hash).await
-    }
-
-    pub async fn get_transaction_by_location(
-        &self,
-        block_hash: BlockHash,
-        index: u64,
-    ) -> Result<Option<Transaction>, StoreError> {
-        self.engine
-            .get_transaction_by_location(block_hash, index)
-            .await
-    }
-
-    pub async fn get_block_by_hash(&self, block_hash: H256) -> Result<Option<Block>, StoreError> {
-        self.engine.get_block_by_hash(block_hash).await
-    }
-
-    pub async fn get_storage_at(
-        &self,
-        block_number: BlockNumber,
-        address: Address,
-        storage_key: H256,
-    ) -> Result<Option<U256>, StoreError> {
-        match self.get_canonical_block_hash(block_number).await? {
-            Some(block_hash) => self.get_storage_at_hash(block_hash, address, storage_key),
-            None => Ok(None),
-        }
-    }
-
-    pub fn get_storage_at_hash(
-        &self,
-        block_hash: BlockHash,
-        address: Address,
-        storage_key: H256,
-    ) -> Result<Option<U256>, StoreError> {
-        let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
-            return Ok(None);
-        };
-        let hashed_key = hash_key(&storage_key);
-        storage_trie
-            .get(&hashed_key)?
-            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
-            .transpose()
-    }
-
     pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
-        self.engine.set_chain_config(chain_config).await
-    }
-
-    pub fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        self.engine.get_chain_config()
+        self.tx.set_chain_config(chain_config).await
     }
 
     pub async fn update_earliest_block_number(
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.engine.update_earliest_block_number(block_number).await
-    }
-
-    pub async fn get_earliest_block_number(&self) -> Result<BlockNumber, StoreError> {
-        self.engine
-            .get_earliest_block_number()
-            .await?
-            .ok_or(StoreError::MissingEarliestBlockNumber)
+        self.tx.update_earliest_block_number(block_number).await
     }
 
     pub async fn update_finalized_block_number(
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.engine
-            .update_finalized_block_number(block_number)
-            .await
-    }
-
-    pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_finalized_block_number().await
+        self.tx.update_finalized_block_number(block_number).await
     }
 
     pub async fn update_safe_block_number(
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.engine.update_safe_block_number(block_number).await
-    }
-
-    pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_safe_block_number().await
+        self.tx.update_safe_block_number(block_number).await
     }
 
     pub async fn update_latest_block_number(
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.engine.update_latest_block_number(block_number).await
-    }
-
-    pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
-        self.engine
-            .get_latest_block_number()
-            .await?
-            .ok_or(StoreError::MissingLatestBlockNumber)
+        self.tx.update_latest_block_number(block_number).await
     }
 
     pub async fn update_pending_block_number(
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.engine.update_pending_block_number(block_number).await
-    }
-
-    pub async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_pending_block_number().await
+        self.tx.update_pending_block_number(block_number).await
     }
 
     pub async fn set_canonical_block(
@@ -621,252 +975,18 @@ impl Store {
         number: BlockNumber,
         hash: BlockHash,
     ) -> Result<(), StoreError> {
-        self.engine.set_canonical_block(number, hash).await
-    }
-
-    pub async fn get_canonical_block_hash(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<Option<BlockHash>, StoreError> {
-        self.engine.get_canonical_block_hash(block_number).await
-    }
-
-    pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
-        let latest_block_number = match self.engine.get_latest_block_number().await {
-            Ok(n) => n.ok_or(StoreError::MissingLatestBlockNumber)?,
-            Err(e) => return Err(e),
-        };
-        self.get_canonical_block_hash(latest_block_number).await
+        self.tx.set_canonical_block(number, hash).await
     }
 
     /// Marks a block number as not having any canonical blocks associated with it.
     /// Used for reorgs.
     /// Note: Should we also remove all others up to the head here?
     pub async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
-        self.engine.unset_canonical_block(number).await
-    }
-
-    /// Obtain the storage trie for the given block
-    pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
-        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
-            return Ok(None);
-        };
-        Ok(Some(self.engine.open_state_trie(header.state_root)))
-    }
-
-    /// Obtain the storage trie for the given account on the given block
-    pub fn storage_trie(
-        &self,
-        block_hash: BlockHash,
-        address: Address,
-    ) -> Result<Option<Trie>, StoreError> {
-        // Fetch Account from state_trie
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_account) = state_trie.get(&hashed_address)? else {
-            return Ok(None);
-        };
-        let account = AccountState::decode(&encoded_account)?;
-        // Open storage_trie
-        let storage_root = account.storage_root;
-        Ok(Some(self.engine.open_storage_trie(
-            H256::from_slice(&hashed_address),
-            storage_root,
-        )))
-    }
-
-    pub async fn get_account_state(
-        &self,
-        block_number: BlockNumber,
-        address: Address,
-    ) -> Result<Option<AccountState>, StoreError> {
-        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
-            return Ok(None);
-        };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        self.get_account_state_from_trie(&state_trie, address)
-    }
-
-    pub fn get_account_state_by_hash(
-        &self,
-        block_hash: BlockHash,
-        address: Address,
-    ) -> Result<Option<AccountState>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        self.get_account_state_from_trie(&state_trie, address)
-    }
-
-    pub fn get_account_state_from_trie(
-        &self,
-        state_trie: &Trie,
-        address: Address,
-    ) -> Result<Option<AccountState>, StoreError> {
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
-            return Ok(None);
-        };
-        Ok(Some(AccountState::decode(&encoded_state)?))
-    }
-
-    pub async fn get_account_proof(
-        &self,
-        block_number: BlockNumber,
-        address: &Address,
-    ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
-        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
-            return Ok(None);
-        };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        Ok(Some(state_trie.get_proof(&hash_address(address))).transpose()?)
-    }
-
-    /// Constructs a merkle proof for the given storage_key in a storage_trie with a known root
-    pub fn get_storage_proof(
-        &self,
-        address: Address,
-        storage_root: H256,
-        storage_key: &H256,
-    ) -> Result<Vec<Vec<u8>>, StoreError> {
-        let trie = self
-            .engine
-            .open_storage_trie(hash_address_fixed(&address), storage_root);
-        Ok(trie.get_proof(&hash_key(storage_key))?)
-    }
-
-    // Returns an iterator across all accounts in the state trie given by the state_root
-    // Does not check that the state_root is valid
-    pub fn iter_accounts(&self, state_root: H256) -> impl Iterator<Item = (H256, AccountState)> {
-        self.engine
-            .open_state_trie(state_root)
-            .into_iter()
-            .content()
-            .map_while(|(path, value)| {
-                Some((H256::from_slice(&path), AccountState::decode(&value).ok()?))
-            })
-    }
-
-    // Returns an iterator across all accounts in the state trie given by the state_root
-    // Does not check that the state_root is valid
-    pub fn iter_storage(
-        &self,
-        state_root: H256,
-        hashed_address: H256,
-    ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
-        let state_trie = self.engine.open_state_trie(state_root);
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
-            return Ok(None);
-        };
-        let storage_root = AccountState::decode(&account_rlp)?.storage_root;
-        Ok(Some(
-            self.engine
-                .open_storage_trie(hashed_address, storage_root)
-                .into_iter()
-                .content()
-                .map_while(|(path, value)| {
-                    Some((H256::from_slice(&path), U256::decode(&value).ok()?))
-                }),
-        ))
-    }
-
-    pub fn get_account_range_proof(
-        &self,
-        state_root: H256,
-        starting_hash: H256,
-        last_hash: Option<H256>,
-    ) -> Result<Vec<Vec<u8>>, StoreError> {
-        let state_trie = self.engine.open_state_trie(state_root);
-        let mut proof = state_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
-        if let Some(last_hash) = last_hash {
-            proof.extend_from_slice(&state_trie.get_proof(&last_hash.as_bytes().to_vec())?);
-        }
-        Ok(proof)
-    }
-
-    pub fn get_storage_range_proof(
-        &self,
-        state_root: H256,
-        hashed_address: H256,
-        starting_hash: H256,
-        last_hash: Option<H256>,
-    ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
-        let state_trie = self.engine.open_state_trie(state_root);
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
-            return Ok(None);
-        };
-        let storage_root = AccountState::decode(&account_rlp)?.storage_root;
-        let storage_trie = self.engine.open_storage_trie(hashed_address, storage_root);
-        let mut proof = storage_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
-        if let Some(last_hash) = last_hash {
-            proof.extend_from_slice(&storage_trie.get_proof(&last_hash.as_bytes().to_vec())?);
-        }
-        Ok(Some(proof))
-    }
-
-    /// Receives the root of the state trie and a list of paths where the first path will correspond to a path in the state trie
-    /// (aka a hashed account address) and the following paths will be paths in the account's storage trie (aka hashed storage keys)
-    /// If only one hash (account) is received, then the state trie node containing the account will be returned.
-    /// If more than one hash is received, then the storage trie nodes where each storage key is stored will be returned
-    /// For more information check out snap capability message [`GetTrieNodes`](https://github.com/ethereum/devp2p/blob/master/caps/snap.md#gettrienodes-0x06)
-    /// The paths can be either full paths (hash) or partial paths (compact-encoded nibbles), if a partial path is given for the account this method will not return storage nodes for it
-    pub fn get_trie_nodes(
-        &self,
-        state_root: H256,
-        paths: Vec<Vec<u8>>,
-        byte_limit: u64,
-    ) -> Result<Vec<Vec<u8>>, StoreError> {
-        let Some(account_path) = paths.first() else {
-            return Ok(vec![]);
-        };
-        let state_trie = self.engine.open_state_trie(state_root);
-        // State Trie Nodes Request
-        if paths.len() == 1 {
-            // Fetch state trie node
-            let node = state_trie.get_node(account_path)?;
-            return Ok(vec![node]);
-        }
-        // Storage Trie Nodes Request
-        let Some(account_state) = state_trie
-            .get(account_path)?
-            .map(|ref rlp| AccountState::decode(rlp))
-            .transpose()?
-        else {
-            return Ok(vec![]);
-        };
-        // We can't access the storage trie without the account's address hash
-        let Ok(hashed_address) = account_path.clone().try_into().map(H256) else {
-            return Ok(vec![]);
-        };
-        let storage_trie = self
-            .engine
-            .open_storage_trie(hashed_address, account_state.storage_root);
-        // Fetch storage trie nodes
-        let mut nodes = vec![];
-        let mut bytes_used = 0;
-        for path in paths.iter().skip(1) {
-            if bytes_used >= byte_limit {
-                break;
-            }
-            let node = storage_trie.get_node(path)?;
-            bytes_used += node.len() as u64;
-            nodes.push(node);
-        }
-        Ok(nodes)
+        self.tx.unset_canonical_block(number).await
     }
 
     pub async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.engine.add_payload(payload_id, block).await
-    }
-
-    pub async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        self.engine.get_payload(payload_id).await
+        self.tx.add_payload(payload_id, block).await
     }
 
     pub async fn update_payload(
@@ -874,57 +994,12 @@ impl Store {
         payload_id: u64,
         payload: PayloadBundle,
     ) -> Result<(), StoreError> {
-        self.engine.update_payload(payload_id, payload).await
-    }
-
-    pub fn get_receipts_for_block(
-        &self,
-        block_hash: &BlockHash,
-    ) -> Result<Vec<Receipt>, StoreError> {
-        self.engine.get_receipts_for_block(block_hash)
+        self.tx.update_payload(payload_id, payload).await
     }
 
     /// Creates a new state trie with an empty state root, for testing purposes only
     pub fn new_state_trie_for_test(&self) -> Trie {
-        self.engine.open_state_trie(*EMPTY_TRIE_HASH)
-    }
-
-    // Methods exclusive for trie management during snap-syncing
-
-    /// Obtain a state trie from the given state root.
-    /// Doesn't check if the state root is valid
-    pub fn open_state_trie(&self, state_root: H256) -> Trie {
-        self.engine.open_state_trie(state_root)
-    }
-
-    /// Obtain a storage trie from the given address and storage_root.
-    /// Doesn't check if the account is stored
-    pub fn open_storage_trie(&self, account_hash: H256, storage_root: H256) -> Trie {
-        self.engine.open_storage_trie(account_hash, storage_root)
-    }
-
-    /// Returns true if the given node is part of the state trie's internal storage
-    pub fn contains_state_node(&self, node_hash: H256) -> Result<bool, StoreError> {
-        // Root is irrelevant, we only care about the internal state
-        Ok(self
-            .open_state_trie(*EMPTY_TRIE_HASH)
-            .db()
-            .get(node_hash.into())?
-            .is_some())
-    }
-
-    /// Returns true if the given node is part of the given storage trie's internal storage
-    pub fn contains_storage_node(
-        &self,
-        hashed_address: H256,
-        node_hash: H256,
-    ) -> Result<bool, StoreError> {
-        // Root is irrelevant, we only care about the internal state
-        Ok(self
-            .open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)
-            .db()
-            .get(node_hash.into())?
-            .is_some())
+        self.tx.open_state_trie(*EMPTY_TRIE_HASH)
     }
 
     /// Sets the hash of the last header downloaded during a snap sync
@@ -932,12 +1007,7 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<(), StoreError> {
-        self.engine.set_header_download_checkpoint(block_hash).await
-    }
-
-    /// Gets the hash of the last header downloaded during a snap sync
-    pub async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
-        self.engine.get_header_download_checkpoint().await
+        self.tx.set_header_download_checkpoint(block_hash).await
     }
 
     /// Sets the last key fetched from the state trie being fetched during snap sync
@@ -945,14 +1015,7 @@ impl Store {
         &self,
         last_keys: [H256; STATE_TRIE_SEGMENTS],
     ) -> Result<(), StoreError> {
-        self.engine.set_state_trie_key_checkpoint(last_keys).await
-    }
-
-    /// Gets the last key fetched from the state trie being fetched during snap sync
-    pub async fn get_state_trie_key_checkpoint(
-        &self,
-    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
-        self.engine.get_state_trie_key_checkpoint().await
+        self.tx.set_state_trie_key_checkpoint(last_keys).await
     }
 
     /// Sets storage trie paths in need of healing, grouped by hashed address
@@ -961,27 +1024,12 @@ impl Store {
         &self,
         paths: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
-        self.engine.set_storage_heal_paths(paths).await
-    }
-
-    /// Gets the storage trie paths in need of healing, grouped by hashed address
-    /// Gets paths from at most `limit` storage tries and removes them from the Store
-    #[allow(clippy::type_complexity)]
-    pub async fn take_storage_heal_paths(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
-        self.engine.take_storage_heal_paths(limit).await
+        self.tx.set_storage_heal_paths(paths).await
     }
 
     /// Sets the state trie paths in need of healing
     pub async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
-        self.engine.set_state_heal_paths(paths).await
-    }
-
-    /// Gets the state trie paths in need of healing
-    pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
-        self.engine.get_state_heal_paths().await
+        self.tx.set_state_heal_paths(paths).await
     }
 
     /// Write an account batch into the current state snapshot
@@ -990,7 +1038,7 @@ impl Store {
         account_hashes: Vec<H256>,
         account_states: Vec<AccountState>,
     ) -> Result<(), StoreError> {
-        self.engine
+        self.tx
             .write_snapshot_account_batch(account_hashes, account_states)
             .await
     }
@@ -1002,7 +1050,7 @@ impl Store {
         storage_keys: Vec<H256>,
         storage_values: Vec<U256>,
     ) -> Result<(), StoreError> {
-        self.engine
+        self.tx
             .write_snapshot_storage_batch(account_hash, storage_keys, storage_values)
             .await
     }
@@ -1014,14 +1062,14 @@ impl Store {
         storage_keys: Vec<Vec<H256>>,
         storage_values: Vec<Vec<U256>>,
     ) -> Result<(), StoreError> {
-        self.engine
+        self.tx
             .write_snapshot_storage_batches(account_hashes, storage_keys, storage_values)
             .await
     }
 
     /// Clears all checkpoint data created during the last snap sync
     pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
-        self.engine.clear_snap_state().await
+        self.tx.clear_snap_state().await
     }
 
     /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
@@ -1029,16 +1077,7 @@ impl Store {
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
-        self.engine
-            .set_state_trie_rebuild_checkpoint(checkpoint)
-            .await
-    }
-
-    /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
-    pub async fn get_state_trie_rebuild_checkpoint(
-        &self,
-    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
-        self.engine.get_state_trie_rebuild_checkpoint().await
+        self.tx.set_state_trie_rebuild_checkpoint(checkpoint).await
     }
 
     /// Set the accont hashes and roots of the storage tries awaiting rebuild
@@ -1046,45 +1085,12 @@ impl Store {
         &self,
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
-        self.engine.set_storage_trie_rebuild_pending(pending).await
-    }
-
-    /// Get the accont hashes and roots of the storage tries awaiting rebuild
-    pub async fn get_storage_trie_rebuild_pending(
-        &self,
-    ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
-        self.engine.get_storage_trie_rebuild_pending().await
+        self.tx.set_storage_trie_rebuild_pending(pending).await
     }
 
     /// Clears the state and storage snapshots
     pub async fn clear_snapshot(&self) -> Result<(), StoreError> {
-        self.engine.clear_snapshot().await
-    }
-
-    /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
-    pub fn read_account_snapshot(
-        &self,
-        start: H256,
-    ) -> Result<Vec<(H256, AccountState)>, StoreError> {
-        self.engine.read_account_snapshot(start)
-    }
-
-    /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
-    pub async fn read_storage_snapshot(
-        &self,
-        account_hash: H256,
-        start: H256,
-    ) -> Result<Vec<(H256, U256)>, StoreError> {
-        self.engine.read_storage_snapshot(account_hash, start).await
-    }
-
-    /// Fetches the latest valid ancestor for a block that was previously marked as invalid
-    /// Returns None if the block was never marked as invalid
-    pub async fn get_latest_valid_ancestor(
-        &self,
-        block: BlockHash,
-    ) -> Result<Option<BlockHash>, StoreError> {
-        self.engine.get_latest_valid_ancestor(block).await
+        self.tx.clear_snapshot().await
     }
 
     /// Marks a block as invalid and sets its latest valid ancestor
@@ -1093,7 +1099,7 @@ impl Store {
         bad_block: BlockHash,
         latest_valid: BlockHash,
     ) -> Result<(), StoreError> {
-        self.engine
+        self.tx
             .set_latest_valid_ancestor(bad_block, latest_valid)
             .await
     }

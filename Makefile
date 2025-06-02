@@ -146,7 +146,7 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 		LEVM="levm"; \
 		echo "Running the test-node with the LEVM feature"; \
 	fi; \
-	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --root \
 	--bin ethrex \
 	--features "dev" \
 	--  \
@@ -169,7 +169,7 @@ load-test-io:
 	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t io-heavy
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
-	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
+	cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
 
 test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 	solc ./test_data/ERC20.sol -o $@
