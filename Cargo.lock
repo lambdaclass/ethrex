@@ -436,9 +436,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-rlp"
-version = "0.3.11"
+version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d6c1d995bff8d011f7cd6c81820d51825e6e06d6db73914c1630ecf544d83d6"
+checksum = "5f70d83b765fdc080dbcd4f4db70d8d23fe4761f2f02ebfa9146b833900634b4"
 dependencies = [
  "alloy-rlp-derive",
  "arrayvec",
@@ -447,9 +447,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-rlp-derive"
-version = "0.3.11"
+version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a40e1ef334153322fd878d07e86af7a529bcb86b2439525920a88eba87bcf943"
+checksum = "64b728d511962dda67c1bc7ea7c03736ec275ed2cf4c35d9585298ac9ccf3b73"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2589,9 +2589,9 @@ dependencies = [
 
 [[package]]
 name = "deunicode"
-version = "1.6.1"
+version = "1.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc55fe0d1f6c107595572ec8b107c0999bb1a2e0b75e37429a4fb0d6474a0e7d"
+checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
 name = "dialoguer"
@@ -2807,6 +2807,7 @@ dependencies = [
 name = "ef_tests-state"
 version = "0.1.0"
 dependencies = [
+ "alloy-rlp",
  "bytes",
  "clap 4.5.36",
  "clap_complete",
@@ -3485,6 +3486,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-sdk",
  "eyre",
+ "genesis-tool",
  "hex",
  "keccak-hash",
  "lazy_static",
@@ -3492,7 +3494,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
- "tools",
  "tracing",
  "tracing-subscriber 0.3.19",
 ]
@@ -3866,6 +3867,14 @@ checksum = "96512db27971c2c3eece70a1e106fbe6c87760234e31e8f7e5634912fe52794a"
 dependencies = [
  "serde",
  "typenum",
+]
+
+[[package]]
+name = "genesis-tool"
+version = "0.1.0"
+dependencies = [
+ "ethrex-common",
+ "serde_json",
 ]
 
 [[package]]
@@ -10038,14 +10047,6 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
-]
-
-[[package]]
-name = "tools"
-version = "0.0.0"
-dependencies = [
- "ethrex-common",
- "serde_json",
 ]
 
 [[package]]
