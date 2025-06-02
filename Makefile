@@ -108,6 +108,17 @@ run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug m
 	- cd hive && ./hive --sim $(SIMULATION) --client-file ../test_data/hive_clients.yml --client ethrex --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
 	$(MAKE) view-hive
 
+run-hive-local: setup-hive
+	- mkdir hive/clients/ethrex/ethrex && \ 
+	cp -R cmd/ hive/clients/ethrex/ethrex/cmd/ && \
+	cp -R crates/ hive/clients/ethrex/ethrex/crates/ && \
+	cp -R tools/ hive/clients/ethrex/ethrex/tools/ && \
+	cp -R test_data/ hive/clients/ethrex/ethrex/test_data/ && \
+	cp Cargo.toml hive/clients/ethrex/ethrex/ && \
+	cp Makefile hive/clients/ethrex/ethrex/ && \
+	cd hive && ./hive --client-file ../test_data/hive_clients.yml --client ethrex --sim.loglevel 4 --sim.limit "/" --sim.parallelism "16" --docker.output --sim devp2p
+	$(MAKE) view-hive
+
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
 
