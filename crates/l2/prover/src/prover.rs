@@ -37,29 +37,29 @@ impl Prover {
     pub async fn start(&self) {
         // Build the prover depending on the prover_type passed as argument.
         loop {
-            match self.request_new_input().await {
-                // If we get the input
-                Ok(prover_data) => {
-                    // Generate the Proof
-                    match prove(prover_data.input).and_then(to_calldata) {
-                        Ok(proving_output) => {
-                            if let Err(e) = self
-                                .submit_proof(prover_data.batch_number, proving_output)
-                                .await
-                            {
-                                // TODO: Retry?
-                                warn!("Failed to submit proof: {e}");
-                            }
-                        }
-                        Err(e) => error!(e),
-                    };
-                }
-                Err(e) => {
-                    sleep(Duration::from_millis(self.proving_time_ms)).await;
-                    warn!("Failed to request new data: {e}");
-                }
-            }
             sleep(Duration::from_millis(self.proving_time_ms)).await;
+            let Ok(prover_data) = self
+                .request_new_input()
+                .await
+                .inspect_err(|e| warn!("Failed to request new data: {e}"))
+            else {
+                continue;
+            };
+            // If we get the input
+            // Generate the Proof
+            let Ok(proving_output) = prove(prover_data.input)
+                .and_then(to_calldata)
+                .inspect_err(|e| error!(e))
+            else {
+                continue;
+            };
+
+            let _ = self
+                .submit_proof(prover_data.batch_number, proving_output)
+                .await
+                .inspect_err(|e|
+                    // TODO: Retry?
+                    warn!("Failed to submit proof: {e}"));
         }
     }
 
@@ -70,31 +70,31 @@ impl Prover {
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
 
-        match response {
-            ProofData::BatchResponse {
-                batch_number,
-                input,
-            } => match (batch_number, input) {
-                (Some(batch_number), Some(input)) => {
-                    info!("Received Response for batch_number: {batch_number}");
-                    let prover_data = ProverData{
-                        batch_number,
-                        input:  ProgramInput {
-                            blocks: input.blocks,
-                            parent_block_header: input.parent_block_header,
-                            db: input.db,
-                            elasticity_multiplier: input.elasticity_multiplier,
-                        }
-                    };
-                    Ok(prover_data)
-                }
-                _ => Err(
+        let ProofData::BatchResponse {
+            batch_number,
+            input,
+        } = response
+        else {
+            return Err("Expecting ProofData::Response".to_owned());
+        };
+
+        let (Some(batch_number), Some(input)) = (batch_number, input) else {
+            return Err(
                     "Received Empty Response, meaning that the ProverServer doesn't have batches to prove.\nThe Prover may be advancing faster than the Proposer."
                         .to_owned(),
-                ),
+                );
+        };
+
+        info!("Received Response for batch_number: {batch_number}");
+        Ok(ProverData {
+            batch_number,
+            input: ProgramInput {
+                blocks: input.blocks,
+                parent_block_header: input.parent_block_header,
+                db: input.db,
+                elasticity_multiplier: input.elasticity_multiplier,
             },
-            _ => Err("Expecting ProofData::Response".to_owned()),
-        }
+        })
     }
 
     async fn submit_proof(
@@ -104,17 +104,16 @@ impl Prover {
     ) -> Result<(), String> {
         let submit = ProofData::proof_submit(batch_number, proving_output);
 
-        let submit_ack = connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)
-            .await
-            .map_err(|e| format!("Failed to get SubmitAck: {e}"))?;
+        let ProofData::ProofSubmitACK { batch_number } =
+            connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)
+                .await
+                .map_err(|e| format!("Failed to get SubmitAck: {e}"))?
+        else {
+            return Err("Expecting ProofData::SubmitAck".to_owned());
+        };
 
-        match submit_ack {
-            ProofData::ProofSubmitACK { batch_number } => {
-                info!("Received submit ack for batch_number: {}", batch_number);
-                Ok(())
-            }
-            _ => Err("Expecting ProofData::SubmitAck".to_owned()),
-        }
+        info!("Received submit ack for batch_number: {batch_number}");
+        Ok(())
     }
 }
 
