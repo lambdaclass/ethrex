@@ -45,7 +45,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use super::{
     eth::transactions::NewPooledTransactionHashes, p2p::DisconnectReason, utils::log_peer_warn,
@@ -487,6 +487,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         sender: mpsc::Sender<Message>,
     ) -> Result<(), RLPxError> {
         let peer_supports_eth = self.negotiated_eth_capability.is_some();
+        let peer_supports_based = self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES);
         match message {
             Message::Disconnect(msg_data) => {
                 log_peer_debug(
@@ -580,34 +581,26 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let response = process_trie_nodes_request(req, self.storage.clone())?;
                 self.send(Message::TrieNodes(response)).await?
             }
-            Message::NewBlock(req) => {
-                // LOOK IF THIS CHECK IS NECESSARY??
-                if self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
-                    if let Ok(Some(_)) = self.storage.get_block_header(req.block.header.number) {
-                        debug!("Block received by peer already exists, ignoring it");
-                        return Ok(());
-                    }
-                    let _ = self
-                        .blockchain
-                        .add_block(&req.block)
-                        .await
-                        .inspect_err(|e| {
-                            log_peer_warn(&self.node, &format!("Error adding new block: {e}"));
-                        });
-
-                    let block_hash = req.block.hash();
-                    apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
-                        .await
-                        .map_err(|e| {
-                            RLPxError::BadRequest(format!("Error adding new block: {e}"))
-                        })?;
-                } else {
-                    warn!(
-                        "Received new block but peer does not support based protocol, ignoring it"
-                    );
+            Message::NewBlock(req) if peer_supports_based => {
+                if let Ok(Some(_)) = self.storage.get_block_header(req.block.header.number) {
+                    debug!("Block received by peer already exists, ignoring it");
+                    return Ok(());
                 }
+                let _ = self
+                    .blockchain
+                    .add_block(&req.block)
+                    .await
+                    .inspect_err(|e| {
+                        log_peer_warn(&self.node, &format!("Error adding new block: {e}"));
+                    });
+
+                let block_hash = req.block.hash();
+                apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
+                    .await
+                    .map_err(|e| RLPxError::BadRequest(format!("Error adding new block: {e}")))?;
                 self.broadcast_message(Message::NewBlock(req))?;
             }
+
             // Send response messages to the backend
             message @ Message::AccountRange(_)
             | message @ Message::StorageRanges(_)
