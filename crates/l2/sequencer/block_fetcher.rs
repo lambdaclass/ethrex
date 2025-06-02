@@ -403,7 +403,7 @@ impl BlockFetcher {
         let mut ret = vec![];
 
         for (tx, receipt) in txs_and_receipts {
-            if is_withdrawal_l2(&tx, &receipt)? {
+            if is_withdrawal_l2(&tx, &receipt) {
                 ret.push((tx.compute_hash(), tx.clone()))
             }
         }
