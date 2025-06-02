@@ -378,6 +378,62 @@ impl Store {
         Ok(state_trie)
     }
 
+    /// Performs the same actions as apply_account_updates_from_trie
+    ///  but also returns the used storage tries with witness recorded
+    pub async fn apply_account_updates_from_trie_with_witness(
+        &self,
+        mut state_trie: Trie,
+        account_updates: &[AccountUpdate],
+        mut storage_tries: HashMap<Address, Trie>,
+    ) -> Result<(Trie, HashMap<Address, Trie>), StoreError> {
+        for update in account_updates.iter() {
+            let hashed_address = hash_address(&update.address);
+            if update.removed {
+                // Remove account from trie
+                state_trie.remove(hashed_address)?;
+            } else {
+                // Add or update AccountState in the trie
+                // Fetch current state or create a new state to be inserted
+                let mut account_state = match state_trie.get(&hashed_address)? {
+                    Some(encoded_state) => AccountState::decode(&encoded_state)?,
+                    None => AccountState::default(),
+                };
+                if let Some(info) = &update.info {
+                    account_state.nonce = info.nonce;
+                    account_state.balance = info.balance;
+                    account_state.code_hash = info.code_hash;
+                    // Store updated code in DB
+                    if let Some(code) = &update.code {
+                        self.add_account_code(info.code_hash, code.clone()).await?;
+                    }
+                }
+                // Store the added storage in the account's storage trie and compute its new root
+                if !update.added_storage.is_empty() {
+                    let storage_trie = storage_tries.entry(update.address).or_insert_with(|| {
+                        let mut trie = self.engine.open_storage_trie(
+                            H256::from_slice(&hashed_address),
+                            account_state.storage_root,
+                        );
+                        trie.record_witness();
+                        trie
+                    });
+                    for (storage_key, storage_value) in &update.added_storage {
+                        let hashed_key = hash_key(storage_key);
+                        if storage_value.is_zero() {
+                            storage_trie.remove(hashed_key)?;
+                        } else {
+                            storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        }
+                    }
+                    account_state.storage_root = storage_trie.hash()?;
+                }
+                state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            }
+        }
+
+        Ok((state_trie, storage_tries))
+    }
+
     /// Adds all genesis accounts and returns the genesis block's state_root
     pub async fn setup_genesis_state_trie(
         &self,
