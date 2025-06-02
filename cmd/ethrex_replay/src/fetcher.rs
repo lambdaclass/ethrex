@@ -1,20 +1,3 @@
-<<<<<<< HEAD
-use std::collections::{HashMap, HashSet};
-use std::hash::RandomState;
-
-use crate::cache::{load_cache, load_cache_batch, write_cache, write_cache_batch, Cache};
-use crate::rpc::{db::RpcDB, get_block, get_latest_block_number};
-=======
-use crate::cache::Cache;
-use crate::rpc::db::to_exec_db_from_witness;
-use crate::rpc::get_witness;
-
-use crate::rpc::{get_block, get_latest_block_number};
->>>>>>> c89e98339 (feat use executionWitness for ethrex_replay)
-use ethrex_common::types::ChainConfig;
-use ethrex_common::{Address, H256};
-use eyre::WrapErr;
-
 pub async fn or_latest(maybe_number: Option<usize>, rpc_url: &str) -> eyre::Result<usize> {
     Ok(match maybe_number {
         Some(v) => v,
@@ -27,9 +10,9 @@ pub async fn get_blockdata(
     chain_config: ChainConfig,
     block_number: usize,
 ) -> eyre::Result<Cache> {
-    // if let Ok(cache) = load_cache(block_number) {
-    //     return Ok(cache);
-    // }
+    if let Ok(cache) = load_cache(block_number) {
+        return Ok(cache);
+    }
     let block = get_block(&rpc_url, block_number)
         .await
         .wrap_err("failed to fetch block")?;
@@ -40,16 +23,21 @@ pub async fn get_blockdata(
         .header;
 
     println!("populating rpc db cache");
-    let witness = get_witness(&rpc_url, block_number).await.wrap_err("err")?;
+    let witness = get_witness(&rpc_url, block_number)
+        .await
+        .wrap_err("Failed to get execution witness")?;
 
-    let db = to_exec_db_from_witness(chain_config, witness).unwrap();
+    let db = to_exec_db_from_witness(chain_config, &witness)
+        .wrap_err("Failed to build prover db from execution witness")?;
 
     let cache = Cache {
         blocks: vec![block],
         parent_block_header,
+        witness,
+        chain_config,
         db,
     };
-    // write_cache(&cache).expect("failed to write cache");
+    write_cache(&cache).expect("failed to write cache");
     Ok(cache)
 }
 
@@ -116,4 +104,81 @@ pub async fn get_rangedata(
 fn dedup_proofs(proofs: &mut Vec<Vec<u8>>) {
     let mut seen: HashSet<Vec<u8>, RandomState> = HashSet::from_iter(proofs.drain(..));
     *proofs = seen.drain().collect();
+}
+
+pub fn to_exec_db_from_witness(
+    chain_config: ChainConfig,
+    witness: &ExecutionWitnessResult,
+) -> Result<ethrex_vm::ProverDB, ProverDBError> {
+    let mut code = HashMap::new();
+    for witness_code in &witness.codes {
+        code.insert(code_hash(witness_code), witness_code.clone());
+    }
+
+    let mut block_hashes = HashMap::new();
+
+    let initial_state_hash = witness
+        .block_headers
+        .first()
+        .expect("no headers?")
+        .state_root;
+
+    for header in witness.block_headers.iter() {
+        block_hashes.insert(header.number, header.hash());
+    }
+
+    let mut initial_node = None;
+
+    for node in witness.state.iter() {
+        let x = Node::decode_raw(node).expect("invalid node");
+        let hash = x.compute_hash().finalize();
+        if hash == initial_state_hash {
+            initial_node = Some(node.clone());
+            break;
+        }
+    }
+
+    let state_trie =
+        Trie::from_nodes(initial_node.as_ref(), &witness.state).expect("failed to create trie");
+
+    let mut storage_tries = HashMap::new();
+    for (addr, nodes) in &witness.storage_tries {
+        let hashed_address = hash_address(addr);
+        let Some(encoded_state) = state_trie
+            .get(&hashed_address)
+            .expect("Failed to get from trie")
+        else {
+            // TODO re-explore this. When testing with hoodi this happened block 521990 an this continue fixed it
+            continue;
+        };
+
+        let state =
+            AccountState::decode(&encoded_state).expect("Failed to get state from encoded state");
+
+        let mut initial_node = None;
+
+        for node in nodes.iter() {
+            let x = Node::decode_raw(node).expect("invalid node");
+            let hash = x.compute_hash().finalize();
+            if hash == state.storage_root {
+                initial_node = Some(node);
+                break;
+            }
+        }
+
+        let storage_trie = Trie::from_nodes(initial_node, nodes).unwrap();
+
+        storage_tries.insert(*addr, storage_trie);
+    }
+
+    let state_trie = Arc::new(Mutex::new(state_trie));
+    let storage_tries = Arc::new(Mutex::new(storage_tries));
+
+    Ok(ProverDB {
+        code,
+        block_hashes,
+        chain_config,
+        state_trie,
+        storage_tries,
+    })
 }

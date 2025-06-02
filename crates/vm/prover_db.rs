@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountInfo, AccountState, AccountUpdate, ChainConfig},
-    Address, H256, U256,
+    types::{AccountState, AccountUpdate, ChainConfig},
+    Address, H256,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{hash_address, hash_key};
-use ethrex_trie::{NodeRLP, Trie};
+use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -18,29 +18,16 @@ use std::{
 /// feeding the DB into a zkVM program to prove the execution.
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct ProverDB {
-    /// indexed by account address
-    pub accounts: HashMap<Address, AccountInfo>,
     /// indexed by code hash
     pub code: HashMap<H256, Bytes>,
-    /// indexed by account address and storage key
-    pub storage: HashMap<Address, HashMap<H256, U256>>,
     /// indexed by block number
     pub block_hashes: HashMap<u64, H256>,
     /// stored chain config
     pub chain_config: ChainConfig,
-    /// Encoded nodes to reconstruct a state trie, but only including relevant data ("pruned trie").
-    ///
-    /// Root node is stored separately from the rest as the first tuple member.
-    pub state_proofs: (Option<NodeRLP>, Vec<NodeRLP>),
-    /// Encoded nodes to reconstruct every storage trie, but only including relevant data ("pruned
-    /// trie").
-    ///
-    /// Root node is stored separately from the rest as the first tuple member.
-    pub storage_proofs: HashMap<Address, (Option<NodeRLP>, Vec<NodeRLP>)>,
-
     #[serde(skip)]
     pub state_trie: Arc<Mutex<Trie>>,
     #[serde(skip)]
+    /// indexed by account address
     pub storage_tries: Arc<Mutex<HashMap<Address, Trie>>>,
 }
 

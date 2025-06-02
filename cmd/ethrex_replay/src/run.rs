@@ -7,6 +7,7 @@ pub async fn exec(cache: Cache) -> eyre::Result<String> {
         blocks,
         parent_block_header,
         db,
+        ..
     } = cache;
     let input = ProgramInput {
         blocks,
@@ -32,6 +33,7 @@ pub async fn prove(cache: Cache) -> eyre::Result<String> {
         blocks,
         parent_block_header,
         db,
+        ..
     } = cache;
     let out = ethrex_prover_lib::prove(ProgramInput {
         blocks,
