@@ -26,9 +26,7 @@ use super::{
 
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
-#[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_transactions::METRICS_TX;
+use ethrex_metrics::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX};
 
 pub struct BlockProducer {
     block_time_ms: u64,
@@ -70,12 +68,10 @@ impl BlockProducer {
         execution_cache: Arc<ExecutionCache>,
     ) {
         loop {
-            if let Err(err) = self
+            let _ = self
                 .main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
                 .await
-            {
-                error!("Block Producer Error: {}", err);
-            }
+                .inspect_err(|e| error!("Block Producer Error: {e}"));
 
             sleep(Duration::from_millis(self.block_time_ms)).await;
         }
@@ -94,7 +90,7 @@ impl BlockProducer {
                 .get_block_header(current_block_number)?
                 .ok_or(BlockProducerError::StorageDataIsNone)?
         };
-        let head_hash = head_header.compute_block_hash();
+        let head_hash = head_header.hash();
         let head_beacon_block_root = H256::zero();
 
         // The proposer leverages the execution payload framework used for the engine API,

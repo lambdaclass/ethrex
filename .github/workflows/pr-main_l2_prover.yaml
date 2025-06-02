@@ -28,25 +28,25 @@ jobs:
           ~/.sp1/bin/sp1up --version 4.1.7
       - name: Check sp1
         run: |
-            cargo check -p ethrex-prover -F sp1
-            cargo check -p ethrex-prover-bench -F sp1
+          cargo check -p ethrex-prover -F sp1
+          cargo check -p ethrex-replay -F sp1
       - name: Clippy sp1
         run: |
-            cargo clippy -p ethrex-prover --all-targets -F sp1
+          cargo clippy -p ethrex-prover --all-targets -F sp1
       - name: Check exec
         run: |
-            cargo check -p ethrex-prover
+          cargo check -p ethrex-prover
       - name: Clippy exec
         run: |
-            cargo clippy -p ethrex-prover --all-targets
+          cargo clippy -p ethrex-prover --all-targets
       - name: Check tdx
         run: |
-            cd crates/l2/tee/quote-gen
-            cargo check
+          cd crates/l2/tee/quote-gen
+          cargo check
       - name: Clippy tdx
         run: |
-            cd crates/l2/tee/quote-gen
-            cargo clippy --all-targets
+          cd crates/l2/tee/quote-gen
+          cargo clippy --all-targets
 
   test:
     # "Test" is a required check, don't change the name

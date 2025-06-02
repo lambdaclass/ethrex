@@ -44,8 +44,11 @@ impl LevmDatabase for DatabaseLogger {
             .get_account(address)
     }
 
-    fn account_exists(&self, address: CoreAddress) -> bool {
-        self.store.lock().unwrap().account_exists(address)
+    fn account_exists(&self, address: CoreAddress) -> Result<bool, DatabaseError> {
+        self.store
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .account_exists(address)
     }
 
     fn get_storage_value(
@@ -78,11 +81,16 @@ impl LevmDatabase for DatabaseLogger {
         Ok(block_hash)
     }
 
-    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
-        self.store.lock().unwrap().get_chain_config()
+    fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
+        self.store
+            .lock()
+            .map_err(|_| {
+                DatabaseError::Custom("Could not lock mutex and get chain config".to_string())
+            })?
+            .get_chain_config()
     }
 
-    fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
+    fn get_account_code(&self, code_hash: CoreH256) -> Result<bytes::Bytes, DatabaseError> {
         {
             let mut code_accessed = self
                 .code_accessed
@@ -104,8 +112,7 @@ impl LevmDatabase for DynVmDatabase {
             .unwrap_or_default();
 
         let acc_code = <dyn VmDatabase>::get_account_code(self.as_ref(), acc_info.code_hash)
-            .map_err(|e| DatabaseError::Custom(e.to_string()))?
-            .unwrap_or_default();
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?;
 
         Ok(Account::new(
             acc_info.balance,
@@ -115,9 +122,10 @@ impl LevmDatabase for DynVmDatabase {
         ))
     }
 
-    fn account_exists(&self, address: CoreAddress) -> bool {
-        let acc_info = <dyn VmDatabase>::get_account_info(self.as_ref(), address).unwrap();
-        acc_info.is_some()
+    fn account_exists(&self, address: CoreAddress) -> Result<bool, DatabaseError> {
+        let acc_info = <dyn VmDatabase>::get_account_info(self.as_ref(), address)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?;
+        Ok(acc_info.is_some())
     }
 
     fn get_storage_value(
@@ -137,11 +145,12 @@ impl LevmDatabase for DynVmDatabase {
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
 
-    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
+    fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
         <dyn VmDatabase>::get_chain_config(self.as_ref())
+            .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
 
-    fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
+    fn get_account_code(&self, code_hash: CoreH256) -> Result<bytes::Bytes, DatabaseError> {
         <dyn VmDatabase>::get_account_code(self.as_ref(), code_hash)
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
@@ -172,8 +181,8 @@ impl LevmDatabase for ProverDB {
         ))
     }
 
-    fn account_exists(&self, address: CoreAddress) -> bool {
-        self.accounts.contains_key(&address)
+    fn account_exists(&self, address: CoreAddress) -> Result<bool, DatabaseError> {
+        Ok(self.accounts.contains_key(&address))
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
@@ -198,11 +207,17 @@ impl LevmDatabase for ProverDB {
         Ok(*storage.get(&key).unwrap_or(&CoreU256::default()))
     }
 
-    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
-        self.get_chain_config()
+    fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
+        Ok(self.get_chain_config())
     }
 
-    fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
-        Ok(self.code.get(&code_hash).cloned())
+    fn get_account_code(&self, code_hash: CoreH256) -> Result<bytes::Bytes, DatabaseError> {
+        match self.code.get(&code_hash) {
+            Some(code) => Ok(code.clone()),
+            None => Err(DatabaseError::Custom(format!(
+                "Could not find code for hash {}",
+                code_hash
+            ))),
+        }
     }
 }

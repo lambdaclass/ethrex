@@ -132,7 +132,7 @@ pub struct RpcReceiptBlockInfo {
 impl RpcReceiptBlockInfo {
     pub fn from_block_header(block_header: BlockHeader) -> Self {
         RpcReceiptBlockInfo {
-            block_hash: block_header.compute_block_hash(),
+            block_hash: block_header.hash(),
             block_number: block_header.number,
         }
     }

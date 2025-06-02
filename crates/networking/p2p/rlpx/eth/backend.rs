@@ -16,7 +16,7 @@ pub async fn validate_status(
     let genesis_header = storage
         .get_block_header(0)?
         .ok_or(RLPxError::NotFound("Genesis Block".to_string()))?;
-    let genesis_hash = genesis_header.compute_block_hash();
+    let genesis_hash = genesis_header.hash();
     let latest_block_number = storage.get_latest_block_number().await?;
     let latest_block_header = storage
         .get_block_header(latest_block_number)?
@@ -93,7 +93,7 @@ mod tests {
         let config = genesis.config;
         let total_difficulty = U256::from(config.terminal_total_difficulty.unwrap_or_default());
         let genesis_header = genesis.get_block().header;
-        let genesis_hash = genesis_header.compute_block_hash();
+        let genesis_hash = genesis_header.hash();
         let fork_id = ForkId::new(config, genesis_header, 2707305664, 123);
 
         let eth = Capability::eth(68);

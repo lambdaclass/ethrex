@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# This script runs a load test and then kills the node under test. The load test sends a 
+# This script runs a load test and then kills the node under test. The load test sends a
 # transaction from each rich account to a random one, so we can check their nonce to
 # determine that the load test finished.
 #
@@ -12,7 +12,7 @@ set -e
 
 # TODO(#2486): Move this to a cached build outside.
 echo "Building load test"
-cargo build --release --manifest-path ./cmd/load_test/Cargo.toml
+cargo build --release --manifest-path ./tooling/load_test/Cargo.toml
 
 echo "Starting load test"
 start_time=$(date +%s)

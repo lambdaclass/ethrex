@@ -179,10 +179,7 @@ impl Store {
     }
 
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        info!(
-            "Adding block to pending: {}",
-            block.header.compute_block_hash()
-        );
+        info!("Adding block to pending: {}", block.hash());
         self.engine.add_pending_block(block).await
     }
 
@@ -469,7 +466,7 @@ impl Store {
         let genesis_hash = genesis_block.hash();
 
         if let Some(header) = self.get_block_header(genesis_block_number)? {
-            if header.compute_block_hash() == genesis_hash {
+            if header.hash() == genesis_hash {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
             } else {
@@ -911,8 +908,8 @@ impl Store {
         // Root is irrelevant, we only care about the internal state
         Ok(self
             .open_state_trie(*EMPTY_TRIE_HASH)
-            .state()
-            .get_node(node_hash.into())?
+            .db()
+            .get(node_hash.into())?
             .is_some())
     }
 
@@ -925,8 +922,8 @@ impl Store {
         // Root is irrelevant, we only care about the internal state
         Ok(self
             .open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)
-            .state()
-            .get_node(node_hash.into())?
+            .db()
+            .get(node_hash.into())?
             .is_some())
     }
 
@@ -1100,6 +1097,37 @@ impl Store {
             .set_latest_valid_ancestor(bad_block, latest_valid)
             .await
     }
+
+    /// Takes a block hash and returns an iterator to its ancestors. Block headers are returned
+    /// in reverse order, starting from the given block and going up to the genesis block.
+    pub fn ancestors(&self, block_hash: BlockHash) -> AncestorIterator {
+        AncestorIterator {
+            store: self.clone(),
+            next_hash: block_hash,
+        }
+    }
+}
+
+pub struct AncestorIterator {
+    store: Store,
+    next_hash: BlockHash,
+}
+
+impl Iterator for AncestorIterator {
+    type Item = Result<(BlockHash, BlockHeader), StoreError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next_hash = self.next_hash;
+        match self.store.get_block_header_by_hash(next_hash) {
+            Ok(Some(header)) => {
+                let ret_hash = self.next_hash;
+                self.next_hash = header.parent_hash;
+                Some(Ok((ret_hash, header)))
+            }
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        }
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {
@@ -1216,7 +1244,7 @@ mod tests {
     async fn test_store_block(store: Store) {
         let (block_header, block_body) = create_block_for_testing();
         let block_number = 6;
-        let hash = block_header.compute_block_hash();
+        let hash = block_header.hash();
 
         store
             .add_block_header(hash, block_header.clone())
@@ -1231,6 +1259,9 @@ mod tests {
         let stored_header = store.get_block_header(block_number).unwrap().unwrap();
         let stored_body = store.get_block_body(block_number).await.unwrap().unwrap();
 
+        // Ensure both headers have their hashes computed for comparison
+        let _ = stored_header.hash();
+        let _ = block_header.hash();
         assert_eq!(stored_header, block_header);
         assert_eq!(stored_body, block_body);
     }

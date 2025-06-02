@@ -78,7 +78,7 @@ impl RpcHandler for GetBlockByNumberRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        let hash = header.compute_block_hash();
+        let hash = header.hash();
         let block = RpcBlock::build(header, body, hash, self.hydrated);
 
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -112,7 +112,7 @@ impl RpcHandler for GetBlockByHashRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        let hash = header.compute_block_hash();
+        let hash = header.hash();
         let block = RpcBlock::build(header, body, hash, self.hydrated);
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
     }

@@ -1,10 +1,11 @@
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountInfo, BlockHash, ChainConfig},
+    types::{AccountInfo, BlockHash, ChainConfig, EMPTY_KECCACK_HASH},
     Address, H256, U256,
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
+use std::cmp::Ordering;
 
 #[derive(Clone)]
 pub struct StoreVmDatabase {
@@ -32,22 +33,42 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
-        match self.store.get_block_header(block_number) {
-            Ok(Some(header)) => Ok(H256::from(header.compute_block_hash().0)),
+        for ancestor_res in self.store.ancestors(self.block_hash) {
+            let (hash, ancestor) = ancestor_res.map_err(|e| EvmError::DB(e.to_string()))?;
+            match ancestor.number.cmp(&block_number) {
+                Ordering::Greater => continue,
+                Ordering::Equal => return Ok(hash),
+                Ordering::Less => {
+                    return Err(EvmError::DB(format!(
+                        "Block number requested {} is higher than the current block number {}",
+                        block_number, ancestor.number
+                    )))
+                }
+            }
+        }
+
+        Err(EvmError::DB(format!(
+            "Block hash not found for block number {block_number}"
+        )))
+    }
+
+    fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
+        self.store
+            .get_chain_config()
+            .map_err(|e| EvmError::DB(e.to_string()))
+    }
+
+    fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(Bytes::new());
+        }
+        match self.store.get_account_code(code_hash) {
+            Ok(Some(code)) => Ok(code),
             Ok(None) => Err(EvmError::DB(format!(
-                "Block header not found for block number {block_number}"
+                "Code not found for hash: {:?}",
+                code_hash
             ))),
             Err(e) => Err(EvmError::DB(e.to_string())),
         }
-    }
-
-    fn get_chain_config(&self) -> ChainConfig {
-        self.store.get_chain_config().unwrap()
-    }
-
-    fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, EvmError> {
-        self.store
-            .get_account_code(code_hash)
-            .map_err(|e| EvmError::DB(e.to_string()))
     }
 }
