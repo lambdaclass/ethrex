@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748895440796,
+  "lastUpdate": 1748898584006,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10315,6 +10315,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181968239174,
             "range": "± 417414937",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "41a84892aec6c36a5c2d0260f0ac6ff24bac0958",
+          "message": "refactor(core): remove unused ProverDB trait implementations (#3012)\n\n**Motivation**\n\nWe only want to run our prover with LEVM\n\n**Description**\n\n- Replace EvmState enum with EvmState struct with inner attribute with\ntype `revm::db::State<DynVmDatabase>`\n  - Impl clone for this struct\n- Remove all trait implementations for ProverDB that are no longer used",
+          "timestamp": "2025-06-02T20:23:39Z",
+          "tree_id": "d8cd7783dda225723b51770511ca83356aec1c53",
+          "url": "https://github.com/lambdaclass/ethrex/commit/41a84892aec6c36a5c2d0260f0ac6ff24bac0958"
+        },
+        "date": 1748898579403,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179129403766,
+            "range": "± 387858032",
             "unit": "ns/iter"
           }
         ]
