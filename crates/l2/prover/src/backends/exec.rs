@@ -5,6 +5,7 @@ use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_vm::Evm;
 use std::collections::HashMap;
+use std::thread::current;
 use tracing::warn;
 #[cfg(feature = "l2")]
 use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
@@ -48,10 +49,12 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
         mut db,
         elasticity_multiplier,
     } = input;
-    // Enforce there's at least one block header, so windows() call doesn't panic.
-    let parent_block_header = block_headers
-        .first()
-        .ok_or("no block headers found".to_string())?;
+    // Enforces there's at least one block header, so windows() call doesn't panic.
+    let (Some(oldest_block_header), Some(parent_block_header)) =
+        (block_headers.first(), block_headers.last())
+    else {
+        return Err("no block headers required (should at least contain parent header)".to_string().into());
+    };
 
     // Validate block hashes. The batch's parent hash is checked in the first validate_block() call.
     for window in block_headers.windows(2) {
@@ -62,6 +65,13 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
             return Err(format!("invalid block hash for block {}", header.number).into());
         }
     }
+    // Now we know that all hashes are valid for blocks with num >= oldest_block_header
+    if !db
+        .validate_block_hashes(oldest_block_header.number)
+        .map_err(|err| err.to_string())?
+    {
+        return Err("invalid block hashes".to_string())?;
+    };
 
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db.get_tries()?;

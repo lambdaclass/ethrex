@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use ethereum_types::H160;
 use ethrex_common::{
-    types::{AccountInfo, AccountUpdate, ChainConfig},
+    types::{AccountInfo, AccountUpdate, BlockHash, BlockHeader, ChainConfig},
     Address, H256, U256,
 };
 use ethrex_trie::{NodeRLP, Trie, TrieError};
@@ -101,5 +101,11 @@ impl ProverDB {
                 }
             }
         }
+    }
+
+    pub fn validate_block_hashes(&self, oldest_valid_block: u64) -> Result<bool, ProverDBError> {
+        self.block_hashes.keys().min().ok_or(ProverDBError::Custom(
+            "no block hashes required (should at least contain parent hash)".to_string(),
+        )).map(|num| *num >= oldest_valid_block)
     }
 }
