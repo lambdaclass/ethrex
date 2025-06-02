@@ -458,9 +458,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn send_new_block(&mut self) -> Result<(), RLPxError> {
         if self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
             let latest_block_number = self.storage.get_latest_block_number().await?;
-            if latest_block_number == self.latest_broadcasted_block {
-                return Ok(());
-            }
             for i in self.latest_broadcasted_block + 1..=latest_block_number {
                 debug!(
                     "Broadcasting new block, current: {}, last broadcasted: {}",
