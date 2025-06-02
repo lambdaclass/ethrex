@@ -143,8 +143,9 @@ impl L1ProofSender {
 
     async fn send_proof_to_aligned(&self, batch_number: u64) -> Result<(), ProofSenderError> {
         let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
-        let elf = std::fs::read(self.aligned_sp1_elf_path.clone())
-            .map_err(|_| ProofSenderError::InternalError("Failed to read ELF file".to_owned()))?;
+        let elf = std::fs::read(self.aligned_sp1_elf_path.clone()).map_err(|e| {
+            ProofSenderError::InternalError(format!("Failed to read ELF file: {e}"))
+        })?;
 
         let verification_data = VerificationData {
             proving_system: ProvingSystemId::SP1,
