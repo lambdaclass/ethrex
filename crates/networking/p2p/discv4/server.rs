@@ -736,6 +736,8 @@ pub(super) mod tests {
     use ethrex_storage::EngineType;
     use ethrex_storage::Store;
 
+    #[cfg(feature = "l2")]
+    use ethrex_storage_rollup::StoreRollup;
     use k256::ecdsa::SigningKey;
     use rand::rngs::OsRng;
     use std::net::{IpAddr, Ipv4Addr};
@@ -797,6 +799,8 @@ pub(super) mod tests {
             broadcast,
             client_version: "ethrex/test".to_string(),
             based: false,
+            #[cfg(feature = "l2")]
+            store_rollup: StoreRollup::default(),
         };
 
         let discv4 = Discv4Server::try_new(ctx.clone()).await?;

@@ -11,6 +11,8 @@ use crate::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{H256, H512};
 use ethrex_storage::Store;
+#[cfg(feature = "l2")]
+use ethrex_storage_rollup::StoreRollup;
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
@@ -50,6 +52,8 @@ pub struct P2PContext {
     pub local_node_record: Arc<Mutex<NodeRecord>>,
     pub client_version: String,
     pub based: bool,
+    #[cfg(feature = "l2")]
+    pub store_rollup: StoreRollup,
 }
 
 impl P2PContext {
@@ -64,6 +68,7 @@ impl P2PContext {
         blockchain: Arc<Blockchain>,
         client_version: String,
         based: bool,
+        #[cfg(feature = "l2")] store_rollup: StoreRollup,
     ) -> Self {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
@@ -81,6 +86,8 @@ impl P2PContext {
             broadcast: channel_broadcast_send_end,
             client_version,
             based,
+            #[cfg(feature = "l2")]
+            store_rollup,
         }
     }
 

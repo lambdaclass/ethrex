@@ -126,6 +126,8 @@ impl Command {
                         tracker.clone(),
                         blockchain.clone(),
                         l2_sequencer_cfg.based.based,
+                        #[cfg(feature = "l2")]
+                        rollup_store.clone(),
                     )
                     .await;
                 } else {

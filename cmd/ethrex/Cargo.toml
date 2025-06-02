@@ -71,6 +71,7 @@ l2 = [
   "ethrex-blockchain/l2",
   "ethrex-rpc/l2",
   "ethrex-storage-rollup",
+  "ethrex-p2p/l2",
 ]
 rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
 rollup_storage_redb = ["ethrex-storage-rollup/redb"]

@@ -11,6 +11,7 @@ ethrex-blockchain.workspace = true
 ethrex-rlp.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
+ethrex-storage-rollup = { workspace = true, optional = true }
 
 tracing.workspace = true
 tokio.workspace = true
@@ -44,5 +45,6 @@ path = "./p2p.rs"
 
 [features]
 default = ["c-kzg"]
+l2 = ["ethrex-storage-rollup"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []

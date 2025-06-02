@@ -30,6 +30,8 @@ use ethrex_common::{
     H256, H512,
 };
 use ethrex_storage::Store;
+#[cfg(feature = "l2")]
+use ethrex_storage_rollup::StoreRollup;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
@@ -90,6 +92,7 @@ pub(crate) struct RLPxConnection<S> {
     next_block_broadcast: Instant,
     broadcasted_txs: HashSet<H256>,
     latest_broadcasted_block: u64,
+    batches_broadcasted: HashSet<u64>,
     client_version: String,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
@@ -100,6 +103,8 @@ pub(crate) struct RLPxConnection<S> {
     /// The receive end is instantiated after the handshake is completed
     /// under `handle_peer`.
     connection_broadcast_send: RLPxConnBroadcastSender,
+    #[cfg(feature = "l2")]
+    store_rollup: StoreRollup,
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
@@ -113,6 +118,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         blockchain: Arc<Blockchain>,
         client_version: String,
         connection_broadcast: RLPxConnBroadcastSender,
+        #[cfg(feature = "l2")] store_rollup: StoreRollup,
     ) -> Self {
         Self {
             signer,
@@ -128,8 +134,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
             broadcasted_txs: HashSet::new(),
             latest_broadcasted_block: 0,
+            batches_broadcasted: HashSet::new(),
             client_version,
             connection_broadcast_send: connection_broadcast,
+            #[cfg(feature = "l2")]
+            store_rollup,
         }
     }
 
@@ -595,6 +604,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
                     .await
                     .map_err(|e| RLPxError::BadRequest(format!("Error adding new block: {e}")))?;
+                #[cfg(feature = "l2")]
+                dbg!(self.store_rollup.get_batch_number_by_block(1_u64).await);
                 self.broadcast_message(Message::NewBlock(req))?;
             }
 
