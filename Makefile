@@ -97,7 +97,6 @@ SIM_PARALLELISM := 16
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
 
-
 HIVE_CLIENT_FILE := ../test_data/network/hive_clients/ethrex.yml
 HIVE_CLIENT_FILE_GIT := ../test_data/network/hive_clients/ethrex_git.yml
 HIVE_CLIENT_FILE_LOCAL := ../test_data/network/hive_clients/ethrex_local.yml
