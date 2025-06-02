@@ -27,7 +27,7 @@ pub struct ExecutionWitnessResult {
         serialize_with = "serialize_keys",
         deserialize_with = "deserialize_keys"
     )]
-    pub keys: HashMap<H160, Vec<Vec<u8>>>,
+    pub storage_tries: HashMap<H160, Vec<Vec<u8>>>,
     pub block_headers: Vec<BlockHeader>,
 }
 

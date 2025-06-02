@@ -370,7 +370,7 @@ impl RpcHandler for ExecutionWitness {
             _ => return Err(RpcErr::Internal("Could not get block".to_owned())),
         };
 
-        let (state_rlp, codes, keys, blocks_used) = context
+        let (state_rlp, codes, storage_tries, blocks_used) = context
             .blockchain
             .execute_block_with_witness(block)
             .await
@@ -385,7 +385,7 @@ impl RpcHandler for ExecutionWitness {
         let execution_witness_result = ExecutionWitnessResult {
             state: state_rlp,
             codes,
-            keys,
+            storage_tries,
             block_headers,
         };
         serde_json::to_value(execution_witness_result)
