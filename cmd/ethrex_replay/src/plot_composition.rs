@@ -1,15 +1,22 @@
-use ethrex_common::{types::{Transaction, TxKind}, Address};
+use ethrex_common::types::{Transaction, TxKind};
 use revm_primitives::HashMap;
+
+use charming::{
+    component::Legend,
+    element::{Tooltip, Trigger},
+    series::Pie,
+    Chart, ImageRenderer,
+};
 
 use crate::cache::Cache;
 
 const TOP_N_DESTINATIONS: usize = 10;
-const TOP_N_SELECTORS: usize = 50;
+const TOP_N_SELECTORS: usize = 10;
 
 #[derive(Default, Debug)]
 struct BlockStats {
-    destinations: HashMap<Address, i64>,
-    selector: HashMap<String, i64>
+    destinations: HashMap<String, i64>,
+    selector: HashMap<String, i64>,
 }
 
 fn categorize_selector(sel: [u8; 4]) -> String {
@@ -44,7 +51,7 @@ fn categorize_selector(sel: [u8; 4]) -> String {
         "d0e30db0" => "deposit",
         "18cbafe5" => "swap",
         "7b939232" => "deposit",
-        "0894edf1" => "relay", // commitVerification(bytes,bytes32)	
+        "0894edf1" => "relay",       // commitVerification(bytes,bytes32)
         "28832cbd" => "swap&bridge", // swapAndStartBridgeTokensViaAcrossV3(...)
         "07ed2379" => "swap",
         "e9ae5c53" => "exec",
@@ -59,42 +66,91 @@ fn categorize_selector(sel: [u8; 4]) -> String {
         "b6b55f25" => "deposit",
         "3ccfd60b" => "withdraw",
         "30c48952" => "swap&bridge", // swapAndStartBridgeTokensViaMayan
-        "13d79a0b" => "swap", // settle
-        _ => "other"
-    }.to_string()
+        "13d79a0b" => "swap",        // settle
+        _ => &selector,
+    }
+    .to_string()
 }
 
 impl BlockStats {
     fn process(&mut self, tx: Transaction) {
         if let TxKind::Call(addr) = tx.to() {
-            *self.destinations.entry(addr).or_insert(0) += 1;
+            *self.destinations.entry(format!("0x{addr:x}")).or_insert(0) += 1;
             if tx.data().len() >= 4 {
                 let mut selector = [0u8; 4];
                 selector.clone_from_slice(&tx.data()[0..4]);
-                *self.selector.entry(categorize_selector(selector)).or_insert(0) += 1;
+                *self
+                    .selector
+                    .entry(categorize_selector(selector))
+                    .or_insert(0) += 1;
             }
         }
     }
-    fn print(&self) {
+    fn chart(&self) -> Vec<(String, Chart)> {
         let mut destinations: Vec<(_, _)> = self.destinations.iter().collect();
         destinations.sort_by_key(|(_, c)| -**c);
         let mut selectors: Vec<(_, _)> = self.selector.iter().collect();
         selectors.sort_by_key(|(_, c)| -**c);
-        for (addr, count) in destinations.iter().take(TOP_N_DESTINATIONS) {
-            println!("0x{addr:x} -- {count} times");
-        }
-        for (selector, count) in selectors.iter().take(TOP_N_SELECTORS) {
-            println!("{selector} -- {count} times");
-        }
+
+
+        vec![
+            ("selectors".to_string(), Chart::new()
+                .tooltip(Tooltip::new().trigger(Trigger::Item))
+                .legend(Legend::new())
+                .series(
+                    Pie::new()
+                        .name(&format!("Top{TOP_N_SELECTORS} selectors"))
+                        .radius(vec!["40%", "55%"])
+                        .data(
+                            truncate_to(selectors, TOP_N_SELECTORS)
+                                .iter()
+                                .map(|(name, count)| (*count as f64, name.as_str()))
+                                .collect(),
+                        ),
+            )),
+            ("destinations".to_string(), Chart::new()
+                .tooltip(Tooltip::new().trigger(Trigger::Item))
+                .legend(Legend::new())
+                .series(
+                    Pie::new()
+                        .name(&format!("Top{TOP_N_DESTINATIONS} destinations"))
+                        .radius(vec!["40%", "55%"])
+                        .data(
+                            truncate_to(destinations, TOP_N_DESTINATIONS)
+                                .iter()
+                                .map(|(name, count)| (*count as f64, name.as_str()))
+                                .collect(),
+                        ),
+            )),
+        ]
     }
 }
 
 pub async fn plot(cache: Cache) -> eyre::Result<()> {
     let mut stats = BlockStats::default();
-    let txs = cache.blocks.iter().flat_map(|b| b.body.transactions.clone()).collect::<Vec<_>>();
+    let txs = cache
+        .blocks
+        .iter()
+        .flat_map(|b| b.body.transactions.clone())
+        .collect::<Vec<_>>();
     for tx in txs {
         stats.process(tx);
     }
-    stats.print();
+    let mut renderer = ImageRenderer::new(1000, 800);
+    for (name, chart) in stats.chart() {
+        renderer.save(&chart, format!("chart_{name}.svg"))?;
+    }
     Ok(())
+}
+
+fn truncate_to(vec: Vec<(&String, &i64)>, size: usize) -> Vec<(String, i64)> {
+    let mut included = 0;
+    let mut res: Vec<(String, i64)> = Vec::new();
+    for (item, count) in vec.iter().take(size) {
+        included += **count;
+        res.push((item.to_string(), **count));
+    }
+    let total = vec.iter().map(|(_, c)| **c).sum::<i64>();
+    res.push(("other".to_string(), total - included));
+    res
 }

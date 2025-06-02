@@ -3,9 +3,9 @@ mod cache;
 mod cli;
 mod constants;
 mod fetcher;
+mod plot_composition;
 mod rpc;
 mod run;
-mod plot_composition;
 
 #[tokio::main]
 async fn main() {
