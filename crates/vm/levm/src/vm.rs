@@ -13,7 +13,7 @@ use crate::{
 use bytes::Bytes;
 use derive_more::derive::Debug;
 use ethrex_common::{
-    types::{Transaction, TxKind},
+    types::{Log, Transaction, TxKind},
     Address, H256, U256,
 };
 use serde::Serialize;
@@ -64,6 +64,14 @@ where
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct TracerLog {
+    pub address: Address,
+    pub topics: Vec<H256>,
+    pub data: Bytes,
+    pub position: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct TracerCallFrame {
     #[serde(rename = "type")]
     pub call_type: Opcode,
@@ -84,6 +92,7 @@ pub struct TracerCallFrame {
     #[serde(rename = "revertReason", serialize_with = "option_string_empty_as_str")]
     pub revert_reason: Option<String>,
     pub calls: Vec<TracerCallFrame>,
+    pub logs: Vec<TracerLog>,
 }
 
 impl TracerCallFrame {
@@ -107,6 +116,7 @@ impl TracerCallFrame {
             error: None,
             revert_reason: None,
             calls: Vec::new(),
+            logs: Vec::new(),
         }
     }
 
@@ -121,6 +131,16 @@ impl TracerCallFrame {
         self.output = output;
         self.error = error;
         self.revert_reason = revert_reason;
+    }
+
+    /// Clear logs from callframe if it reverted and repeat with its subcalls.
+    pub fn clear_reverted_logs(&mut self) {
+        if self.error.is_some() {
+            self.logs.clear();
+            for subcall in &mut self.calls {
+                subcall.clear_reverted_logs();
+            }
+        }
     }
 }
 
@@ -216,6 +236,13 @@ impl LevmCallTracer {
             // We just want to register top call
             return Ok(());
         }
+        if is_top_call {
+            // After finishing transaction execution clear all logs that reverted.
+            self.callframes
+                .last_mut()
+                .ok_or(InternalError::CouldNotAccessLastCallframe)?
+                .clear_reverted_logs();
+        }
         let (gas_used, output) = (report.gas_used, report.output.clone());
 
         let (error, revert_reason) = if let TxResult::Revert(ref err) = report.result {
@@ -238,6 +265,26 @@ impl LevmCallTracer {
             return Ok(());
         }
         self.exit(gas_used, Bytes::new(), error, None)
+    }
+
+    pub fn log(&mut self, log: Log) -> Result<(), InternalError> {
+        if !self.active || self.only_top_call && self.callframes.len() > 1 {
+            return Ok(());
+        }
+        let callframe = self
+            .callframes
+            .last_mut()
+            .ok_or(InternalError::CouldNotAccessLastCallframe)?;
+
+        let log = TracerLog {
+            address: log.address,
+            topics: log.topics,
+            data: log.data,
+            position: callframe.calls.len(),
+        };
+
+        callframe.logs.push(log);
+        Ok(())
     }
 }
 
