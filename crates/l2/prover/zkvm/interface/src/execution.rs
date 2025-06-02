@@ -59,15 +59,13 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             &mut db,
             elasticity_multiplier,
         );
-        unreachable!();
-    } else {
-        stateless_validation_l1(
-            &blocks,
-            &parent_block_header,
-            &mut db,
-            elasticity_multiplier,
-        )
     }
+    stateless_validation_l1(
+        &blocks,
+        &parent_block_header,
+        &mut db,
+        elasticity_multiplier,
+    )
 }
 
 pub fn stateless_validation_l1(
