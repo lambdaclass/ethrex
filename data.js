@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748890767843,
+  "lastUpdate": 1748892768180,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10225,6 +10225,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180545270117,
             "range": "± 939070913",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8d0ead022480524719b41a7cc668f89aff43267a",
+          "message": "fix(l2): properly get needed proof types (#3011)\n\n**Motivation**\n\nIn #2950, we removed the processing of the contract call response, which\nresulted in all proof types being marked as needed.\n\n**Description**\n\nProperly handles the contract call response.\n\nCloses None",
+          "timestamp": "2025-06-02T18:45:21Z",
+          "tree_id": "3fee9c21c6753fc19412085a9d8129f3a1fa6607",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8d0ead022480524719b41a7cc668f89aff43267a"
+        },
+        "date": 1748892763342,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183365010848,
+            "range": "± 1024775841",
             "unit": "ns/iter"
           }
         ]
