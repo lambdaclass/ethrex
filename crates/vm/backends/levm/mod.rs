@@ -16,11 +16,11 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use ethrex_levm::call_frame::CallFrameBackup;
+use ethrex_levm::calltracer::LevmCallTracer;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
 use ethrex_levm::utils::restore_cache_state;
-use ethrex_levm::vm::LevmCallTracer;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
