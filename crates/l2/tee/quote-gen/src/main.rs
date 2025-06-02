@@ -51,10 +51,35 @@ fn sign_eip191(msg: &[u8], private_key: &SecretKey) -> Vec<u8> {
 fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
     let ProgramInput {
         blocks,
-        parent_block_header,
+        block_headers,
         mut db,
         elasticity_multiplier,
     } = input;
+
+    // Enforces there's at least one block header, so windows() call doesn't panic.
+    let (Some(oldest_block_header), Some(parent_block_header)) =
+        (block_headers.first(), block_headers.last())
+    else {
+        return Err("no block headers required (should at least contain parent header)".to_string());
+    };
+
+    // Validate block hashes. The batch's parent hash is checked in the first validate_block() call.
+    for window in block_headers.windows(2) {
+        let (Some(header), Some(next_header)) = (&window.first(), &window.get(1)) else {
+            return Err("block header window len is < 2".to_string())?;
+        };
+        if next_header.parent_hash != header.hash() {
+            return Err(format!("invalid block hash for block {}", header.number));
+        }
+    }
+    // Now we know that all hashes are valid for blocks with num >= oldest_block_header
+    if !db
+        .validate_block_hashes(oldest_block_header.number)
+        .map_err(|err| err.to_string())?
+    {
+        return Err("invalid block hashes".to_string())?;
+    };
+
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
         .get_tries()

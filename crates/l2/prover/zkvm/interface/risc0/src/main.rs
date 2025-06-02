@@ -17,11 +17,35 @@ use zkvm_interface::{
 fn main() {
     let ProgramInput {
         block,
-        parent_block_header,
+        block_headers,
         mut db,
         #[cfg(feature = "l2")]
         deposit_logs_hash,
     } = env::read();
+    // Enforces there's at least one block header, so windows() call doesn't panic.
+    let (Some(oldest_block_header), Some(parent_block_header)) =
+        (block_headers.first(), block_headers.last())
+    else {
+        panic!("no block headers required (should at least contain parent header)");
+    };
+
+    // Validate block hashes. The batch's parent hash is checked in the first validate_block() call.
+    for window in block_headers.windows(2) {
+        let (Some(header), Some(next_header)) = (&window.first(), &window.get(1)) else {
+            panic!("block header window len is < 2");
+        };
+        if next_header.parent_hash != header.hash() {
+            panic(format!("invalid block hash for block {}", header.number));
+        }
+    }
+    // Now we know that all hashes are valid for blocks with num >= oldest_block_header
+    if !db
+        .validate_block_hashes(oldest_block_header.number)
+        .map_err(|err| err.to_string())?
+    {
+        panic("invalid block hashes");
+    };
+
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
         .get_tries()
