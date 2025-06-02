@@ -1227,11 +1227,11 @@ mod tests {
             .add_initial_state(genesis_kurtosis)
             .await
             .expect("second genesis with same block");
-        panic::catch_unwind(move || {
-            let rt = tokio::runtime::Runtime::new().expect("runtime creation failed");
-            let _ = rt.block_on(store.add_initial_state(genesis_hive));
-        })
-        .expect_err("genesis with a different block should panic");
+        // The task panic will still be shown via stderr, but rest assured that it will also be caught and read by the test assertion
+        let add_initial_state_handle =
+            tokio::task::spawn(async move { store.add_initial_state(genesis_hive).await });
+        let panic = add_initial_state_handle.await.unwrap_err().into_panic();
+        assert_eq!(panic.downcast_ref::<&str>().unwrap(), &"Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2");
     }
 
     fn remove_test_dbs(path: &str) {
