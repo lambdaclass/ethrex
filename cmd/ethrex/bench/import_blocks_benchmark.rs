@@ -1,8 +1,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use ethrex::{
     cli::{import_blocks, remove_db},
-    utils::get_datadir,
     networks::Network,
+    utils::get_datadir,
     DEFAULT_DATADIR,
 };
 use ethrex_vm::EvmEngine;

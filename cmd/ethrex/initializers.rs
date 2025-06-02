@@ -1,12 +1,8 @@
 use crate::{
     cli::Options,
-    utils::{
-        get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
-        read_node_config_file,
-    },
-    DEFAULT_JWT_PATH, DEFAULT_STORE_DIR,
     networks::{self, Network, PublicNetwork},
-    utils::{get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file, read_node_config_file},
+    utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
+    DEFAULT_JWT_PATH, DEFAULT_STORE_DIR,
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
@@ -67,7 +63,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub async fn init_store(data_dir: &str, network: &str, genesis: Genesis) -> Store {
+pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
     let path = Path::new(data_dir).join(DEFAULT_STORE_DIR);
     let data_dir_path = path.display().to_string();
     let store = if path.ends_with("memory") {
@@ -256,6 +252,7 @@ pub fn get_network(network: String) -> String {
         "mainnet" => String::from(networks::MAINNET_GENESIS_PATH),
         _ => network,
     }
+}
 
 #[allow(dead_code)]
 pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<Node> {

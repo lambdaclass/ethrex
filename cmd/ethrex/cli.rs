@@ -13,9 +13,9 @@ use tracing::{info, warn, Level};
 
 use crate::{
     initializers::{init_blockchain, init_store},
-    utils::{self, get_client_version, get_datadir},
     networks::{Network, PublicNetwork},
-    DEFAULT_DATADIR,
+    utils::{self, get_client_version, get_datadir},
+    DEFAULT_CUSTOM_DIR, DEFAULT_DATADIR,
 };
 
 #[cfg(feature = "l2")]
@@ -322,11 +322,10 @@ pub fn remove_db(datadir: &str, force: bool) {
 pub async fn import_blocks(
     path: &str,
     data_dir: &str,
-    network: &str,
     genesis: Genesis,
     evm: EvmEngine,
 ) -> Result<(), ChainError> {
-    let data_dir = get_datadir(data_dir, network);
+    let data_dir = get_datadir(data_dir, DEFAULT_CUSTOM_DIR);
     let store = init_store(&data_dir, genesis).await;
     let blockchain = init_blockchain(evm, store.clone());
     let path_metadata = metadata(path).expect("Failed to read path");
