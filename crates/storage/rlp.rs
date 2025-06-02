@@ -56,7 +56,7 @@ impl<T: RLPEncode> From<T> for Rlp<T> {
 
 impl<T: RLPDecode> Rlp<T> {
     pub fn to(&self) -> Result<T, ethrex_rlp::error::RLPDecodeError> {
-        Ok(T::decode(&self.0)?)
+        T::decode(&self.0)
     }
 }
 

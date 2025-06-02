@@ -294,9 +294,18 @@ impl RedBStore {
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        Ok(self
-            .read_sync(CANONICAL_BLOCK_HASHES_TABLE, number)?
-            .map(|a| a.value().to()))
+        Ok(
+            match self
+                .read_sync(CANONICAL_BLOCK_HASHES_TABLE, number)?
+                .map(|a| a.value().to())
+            {
+                Some(block_hash_decoded) => match block_hash_decoded {
+                    Ok(block_hash_decoded) => Some(block_hash_decoded),
+                    Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                },
+                None => None,
+            },
+        )
     }
 }
 
@@ -338,9 +347,18 @@ impl StoreEngine for RedBStore {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            Ok(self
-                .read_sync(HEADERS_TABLE, <H256 as Into<BlockHashRLP>>::into(hash))?
-                .map(|b| b.value().to()))
+            Ok(
+                match self
+                    .read_sync(HEADERS_TABLE, <H256 as Into<BlockHashRLP>>::into(hash))?
+                    .map(|b| b.value().to())
+                {
+                    Some(block_header_decoded) => match block_header_decoded {
+                        Ok(block_header_decoded) => Some(block_header_decoded),
+                        Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                    },
+                    None => None,
+                },
+            )
         } else {
             Ok(None)
         }
@@ -446,7 +464,11 @@ impl StoreEngine for RedBStore {
             .await?;
         let hashes: Vec<BlockHashRLP> = hashes.into_iter().map(|v| v.value()).collect();
         let blocks = self.read_bulk(BLOCK_BODIES_TABLE, hashes).await?;
-        Ok(blocks.into_iter().map(|b| b.value().to()).collect())
+        let mut block_bodies = Vec::new();
+        for block_body in blocks.into_iter() {
+            block_bodies.push(block_body.value().to()?)
+        }
+        Ok(block_bodies)
     }
 
     async fn get_block_bodies_by_hash(
@@ -458,32 +480,54 @@ impl StoreEngine for RedBStore {
             .map(<H256 as Into<BlockHashRLP>>::into)
             .collect();
         let blocks = self.read_bulk(BLOCK_BODIES_TABLE, hashes).await?;
-        Ok(blocks.into_iter().map(|b| b.value().to()).collect())
+        let mut block_bodies = Vec::new();
+        for block_body in blocks.into_iter() {
+            block_bodies.push(block_body.value().to()?)
+        }
+        Ok(block_bodies)
     }
 
     async fn get_block_body_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        Ok(self
-            .read(
-                BLOCK_BODIES_TABLE,
-                <H256 as Into<BlockHashRLP>>::into(block_hash),
-            )
-            .await?
-            .map(|b| b.value().to()))
+        Ok(
+            match self
+                .read(
+                    BLOCK_BODIES_TABLE,
+                    <H256 as Into<BlockHashRLP>>::into(block_hash),
+                )
+                .await?
+                .map(|b| b.value().to())
+            {
+                Some(block_body_decoded) => match block_body_decoded {
+                    Ok(block_body_decoded) => Some(block_body_decoded),
+                    Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                },
+                None => None,
+            },
+        )
     }
 
     fn get_block_header_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        Ok(self
-            .read_sync(
-                HEADERS_TABLE,
-                <H256 as Into<BlockHashRLP>>::into(block_hash),
-            )?
-            .map(|b| b.value().to()))
+        Ok(
+            match self
+                .read_sync(
+                    HEADERS_TABLE,
+                    <H256 as Into<BlockHashRLP>>::into(block_hash),
+                )?
+                .map(|b| b.value().to())
+            {
+                Some(block_header_decoded) => match block_header_decoded {
+                    Ok(block_header_decoded) => Some(block_header_decoded),
+                    Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                },
+                None => None,
+            },
+        )
     }
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
@@ -496,13 +540,22 @@ impl StoreEngine for RedBStore {
     }
 
     async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
-        Ok(self
-            .read(
-                PENDING_BLOCKS_TABLE,
-                <H256 as Into<BlockHashRLP>>::into(block_hash),
-            )
-            .await?
-            .map(|b| b.value().to()))
+        Ok(
+            match self
+                .read(
+                    PENDING_BLOCKS_TABLE,
+                    <H256 as Into<BlockHashRLP>>::into(block_hash),
+                )
+                .await?
+                .map(|b| b.value().to())
+            {
+                Some(pending_block_decoded) => match pending_block_decoded {
+                    Ok(pending_block_decoded) => Some(pending_block_decoded),
+                    Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                },
+                None => None,
+            },
+        )
     }
 
     async fn add_block_number(
@@ -559,7 +612,7 @@ impl StoreEngine for RedBStore {
 
         Ok(table
             .get(<H256 as Into<TransactionHashRLP>>::into(transaction_hash))?
-            .map_while(|res| res.ok().map(|t| t.value().to()))
+            .map_while(|res| res.ok().map(|t| t.value().to().expect("RLP decode failed")))
             .find(|(number, hash, _index)| {
                 self.get_block_hash_by_block_number(*number)
                     .is_ok_and(|o| o == Some(*hash))
@@ -613,13 +666,22 @@ impl StoreEngine for RedBStore {
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            Ok(self
-                .read(
-                    RECEIPTS_TABLE,
-                    <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((hash, index)),
-                )
-                .await?
-                .map(|b| b.value().to()))
+            Ok(
+                match self
+                    .read(
+                        RECEIPTS_TABLE,
+                        <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((hash, index)),
+                    )
+                    .await?
+                    .map(|b| b.value().to())
+                {
+                    Some(receipt_decoded) => match receipt_decoded {
+                        Ok(receipt_decoded) => Some(receipt_decoded),
+                        Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                    },
+                    None => None,
+                },
+            )
         } else {
             Ok(None)
         }
@@ -642,21 +704,41 @@ impl StoreEngine for RedBStore {
         &self,
         code_hash: ethrex_common::H256,
     ) -> Result<Option<bytes::Bytes>, StoreError> {
-        Ok(self
-            .read_sync(
-                ACCOUNT_CODES_TABLE,
-                <H256 as Into<AccountCodeHashRLP>>::into(code_hash),
-            )?
-            .map(|b| b.value().to()))
+        Ok(
+            match self
+                .read_sync(
+                    ACCOUNT_CODES_TABLE,
+                    <H256 as Into<AccountCodeHashRLP>>::into(code_hash),
+                )?
+                .map(|b| b.value().to())
+            {
+                Some(acount_code_decoded) => match acount_code_decoded {
+                    Ok(acount_code_decoded) => Some(acount_code_decoded),
+                    Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                },
+                None => None,
+            },
+        )
     }
 
     async fn get_canonical_block_hash(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        self.read(CANONICAL_BLOCK_HASHES_TABLE, block_number)
-            .await
-            .map(|o| o.map(|hash_rlp| hash_rlp.value().to()))
+        Ok(
+            match self
+                .read(CANONICAL_BLOCK_HASHES_TABLE, block_number)
+                .await
+                .map(|o| o.map(|hash_rlp| hash_rlp.value().to()))
+            {
+                Ok(Some(canonical_block_hash_decoded)) => match canonical_block_hash_decoded {
+                    Ok(canonical_block_hash_decoded) => Some(canonical_block_hash_decoded),
+                    Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                },
+                Ok(None) => None,
+                Err(error) => return Err(error),
+            },
+        )
     }
 
     async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
@@ -840,10 +922,19 @@ impl StoreEngine for RedBStore {
     }
 
     async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        Ok(self
-            .read(PAYLOADS_TABLE, payload_id)
-            .await?
-            .map(|b| b.value().to()))
+        Ok(
+            match self
+                .read(PAYLOADS_TABLE, payload_id)
+                .await?
+                .map(|b| b.value().to())
+            {
+                Some(payload_decoded) => match payload_decoded {
+                    Ok(payload_decoded) => Some(payload_decoded),
+                    Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                },
+                None => None,
+            },
+        )
     }
 
     async fn add_receipts(
@@ -927,10 +1018,11 @@ impl StoreEngine for RedBStore {
             receipt_index += 1;
             expected_key = (*block_hash, receipt_index).into()
         }
-        Ok(encoded_receipts
-            .into_iter()
-            .map(|receipt| receipt.to())
-            .collect())
+        let mut decoded_receipts = Vec::new();
+        for encoded_receipt in encoded_receipts.into_iter() {
+            decoded_receipts.push(encoded_receipt.to()?)
+        }
+        Ok(decoded_receipts)
     }
 
     async fn set_header_download_checkpoint(
@@ -1000,8 +1092,12 @@ impl StoreEngine for RedBStore {
         let res: Vec<(H256, Vec<Nibbles>)> = table
             .range(<H256 as Into<AccountHashRLP>>::into(Default::default())..)?
             .map_while(|val| {
-                val.ok()
-                    .map(|(hash, paths)| (hash.value().to(), paths.value().to()))
+                val.ok().map(|(hash, paths)| {
+                    (
+                        hash.value().to().expect("RLP decode failed"),
+                        paths.value().to().expect("RLP decode failed"),
+                    )
+                })
             })
             .take(limit)
             .collect();
@@ -1178,8 +1274,12 @@ impl StoreEngine for RedBStore {
             .range(<H256 as Into<AccountHashRLP>>::into(start)..)?
             .take(MAX_SNAPSHOT_READS)
             .map_while(|elem| {
-                elem.ok()
-                    .map(|(key, value)| (key.value().to(), value.value().to()))
+                elem.ok().map(|(key, value)| {
+                    (
+                        key.value().to().expect("RLP decode failed"),
+                        value.value().to().expect("RLP decode failed"),
+                    )
+                })
             })
             .collect())
     }
@@ -1211,13 +1311,22 @@ impl StoreEngine for RedBStore {
         &self,
         block: BlockHash,
     ) -> Result<Option<BlockHash>, StoreError> {
-        Ok(self
-            .read(
-                INVALID_ANCESTORS_TABLE,
-                <H256 as Into<BlockHashRLP>>::into(block),
-            )
-            .await?
-            .map(|b| b.value().to()))
+        Ok(
+            match self
+                .read(
+                    INVALID_ANCESTORS_TABLE,
+                    <H256 as Into<BlockHashRLP>>::into(block),
+                )
+                .await?
+                .map(|b| b.value().to())
+            {
+                Some(latest_valid_ancestor_decoded) => match latest_valid_ancestor_decoded {
+                    Ok(latest_valid_ancestor_decoded) => Some(latest_valid_ancestor_decoded),
+                    Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                },
+                None => None,
+            },
+        )
     }
 
     async fn set_latest_valid_ancestor(
