@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex};
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{AccountUpdate, Block};
 use ethrex_common::{Address, H256};
-use ethrex_levm::db::error::DatabaseError;
 use ethrex_storage::{hash_address, hash_key, Store};
 use ethrex_trie::{Node, PathRLP};
 use ethrex_trie::{NodeRLP, Trie, TrieError};
@@ -45,9 +44,7 @@ pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, P
 
         // Replace the store
         *logger.store.lock().map_err(|err| {
-            ProverDBError::Database(DatabaseError::Custom(format!(
-                "Failed to lock 'store' with error: {err}"
-            )))
+            ProverDBError::Database(format!("Failed to lock 'store' with error: {err}"))
         })? = Box::new(new_store);
     }
 
