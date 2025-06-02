@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748876525903,
+  "lastUpdate": 1748877835665,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10105,6 +10105,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180189133121,
             "range": "± 990831883",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bd1cee0f09964926b0da6b69ab17e2b492a9fe30",
+          "message": "fix(core): only import `tokio` with `full` feature where needed (#2981)\n\n**Motivation**\nWhen Implementing #2919 I ran into issues due to adding `tokio` as a\ndependency to the `blockchain` crate. This PR aims to fix this issue by\nremoving the `full` feature from the workspace`tokio` dependency and\nadding it where it is necessary.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Remove `full` feature from workspace `tokio` dep\n* Add `full` feature to `tokio` dep on crates `ef_tests-state` &\n`ef_tests-blockchain`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\nNeeded for #2919 & #2971",
+          "timestamp": "2025-06-02T14:34:54Z",
+          "tree_id": "342c1ed62dc52346f6522d0be99f27cd8995ec00",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bd1cee0f09964926b0da6b69ab17e2b492a9fe30"
+        },
+        "date": 1748877830454,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183892288932,
+            "range": "± 604464521",
             "unit": "ns/iter"
           }
         ]
