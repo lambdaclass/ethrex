@@ -39,3 +39,6 @@ tokio.workspace = true
 
 [lib]
 path = "./lib.rs"
+
+[lints.clippy] 
+unwrap_used = "deny" 
