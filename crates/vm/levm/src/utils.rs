@@ -1,6 +1,7 @@
 use crate::{
+    call_frame::CallFrameBackup,
     constants::*,
-    db::gen_db::GeneralizedDatabase,
+    db::{cache, gen_db::GeneralizedDatabase},
     errors::{InternalError, OutOfGasError, TxValidationError, VMError},
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
@@ -25,7 +26,10 @@ use ethrex_common::{
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
-use libsecp256k1::{Message, RecoveryId, Signature};
+use secp256k1::{
+    ecdsa::{RecoverableSignature, RecoveryId},
+    Message,
+};
 use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -134,6 +138,36 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
     }
 
     Ok(valid_jump_destinations)
+}
+
+// ================== Backup related functions =======================
+
+/// Restore the state of the cache to the state it in the callframe backup.
+pub fn restore_cache_state(
+    db: &mut GeneralizedDatabase,
+    callframe_backup: CallFrameBackup,
+) -> Result<(), VMError> {
+    for (address, account) in callframe_backup.original_accounts_info {
+        if let Some(current_account) = cache::get_account_mut(&mut db.cache, &address) {
+            current_account.info = account.info;
+            current_account.code = account.code;
+        }
+    }
+
+    for (address, storage) in callframe_backup.original_account_storage_slots {
+        // This call to `get_account_mut` should never return None, because we are looking up accounts
+        // that had their storage modified, which means they should be in the cache. That's why
+        // we return an internal error in case we haven't found it.
+        let account = cache::get_account_mut(&mut db.cache, &address).ok_or(VMError::Internal(
+            crate::errors::InternalError::AccountNotFound,
+        ))?;
+
+        for (key, value) in storage {
+            account.storage.insert(key, value);
+        }
+    }
+
+    Ok(())
 }
 
 // ================= Blob hash related functions =====================
@@ -278,7 +312,7 @@ pub fn eip7702_recover_address(
     hasher.update(rlp_buf);
     let bytes = &mut hasher.finalize();
 
-    let Ok(message) = Message::parse_slice(bytes) else {
+    let Ok(message) = Message::from_digest_slice(bytes) else {
         return Ok(None);
     };
 
@@ -288,25 +322,25 @@ pub fn eip7702_recover_address(
     ]
     .concat();
 
-    let Ok(signature) = Signature::parse_standard_slice(&bytes) else {
-        return Ok(None);
-    };
-
-    let Ok(recovery_id) = RecoveryId::parse(
+    let Ok(recovery_id) = RecoveryId::from_i32(
         auth_tuple
             .y_parity
-            .as_u32()
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?,
     ) else {
         return Ok(None);
     };
 
-    let Ok(authority) = libsecp256k1::recover(&message, &signature, &recovery_id) else {
+    let Ok(signature) = RecoverableSignature::from_compact(&bytes, recovery_id) else {
         return Ok(None);
     };
 
-    let public_key = authority.serialize();
+    //recover
+    let Ok(authority) = signature.recover(&message) else {
+        return Ok(None);
+    };
+
+    let public_key = authority.serialize_uncompressed();
     let mut hasher = Keccak256::new();
     hasher.update(
         public_key
@@ -574,11 +608,8 @@ impl<'a> VM<'a> {
         Ok(min_gas_used)
     }
 
-    pub fn is_precompile(&self) -> Result<bool, VMError> {
-        Ok(is_precompile(
-            &self.current_call_frame()?.code_address,
-            self.env.config.fork,
-        ))
+    pub fn is_precompile(&self, address: &Address) -> bool {
+        is_precompile(address, self.env.config.fork)
     }
 
     /// Backup of Substate, a copy of the current substate to restore if sub-context is reverted
@@ -633,7 +664,7 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    pub fn get_hooks(tx: &Transaction) -> Vec<Arc<dyn Hook + 'static>> {
+    pub fn get_hooks(_tx: &Transaction) -> Vec<Arc<dyn Hook + 'static>> {
         #[cfg(not(feature = "l2"))]
         let hooks: Vec<Arc<dyn Hook>> = vec![Arc::new(DefaultHook)];
         #[cfg(feature = "l2")]
@@ -641,7 +672,7 @@ impl<'a> VM<'a> {
             let recipient = if let Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
                 recipient,
                 ..
-            }) = tx
+            }) = _tx
             {
                 Some(*recipient)
             } else {
@@ -673,12 +704,5 @@ impl<'a> VM<'a> {
                 Ok(created_address)
             }
         }
-    }
-
-    /// Checks if an address is delegation target in current transaction.
-    pub fn is_delegation_target(&self, address: Address) -> bool {
-        self.tx.authorization_list().as_ref().map_or(false, |list| {
-            list.iter().any(|item| item.address == address)
-        })
     }
 }

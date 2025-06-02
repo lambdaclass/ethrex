@@ -54,20 +54,20 @@ pub struct EFTestRunnerOptions {
     #[arg(
         long,
         value_name = "FORK",
-        use_value_delimiter = true,
+        value_delimiter = ',',
         default_value = "Merge,Shanghai,Cancun,Prague"
     )]
     pub forks: Option<Vec<SpecId>>,
     /// For running specific .json files
-    #[arg(short, long, value_name = "TESTS", use_value_delimiter = true)]
+    #[arg(short, long, value_name = "TESTS", value_delimiter = ',')]
     pub tests: Vec<String>,
     /// For running tests with a specific name
-    #[arg(long, value_name = "SPECIFIC_TESTS", use_value_delimiter = true)]
+    #[arg(long, value_name = "SPECIFIC_TESTS", value_delimiter = ',')]
     pub specific_tests: Vec<String>,
     /// For running tests only with LEVM without the REVM re-run.
     #[arg(short, long, value_name = "SUMMARY", default_value = "false")]
     pub summary: bool,
-    #[arg(long, value_name = "SKIP", use_value_delimiter = true)]
+    #[arg(long, value_name = "SKIP", value_delimiter = ',')]
     pub skip: Vec<String>,
     /// For providing more detailed information
     #[arg(long, value_name = "VERBOSE", default_value = "false")]

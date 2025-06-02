@@ -1,8 +1,8 @@
 use ethrex_blockchain::{validate_block, validate_gas_used};
+use ethrex_common::types::AccountUpdate;
 use ethrex_common::Address;
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
-use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
 use std::collections::HashMap;
 use tracing::warn;
@@ -41,7 +41,7 @@ pub fn to_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::err
     })
 }
 
-fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
+pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
     let ProgramInput {
         blocks,
         parent_block_header,
