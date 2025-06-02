@@ -167,31 +167,39 @@ impl LevmDatabase for DynVmDatabase {
 
 impl LevmDatabase for ProverDB {
     fn get_account(&self, address: CoreAddress) -> Result<Account, DatabaseError> {
-        let Some(acc_info) = self.accounts.get(&address) else {
+        let state_trie_lock = self
+            .state_trie
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Failed to lock state trie".to_string()))?;
+        let hashed_address = hash_address(&address);
+        let Some(encoded_state) = state_trie_lock
+            .get(&hashed_address)
+            .map_err(|_| DatabaseError::Custom("Failed to get account from trie".to_string()))?
+        else {
             return Ok(Account::default());
         };
+        let state = AccountState::decode(&encoded_state).map_err(|_| {
+            DatabaseError::Custom("Failed to get decode account from trie".to_string())
+        })?;
+        let code = self.get_account_code(state.code_hash)?;
 
-        let acc_code = if acc_info.code_hash != EMPTY_CODE_HASH {
-            self.code
-                .get(&acc_info.code_hash)
-                .ok_or(DatabaseError::Custom(format!(
-                    "Could not find account's code hash {}",
-                    &acc_info.code_hash
-                )))?
-        } else {
-            &bytes::Bytes::new()
-        };
-
-        Ok(Account::new(
-            acc_info.balance,
-            acc_code.clone(),
-            acc_info.nonce,
-            HashMap::new(),
-        ))
+        Ok(Account {
+            info: AccountInfo {
+                balance: state.balance,
+                code_hash: state.code_hash,
+                nonce: state.nonce,
+            },
+            code,
+            storage: HashMap::new(),
+        })
     }
 
-    fn account_exists(&self, address: CoreAddress) -> Result<bool, DatabaseError> {
-        Ok(self.accounts.contains_key(&address))
+    fn account_exists(&self, address: CoreAddress) -> bool {
+        if let Ok(account) = self.get_account(address) {
+            !account.is_empty()
+        } else {
+            false
+        }
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
@@ -210,10 +218,25 @@ impl LevmDatabase for ProverDB {
         address: CoreAddress,
         key: CoreH256,
     ) -> Result<CoreU256, DatabaseError> {
-        let Some(storage) = self.storage.get(&address) else {
-            return Ok(CoreU256::default());
+        let storage_tries_lock = self
+            .storage_tries
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Failed to lock storage tries".to_string()))?;
+
+        let Some(storage_trie) = storage_tries_lock.get(&address) else {
+            return Ok(CoreU256::zero());
         };
-        Ok(*storage.get(&key).unwrap_or(&CoreU256::default()))
+        let hashed_key = hash_key(&key);
+        Ok(storage_trie
+            .get(&hashed_key)
+            .map_err(|_| DatabaseError::Custom("failed to read storage from trie".to_string()))?
+            .map(|rlp| {
+                CoreU256::decode(&rlp).map_err(|_| {
+                    DatabaseError::Custom("failed to read storage from trie".to_string())
+                })
+            })
+            .transpose()?
+            .unwrap_or_else(CoreU256::zero))
     }
 
     fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
