@@ -82,7 +82,12 @@ impl LevmDatabase for DatabaseLogger {
     }
 
     fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
-        self.store.lock().unwrap().get_chain_config()
+        self.store
+            .lock()
+            .map_err(|_| {
+                DatabaseError::Custom("Could not lock mutex and get chain config".to_string())
+            })?
+            .get_chain_config()
     }
 
     fn get_account_code(&self, code_hash: CoreH256) -> Result<bytes::Bytes, DatabaseError> {
