@@ -2589,9 +2589,9 @@ dependencies = [
 
 [[package]]
 name = "deunicode"
-version = "1.6.1"
+version = "1.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc55fe0d1f6c107595572ec8b107c0999bb1a2e0b75e37429a4fb0d6474a0e7d"
+checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
 name = "dialoguer"
@@ -3485,6 +3485,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-sdk",
  "eyre",
+ "genesis-tool",
  "hex",
  "keccak-hash",
  "lazy_static",
@@ -3492,7 +3493,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
- "tools",
  "tracing",
  "tracing-subscriber 0.3.19",
 ]
@@ -3866,6 +3866,14 @@ checksum = "96512db27971c2c3eece70a1e106fbe6c87760234e31e8f7e5634912fe52794a"
 dependencies = [
  "serde",
  "typenum",
+]
+
+[[package]]
+name = "genesis-tool"
+version = "0.1.0"
+dependencies = [
+ "ethrex-common",
+ "serde_json",
 ]
 
 [[package]]
@@ -10038,14 +10046,6 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
-]
-
-[[package]]
-name = "tools"
-version = "0.0.0"
-dependencies = [
- "ethrex-common",
- "serde_json",
 ]
 
 [[package]]

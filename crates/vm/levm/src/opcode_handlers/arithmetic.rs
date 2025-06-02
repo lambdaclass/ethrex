@@ -6,8 +6,6 @@ use crate::{
 };
 use ethrex_common::{U256, U512};
 
-use super::bitwise_comparison::checked_shift_right;
-
 // Arithmetic Operations (11)
 // Opcodes: ADD, SUB, MUL, DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP, SIGNEXTEND
 
@@ -257,7 +255,8 @@ impl<'a> VM<'a> {
                 InternalError::ArithmeticOperationOverflow,
             ))?;
 
-        let shifted_value = checked_shift_right(value_to_extend, sign_bit_index)?;
+        #[expect(clippy::arithmetic_side_effects)]
+        let shifted_value = value_to_extend >> sign_bit_index;
         let sign_bit = shifted_value & U256::one();
 
         let sign_bit_mask = checked_shift_left(U256::one(), sign_bit_index)?
