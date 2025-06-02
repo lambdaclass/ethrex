@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748872999236,
+  "lastUpdate": 1748875401302,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9985,6 +9985,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182235471621,
             "range": "± 592721301",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "tomas.arjovsky@lambdaclass.com",
+            "name": "Tomás Arjovsky",
+            "username": "Arkenan"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f015a051b07351e768750c581c231414b5fbb43c",
+          "message": "fix(l1): when in the VM db, get the block hash using the ancestors (#2965)\n\nInstead of using the canonical block, look for the ancestor. This might\nbe a costly operation. This solves the issue. The first 11k hoodi blocks\nare processed correctly in about 15 minutes.\n\nCloses #2951",
+          "timestamp": "2025-06-02T13:55:54Z",
+          "tree_id": "6f65a6b09f8a903553827c728c87e559b3fc4b59",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f015a051b07351e768750c581c231414b5fbb43c"
+        },
+        "date": 1748875396913,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183521552509,
+            "range": "± 636162024",
             "unit": "ns/iter"
           }
         ]
