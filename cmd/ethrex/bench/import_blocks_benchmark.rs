@@ -18,10 +18,10 @@ fn block_import() {
     let network = Network::from("../../test_data/genesis-perf-ci.json");
 
     let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(import_blocks(
+    let _ = rt.block_on(import_blocks(
         "../../test_data/l2-1k-erc20.rlp",
         data_dir,
-        network.get_path(),
+        network.get_genesis(),
         evm_engine,
     ));
 }

@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
+use ethrex_common::types::Genesis;
 use ethrex_p2p::types::Node;
 use lazy_static::lazy_static;
+
+use crate::utils;
 
 pub const HOLESKY_GENESIS_PATH: &str = "cmd/ethrex/networks/holesky/genesis.json";
 const HOLESKY_BOOTNODES_PATH: &str = "cmd/ethrex/networks/holesky/bootnodes.json";
@@ -65,7 +68,7 @@ impl From<PathBuf> for Network {
 }
 
 impl Network {
-    pub fn get_path(&self) -> &Path {
+    pub fn get_genesis_path(&self) -> &Path {
         match self {
             Network::PublicNetwork(PublicNetwork::Holesky) => Path::new(HOLESKY_GENESIS_PATH),
             Network::PublicNetwork(PublicNetwork::Hoodi) => Path::new(HOODI_GENESIS_PATH),
@@ -73,5 +76,8 @@ impl Network {
             Network::PublicNetwork(PublicNetwork::Sepolia) => Path::new(SEPOLIA_GENESIS_PATH),
             Network::GenesisPath(s) => s,
         }
+    }
+    pub fn get_genesis(&self) -> Genesis {
+        utils::read_genesis_file(self.get_genesis_path())
     }
 }

@@ -235,9 +235,7 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
 }
 
 pub fn get_network(opts: &Options) -> Network {
-    opts.network
-        .clone()
-        .expect("--network is required and it was not provided")
+    opts.network.clone()
 }
 
 #[allow(dead_code)]

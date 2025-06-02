@@ -67,7 +67,7 @@ impl Command {
 
                 let network = get_network(&opts.node_opts);
 
-                let genesis = read_genesis_file(network.get_path());
+                let genesis = read_genesis_file(network.get_genesis_path());
                 let store = init_store(&data_dir, genesis).await;
                 let rollup_store = init_rollup_store(&rollup_store_dir).await;
 

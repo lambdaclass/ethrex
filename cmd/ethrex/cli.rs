@@ -5,15 +5,16 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::fork_choice::apply_fork_choice;
+use ethrex_blockchain::{error::ChainError, fork_choice::apply_fork_choice};
+use ethrex_common::types::Genesis;
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
     initializers::{init_blockchain, init_store},
-    networks::Network,
-    utils::{self, get_client_version, read_genesis_file, set_datadir},
+    networks::{Network, PublicNetwork},
+    utils::{self, get_client_version, set_datadir},
     DEFAULT_DATADIR,
 };
 
@@ -34,6 +35,7 @@ pub struct CLI {
 pub struct Options {
     #[arg(
         long = "network",
+        default_value = "mainnet",
         value_name = "GENESIS_FILE_PATH",
         help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
         long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.",
@@ -41,7 +43,7 @@ pub struct Options {
         env = "ETHREX_NETWORK",
         value_parser = clap::value_parser!(Network),
     )]
-    pub network: Option<Network>,
+    pub network: Network,
     #[arg(long = "bootnodes", value_parser = clap::value_parser!(Node), value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help = "Comma separated enode URLs for P2P discovery bootstrap.", help_heading = "P2P options")]
     pub bootnodes: Vec<Node>,
     #[arg(
@@ -202,7 +204,7 @@ impl Default for Options {
             p2p_port: Default::default(),
             discovery_addr: Default::default(),
             discovery_port: Default::default(),
-            network: Default::default(),
+            network: Network::PublicNetwork(PublicNetwork::Mainnet),
             bootnodes: Default::default(),
             datadir: Default::default(),
             syncmode: Default::default(),
@@ -274,14 +276,14 @@ impl Subcommand {
                     .await?;
                 }
 
-                let network = opts
-                    .network
-                    .as_ref()
-                    .expect("--network is required and it was not provided");
-                import_blocks(&path, &opts.datadir, network.get_path(), opts.evm).await;
+                let network = &opts.network;
+                import_blocks(&path, &opts.datadir, network.get_genesis(), opts.evm).await?;
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
-                compute_state_root(&genesis_path);
+                let state_root = Network::from(genesis_path)
+                    .get_genesis()
+                    .compute_state_root();
+                println!("{:#x}", state_root);
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
@@ -317,14 +319,15 @@ pub fn remove_db(datadir: &str, force: bool) {
     }
 }
 
-pub async fn import_blocks(path: &str, data_dir: &str, genesis_path: &Path, evm: EvmEngine) {
+pub async fn import_blocks(
+    path: &str,
+    data_dir: &str,
+    genesis: Genesis,
+    evm: EvmEngine,
+) -> Result<(), ChainError> {
     let data_dir = set_datadir(data_dir);
-
-    let genesis = read_genesis_file(genesis_path);
     let store = init_store(&data_dir, genesis).await;
-
     let blockchain = init_blockchain(evm, store.clone());
-
     let path_metadata = metadata(path).expect("Failed to read path");
     let blocks = if path_metadata.is_dir() {
         let mut blocks = vec![];
@@ -342,9 +345,7 @@ pub async fn import_blocks(path: &str, data_dir: &str, genesis_path: &Path, evm:
         info!("Importing blocks from chain file: {path}");
         utils::read_chain_file(path)
     };
-
     let size = blocks.len();
-
     for block in &blocks {
         let hash = block.hash();
 
@@ -361,31 +362,25 @@ pub async fn import_blocks(path: &str, data_dir: &str, genesis_path: &Path, evm:
             Ok(None) => {
                 if let Err(error) = blockchain.add_block(block).await {
                     warn!(
-                        "Failed to add block {} with hash {:#x}: {}.",
-                        block.header.number, hash, error
+                        "Failed to add block {} with hash {:#x}",
+                        block.header.number, hash
                     );
-                    return;
+                    return Err(error);
                 }
             }
             Err(_) => {
-                warn!("Couldn't check if block is already in the blockchain");
-                return;
+                return Err(ChainError::Custom(String::from(
+                    "Couldn't check if block is already in the blockchain",
+                )));
             }
         }
     }
-
     if let Some(last_block) = blocks.last() {
         let hash = last_block.hash();
         if let Err(error) = apply_fork_choice(&store, hash, hash, hash).await {
             warn!("Failed to apply fork choice: {}", error);
         }
     }
-
     info!("Added {size} blocks to blockchain");
-}
-
-pub fn compute_state_root(genesis_path: &Path) {
-    let genesis = utils::read_genesis_file(genesis_path);
-    let state_root = genesis.compute_state_root();
-    println!("{:#x}", state_root);
+    Ok(())
 }
