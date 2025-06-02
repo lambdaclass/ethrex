@@ -1,20 +1,22 @@
 use bytes::Bytes;
-use ethereum_types::H160;
 use ethrex_common::{
-    types::{AccountInfo, AccountUpdate, ChainConfig},
+    types::{AccountInfo, AccountState, AccountUpdate, ChainConfig},
     Address, H256, U256,
 };
-use ethrex_trie::{NodeRLP, Trie, TrieError};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_storage::{hash_address, hash_key};
+use ethrex_trie::{NodeRLP, Trie};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-
-use crate::errors::ProverDBError;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 /// In-memory EVM database for single batch execution data.
 ///
 /// This is mainly used to store the relevant state data for executing a single batch and then
 /// feeding the DB into a zkVM program to prove the execution.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct ProverDB {
     /// indexed by account address
     pub accounts: HashMap<Address, AccountInfo>,
@@ -35,6 +37,11 @@ pub struct ProverDB {
     ///
     /// Root node is stored separately from the rest as the first tuple member.
     pub storage_proofs: HashMap<Address, (Option<NodeRLP>, Vec<NodeRLP>)>,
+
+    #[serde(skip)]
+    pub state_trie: Arc<Mutex<Trie>>,
+    #[serde(skip)]
+    pub storage_tries: Arc<Mutex<HashMap<Address, Trie>>>,
 }
 
 impl ProverDB {
@@ -42,63 +49,65 @@ impl ProverDB {
         self.chain_config
     }
 
-    /// Recreates the state trie and storage tries from the encoded nodes.
-    pub fn get_tries(&self) -> Result<(Trie, HashMap<H160, Trie>), ProverDBError> {
-        let (state_trie_root, state_trie_nodes) = &self.state_proofs;
-        let state_trie = Trie::from_nodes(state_trie_root.as_ref(), state_trie_nodes)?;
-
-        let storage_trie = self
-            .storage_proofs
-            .iter()
-            .map(|(address, nodes)| {
-                let (storage_trie_root, storage_trie_nodes) = nodes;
-                let trie = Trie::from_nodes(storage_trie_root.as_ref(), storage_trie_nodes)?;
-                Ok((*address, trie))
-            })
-            .collect::<Result<_, TrieError>>()?;
-
-        Ok((state_trie, storage_trie))
-    }
-
-    pub fn apply_account_updates(&mut self, account_updates: &[AccountUpdate]) {
+    pub fn apply_account_updates_from_trie(&mut self, account_updates: &[AccountUpdate]) {
+        let mut state_trie_lock = self.state_trie.lock().expect("Failed to lock trie");
+        let mut storage_tries_lock = self
+            .storage_tries
+            .lock()
+            .expect("Failed to lock storage tries");
         for update in account_updates.iter() {
+            let hashed_address = hash_address(&update.address);
             if update.removed {
-                self.accounts.remove(&update.address);
+                // Remove account from trie
+                state_trie_lock
+                    .remove(hashed_address)
+                    .expect("failed to remove from trie");
             } else {
-                // Add or update AccountInfo
-                // Fetch current account_info or create a new one to be inserted
-                let mut account_info = match self.accounts.get(&update.address) {
-                    Some(account_info) => account_info.clone(),
-                    None => AccountInfo::default(),
+                // Add or update AccountState in the trie
+                // Fetch current state or create a new state to be inserted
+                let mut account_state = match state_trie_lock
+                    .get(&hashed_address)
+                    .expect("failed to get account state from trie")
+                {
+                    Some(encoded_state) => AccountState::decode(&encoded_state)
+                        .expect("failed to decode account state"),
+                    None => AccountState::default(),
                 };
                 if let Some(info) = &update.info {
-                    account_info.nonce = info.nonce;
-                    account_info.balance = info.balance;
-                    account_info.code_hash = info.code_hash;
-
-                    // Store updated code
+                    account_state.nonce = info.nonce;
+                    account_state.balance = info.balance;
+                    account_state.code_hash = info.code_hash;
+                    // Store updated code in DB
                     if let Some(code) = &update.code {
                         self.code.insert(info.code_hash, code.clone());
                     }
                 }
-                // Insert new AccountInfo
-                self.accounts.insert(update.address, account_info);
-
-                // Store the added storage
+                // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let mut storage = match self.storage.get(&update.address) {
-                        Some(storage) => storage.clone(),
-                        None => HashMap::default(),
-                    };
+                    let storage_trie =
+                        storage_tries_lock.entry(update.address).or_insert_with(|| {
+                            Trie::from_nodes(None, &[]).expect("failed to create empty trie")
+                        });
+
                     for (storage_key, storage_value) in &update.added_storage {
+                        let hashed_key = hash_key(storage_key);
                         if storage_value.is_zero() {
-                            storage.remove(storage_key);
+                            storage_trie
+                                .remove(hashed_key)
+                                .expect("failed to remove key");
                         } else {
-                            storage.insert(*storage_key, *storage_value);
+                            storage_trie
+                                .insert(hashed_key, storage_value.encode_to_vec())
+                                .expect("failed to insert in trie");
                         }
                     }
-                    self.storage.insert(update.address, storage);
+                    account_state.storage_root = storage_trie
+                        .hash()
+                        .expect("failed to calculate storage trie root");
                 }
+                state_trie_lock
+                    .insert(hashed_address, account_state.encode_to_vec())
+                    .expect("failed to insert into storage");
             }
         }
     }

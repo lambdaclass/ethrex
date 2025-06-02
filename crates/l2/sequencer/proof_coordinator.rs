@@ -30,7 +30,7 @@ use tracing::{debug, error, info, warn};
 use super::errors::SequencerError;
 use super::utils::sleep_random;
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
     pub parent_block_header: BlockHeader,

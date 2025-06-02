@@ -192,6 +192,8 @@ pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, P
         chain_config,
         state_proofs,
         storage_proofs,
+        // TODO use execution witness for l2 proofs
+        ..Default::default()
     })
 }
 
