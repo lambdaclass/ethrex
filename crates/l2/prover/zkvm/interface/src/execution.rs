@@ -105,13 +105,10 @@ pub fn stateless_validation_l2(
         final_state_hash,
     } = execute_stateless(blocks, parent_block_header, db, elasticity_multiplier)?;
 
-    #[cfg(feature = "l2")]
     let mut withdrawals = vec![];
-    #[cfg(feature = "l2")]
     let mut deposits_hashes = vec![];
 
     // Get L2 withdrawals and deposits for this block
-    #[cfg(feature = "l2")]
     for block in blocks {
         let block_withdrawals = get_block_withdrawals(&block.body.transactions, &receipts)
             .map_err(StatelessExecutionError::WithdrawalError)?;
@@ -129,21 +126,17 @@ pub fn stateless_validation_l2(
     }
 
     // Calculate L2 withdrawals root
-    #[cfg(feature = "l2")]
     let withdrawals_merkle_root = get_withdrawals_merkle_root(withdrawals)
         .map_err(StatelessExecutionError::WithdrawalError)?;
 
     // Calculate L2 deposits logs root
-    #[cfg(feature = "l2")]
     let deposit_logs_hash =
         get_deposit_hash(deposits_hashes).map_err(StatelessExecutionError::DepositError)?;
 
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
-        #[cfg(feature = "l2")]
         withdrawals_merkle_root,
-        #[cfg(feature = "l2")]
         deposit_logs_hash,
     })
 }
