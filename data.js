@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748882274342,
+  "lastUpdate": 1748888206411,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10165,6 +10165,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181239613738,
             "range": "± 1393082597",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "725f6534cc3ce01c21b724d6620cfcc19ab837eb",
+          "message": "feat(core): ethrex_replay multiblock (#2960)\n\n**Motivation**\n\nWe want to prove batches of blocks, and thus the simulator should also\nsupport this usecase.\n\n**Description**\n\nImplements multiblock support.\n\nMakes progress towards #2913",
+          "timestamp": "2025-06-02T17:29:45Z",
+          "tree_id": "6646220019c7ad887065265095f1203417794587",
+          "url": "https://github.com/lambdaclass/ethrex/commit/725f6534cc3ce01c21b724d6620cfcc19ab837eb"
+        },
+        "date": 1748888201442,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179111437234,
+            "range": "± 350203292",
             "unit": "ns/iter"
           }
         ]
