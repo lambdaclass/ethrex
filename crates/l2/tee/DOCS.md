@@ -2,6 +2,11 @@
 
 ## Usage
 
+> [!NOTE]
+>
+> - Running the following without an L2 running will continuously throw the error: `Error sending quote: Failed to get ProverSetupAck: Connection refused (os error 111)`. If you want to run this in a proper setup go to the [Running](#Running) section.
+> - The quote generator runs in a QEMU, to quit it press `CTRL+A X`.
+
 On a machine with TDX support [with the required setup](https://github.com/canonical/tdx) go to quote-gen and run
 ```
 make run
