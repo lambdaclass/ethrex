@@ -36,20 +36,24 @@ pub struct RpcDB {
 }
 
 impl RpcDB {
-    pub async fn with_cache(
-        rpc_url: &str,
-        chain_config: ChainConfig,
-        block_number: usize,
-        block: &Block,
-    ) -> eyre::Result<Self> {
-        let mut db = RpcDB {
+    pub fn new(rpc_url: &str, chain_config: ChainConfig, block_number: usize) -> Self {
+        RpcDB {
             rpc_url: rpc_url.to_string(),
             block_number,
             cache: Arc::new(Mutex::new(HashMap::new())),
             child_cache: Arc::new(Mutex::new(HashMap::new())),
             block_hashes: Arc::new(Mutex::new(HashMap::new())),
             chain_config,
-        };
+        }
+    }
+
+    pub async fn with_cache(
+        rpc_url: &str,
+        chain_config: ChainConfig,
+        block_number: usize,
+        block: &Block,
+    ) -> eyre::Result<Self> {
+        let mut db = RpcDB::new(rpc_url, chain_config, block_number);
 
         db.cache_accounts(block).await?;
 
@@ -204,6 +208,13 @@ impl RpcDB {
         }
 
         Ok(fetched)
+    }
+
+    pub async fn load_accounts(
+        &self,
+        accounts: &[(Address, Vec<H256>)],
+    ) -> eyre::Result<HashMap<Address, Account>> {
+        self.fetch_accounts(accounts, false).await
     }
 
     async fn fetch_account(
