@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748875478960,
+  "lastUpdate": 1748876525903,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10075,6 +10075,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178606857386,
             "range": "± 299790146",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2c3e2bcb199d84d0d237f45a283e5cd32e92450c",
+          "message": "fix(l2): use --bench on Makefile (#2967)\n\n**Motivation**\n\nThe CI relies on replay writing the benchmark file.\n\n**Description**\n\nThis PR enables it _on the Makefile_.\n\n---------\n\nCo-authored-by: Francisco Xavier Gauna <francisco.gauna@lambdaclass.com>",
+          "timestamp": "2025-06-02T14:15:19Z",
+          "tree_id": "daf25d415a35049e4be4cbc87f2422467bcf379d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2c3e2bcb199d84d0d237f45a283e5cd32e92450c"
+        },
+        "date": 1748876521800,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180189133121,
+            "range": "± 990831883",
             "unit": "ns/iter"
           }
         ]
