@@ -55,7 +55,7 @@ impl REVM {
     ) -> Result<BlockExecutionResult, EvmError> {
         let block_header = &block.header;
         let spec_id: SpecId = spec_id(
-            &state.state.database.get_chain_config()?,
+            &state.inner.database.get_chain_config()?,
             block_header.timestamp,
         );
         cfg_if::cfg_if! {
@@ -129,7 +129,7 @@ impl REVM {
                 )
             })
             .collect::<Vec<_>>();
-        initial_state.state.increment_balances(balance_increments)?;
+        initial_state.inner.increment_balances(balance_increments)?;
         Ok(())
     }
 
@@ -174,7 +174,7 @@ impl REVM {
         state: &mut EvmState,
     ) -> Result<revm_primitives::AccountInfo, EvmError> {
         let revm_addr = RevmAddress::from_slice(addr.as_bytes());
-        let account_info = state.state.basic(revm_addr)?.ok_or(EvmError::DB(
+        let account_info = state.inner.basic(revm_addr)?.ok_or(EvmError::DB(
             "System contract address was not found after deployment".to_string(),
         ))?;
         Ok(account_info)
@@ -266,7 +266,7 @@ impl REVM {
     pub fn get_state_transitions(
         initial_state: &mut EvmState,
     ) -> Vec<ethrex_common::types::AccountUpdate> {
-        let initial_state = &mut initial_state.state;
+        let initial_state = &mut initial_state.inner;
         initial_state.merge_transitions(BundleRetention::PlainState);
         let bundle = initial_state.take_bundle();
 
@@ -346,7 +346,7 @@ pub fn run_without_commit(
         tx_env.gas_price,
         tx_env.max_fee_per_blob_gas,
     );
-    let chain_config = state.state.database.get_chain_config()?;
+    let chain_config = state.inner.database.get_chain_config()?;
     #[allow(unused_mut)]
     let mut evm_builder = Evm::builder()
         .with_block_env(block_env)
@@ -358,7 +358,7 @@ pub fn run_without_commit(
             env.chain_id = chain_config.chain_id;
         });
     let tx_result = {
-        let mut evm = evm_builder.with_db(&mut state.state).build();
+        let mut evm = evm_builder.with_db(&mut state.inner).build();
         evm.transact().map_err(EvmError::from)?
     };
     Ok(tx_result.result.into())
@@ -371,7 +371,7 @@ fn run_evm(
     state: &mut EvmState,
     spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
-    let state = &mut state.state;
+    let state = &mut state.inner;
     let tx_result = {
         let chain_spec = state.database.get_chain_config()?;
         #[allow(unused_mut)]
@@ -587,7 +587,7 @@ pub(crate) fn generic_system_contract_revm(
     contract_address: Address,
     system_address: Address,
 ) -> Result<ExecutionResult, EvmError> {
-    let state = &mut state.state;
+    let state = &mut state.inner;
     let spec_id = spec_id(&state.database.get_chain_config()?, block_header.timestamp);
     let tx_env = TxEnv {
         caller: RevmAddress::from_slice(system_address.as_bytes()),
@@ -626,7 +626,7 @@ pub fn extract_all_requests(
     state: &mut EvmState,
     header: &BlockHeader,
 ) -> Result<Vec<Requests>, EvmError> {
-    let config = state.state.database.get_chain_config()?;
+    let config = state.inner.database.get_chain_config()?;
     let spec_id = spec_id(&config, header.timestamp);
 
     if spec_id < SpecId::PRAGUE {

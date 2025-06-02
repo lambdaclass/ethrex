@@ -12,41 +12,41 @@ use crate::{errors::EvmError, VmDatabase};
 ///
 /// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
 pub struct EvmState {
-    pub state: revm::db::State<DynVmDatabase>,
+    pub inner: revm::db::State<DynVmDatabase>,
 }
 
 // Needed because revm::db::State is not cloneable and we need to
 // restore the previous EVM state after executing a transaction in L2 mode whose resulting state diff doesn't fit in a blob.
 impl Clone for EvmState {
     fn clone(&self) -> Self {
-        let state = revm::db::State::<DynVmDatabase> {
-            cache: self.state.cache.clone(),
-            database: self.state.database.clone(),
-            transition_state: self.state.transition_state.clone(),
-            bundle_state: self.state.bundle_state.clone(),
-            use_preloaded_bundle: self.state.use_preloaded_bundle,
-            block_hashes: self.state.block_hashes.clone(),
+        let inner = revm::db::State::<DynVmDatabase> {
+            cache: self.inner.cache.clone(),
+            database: self.inner.database.clone(),
+            transition_state: self.inner.transition_state.clone(),
+            bundle_state: self.inner.bundle_state.clone(),
+            use_preloaded_bundle: self.inner.use_preloaded_bundle,
+            block_hashes: self.inner.block_hashes.clone(),
         };
 
-        Self { state }
+        Self { inner }
     }
 }
 
 impl EvmState {
     /// Gets the stored chain config
     pub fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        self.state.database.get_chain_config()
+        self.inner.database.get_chain_config()
     }
 }
 
 /// Builds EvmState from a Store
 pub fn evm_state(db: DynVmDatabase) -> EvmState {
-    let state = revm::db::State::builder()
+    let inner = revm::db::State::builder()
         .with_database(db)
         .with_bundle_update()
         .without_state_clear()
         .build();
-    EvmState { state }
+    EvmState { inner }
 }
 
 impl revm::Database for DynVmDatabase {

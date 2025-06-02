@@ -207,7 +207,7 @@ pub fn prepare_revm_for_tx<'state>(
         .with_external_context(
             RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
         );
-    Ok(evm_builder.with_db(&mut initial_state.state).build())
+    Ok(evm_builder.with_db(&mut initial_state.inner).build())
 }
 
 pub fn compare_levm_revm_execution_results(

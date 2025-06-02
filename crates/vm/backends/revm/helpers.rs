@@ -83,7 +83,7 @@ fn create_access_list_inner(
         .with_external_context(&mut access_list_inspector);
     let tx_result = {
         let mut evm = evm_builder
-            .with_db(&mut state.state)
+            .with_db(&mut state.inner)
             .append_handler_register(inspector_handle_register)
             .build();
         evm.transact()?
