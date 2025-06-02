@@ -96,16 +96,22 @@ SIM_PARALLELISM := 16
 # The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
+
+
+HIVE_CLIENT_FILE := ../test_data/network/hive_clients/ethrex.yml
+HIVE_CLIENT_FILE_GIT := ../test_data/network/hive_clients/ethrex_git.yml
+HIVE_CLIENT_FILE_LOCAL := ../test_data/network/hive_clients/ethrex_local.yml
+
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
-	- cd hive && ./hive --client-file ../test_data/hive_clients.yml --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
 	$(MAKE) view-hive
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
-	- cd hive && ./hive --client-file ../test_data/hive_clients.yml --client ethrex --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
 	$(MAKE) view-hive
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	- cd hive && ./hive --sim $(SIMULATION) --client-file ../test_data/hive_clients.yml --client ethrex --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
+	- cd hive && ./hive --sim $(SIMULATION) --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
 	$(MAKE) view-hive
 
 run-hive-local: setup-hive
@@ -116,7 +122,7 @@ run-hive-local: setup-hive
 	cp -R test_data/ hive/clients/ethrex/ethrex/test_data/ && \
 	cp Cargo.toml hive/clients/ethrex/ethrex/ && \
 	cp Makefile hive/clients/ethrex/ethrex/ && \
-	cd hive && ./hive --client-file ../test_data/hive_clients.yml --client ethrex --sim.loglevel 4 --sim.limit "/" --sim.parallelism "16" --docker.output --sim devp2p
+	cd hive && ./hive --client-file $(HIVE_CLIENT_FILE_LOCAL) --client ethrex --sim.loglevel 4 --sim.limit "/" --sim.parallelism "16" --docker.output --sim devp2p
 	$(MAKE) view-hive
 
 clean-hive-logs: ## 🧹 Clean Hive logs
