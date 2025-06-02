@@ -79,10 +79,18 @@ stop-localnet-silent:
 HIVE_BRANCH ?= master
 
 setup-hive: ## 🐝 Set up Hive testing framework
-	git clone --branch $(HIVE_BRANCH) https://github.com/lambdaclass/hive && \
-	cd hive && \
-	git checkout $(HIVE_BRANCH) && \
-	go build .;\
+	if [ -d "hive" ]; then \
+		cd hive && \
+		git fetch origin && \
+		git checkout $(HIVE_BRANCH) && \
+		git pull origin $(HIVE_BRANCH) && \
+		go build .; \
+	else \
+		git clone --branch $(HIVE_BRANCH) https://github.com/lambdaclass/hive && \
+		cd hive && \
+		git checkout $(HIVE_BRANCH) && \
+		go build .; \
+	fi
 
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 4
