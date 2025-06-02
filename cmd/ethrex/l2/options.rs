@@ -392,7 +392,7 @@ pub struct AlignedOptions {
     pub aligned_verifier_interval_ms: u64,
     #[arg(
         long = "beacon-url",
-        default_value = "http://127.0.0.1:58801",
+        default_value = "http://localhost:58801",
         value_name = "BEACON_URL",
         env = "BEACON_URL",
         help = "Beacon url to use.",

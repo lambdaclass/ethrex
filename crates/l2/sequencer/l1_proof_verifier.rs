@@ -5,7 +5,6 @@ use aligned_sdk::{
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::EthClient;
-use reqwest::Url;
 use secp256k1::SecretKey;
 use tracing::{error, info};
 
@@ -41,7 +40,7 @@ pub async fn start_l1_proof_verifier(cfg: SequencerConfig) -> Result<(), Sequenc
 
 struct L1ProofVerifier {
     eth_client: EthClient,
-    beacon_url: Url,
+    beacon_url: String,
     l1_address: Address,
     l1_private_key: SecretKey,
     on_chain_proposer_address: Address,
@@ -58,14 +57,11 @@ impl L1ProofVerifier {
     ) -> Result<Self, SequencerError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
 
-        let beacon_url = Url::parse(&aligned_cfg.beacon_url)
-            .map_err(|e| ProofVerifierError::ParseBeaconUrl(format!("Invalid beacon URL: {e}")))?;
-
         let network = resolve_network(&aligned_cfg.network)?;
 
         Ok(Self {
             eth_client,
-            beacon_url,
+            beacon_url: aligned_cfg.beacon_url.clone(),
             network,
             l1_address: proof_coordinator_cfg.l1_address,
             l1_private_key: proof_coordinator_cfg.l1_private_key,
@@ -137,7 +133,7 @@ impl L1ProofVerifier {
             &verification_data,
             self.network.clone(),
             rpc_url.as_str().into(),
-            self.beacon_url.as_str().into(),
+            self.beacon_url.clone(),
             None,
         )
         .await
