@@ -13,9 +13,11 @@ use ethrex_vm::{DynVmDatabase, Evm, ProverDB, ProverDBError};
 
 pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, ProverDBError> {
     let chain_config = store.get_chain_config()?;
-    let Some(first_block_parent_hash) = blocks.first().map(|e| e.header.parent_hash) else {
+    let Some(first_block) = blocks.first() else {
         return Err(ProverDBError::Custom("Unable to get first block".into()));
     };
+    let first_block_parent_hash = first_block.header.parent_hash;
+
     let Some(last_block) = blocks.last() else {
         return Err(ProverDBError::Custom("Unable to get last block".into()));
     };
@@ -120,6 +122,7 @@ pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, P
         .clone()
         .into_iter()
         .map(|(num, hash)| (num, H256::from(hash.0)))
+        .chain([(first_block.header.number - 1, first_block_parent_hash)])
         .collect();
 
     // get account proofs

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct Cache {
     pub block: Block,
-    pub parent_block_header: BlockHeader,
+    pub block_headers: Vec<BlockHeader>,
     pub db: ProverDB,
 }
 

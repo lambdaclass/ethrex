@@ -5,7 +5,7 @@ use zkvm_interface::io::ProgramInput;
 pub async fn exec(cache: Cache) -> eyre::Result<String> {
     let Cache {
         block,
-        parent_block_header,
+        block_headers,
         db,
     } = cache;
     #[cfg(any(feature = "sp1", feature = "risc0", feature = "pico"))]
@@ -23,7 +23,7 @@ pub async fn exec(cache: Cache) -> eyre::Result<String> {
     {
         let out = ethrex_prover_lib::execution_program(ProgramInput {
             blocks: vec![block],
-            parent_block_header,
+            block_headers,
             db,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
         })
@@ -35,12 +35,12 @@ pub async fn exec(cache: Cache) -> eyre::Result<String> {
 pub async fn prove(cache: Cache) -> eyre::Result<String> {
     let Cache {
         block,
-        parent_block_header,
+        block_headers,
         db,
     } = cache;
     let out = ethrex_prover_lib::prove(ProgramInput {
         blocks: vec![block],
-        parent_block_header,
+        block_headers,
         db,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
     })

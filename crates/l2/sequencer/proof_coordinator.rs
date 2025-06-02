@@ -33,7 +33,7 @@ use super::utils::sleep_random;
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
-    pub parent_block_header: BlockHeader,
+    pub block_headers: Vec<BlockHeader>,
     pub db: ProverDB,
     pub elasticity_multiplier: u64,
 }
@@ -52,6 +52,7 @@ struct ProofCoordinator {
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
+#[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize)]
 pub enum ProofData {
     /// 1.
@@ -408,6 +409,10 @@ impl ProofCoordinator {
                 "Batch number {batch_number} not found in store"
             )));
         };
+        let first_block_number_in_batch = *block_numbers
+            .iter()
+            .min()
+            .ok_or(ProverServerError::InternalError("empty batch".to_string()))?;
 
         let blocks = self.fetch_blocks(block_numbers).await?;
 
@@ -416,26 +421,29 @@ impl ProofCoordinator {
             .await
             .map_err(EvmError::ProverDB)?;
 
-        // Get the block_header of the parent of the first block
-        let parent_hash = blocks
-            .first()
-            .ok_or_else(|| {
-                ProverServerError::Custom("No blocks found for the given batch number".to_string())
-            })?
-            .header
-            .parent_hash;
-
-        let parent_block_header = self
-            .store
-            .get_block_header_by_hash(parent_hash)?
-            .ok_or(ProverServerError::StorageDataIsNone)?;
+        let mut block_headers = Vec::new();
+        let oldest_required_block_number =
+            db.block_hashes
+                .keys()
+                .min()
+                .ok_or(ProverServerError::InternalError(
+                    "no block hashes required (should at least contain parent hash)".to_string(),
+                ))?;
+        // from oldest required to parent:
+        for number in *oldest_required_block_number..first_block_number_in_batch {
+            let header = self
+                .store
+                .get_block_header(number)?
+                .ok_or(ProverServerError::StorageDataIsNone)?;
+            block_headers.push(header);
+        }
 
         debug!("Created prover input for batch {batch_number}");
 
         Ok(ProverInputData {
             db,
             blocks,
-            parent_block_header,
+            block_headers,
             elasticity_multiplier: self.elasticity_multiplier,
         })
     }

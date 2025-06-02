@@ -13,9 +13,9 @@ pub struct ProgramInput {
     /// blocks to execute
     #[serde_as(as = "SerdeJSON")]
     pub blocks: Vec<Block>,
-    /// header of the previous block
+    /// headers of previous blocks
     #[serde_as(as = "SerdeJSON")]
-    pub parent_block_header: BlockHeader,
+    pub block_headers: Vec<BlockHeader>,
     /// database containing only the data necessary to execute
     pub db: ProverDB,
     /// value used to calculate base fee

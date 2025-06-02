@@ -1,7 +1,7 @@
 use crate::cache::{load_cache, write_cache, Cache};
 use crate::rpc::{db::RpcDB, get_block, get_latest_block_number};
 use ethrex_common::types::ChainConfig;
-use eyre::WrapErr;
+use eyre::{ContextCompat, WrapErr};
 
 pub async fn or_latest(maybe_number: Option<usize>, rpc_url: &str) -> eyre::Result<usize> {
     Ok(match maybe_number {
@@ -22,11 +22,6 @@ pub async fn get_blockdata(
         .await
         .wrap_err("failed to fetch block")?;
 
-    let parent_block_header = get_block(&rpc_url, block_number - 1)
-        .await
-        .wrap_err("failed to fetch block")?
-        .header;
-
     println!("populating rpc db cache");
     let rpc_db = RpcDB::with_cache(&rpc_url, chain_config, block_number - 1, &block)
         .await
@@ -36,9 +31,27 @@ pub async fn get_blockdata(
         .to_exec_db(&block)
         .wrap_err("failed to build execution db")?;
 
+    let mut block_headers = Vec::new();
+    let oldest_required_block_number = db
+        .block_hashes
+        .keys()
+        .min()
+        .wrap_err("no block hashes required (should at least contain parent hash)")?;
+    // from oldest required to parent:
+    for number in *oldest_required_block_number..block.header.number {
+        let number: usize = number
+            .try_into()
+            .wrap_err("failed to convert block number to usize from u64")?;
+        let header = get_block(&rpc_url, number)
+            .await
+            .wrap_err("failed to fetch block")?
+            .header;
+        block_headers.push(header);
+    }
+
     let cache = Cache {
         block,
-        parent_block_header,
+        block_headers,
         db,
     };
     write_cache(&cache).expect("failed to write cache");

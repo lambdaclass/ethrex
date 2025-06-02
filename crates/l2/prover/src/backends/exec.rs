@@ -44,10 +44,24 @@ pub fn to_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::err
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
     let ProgramInput {
         blocks,
-        parent_block_header,
+        block_headers,
         mut db,
         elasticity_multiplier,
     } = input;
+    // Enforce there's at least one block header, so windows() call doesn't panic.
+    let parent_block_header = block_headers
+        .first()
+        .ok_or("no block headers found".to_string())?;
+
+    // Validate block hashes. The batch's parent hash is checked in the first validate_block() call.
+    for window in block_headers.windows(2) {
+        let (Some(header), Some(next_header)) = (&window.first(), &window.get(1)) else {
+            return Err("block header window len is < 2".to_string())?;
+        };
+        if next_header.parent_hash != header.hash() {
+            return Err(format!("invalid block hash for block {}", header.number).into());
+        }
+    }
 
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db.get_tries()?;
@@ -63,7 +77,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
 
     let last_block = blocks.last().ok_or("empty batch".to_string())?;
     let last_block_state_root = last_block.header.state_root;
-    let mut parent_header = parent_block_header;
+    let mut parent_block_header = parent_block_header.clone();
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
 
     #[cfg(feature = "l2")]
@@ -75,7 +89,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
         // Validate the block
         validate_block(
             &block,
-            &parent_header,
+            &parent_block_header,
             &db.chain_config,
             elasticity_multiplier,
         )?;
@@ -117,7 +131,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
         }
 
         validate_gas_used(&receipts, &block.header)?;
-        parent_header = block.header;
+        parent_block_header = block.header;
     }
 
     // Calculate L2 withdrawals root
