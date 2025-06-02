@@ -1,6 +1,6 @@
 use crate::{
     cli::Options,
-    networks::{self, Network, PublicNetworkType},
+    networks::{self, Network, PublicNetwork},
     utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
 };
 use ethrex_blockchain::Blockchain;
@@ -245,19 +245,19 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
     match network {
-        Network::PublicNetwork(PublicNetworkType::Holesky) => {
+        Network::PublicNetwork(PublicNetwork::Holesky) => {
             info!("Adding holesky preset bootnodes");
             bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
         }
-        Network::PublicNetwork(PublicNetworkType::Hoodi) => {
+        Network::PublicNetwork(PublicNetwork::Hoodi) => {
             info!("Addig hoodi preset bootnodes");
             bootnodes.extend(networks::HOODI_BOOTNODES.clone());
         }
-        Network::PublicNetwork(PublicNetworkType::Mainnet) => {
+        Network::PublicNetwork(PublicNetwork::Mainnet) => {
             info!("Adding mainnet preset bootnodes");
             bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
         }
-        Network::PublicNetwork(PublicNetworkType::Sepolia) => {
+        Network::PublicNetwork(PublicNetwork::Sepolia) => {
             info!("Adding sepolia preset bootnodes");
             bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
         }

@@ -352,13 +352,25 @@ pub async fn import_blocks(path: &str, data_dir: &str, genesis_path: &Path, evm:
             "Adding block {} with hash {:#x}.",
             block.header.number, hash
         );
-
-        if let Err(error) = blockchain.try_add_block(block).await {
-            warn!(
-                "Failed to add block {} with hash {:#x}: {}.",
-                block.header.number, hash, error
-            );
-            return;
+        // Check if the block is already in the blockchain, if it is do nothing, if not add it
+        match store.get_block_number(hash).await {
+            Ok(Some(_)) => {
+                info!("Block {} is already in the blockchain", block.hash());
+                continue;
+            }
+            Ok(None) => {
+                if let Err(error) = blockchain.add_block(block).await {
+                    warn!(
+                        "Failed to add block {} with hash {:#x}: {}.",
+                        block.header.number, hash, error
+                    );
+                    return;
+                }
+            }
+            Err(_) => {
+                warn!("Couldn't check if block is already in the blockchain");
+                return;
+            }
         }
     }
 

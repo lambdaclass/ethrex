@@ -35,11 +35,11 @@ lazy_static! {
 }
 #[derive(Debug, Clone)]
 pub enum Network {
-    PublicNetwork(PublicNetworkType),
+    PublicNetwork(PublicNetwork),
     GenesisPath(PathBuf),
 }
 #[derive(Debug, Clone)]
-pub enum PublicNetworkType {
+pub enum PublicNetwork {
     Hoodi,
     Holesky,
     Sepolia,
@@ -49,10 +49,10 @@ pub enum PublicNetworkType {
 impl From<&str> for Network {
     fn from(value: &str) -> Self {
         match value {
-            "hoodi" => Network::PublicNetwork(PublicNetworkType::Hoodi),
-            "holesky" => Network::PublicNetwork(PublicNetworkType::Holesky),
-            "mainnet" => Network::PublicNetwork(PublicNetworkType::Mainnet),
-            "sepolia" => Network::PublicNetwork(PublicNetworkType::Sepolia),
+            "hoodi" => Network::PublicNetwork(PublicNetwork::Hoodi),
+            "holesky" => Network::PublicNetwork(PublicNetwork::Holesky),
+            "mainnet" => Network::PublicNetwork(PublicNetwork::Mainnet),
+            "sepolia" => Network::PublicNetwork(PublicNetwork::Sepolia),
             s => Network::GenesisPath(PathBuf::from(s)),
         }
     }
@@ -67,10 +67,10 @@ impl From<PathBuf> for Network {
 impl Network {
     pub fn get_path(&self) -> &Path {
         match self {
-            Network::PublicNetwork(PublicNetworkType::Holesky) => Path::new(HOLESKY_GENESIS_PATH),
-            Network::PublicNetwork(PublicNetworkType::Hoodi) => Path::new(HOODI_GENESIS_PATH),
-            Network::PublicNetwork(PublicNetworkType::Mainnet) => Path::new(MAINNET_GENESIS_PATH),
-            Network::PublicNetwork(PublicNetworkType::Sepolia) => Path::new(SEPOLIA_GENESIS_PATH),
+            Network::PublicNetwork(PublicNetwork::Holesky) => Path::new(HOLESKY_GENESIS_PATH),
+            Network::PublicNetwork(PublicNetwork::Hoodi) => Path::new(HOODI_GENESIS_PATH),
+            Network::PublicNetwork(PublicNetwork::Mainnet) => Path::new(MAINNET_GENESIS_PATH),
+            Network::PublicNetwork(PublicNetwork::Sepolia) => Path::new(SEPOLIA_GENESIS_PATH),
             Network::GenesisPath(s) => s,
         }
     }
