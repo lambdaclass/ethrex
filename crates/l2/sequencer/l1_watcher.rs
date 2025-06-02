@@ -112,17 +112,17 @@ impl GenServer for L1Watcher {
             Self::InMsg::Watch => {
                 let check_interval = random_duration(state.check_interval);
                 send_after(check_interval, tx.clone(), Self::InMsg::Watch);
-                match get_logs(state).await {
-                    Ok(logs) => {
-                        // We may not have a deposit nor a withdrawal, that means no events -> no logs.
-                        if !logs.is_empty() {
-                            if let Err(err) = process_logs(state, logs).await {
-                                error!("L1 Watcher Error: {}", err)
-                            };
-                        };
-                    }
-                    Err(err) => error!("L1 Watcher Error: {}", err),
-                };
+                if let Ok(logs) = get_logs(state)
+                    .await
+                    .inspect_err(|err| error!("L1 Watcher Error: {err}"))
+                {
+                    // We may not have a deposit nor a withdrawal, that means no events -> no logs.
+                    if !logs.is_empty() {
+                        let _ = process_logs(state, logs)
+                            .await
+                            .inspect_err(|err| error!("L1 Watcher Error: {}", err));
+                    };
+                }
 
                 CastResponse::NoReply
             }
@@ -175,7 +175,8 @@ pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1Watch
     // Matches the event DepositInitiated from ICommonBridge.sol
     let topic =
         keccak(b"DepositInitiated(uint256,address,uint256,address,address,uint256,bytes,bytes32)");
-    let logs = match state
+
+    let logs = state
         .eth_client
         .get_logs(
             state.last_block_fetched + 1,
@@ -184,15 +185,12 @@ pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1Watch
             topic,
         )
         .await
-    {
-        Ok(logs) => logs,
-        Err(error) => {
+        .inspect_err(|error| {
             // We may get an error if the RPC doesn't has the logs for the requested
             // block interval. For example, Light Nodes.
             warn!("Error when getting logs from L1: {}", error);
-            vec![]
-        }
-    };
+        })
+        .unwrap_or_default();
 
     debug!("Logs: {:#?}", logs);
 
@@ -264,21 +262,18 @@ pub async fn process_logs(
             )
             .await?;
 
-        match state
+        let Ok(hash) = state
             .blockchain
             .add_transaction_to_pool(Transaction::PrivilegedL2Transaction(mint_transaction))
             .await
-        {
-            Ok(hash) => {
-                info!("Mint transaction added to mempool {hash:#x}",);
-                deposit_txs.push(hash);
-            }
-            Err(e) => {
-                warn!("Failed to add mint transaction to the mempool: {e:#?}");
-                // TODO: Figure out if we want to continue or not
-                continue;
-            }
-        }
+            .inspect_err(|e| warn!("Failed to add mint transaction to the mempool: {e:#?}"))
+        else {
+            // TODO: Figure out if we want to continue or not
+            continue;
+        };
+
+        info!("Mint transaction added to mempool {hash:#x}",);
+        deposit_txs.push(hash);
     }
 
     Ok(deposit_txs)
