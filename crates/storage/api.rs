@@ -403,14 +403,4 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError>;
-
-    /// Checks if a given block belongs to the current canonical chain. Returns false if the block is not known
-    fn is_canonical_sync(&self, block_hash: BlockHash) -> Result<bool, StoreError> {
-        let Some(block_number) = self.get_block_number_sync(block_hash)? else {
-            return Ok(false);
-        };
-        Ok(self
-            .get_canonical_block_hash_sync(block_number)?
-            .is_some_and(|h| h == block_hash))
-    }
 }

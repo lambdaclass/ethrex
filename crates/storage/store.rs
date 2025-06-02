@@ -1117,7 +1117,13 @@ impl Store {
 
     /// Checks if a given block belongs to the current canonical chain. Returns false if the block is not known
     pub fn is_canonical_sync(&self, block_hash: BlockHash) -> Result<bool, StoreError> {
-        self.engine.is_canonical_sync(block_hash)
+        let Some(block_number) = self.engine.get_block_number_sync(block_hash)? else {
+            return Ok(false);
+        };
+        Ok(self
+            .engine
+            .get_canonical_block_hash_sync(block_number)?
+            .is_some_and(|h| h == block_hash))
     }
 }
 
