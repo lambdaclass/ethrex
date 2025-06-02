@@ -145,10 +145,6 @@ impl<'a> VM<'a> {
     }
 
     pub fn handle_opcode_result(&mut self) -> Result<ExecutionReport, VMError> {
-        let backup = self
-            .substate_backups
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         // On successful create check output validity
         if (self.is_create() && self.current_call_frame()?.depth == 0)
             || self.current_call_frame()?.create_op_called
@@ -196,12 +192,18 @@ impl<'a> VM<'a> {
                 Err(error) => {
                     // Revert if error
                     self.current_call_frame_mut()?.gas_used = self.current_call_frame()?.gas_limit;
-                    self.restore_state(backup)?;
+                    let gas_refunded = self
+                        .substate_backups
+                        .last()
+                        .ok_or(VMError::Internal(
+                            InternalError::CouldNotAccessLastCallframe,
+                        ))?
+                        .refunded_gas;
 
                     return Ok(ExecutionReport {
                         result: TxResult::Revert(error),
                         gas_used: self.current_call_frame()?.gas_used,
-                        gas_refunded: self.substate.refunded_gas,
+                        gas_refunded,
                         output: std::mem::take(&mut self.current_call_frame_mut()?.output),
                         logs: vec![],
                     });
@@ -219,10 +221,6 @@ impl<'a> VM<'a> {
     }
 
     pub fn handle_opcode_error(&mut self, error: VMError) -> Result<ExecutionReport, VMError> {
-        let backup = self
-            .substate_backups
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         if error.should_propagate() {
             return Err(error);
         }
@@ -237,16 +235,20 @@ impl<'a> VM<'a> {
                 self.current_call_frame()?.gas_used.saturating_add(left_gas);
         }
 
-        let refunded = backup.refunded_gas;
+        let gas_refunded = self
+            .substate_backups
+            .last()
+            .ok_or(VMError::Internal(
+                InternalError::CouldNotAccessLastCallframe,
+            ))?
+            .refunded_gas;
         let output = std::mem::take(&mut self.current_call_frame_mut()?.output); // Bytes::new() if error is not RevertOpcode
         let gas_used = self.current_call_frame()?.gas_used;
-
-        self.restore_state(backup)?;
 
         Ok(ExecutionReport {
             result: TxResult::Revert(error),
             gas_used,
-            gas_refunded: refunded,
+            gas_refunded,
             output,
             logs: vec![],
         })
