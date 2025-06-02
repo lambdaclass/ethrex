@@ -124,13 +124,21 @@ impl TracerCallFrame {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 /// Geth's callTracer (https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers)
 pub struct CallTracer {
     pub callframes: Vec<TracerCallFrame>,
+    pub active: bool,
 }
 
 impl CallTracer {
+    pub fn new(active: bool) -> Self {
+        CallTracer {
+            callframes: vec![],
+            active,
+        }
+    }
+
     /// Starts trace call.
     pub fn enter(
         &mut self,
@@ -141,6 +149,9 @@ impl CallTracer {
         gas: u64,
         input: Bytes,
     ) {
+        if !self.active {
+            return;
+        }
         let callframe = TracerCallFrame::new(call_type, from, to, value, gas, input);
         self.callframes.push(callframe);
     }
@@ -171,6 +182,9 @@ impl CallTracer {
 
     /// Exits trace call using the ExecutionReport.
     pub fn exit_report(&mut self, report: &ExecutionReport) -> Result<(), InternalError> {
+        if !self.active {
+            return Ok(());
+        }
         let (gas_used, output) = (report.gas_used, report.output.clone());
 
         let (error, revert_reason) = if let TxResult::Revert(ref err) = report.result {
@@ -189,6 +203,9 @@ impl CallTracer {
         gas_used: u64,
         error: Option<String>,
     ) -> Result<(), InternalError> {
+        if !self.active {
+            return Ok(());
+        }
         self.exit(gas_used, Bytes::new(), error, None)
     }
 }
@@ -207,7 +224,12 @@ pub struct VM<'a> {
 }
 
 impl<'a> VM<'a> {
-    pub fn new(env: Environment, db: &'a mut GeneralizedDatabase, tx: &Transaction) -> Self {
+    pub fn new(
+        env: Environment,
+        db: &'a mut GeneralizedDatabase,
+        tx: &Transaction,
+        enable_tracing: bool,
+    ) -> Self {
         let hooks = Self::get_hooks(tx);
 
         Self {
@@ -219,7 +241,7 @@ impl<'a> VM<'a> {
             hooks,
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
-            tracer: CallTracer::default(),
+            tracer: CallTracer::new(enable_tracing),
         }
     }
 

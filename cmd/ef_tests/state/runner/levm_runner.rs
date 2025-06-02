@@ -191,6 +191,7 @@ pub fn prepare_vm_for_tx<'a>(
         },
         db,
         &tx,
+        false,
     ))
 }
 

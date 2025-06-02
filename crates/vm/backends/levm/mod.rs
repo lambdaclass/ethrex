@@ -144,7 +144,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx);
+        let mut vm = VM::new(env, db, tx, false);
 
         vm.execute().map_err(VMError::into)
     }
@@ -159,7 +159,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<(ExecutionReport, CallFrameBackup), EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx);
+        let mut vm = VM::new(env, db, tx, false);
 
         let report_result = vm.execute().map_err(EvmError::from)?;
 
@@ -464,7 +464,7 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
-    let mut vm = VM::new(env, db, tx);
+    let mut vm = VM::new(env, db, tx, false);
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -627,5 +627,5 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    Ok(VM::new(env, db, &tx))
+    Ok(VM::new(env, db, &tx, false))
 }

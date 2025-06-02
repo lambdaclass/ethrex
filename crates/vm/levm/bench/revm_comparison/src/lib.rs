@@ -193,5 +193,5 @@ fn new_vm_with_ops_addr_bal_db(
         data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx)
+    VM::new(env, db, &tx, false)
 }
