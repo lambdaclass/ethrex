@@ -132,6 +132,10 @@ pub struct CallTracer {
 }
 
 impl CallTracer {
+    /// If active is set to false it won't trace anything.
+    /// This is to keep LEVM's code clean, like `self.tracer.enter(...)``
+    /// instead of something more complex or uglier than that.
+    /// (For now that we only implement one tracer is the most convenient solution)
     pub fn new(active: bool) -> Self {
         CallTracer {
             callframes: vec![],
