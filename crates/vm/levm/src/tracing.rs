@@ -53,6 +53,7 @@ pub struct TracerLog {
     pub topics: Vec<H256>,
     #[serde(serialize_with = "to_hex")]
     pub data: Bytes,
+    /// Idea taken from geth, see https://github.com/ethereum/go-ethereum/pull/28389
     #[serde(serialize_with = "to_hex")]
     pub position: usize,
 }
@@ -69,7 +70,7 @@ impl LevmCallTracer {
 
     /// This is to keep LEVM's code clean, like `self.tracer.enter(...)`,
     /// instead of something more complex or uglier when we don't want to trace.
-    /// (For now that we only implement one tracer is the most convenient solution.
+    /// (For now that we only implement one tracer I think is the most convenient solution.
     /// In the future a NoOpTracer may be more convenient)
     pub fn disabled() -> Self {
         LevmCallTracer {
