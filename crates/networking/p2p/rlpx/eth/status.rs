@@ -58,8 +58,8 @@ impl StatusMessage {
             .get_block_header(lastest_block)?
             .ok_or(RLPxError::NotFound(format!("Block {lastest_block}")))?;
 
-        let genesis = genesis_header.compute_block_hash();
-        let lastest_block_hash = block_header.compute_block_hash();
+        let genesis = genesis_header.hash();
+        let lastest_block_hash = block_header.hash();
         let fork_id = ForkId::new(
             chain_config,
             genesis_header,
