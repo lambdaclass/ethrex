@@ -1233,7 +1233,12 @@ mod tests {
         let add_initial_state_handle =
             tokio::task::spawn(async move { store.add_initial_state(genesis_hive).await });
         let panic = add_initial_state_handle.await.unwrap_err().into_panic();
-        assert_eq!(panic.downcast_ref::<&str>().unwrap(), &GENESIS_DIFF_PANIC_MESSAGE);
+        assert_eq!(
+            panic
+                .downcast_ref::<String>()
+                .expect("Failed to downcast panic message"),
+            &GENESIS_DIFF_PANIC_MESSAGE
+        );
     }
 
     fn remove_test_dbs(path: &str) {
