@@ -147,6 +147,12 @@ impl Trie {
         }
     }
 
+    pub fn hash_no_commit_with_batch(&mut self) -> Result<Vec<(NodeHash, Vec<u8>)>, TrieError> {
+        let ret = self.commit_vec_aka_state_diff()?;
+        let _ret_hash = self.hash_no_commit();
+        Ok(ret)
+    }
+
     /// Compute the hash of the root node and flush any changes into the database.
     ///
     /// This method will also compute the hash of all internal nodes indirectly. It will not clear
@@ -155,10 +161,19 @@ impl Trie {
         if self.root.is_valid() {
             let mut acc = Vec::new();
             self.root.commit(&mut acc);
-            self.db.put_batch(acc)?;
+            self.db.put_batch(acc)?; // we'll try to avoid calling this for every commit
         }
 
         Ok(())
+    }
+
+    pub fn commit_vec_aka_state_diff(&mut self) -> Result<Vec<(NodeHash, Vec<u8>)>, TrieError> {
+        let mut acc = Vec::new();
+        if self.root.is_valid() {
+            self.root.commit(&mut acc);
+        }
+
+        Ok(acc)
     }
 
     /// Obtain a merkle proof for the given path.
