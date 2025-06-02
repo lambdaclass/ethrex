@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748892768180,
+  "lastUpdate": 1748894315960,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10255,6 +10255,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183365010848,
             "range": "± 1024775841",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f89218d74024abfcffdc7c7a43b3e2bf4ebd610a",
+          "message": "fix(l2): change watcher block delay to 10 blocks instead of 128 (#2996)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-02T19:11:20Z",
+          "tree_id": "3cbd6dd2a2f211e8f242d8823ecb45d3b7cbc377",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f89218d74024abfcffdc7c7a43b3e2bf4ebd610a"
+        },
+        "date": 1748894310965,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182021326121,
+            "range": "± 562179185",
             "unit": "ns/iter"
           }
         ]
