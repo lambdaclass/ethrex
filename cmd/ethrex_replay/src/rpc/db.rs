@@ -566,10 +566,8 @@ pub fn to_exec_db_from_witness(
 
     let root = state_trie.hash_no_commit();
 
-    dbg!(hex::encode(root));
-
     let mut storage_tries = HashMap::new();
-    for (addr, nodes) in witness.keys {
+    for (addr, nodes) in witness.storage_tries {
         let hashed_address = hash_address(&addr);
         let Some(encoded_state) = state_trie
             .get(&hashed_address)
