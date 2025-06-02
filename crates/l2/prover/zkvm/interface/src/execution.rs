@@ -59,7 +59,6 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             &mut db,
             elasticity_multiplier,
         );
-        #[expect(unreachable_code)]
         unreachable!();
     } else {
         stateless_validation_l1(
