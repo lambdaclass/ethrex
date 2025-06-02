@@ -86,11 +86,10 @@ impl SubcommandExecute {
                 let cache = get_blockdata(&rpc_url, chain_config, block).await?;
                 let body = async {
                     let gas_used = cache.blocks[0].header.gas_used as f64;
-                    let res = exec(cache).await?;
-                    Ok((gas_used, res))
+                    exec(cache).await?;
+                    Ok((gas_used, ()))
                 };
-                let res = run_and_measure(bench, body).await?;
-                println!("{res}");
+                run_and_measure(bench, body).await?;
             }
             SubcommandExecute::BlockRange {
                 start,
@@ -108,11 +107,10 @@ impl SubcommandExecute {
                 let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
                 let body = async {
                     let gas_used = cache.blocks.iter().map(|b| b.header.gas_used as f64).sum();
-                    let res = exec(cache).await?;
-                    Ok((gas_used, res))
+                    exec(cache).await?;
+                    Ok((gas_used, ()))
                 };
-                let res = run_and_measure(bench, body).await?;
-                println!("{res}");
+                run_and_measure(bench, body).await?;
             }
             SubcommandExecute::Transaction {
                 tx,

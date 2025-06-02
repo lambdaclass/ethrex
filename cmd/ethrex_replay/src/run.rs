@@ -6,7 +6,7 @@ use eyre::Ok;
 use std::sync::Arc;
 use zkvm_interface::io::ProgramInput;
 
-pub async fn exec(cache: Cache) -> eyre::Result<String> {
+pub async fn exec(cache: Cache) -> eyre::Result<()> {
     let Cache {
         blocks,
         parent_block_header,
@@ -18,17 +18,8 @@ pub async fn exec(cache: Cache) -> eyre::Result<String> {
         db,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
     };
-    #[cfg(any(feature = "sp1", feature = "risc0", feature = "pico"))]
-    {
-        ethrex_prover_lib::execute(input).map_err(|e| eyre::Error::msg(e.to_string()))?;
-        Ok("".to_string())
-    }
-    #[cfg(not(any(feature = "sp1", feature = "risc0", feature = "pico")))]
-    {
-        let out = ethrex_prover_lib::execution_program(input)
-            .map_err(|e| eyre::Error::msg(e.to_string()))?;
-        Ok(serde_json::to_string(&out)?)
-    }
+    ethrex_prover_lib::execute(input).map_err(|e| eyre::Error::msg(e.to_string()))?;
+    Ok(())
 }
 
 pub async fn prove(cache: Cache) -> eyre::Result<String> {
