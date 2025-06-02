@@ -117,7 +117,7 @@ run-hive-local: setup-hive
 	- mkdir hive/clients/ethrex/ethrex && \ 
 	cp -R cmd/ hive/clients/ethrex/ethrex/cmd/ && \
 	cp -R crates/ hive/clients/ethrex/ethrex/crates/ && \
-	cp -R tools/ hive/clients/ethrex/ethrex/tools/ && \
+	cp -R tooling/ hive/clients/ethrex/ethrex/tooling/ && \
 	cp -R test_data/ hive/clients/ethrex/ethrex/test_data/ && \
 	cp Cargo.toml hive/clients/ethrex/ethrex/ && \
 	cp Makefile hive/clients/ethrex/ethrex/ && \
