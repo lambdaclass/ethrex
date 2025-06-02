@@ -51,12 +51,15 @@ pub async fn prove(cache: Cache) -> eyre::Result<String> {
 }
 
 pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<AccountUpdate>)> {
-    let block = cache.blocks[0].clone();
+    let block = cache
+        .blocks
+        .first()
+        .ok_or(eyre::Error::msg("missing block data"))?;
     let mut remaining_gas = block.header.gas_limit;
     let mut store = {
         let store = Arc::new(cache.db);
         let mut db = GeneralizedDatabase::new(store.clone(), CacheDB::new());
-        LEVM::prepare_block(&block, &mut db)?;
+        LEVM::prepare_block(block, &mut db)?;
         drop(db);
         // TODO: refactor GeneralizedDatabase and Database to avoid this
         Arc::into_inner(store).ok_or(eyre::Error::msg("couldn't get store out of Arc<>"))?

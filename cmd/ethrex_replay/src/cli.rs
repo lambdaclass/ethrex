@@ -36,7 +36,7 @@ enum SubcommandExecute {
         #[arg(long, required = false)]
         bench: bool,
     },
-    #[command(name = "block-range", about = "Executes a range of blocks")]
+    #[command(about = "Executes a range of blocks")]
     BlockRange {
         #[arg(help = "Starting block. (Inclusive)")]
         start: usize,
@@ -55,8 +55,8 @@ enum SubcommandExecute {
         #[arg(long, required = false)]
         bench: bool,
     },
-    #[command(about = "Execute and return transaction info.")]
-    Tx {
+    #[command(about = "Execute and return transaction info.", visible_alias = "tx")]
+    Transaction {
         #[arg(help = "ID of the transaction")]
         tx: String,
         #[arg(long, env = "RPC_URL", required = true)]
@@ -90,7 +90,7 @@ impl SubcommandExecute {
                     Ok((gas_used, res))
                 };
                 let res = run_and_measure(bench, body).await?;
-                println!("{}", res);
+                println!("{res}");
             }
             SubcommandExecute::BlockRange {
                 start,
@@ -112,9 +112,9 @@ impl SubcommandExecute {
                     Ok((gas_used, res))
                 };
                 let res = run_and_measure(bench, body).await?;
-                println!("{}", res);
+                println!("{res}");
             }
-            SubcommandExecute::Tx {
+            SubcommandExecute::Transaction {
                 tx,
                 rpc_url,
                 network,
@@ -152,7 +152,7 @@ enum SubcommandProve {
         #[arg(long, required = false)]
         bench: bool,
     },
-    #[command(name = "block-range", about = "Proves a range of blocks")]
+    #[command(about = "Proves a range of blocks")]
     BlockRange {
         #[arg(help = "Starting block. (Inclusive)")]
         start: usize,
@@ -165,7 +165,7 @@ enum SubcommandProve {
             default_value = "mainnet",
             env = "NETWORK",
             required = false,
-            help = "Name or ChainID of the network to use"
+            long_help = "Name or ChainID of the network to use. The networks currently supported include holesky, sepolia, hoodi and mainnet."
         )]
         network: String,
         #[arg(long, required = false)]
@@ -191,7 +191,7 @@ impl SubcommandProve {
                     Ok((gas_used, res))
                 };
                 let res = run_and_measure(bench, body).await?;
-                println!("{}", res);
+                println!("{res}");
             }
             SubcommandProve::BlockRange {
                 start,
@@ -213,7 +213,7 @@ impl SubcommandProve {
                     Ok((gas_used, res))
                 };
                 let res = run_and_measure(bench, body).await?;
-                println!("{}", res);
+                println!("{res}");
             }
         }
         Ok(())
@@ -253,7 +253,7 @@ fn print_transition(update: AccountUpdate) {
         println!("  Updated AccountInfo:");
         println!("    New balance: {}", info.balance);
         println!("    New nonce: {}", info.nonce);
-        println!("    New codehash: 0x{:x}", info.code_hash);
+        println!("    New codehash: {:#x}", info.code_hash);
         if let Some(code) = update.code {
             println!("    New code: {}", hex::encode(code));
         }
@@ -262,7 +262,7 @@ fn print_transition(update: AccountUpdate) {
         println!("  Updated Storage:");
     }
     for (key, value) in update.added_storage {
-        println!("    0x{:x} = 0x{:x}", key, value);
+        println!("    {:#x} = {:#x}", key, value);
     }
 }
 
@@ -278,9 +278,9 @@ fn print_receipt(receipt: Receipt) {
         println!("  Logs: ");
     }
     for log in receipt.logs {
-        let formatted_topics = log.topics.iter().map(|v| format!("0x{v:x}"));
+        let formatted_topics = log.topics.iter().map(|v| format!("{v:#x}"));
         println!(
-            "    - 0x{:x} ({}) => 0x{:x}",
+            "    - {:#x} ({}) => {:#x}",
             log.address,
             formatted_topics.collect::<Vec<String>>().join(", "),
             log.data
