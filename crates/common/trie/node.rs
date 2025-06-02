@@ -37,7 +37,14 @@ impl NodeRef {
 
     pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
         match *self {
-            NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
+            NodeRef::Node(ref node, _) => {
+                let x = Some(node.as_ref().clone());
+                if let Some(_x) = x.as_ref() {
+                    // TODO investigate this
+                    // dbg!(hex::encode(x.encode_raw()));
+                }
+                Ok(x)
+            }
             NodeRef::Hash(NodeHash::Inline((data, len))) => {
                 Ok(Some(Node::decode_raw(&data[..len as usize])?))
             }

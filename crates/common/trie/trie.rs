@@ -50,6 +50,12 @@ pub struct Trie {
     root: NodeRef,
 }
 
+impl Default for Trie {
+    fn default() -> Self {
+        Self::new_temp()
+    }
+}
+
 impl Trie {
     /// Creates a new Trie from a clean DB
     pub fn new(db: Box<dyn TrieDB>) -> Self {
@@ -312,6 +318,12 @@ impl Trie {
             fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
                 Ok(())
             }
+
+            fn record_witness(&mut self) {}
+
+            fn witness(&self) -> HashSet<Vec<u8>> {
+                HashSet::new()
+            }
         }
 
         Trie::new(Box::new(NullTrieDB))
@@ -384,7 +396,10 @@ impl Trie {
         }
     }
 
-    #[cfg(test)]
+    pub fn record_witness(&mut self) {
+        self.db.record_witness();
+    }
+
     /// Creates a new Trie based on a temporary InMemory DB
     fn new_temp() -> Self {
         use std::collections::HashMap;

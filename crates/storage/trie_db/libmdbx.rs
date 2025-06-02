@@ -1,10 +1,17 @@
-use ethrex_trie::{error::TrieError, NodeHash};
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_trie::{error::TrieError, Node, NodeHash};
 use libmdbx::orm::{Database, Table};
-use std::{marker::PhantomData, sync::Arc};
+use std::{
+    collections::HashSet,
+    marker::PhantomData,
+    sync::{Arc, Mutex},
+};
 /// Libmdbx implementation for the TrieDB trait, with get and put operations.
 pub struct LibmdbxTrieDB<T: Table> {
     db: Arc<Database>,
     phantom: PhantomData<T>,
+    record_witness: bool,
+    witness: Arc<Mutex<HashSet<Vec<u8>>>>,
 }
 
 use ethrex_trie::TrieDB;
@@ -17,6 +24,8 @@ where
         Self {
             db,
             phantom: PhantomData,
+            record_witness: false,
+            witness: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 }
@@ -25,9 +34,28 @@ impl<T> TrieDB for LibmdbxTrieDB<T>
 where
     T: Table<Key = NodeHash, Value = Vec<u8>>,
 {
+    fn record_witness(&mut self) {
+        self.record_witness = true;
+    }
+
+    fn witness(&self) -> HashSet<Vec<u8>> {
+        let lock = self.witness.lock().unwrap();
+        lock.clone()
+    }
+
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        txn.get::<T>(key).map_err(TrieError::DbError)
+        let value = txn.get::<T>(key).map_err(TrieError::DbError)?;
+        if !self.record_witness {
+            return Ok(value);
+        }
+        if let Some(value) = value.as_ref() {
+            if let Ok(decoded) = Node::decode(value) {
+                let mut lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
+                lock.insert(decoded.encode_raw());
+            }
+        }
+        Ok(value)
     }
 
     fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
