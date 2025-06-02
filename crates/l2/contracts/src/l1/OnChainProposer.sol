@@ -197,6 +197,7 @@ contract OnChainProposer is
             genesisStateRoot,
             bytes32(0),
             bytes32(0),
+            bytes32(0),
             bytes32(0)
         );
 

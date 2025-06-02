@@ -178,8 +178,14 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
     let first_block_to_commit = last_committed_block_number + 1;
 
     // Try to prepare batch
-    let (blobs_bundle, new_state_root, withdrawal_hashes, deposit_logs_hash, last_block_of_batch) =
-        prepare_batch_from_block(state, last_committed_block_number).await?;
+    let (
+        blobs_bundle,
+        new_state_root,
+        withdrawal_hashes,
+        deposit_logs_hash,
+        last_block_of_batch,
+        last_added_block_hash,
+    ) = prepare_batch_from_block(state, last_committed_block_number).await?;
 
     if last_committed_block_number == last_block_of_batch {
         debug!("No new blocks to commit, skipping");
@@ -197,6 +203,7 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                 withdrawal_logs_merkle_root,
                 deposit_logs_hash,
                 blobs_bundle,
+                last_added_block_hash,
             )
             .await
         {
@@ -230,7 +237,7 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
 async fn prepare_batch_from_block(
     state: &mut CommitterState,
     mut last_added_block_number: BlockNumber,
-) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
+) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber, H256), CommitterError> {
     let first_block_of_batch = last_added_block_number + 1;
     let mut blobs_bundle = BlobsBundle::default();
 
@@ -240,6 +247,7 @@ async fn prepare_batch_from_block(
     let mut withdrawal_hashes = vec![];
     let mut deposit_logs_hashes = vec![];
     let mut new_state_root = H256::default();
+    let mut last_added_block_hash = H256::default();
 
     #[cfg(feature = "metrics")]
     let mut tx_count = 0_u64;
@@ -323,7 +331,7 @@ async fn prepare_batch_from_block(
             // Prepare current state diff.
             let state_diff = prepare_state_diff(
                 first_block_of_batch,
-                block_to_commit_header,
+                block_to_commit_header.clone(),
                 state.store.clone(),
                 &acc_withdrawals,
                 &acc_deposits,
@@ -362,6 +370,7 @@ async fn prepare_batch_from_block(
                     .hash_no_commit();
 
                 last_added_block_number += 1;
+                last_added_block_hash = block_to_commit_header.hash();
             }
             Err(_) => {
                 warn!("Batch size limit reached. Any remaining blocks will be processed in the next batch.");
@@ -395,6 +404,7 @@ async fn prepare_batch_from_block(
         withdrawal_hashes,
         deposit_logs_hash,
         last_added_block_number,
+        last_added_block_hash,
     ))
 }
 
@@ -541,6 +551,7 @@ async fn send_commitment(
     withdrawal_logs_merkle_root: H256,
     deposit_logs_hash: H256,
     blobs_bundle: BlobsBundle,
+    last_block_hash: H256,
 ) -> Result<H256, CommitterError> {
     let state_diff_kzg_versioned_hash = if !state.validium {
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
@@ -559,6 +570,7 @@ async fn send_commitment(
         Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
         Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
         Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
+        Value::FixedBytes(last_block_hash.0.to_vec().into()),
     ];
 
     let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;
