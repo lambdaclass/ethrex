@@ -564,8 +564,6 @@ pub fn to_exec_db_from_witness(
     let state_trie =
         Trie::from_nodes(initial_node.as_ref(), &witness.state).expect("failed to create trie");
 
-    let root = state_trie.hash_no_commit();
-
     let mut storage_tries = HashMap::new();
     for (addr, nodes) in witness.storage_tries {
         let hashed_address = hash_address(&addr);
@@ -573,7 +571,8 @@ pub fn to_exec_db_from_witness(
             .get(&hashed_address)
             .expect("Failed to get from trie")
         else {
-            todo!()
+            // TODO re-explore this. When testing with hoodi this happened block 521990 an this continue fixed it
+            continue;
         };
 
         let state =
