@@ -12,7 +12,11 @@ use ethrex_common::{
     H256, U256,
 };
 use ethrex_levm::{
-    tracing::LevmCallTracer, db::gen_db::GeneralizedDatabase, errors::{ExecutionReport, TxValidationError, VMError}, vm::VM, EVMConfig, Environment
+    db::gen_db::GeneralizedDatabase,
+    errors::{ExecutionReport, TxValidationError, VMError},
+    tracing::LevmCallTracer,
+    vm::VM,
+    EVMConfig, Environment,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::backends;
@@ -188,7 +192,7 @@ pub fn prepare_vm_for_tx<'a>(
         },
         db,
         &tx,
-        LevmCallTracer::new(false, true),
+        LevmCallTracer::disabled(),
     ))
 }
 
