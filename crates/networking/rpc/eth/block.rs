@@ -360,24 +360,22 @@ impl RpcHandler for ExecutionWitness {
             _ => return Err(RpcErr::Internal("Could not get block header".to_owned())),
         };
 
-        let block = match context
-            .storage
-            .get_block_by_hash(header.compute_block_hash())
-            .await
-        {
+        let parent_header = match context.storage.get_block_header(block_number - 1)? {
+            Some(header) => header,
+            _ => return Err(RpcErr::Internal("Could not get block header".to_owned())),
+        };
+
+        let block = match context.storage.get_block_by_hash(header.hash()).await {
             Ok(Some(block)) => block,
             _ => return Err(RpcErr::Internal("Could not get block".to_owned())),
         };
 
-        let Ok((state_rlp, codes, keys, blocks_used)) =
-            context.blockchain.execute_block_with_witness(block).await
-        else {
-            return Err(RpcErr::Internal(
-                "Failed to execute block with witness".to_string(),
-            ));
-        };
-
-        let mut block_headers = vec![header];
+        let (state_rlp, codes, keys, blocks_used) = context
+            .blockchain
+            .execute_block_with_witness(block)
+            .await
+            .map_err(|e| RpcErr::Internal(e.to_string()))?;
+        let mut block_headers = vec![parent_header];
         for (block_number, _block_hash) in blocks_used {
             if let Ok(Some(block_header)) = context.storage.get_block_header(block_number) {
                 block_headers.push(block_header);
