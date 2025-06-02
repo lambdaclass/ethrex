@@ -4,7 +4,10 @@ use std::{
     sync::Arc,
 };
 
-use ethrex_common::{types::BlockNumber, H256};
+use ethrex_common::{
+    types::{requests::Deposit, Blob, BlockNumber},
+    H256,
+};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use libmdbx::{
@@ -14,7 +17,7 @@ use libmdbx::{
 
 use crate::{
     api::StoreEngineRollup,
-    rlp::{BlockNumbersRLP, OperationsCountRLP, WithdrawalHashesRLP},
+    rlp::{BlockNumbersRLP, OperationsCountRLP, Rlp, WithdrawalHashesRLP},
 };
 
 pub struct Store {
@@ -66,6 +69,9 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
         table_info!(WithdrawalHashesByBatch),
         table_info!(BlockNumbersByBatch),
         table_info!(OperationsCount),
+        table_info!(BlobsBundles),
+        table_info!(StateRoots),
+        table_info!(DepositLogsHashes),
     ]
     .into_iter()
     .collect();
@@ -147,6 +153,25 @@ impl StoreEngineRollup for Store {
         .await
     }
 
+    async fn store_blob_bundle_by_batch_number(
+        &self,
+        batch_number: u64,
+        blob_bundles: Vec<Blob>,
+    ) -> Result<(), StoreError> {
+        self.write::<BlobsBundles>(batch_number, blob_bundles.into())
+            .await
+    }
+
+    async fn get_blob_bundle_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<Blob>>, StoreError> {
+        Ok(self
+            .read::<BlobsBundles>(batch_number)
+            .await?
+            .map(|blobs| blobs.to()))
+    }
+
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
         let exists = self
             .read::<BlockNumbersByBatch>(*batch_number)
@@ -213,4 +238,19 @@ table!(
 table!(
     /// Transaction, deposits, withdrawals count
     ( OperationsCount ) u64 => OperationsCountRLP
+);
+
+table!(
+    /// Blobs bundles by batch number
+    ( BlobsBundles ) u64 => Rlp<Vec<Blob>>
+);
+
+table!(
+    /// State roots by batch number
+    ( StateRoots ) u64 => Rlp<H256>
+);
+
+table!(
+    /// State roots by batch number
+    ( DepositLogsHashes ) u64 => Rlp<H256>
 );

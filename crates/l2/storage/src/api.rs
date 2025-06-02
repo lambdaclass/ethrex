@@ -2,7 +2,10 @@
 
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
-use ethrex_common::{types::BlockNumber, H256};
+use ethrex_common::{
+    types::{Blob, BlockNumber},
+    H256,
+};
 use ethrex_storage::error::StoreError;
 
 // We need async_trait because the stabilized feature lacks support for object safety
@@ -47,6 +50,17 @@ pub trait StoreEngineRollup: Debug + Send + Sync + RefUnwindSafe {
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<BlockNumber>>, StoreError>;
+
+    async fn store_blob_bundle_by_batch_number(
+        &self,
+        batch_number: u64,
+        state_diff: Vec<Blob>,
+    ) -> Result<(), StoreError>;
+
+    async fn get_blob_bundle_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<Blob>>, StoreError>;
 
     async fn update_operations_count(
         &self,

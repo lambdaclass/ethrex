@@ -6,7 +6,10 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::libmdbx::Store as LibmdbxStoreRollup;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStoreRollup;
-use ethrex_common::{types::BlockNumber, H256};
+use ethrex_common::{
+    types::{BlobsBundle, BlockNumber},
+    H256,
+};
 use ethrex_storage::error::StoreError;
 use tracing::info;
 
@@ -117,7 +120,10 @@ impl Store {
         batch_number: u64,
         first_block_number: u64,
         last_block_number: u64,
+        new_state_root: H256,
+        blobs_bundle: BlobsBundle,
         withdrawal_hashes: Vec<H256>,
+        deposit_logs_hash: H256,
     ) -> Result<(), StoreError> {
         let blocks: Vec<u64> = (first_block_number..=last_block_number).collect();
 

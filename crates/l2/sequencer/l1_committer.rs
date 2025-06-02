@@ -166,6 +166,20 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
         .await?;
     let batch_to_commit = last_committed_batch_number + 1;
 
+    // if let Some(state_diff) = state.rollup_store.get_state_diff_by_batch_number(batch_to_commit).await? {
+    //     let last_committed_block_number = state
+    //         .rollup_store
+    //         .get_block_numbers_by_batch(last_committed_batch_number)
+    //         .await?
+    //         .and_then(|blocks| blocks.last().copied())
+    //         .ok_or_else(|| CommitterError::InternalError("Invalid rollup_storage state".into()))?;
+
+    //     let last_block = state.store.get_block_header(last_committed_block_number)?.unwrap();
+
+    //     let new_state_root = last_block.state_root;
+
+    // };
+
     // Get the last committed block_number
     let last_committed_block_number = state
         .rollup_store
@@ -192,7 +206,10 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
             batch_to_commit,
             first_block_to_commit,
             last_block_of_batch,
+            blobs_bundle,
+            new_state_root,
             withdrawal_hashes,
+            deposit_logs_hash,
         )
         .await?;
 
