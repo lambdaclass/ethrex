@@ -8,12 +8,9 @@ use std::collections::HashMap;
 use tracing::warn;
 #[cfg(feature = "l2")]
 use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
+use zkvm_interface::io::{ProgramInput, ProgramOutput};
 #[cfg(feature = "l2")]
 use zkvm_interface::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
-use zkvm_interface::{
-    io::{ProgramInput, ProgramOutput},
-    trie::{update_tries, verify_db},
-};
 
 pub struct ProveOutput(pub ProgramOutput);
 
@@ -48,18 +45,19 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
         mut db,
         elasticity_multiplier,
     } = input;
-
-    // Tries used for validating initial and final state root
-    let (mut state_trie, mut storage_tries) = db.get_tries()?;
+    let chain_config = db.chain_config;
 
     // Validate the initial state
-    let initial_state_hash = state_trie.hash_no_commit();
+    let initial_state_hash = {
+        if let Ok(state_trie) = db.state_trie.lock() {
+            state_trie.hash_no_commit()
+        } else {
+            return Err("Failed to get initial state root".to_string().into());
+        }
+    };
     if initial_state_hash != parent_block_header.state_root {
         return Err("invalid initial state trie".to_string().into());
     }
-    if !verify_db(&db, &state_trie, &storage_tries)? {
-        return Err("invalid database".to_string().into());
-    };
 
     let last_block = blocks.last().ok_or("empty batch".to_string())?;
     let last_block_state_root = last_block.header.state_root;
@@ -73,12 +71,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
 
     for block in blocks {
         // Validate the block
-        validate_block(
-            &block,
-            &parent_header,
-            &db.chain_config,
-            elasticity_multiplier,
-        )?;
+        validate_block(&block, &parent_header, &chain_config, elasticity_multiplier)?;
 
         // Execute block
         let mut vm = Evm::from_prover_db(db.clone());
@@ -104,7 +97,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
         }
 
         // Update db for the next block
-        db.apply_account_updates(&account_updates);
+        db.apply_account_updates_from_trie(&account_updates);
 
         // Update acc_account_updates
         for account in account_updates {
@@ -134,12 +127,13 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
         return Err("Failed to calculate deposits logs hash".to_string().into());
     };
 
-    // Update state trie
-    let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
-    update_tries(&mut state_trie, &mut storage_tries, &acc_account_updates)?;
-
     // Calculate final state root hash and check
-    let final_state_hash = state_trie.hash_no_commit();
+    let final_state_hash = if let Ok(lock) = db.state_trie.lock() {
+        lock.hash_no_commit()
+    } else {
+        return Err("Couldn't calculate final state root".to_string().into());
+    };
+
     if final_state_hash != last_block_state_root {
         return Err("invalid final state trie".to_string().into());
     }
