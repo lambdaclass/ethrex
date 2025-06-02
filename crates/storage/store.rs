@@ -21,7 +21,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::sync::Arc;
 use tracing::info;
-
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
 // Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads

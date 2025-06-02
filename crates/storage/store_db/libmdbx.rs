@@ -38,7 +38,7 @@ pub struct Store {
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
         Ok(Self {
-            db: Arc::new(init_db(Some(path))),
+            db: Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?),
         })
     }
 
@@ -122,7 +122,7 @@ impl Store {
         {
             Some(block_hash_decoded) => match block_hash_decoded {
                 Ok(block_hash_decoded) => Ok(Some(block_hash_decoded)),
-                Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                Err(_) => Err(StoreError::Custom("RLP decode failed".to_string())),
             },
             None => Ok(None),
         }
@@ -161,7 +161,7 @@ impl StoreEngine for Store {
             match self.read_sync::<Headers>(hash.into())?.map(|b| b.to()) {
                 Some(decoded_header) => match decoded_header {
                     Ok(decoded_header) => Ok(Some(decoded_header)),
-                    Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                    Err(_) => Err(StoreError::Custom("RLP decode failed".to_string())),
                 },
                 None => Ok(None),
             }
@@ -277,7 +277,7 @@ impl StoreEngine for Store {
         {
             Some(decoded_block) => match decoded_block {
                 Ok(decoded_block) => Ok(Some(decoded_block)),
-                Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                Err(_) => Err(StoreError::Custom("RLP decode failed".to_string())),
             },
             None => Ok(None),
         }
@@ -293,7 +293,7 @@ impl StoreEngine for Store {
         {
             Some(block_header_decoded) => match block_header_decoded {
                 Ok(block_header_decoded) => Ok(Some(block_header_decoded)),
-                Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                Err(_) => Err(StoreError::Custom("RLP decode failed".to_string())),
             },
             None => Ok(None),
         }
@@ -327,7 +327,7 @@ impl StoreEngine for Store {
         {
             Some(account_code_decoded) => match account_code_decoded {
                 Ok(account_code_decoded) => Ok(Some(account_code_decoded)),
-                Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                Err(_) => Err(StoreError::Custom("RLP decode failed".to_string())),
             },
             None => Ok(None),
         }
@@ -565,11 +565,11 @@ impl StoreEngine for Store {
             Ok(canonical_block_hash_decoded) => match canonical_block_hash_decoded {
                 Some(canonical_block_hash_decoded) => match canonical_block_hash_decoded {
                     Ok(canonical_block_hash_decoded) => Ok(Some(canonical_block_hash_decoded)),
-                    Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
+                    Err(_) => Err(StoreError::Custom("RLP decode failed".to_string())),
                 },
                 None => Ok(None),
             },
-            Err(error) => return Err(error),
+            Err(error) => Err(error),
         }
     }
 
@@ -1356,7 +1356,7 @@ const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 2; // 2 TB
 
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
-pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
+pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
     let tables = [
         table_info!(BlockNumbers),
         table_info!(Headers),
@@ -1387,7 +1387,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
         }),
         ..Default::default()
     };
-    Database::create_with_options(path, options, &tables).unwrap()
+    Database::create_with_options(path, options, &tables)
 }
 
 #[cfg(test)]
