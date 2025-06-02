@@ -192,10 +192,10 @@ ethrex Execution client
 Usage: ethrex [OPTIONS] [COMMAND]
 
 Commands:
-  removedb  Remove the database
-  import    Import blocks to the database
+  removedb            Remove the database
+  import              Import blocks to the database
   compute-state-root  Compute the state root from a genesis file
-  help      Print this message or the help of the given subcommand(s)
+  help                Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help
@@ -209,6 +209,7 @@ Node options:
           Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.
 
           [env: ETHREX_NETWORK=]
+          [default: mainnet]
 
       --datadir <DATABASE_DIRECTORY>
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
