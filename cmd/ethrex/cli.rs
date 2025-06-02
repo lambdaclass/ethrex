@@ -348,11 +348,8 @@ pub async fn import_blocks(
     let size = blocks.len();
     for block in &blocks {
         let hash = block.hash();
-
-        info!(
-            "Adding block {} with hash {:#x}.",
-            block.header.number, hash
-        );
+        let number = block.header.number;
+        info!("Adding block {number} with hash {hash:#x}.");
         // Check if the block is already in the blockchain, if it is do nothing, if not add it
         let block_number = store.get_block_number(hash).await.map_err(|_e| {
             ChainError::Custom(String::from(
@@ -360,20 +357,15 @@ pub async fn import_blocks(
             ))
         })?;
 
-        match block_number {
-            Some(_) => {
-                info!("Block {} is already in the blockchain", block.hash());
-                continue;
-            }
-            None => {
-                blockchain.add_block(block).await.inspect_err(|_| {
-                    warn!(
-                        "Failed to add block {} with hash {:#x}",
-                        block.header.number, hash
-                    )
-                })?;
-            }
+        if block_number.is_some() {
+            info!("Block {} is already in the blockchain", block.hash());
+            continue;
         }
+
+        blockchain
+            .add_block(block)
+            .await
+            .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
     }
 
     if let Some(last_block) = blocks.last() {
