@@ -186,21 +186,45 @@ impl Store {
             return Ok(None);
         };
 
-        let first_block = *blocks.first().unwrap();
-        let last_block = *blocks.last().unwrap();
+        let first_block = *blocks.first().ok_or(StoreError::Custom(
+            "Failed while trying to retrieve the first block of a known batch. This is a bug."
+                .to_owned(),
+        ))?;
+        let last_block = *blocks.last().ok_or(StoreError::Custom(
+            "Failed while trying to retrieve the last block of a known batch. This is a bug."
+                .to_owned(),
+        ))?;
 
-        let state_root = self.get_state_root_by_batch(batch_number).await?.unwrap();
-        let blobs_bundle =
-            BlobsBundle::create_from_blobs(&self.get_blobs_by_batch(batch_number).await?.unwrap())
-                .unwrap();
+        let state_root =
+            self.get_state_root_by_batch(batch_number)
+                .await?
+                .ok_or(StoreError::Custom(
+                "Failed while trying to retrieve the state root of a known batch. This is a bug."
+                    .to_owned(),
+            ))?;
+        let blobs_bundle = BlobsBundle::create_from_blobs(
+            &self
+                .get_blobs_by_batch(batch_number)
+                .await?
+                .ok_or(StoreError::Custom(
+                    "Failed while trying to retrieve the blobs of a known batch. This is a bug."
+                        .to_owned(),
+                ))?,
+        ).map_err(|e| {
+            StoreError::Custom(format!("Failed to create blobs bundle from blob while getting batch from database: {e}. This is a bug"))
+        })?;
         let withdrawal_hashes = self
             .get_withdrawal_hashes_by_batch(batch_number)
-            .await?
-            .unwrap();
+            .await?.ok_or(StoreError::Custom(
+            "Failed while trying to retrieve the withdrawal hashes of a known batch. This is a bug."
+                .to_owned(),
+        ))?;
         let deposit_logs_hash = self
             .get_deposit_logs_hash_by_batch(batch_number)
-            .await?
-            .unwrap();
+            .await?.ok_or(StoreError::Custom(
+            "Failed while trying to retrieve the deposit logs hash of a known batch. This is a bug."
+                .to_owned(),
+        ))?;
 
         Ok(Some(Batch {
             number: batch_number,

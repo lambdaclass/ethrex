@@ -1,7 +1,8 @@
 use crate::{config::EthrexL2Config, utils::config::confirm};
 use clap::Subcommand;
+use ethrex_common::H256;
 use ethrex_common::{
-    types::{batch::Batch, bytes_from_blob, BlockHeader, BYTES_PER_BLOB},
+    types::{batch::Batch, bytes_from_blob, BlobsBundle, BlockHeader, BYTES_PER_BLOB},
     Address,
 };
 use ethrex_l2::sequencer::state_diff::StateDiff;
@@ -220,7 +221,7 @@ impl Command {
                     .state_trie(genesis_block_hash)?
                     .expect("Cannot open state trie");
 
-                let mut last_block_number = 0;
+                let last_block_number = 0;
 
                 // Iterate over each blob
                 let files: Vec<std::fs::DirEntry> = read_dir(blobs_dir)?.try_collect()?;
@@ -295,9 +296,9 @@ impl Command {
                         first_block: first_block_number,
                         last_block: new_block.number,
                         state_root: new_block.state_root,
-                        deposit_logs_hash: todo!(),
+                        deposit_logs_hash: H256::zero(),
                         withdrawal_hashes,
-                        blobs_bundle: todo!(),
+                        blobs_bundle: BlobsBundle::empty(),
                     };
 
                     // Store batch info in L2 storage

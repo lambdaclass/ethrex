@@ -170,8 +170,7 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
             let last_committed_batch = state
                 .rollup_store
                 .get_batch(last_committed_batch_number)
-                .await?
-                .unwrap();
+                .await?.ok_or(CommitterError::InternalError(format!("Failed to get batch with batch number {last_committed_batch_number}. Batch is missing when it should be present. This is a bug")))?;
             let first_block_to_commit = last_committed_batch.last_block + 1;
             // Try to prepare batch
             let (
