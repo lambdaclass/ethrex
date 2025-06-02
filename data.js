@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748635963685,
+  "lastUpdate": 1748872999236,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -9955,6 +9955,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181321515272,
             "range": "± 1079993103",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d7d503610412c14701c4dd232ebd8bd23a62eb91",
+          "message": "chore(ci): bump version of 'actions/attest-build-provenance' (#2994)\n\n**Motivation**\n\nReviewing https://github.com/lambdaclass/rex/pull/125, we found that the\nversion used of `actions/attest-build-provenance` is v1, while the\nlatest one is v2.\n\n**Description**\n\nThis PR bumps the version of `actions/attest-build-provenance` to v2.",
+          "timestamp": "2025-06-02T13:14:59Z",
+          "tree_id": "e534f0eedeaaa6f9ac5a1e83de1fc517cddbe27a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d7d503610412c14701c4dd232ebd8bd23a62eb91"
+        },
+        "date": 1748872995215,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182235471621,
+            "range": "± 592721301",
             "unit": "ns/iter"
           }
         ]
