@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748875425419,
+  "lastUpdate": 1748875478960,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10045,6 +10045,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181773960488,
             "range": "± 352419544",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "pdeymon@fi.uba.ar",
+            "name": "Pablo Deymonnaz",
+            "username": "pablodeymo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "25d6056f6e3aa665dff0ce07c0c662eea4675fdd",
+          "message": "chore(core): pin Rust version 1.82.0 for CI actions (#2972)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-02T13:58:16Z",
+          "tree_id": "0bb89e24fa7e8b5adffcc167d1bb0a4a04505f70",
+          "url": "https://github.com/lambdaclass/ethrex/commit/25d6056f6e3aa665dff0ce07c0c662eea4675fdd"
+        },
+        "date": 1748875474366,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178606857386,
+            "range": "± 299790146",
             "unit": "ns/iter"
           }
         ]
