@@ -43,6 +43,10 @@ pub fn make_chainconfig(chain_id: u64) -> ChainConfig {
 pub fn get_chain_config(name: &str) -> eyre::Result<ChainConfig> {
     Ok(match name {
         "mainnet" => make_chainconfig(1),
+        "cancun" => ChainConfig {
+            prague_time: None,
+            ..make_chainconfig(1)
+        },
         "holesky" => make_chainconfig(17000),
         "hoodi" => make_chainconfig(560048),
         "sepolia" => make_chainconfig(11155111),
