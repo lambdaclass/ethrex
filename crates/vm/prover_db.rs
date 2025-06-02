@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use ethereum_types::H160;
 use ethrex_common::{
-    types::{AccountInfo, AccountUpdate, BlockHash, BlockHeader, ChainConfig},
+    types::{AccountInfo, AccountUpdate, ChainConfig},
     Address, H256, U256,
 };
 use ethrex_trie::{NodeRLP, Trie, TrieError};

@@ -5,7 +5,6 @@ use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_vm::Evm;
 use std::collections::HashMap;
-use std::thread::current;
 use tracing::warn;
 #[cfg(feature = "l2")]
 use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
@@ -74,7 +73,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
         .validate_block_hashes(oldest_block_header.number)
         .map_err(|err| err.to_string())?
     {
-        return Err("invalid block hashes".to_string())?;
+        return Err("invalid block hashes".to_string().into());
     };
 
     // Tries used for validating initial and final state root
