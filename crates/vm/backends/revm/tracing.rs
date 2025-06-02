@@ -208,10 +208,11 @@ fn map_call(
             used_idxs.insert(*child_idx);
         }
     }
+    let to = Address::from_slice(revm_call.trace.address.0.as_slice());
     Call {
         r#type: map_call_type(revm_call.kind()),
         from: Address::from_slice(revm_call.trace.caller.0.as_slice()),
-        to: Address::from_slice(revm_call.trace.address.0.as_slice()),
+        to,
         value: U256(*revm_call.trace.value.as_limbs()),
         gas: revm_call.trace.gas_limit,
         gas_used: revm_call.trace.gas_used,
@@ -226,7 +227,13 @@ fn map_call(
             .is_revert()
             .then(|| revert_reason_or_error.clone()),
         calls: subcalls,
-        logs: with_log.then(|| revm_call.logs.into_iter().map(map_log).collect()),
+        logs: with_log.then(|| {
+            revm_call
+                .logs
+                .into_iter()
+                .map(|revm_log| map_log(revm_log, to))
+                .collect()
+        }),
     }
 }
 
@@ -243,8 +250,9 @@ fn map_call_type(revm_call_type: CallKind) -> CallType {
     }
 }
 
-fn map_log(revm_log: RevmCallLog) -> CallLog {
+fn map_log(revm_log: RevmCallLog, address: Address) -> CallLog {
     CallLog {
+        address,
         topics: revm_log
             .raw_log
             .topics()

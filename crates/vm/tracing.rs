@@ -60,7 +60,7 @@ pub enum CallType {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CallLog {
-    // pub address: Address, Not found in revm log
+    pub address: Address,
     pub topics: Vec<H256>,
     #[serde(with = "serde_utils::bytes")]
     pub data: Bytes,
