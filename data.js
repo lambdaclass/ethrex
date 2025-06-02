@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748875401302,
+  "lastUpdate": 1748875425419,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10015,6 +10015,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183521552509,
             "range": "± 636162024",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "pdeymon@fi.uba.ar",
+            "name": "Pablo Deymonnaz",
+            "username": "pablodeymo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d56d9c5296301c7ec46242f2d91cb29ad4a19f8f",
+          "message": "refactor(l2): type system and programming style (#2950)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-06-02T13:56:46Z",
+          "tree_id": "3ef646ed7cb4b6b22e0c137da8463181bb1561fe",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d56d9c5296301c7ec46242f2d91cb29ad4a19f8f"
+        },
+        "date": 1748875421171,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181773960488,
+            "range": "± 352419544",
             "unit": "ns/iter"
           }
         ]
