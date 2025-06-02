@@ -17,6 +17,7 @@ HOLESKY_BOOTNODES=enode://a37d916374b92440247c20434389904f0f1f4ddf65e00ba7d482b5
 HOODI_CHECKPOINT_SYNC_URL ?= https://hoodi.beaconstate.ethstaker.cc
 HOODI_BOOTNODES ?= enode://60203fcb3524e07c5df60a14ae1c9c5b24023ea5d47463dfae051d2c9f3219f309657537576090ca0ae641f73d419f53d8e8000d7a464319d4784acd7d2abc41@209.38.124.160:30303
 CURRENT_DATETIME = $(shell date +'%y.%m.%d-%H.%M.%S')
+BATCH_SIZE ?= 1024
 
 create_data_dir:
 	mkdir -p $(NETWORK)_data
@@ -31,44 +32,51 @@ start_geth: create_data_dir
 
 
 sync: create_data_dir
-	#cd $(ETHREX_DIR) && git checkout main
+ifndef BLOCK_NUM
+	$(error "Sync block number not set")
+endif	
 	mkdir -p $(NETWORK)_data
 #	samply record --unstable-presymbolicate --save-only -- 
 	make start_ethrex_$(NETWORK) >> ./logs/ethrex-sync-$(NETWORK)-$(EVM).log
 
 
 flamegraph-main:
+ifndef BLOCK_NUM
+	$(error "Sync block number not set)
+endif
 	cd $(ETHREX_DIR) && git checkout main
-	#export SYNC-BLOCK-NUM = $(BLOCK-NUM)
-	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(shell date +'%y.%m.%d-%H:%M:%S')-main-$(LOGNAME).log	
+	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(BLOCK_NUM)-$(LOGNAME).log	
 
-flamegraph-branch: 
+flamegraph-branch:
+ifndef BLOCK_NUM
+	$(error "Sync block number not set")
+endif	
 	cd $(ETHREX_DIR) && git checkout $(BRANCH)
-	make flamegraph >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(shell date +'%y.%m.%d-%H:%M:%S')-$(BRANCH)-$(LOGNAME).log
+	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-$(BRANCH)-block-$(BLOCK_NUM)-$(LOGNAME).log
 
 flamegraph-holesky:
-	cd $(ETHREX_DIR) && CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) SYNC_BLOCK_NUM=$(BLOCK_NUM)  CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
 		--http.port 8545 \
 		--authrpc.port 8551 \
 		--p2p.port 30303\
 		--discovery.port 30303 \
 		--network holesky \
 		--datadir "${EVM}_holesky_data/ethrex" \
-		--authrpc.jwtsecret "/holesky_data/jwt.hex" \
+		--authrpc.jwtsecret "/tools/sync/holesky_data/jwt.hex" \
 		--bootnodes $(HOLESKY_BOOTNODES) \
-		--evm $(EVM) && cp ethrex/flamegraph.svg flamegraphs/ethrex-holesky-$(EVM)--flamegraph-$(shell date +'%y.%m.%d-%H:%M:%S')-main$(LOGNAME).svg	
+		--evm $(EVM) && cp ethrex/flamegraph.svg flamegraphs/ethrex-holesky-$(EVM)--flamegraph-$(CURRENT_DATETIME)-main$(LOGNAME).svg	
 
 flamegraph-hoodi:
-	cd $(ETHREX_DIR) && CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) SYNC_BLOCK_NUM=$(BLOCK_NUM)  CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
 		--http.port 8545 \
 		--authrpc.port 8551 \
 		--p2p.port 30303\
 		--discovery.port 30303 \
 		--network hoodi \
 		--datadir "${EVM}_hoodi_data/ethrex" \
-		--authrpc.jwtsecret "/hoodi_data/jwt.hex" \
+		--authrpc.jwtsecret "tools/sync/hoodi_data/jwt.hex" \
 		--bootnodes $(HOODI_BOOTNODES) \
-		--evm $(EVM) && cp ethrex/flamegraph.svg flamegraphs/ethrex-hoodi-$(EVM)--flamegraph-$(shell date +'%y.%m.%d-%H:%M:%S')-main$(LOGNAME).svg	
+		--evm $(EVM) && cp ethrex/flamegraph.svg flamegraphs/ethrex-hoodi-$(EVM)--flamegraph-$(CURRENT_DATETIME)-main$(LOGNAME).svg	
 
 start-lighthouse:
 	make $(NETWORK)-lighthouse
@@ -100,14 +108,13 @@ hoodi-lighthouse:
 
 
 backup-db:
-	#mkdir /home/admin/.local/share/levm_$(NETWORK)_data/ethrex/backups
 	mkdir -p /home/admin/.local/share/ethrex_db_backups/db_backup_$(EVM)_$(NETWORK)_$(CURRENT_DATETIME)
 	rsync -ah --info=progress2 /home/admin/.local/share/$(EVM)_$(NETWORK)_data/ethrex/mdbx.* /home/admin/.local/share/ethrex_db_backups/db_backup_$(EVM)_$(NETWORK)_$(CURRENT_DATETIME)
 	cp ./logs/ethrex-sync-holesky-levm.log /home/admin/.local/share/ethrex_db_backups/db_backup_$(EVM)_$(NETWORK)_$(CURRENT_DATETIME)/ethrex_sync_holesky_levm.log
 
 
 start_ethrex_hoodi:
-	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) SYNC_BLOCK_NUM=$(BLOCK_NUM) RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
     		--http.port 8545 \
     		--authrpc.port 8551 \
     		--p2p.port 30303\
@@ -119,7 +126,7 @@ start_ethrex_hoodi:
     		--evm $(EVM)
 
 start_ethrex_holesky:
-	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) SYNC_BLOCK_NUM=$(BLOCK_NUM)  RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
     		--http.port 8545 \
     		--authrpc.port 8551 \
     		--p2p.port 30303\
