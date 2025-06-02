@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748898584006,
+  "lastUpdate": 1748900872808,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10345,6 +10345,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179129403766,
             "range": "± 387858032",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0ad7b9d0187082f1e8d1bf8b7942a6b6d24a46f1",
+          "message": "fix(levm): edge case error when creating contract fails (#2984)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- When syncing with holesky in batches there's an error particularly\nwhen a Create internal transaction reverts, this is because we are\nmishandling the cache. This aims to fix it.\n\n**Description**\n\n- Created transfer function to make transfers more clear\n- Make changes that should be reverted if tx reverts after pushing new\ncallframe to callstack so that these are reverted when that callframe\nreverts. This allows deleting manual reversion, which is error prone.\n- Restore cache state in 2 places:\n  - In handle_return when internal transaction reverts\n  - When the external transaction (the first callframe) reverts\n- The substate restore is done only when an opcode fails\n\nNote: Code quality can be improved to make things be nicer and it will\nbe handled in the future, but for now this fixes the bug in the most\nclear way possible.\n\n\nCloses #2992",
+          "timestamp": "2025-06-02T21:00:05Z",
+          "tree_id": "26ff52f756c20ba4735d244323629c4cc2ee3d30",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0ad7b9d0187082f1e8d1bf8b7942a6b6d24a46f1"
+        },
+        "date": 1748900869186,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181520375666,
+            "range": "± 479756847",
             "unit": "ns/iter"
           }
         ]
