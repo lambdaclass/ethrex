@@ -20,6 +20,7 @@ use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
 use ethrex_levm::utils::restore_cache_state;
+use ethrex_levm::vm::LevmCallTracer;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
@@ -144,7 +145,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx, false);
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
 
         vm.execute().map_err(VMError::into)
     }
@@ -159,7 +160,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<(ExecutionReport, CallFrameBackup), EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx, false);
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
 
         let report_result = vm.execute().map_err(EvmError::from)?;
 
@@ -464,7 +465,7 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
-    let mut vm = VM::new(env, db, tx, false);
+    let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -627,5 +628,5 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    Ok(VM::new(env, db, &tx, false))
+    Ok(VM::new(env, db, &tx, LevmCallTracer::disabled()))
 }

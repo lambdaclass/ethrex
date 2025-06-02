@@ -6,7 +6,7 @@ use ethrex_common::{
 use ethrex_levm::{
     db::{cache, gen_db::GeneralizedDatabase, CacheDB},
     errors::TxResult,
-    vm::VM,
+    vm::{LevmCallTracer, VM},
     Environment,
 };
 use ethrex_vm::ProverDB;
@@ -193,5 +193,5 @@ fn new_vm_with_ops_addr_bal_db(
         data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx, false)
+    VM::new(env, db, &tx, LevmCallTracer::disabled())
 }

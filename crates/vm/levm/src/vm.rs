@@ -124,22 +124,37 @@ impl TracerCallFrame {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 /// Geth's callTracer (https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers)
-pub struct CallTracer {
+/// Use `LevmCallTracer::disabled()` when tracing is not wanted.
+pub struct LevmCallTracer {
+    /// Stack for tracer callframes, at the end of execution there will be only one element.
     pub callframes: Vec<TracerCallFrame>,
+    /// Trace only the top call (a.k.a. the external transaction)
+    pub only_top_call: bool,
+    /// Trace logs
+    pub with_log: bool,
+    /// If active is set to false it won't trace.
     pub active: bool,
 }
 
-impl CallTracer {
-    /// If active is set to false it won't trace anything.
-    /// This is to keep LEVM's code clean, like `self.tracer.enter(...)``
-    /// instead of something more complex or uglier than that.
-    /// (For now that we only implement one tracer is the most convenient solution)
-    pub fn new(active: bool) -> Self {
-        CallTracer {
+impl LevmCallTracer {
+    pub fn new(only_top_call: bool, with_log: bool) -> Self {
+        LevmCallTracer {
             callframes: vec![],
-            active,
+            only_top_call,
+            with_log,
+            active: true,
+        }
+    }
+
+    /// This is to keep LEVM's code clean, like `self.tracer.enter(...)`,
+    /// instead of something more complex or uglier when we don't want to trace.
+    /// (For now that we only implement one tracer is the most convenient solution)
+    pub fn disabled() -> Self {
+        LevmCallTracer {
+            active: false,
+            ..Default::default()
         }
     }
 
@@ -224,7 +239,7 @@ pub struct VM<'a> {
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
-    pub tracer: CallTracer,
+    pub tracer: LevmCallTracer,
 }
 
 impl<'a> VM<'a> {
@@ -232,7 +247,7 @@ impl<'a> VM<'a> {
         env: Environment,
         db: &'a mut GeneralizedDatabase,
         tx: &Transaction,
-        enable_tracing: bool,
+        tracer: LevmCallTracer,
     ) -> Self {
         let hooks = Self::get_hooks(tx);
 
@@ -245,7 +260,7 @@ impl<'a> VM<'a> {
             hooks,
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
-            tracer: CallTracer::new(enable_tracing),
+            tracer,
         }
     }
 
