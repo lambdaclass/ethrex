@@ -23,7 +23,8 @@ fn block_import() {
         data_dir,
         network.get_genesis(),
         evm_engine,
-    )).expect("Failed to import blocks on the Tokio runtime");
+    ))
+    .expect("Failed to import blocks on the Tokio runtime");
 }
 
 pub fn import_blocks_benchmark(c: &mut Criterion) {
