@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748888206411,
+  "lastUpdate": 1748890767843,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10195,6 +10195,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179111437234,
             "range": "± 350203292",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "128638963+santiago-MV@users.noreply.github.com",
+            "name": "santiago-MV",
+            "username": "santiago-MV"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "27d6fa209162452b04bd063a663c2543ccfb49eb",
+          "message": "fix(l1): dont fail when importing a block that is already stored (#2949)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nThe import commands has some issues\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\nThe first issue was that the network flag wouldn't recognize public\nnetworks\nEx.: When running `-- network hoodi` it failed\nThe function `get_genesis_path` solve this issue by matching the inputed\nvalue `hoodi` with the path to its `genesis.json` file, using the values\ndefined in `network.rs`\n\nWhen trying to add the block 0 to the blockchain it would fail because\nthe parent block couldn't be found. This was solved by ensuring that\nblocks that are already in the blockchain don't get added again (The\ngenesis block is added when the `Store` is initialized)\nThe `try_block_add` method of `Blockchain` implements this logic\n\nCloses #2936",
+          "timestamp": "2025-06-02T18:12:37Z",
+          "tree_id": "48a991bd3f74c65fd2f49d3a2e27375d93637b9a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/27d6fa209162452b04bd063a663c2543ccfb49eb"
+        },
+        "date": 1748890763715,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180545270117,
+            "range": "± 939070913",
             "unit": "ns/iter"
           }
         ]
