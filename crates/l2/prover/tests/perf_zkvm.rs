@@ -59,21 +59,34 @@ async fn setup() -> (ProgramInput, Block) {
     }
     let block_to_prove = blocks.get(3).unwrap();
 
-    let parent_block_header = store
-        .get_block_header_by_hash(block_to_prove.header.parent_hash)
-        .unwrap()
-        .unwrap();
-
     let db = to_prover_db(&store.clone(), &vec![block_to_prove.clone()])
         .await
         .unwrap();
+
+    let mut block_headers = Vec::new();
+    let oldest_required_block_number = db
+        .block_hashes
+        .keys()
+        .min()
+        .expect("no block hashes required (should at least contain parent hash)");
+    // from oldest required to parent:
+    for number in *oldest_required_block_number..block_to_prove.header.number {
+        let number: usize = number
+            .try_into()
+            .expect("failed to convert block number to usize from u64");
+        let header = store
+            .get_block_header(number as u64)
+            .expect("failed to fetch block")
+            .expect("block not found");
+        block_headers.push(header);
+    }
 
     // This is just a test, so we can use the default value for the elasticity multiplier.
     let elasticity_multiplier = ELASTICITY_MULTIPLIER;
 
     let input = ProgramInput {
         blocks: vec![block_to_prove.clone()],
-        parent_block_header,
+        block_headers,
         db,
         elasticity_multiplier,
     };
