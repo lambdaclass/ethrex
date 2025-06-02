@@ -1,5 +1,5 @@
 pub mod call_frame;
-pub mod calltracer;
+pub mod tracing;
 pub mod constants;
 pub mod db;
 pub mod environment;

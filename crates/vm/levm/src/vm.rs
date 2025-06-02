@@ -2,7 +2,7 @@
 use crate::call_frame::CallFrameBackup;
 use crate::{
     call_frame::CallFrame,
-    calltracer::LevmCallTracer,
+    tracing::LevmCallTracer,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
     errors::{ExecutionReport, OpcodeResult, VMError},

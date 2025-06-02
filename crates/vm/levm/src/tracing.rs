@@ -69,7 +69,8 @@ impl LevmCallTracer {
 
     /// This is to keep LEVM's code clean, like `self.tracer.enter(...)`,
     /// instead of something more complex or uglier when we don't want to trace.
-    /// (For now that we only implement one tracer is the most convenient solution)
+    /// (For now that we only implement one tracer is the most convenient solution.
+    /// In the future a NoOpTracer may be more convenient)
     pub fn disabled() -> Self {
         LevmCallTracer {
             active: false,
@@ -167,7 +168,11 @@ impl LevmCallTracer {
     }
 
     pub fn log(&mut self, log: Log) -> Result<(), InternalError> {
-        if !self.active || self.only_top_call && self.callframes.len() > 1 {
+        if !self.active || !self.with_log {
+            return Ok(());
+        }
+        if self.only_top_call && self.callframes.len() > 1 {
+            // Register logs for top call only.
             return Ok(());
         }
         let callframe = self
