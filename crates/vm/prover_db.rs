@@ -104,8 +104,12 @@ impl ProverDB {
     }
 
     pub fn validate_block_hashes(&self, oldest_valid_block: u64) -> Result<bool, ProverDBError> {
-        self.block_hashes.keys().min().ok_or(ProverDBError::Custom(
-            "no block hashes required (should at least contain parent hash)".to_string(),
-        )).map(|num| *num >= oldest_valid_block)
+        self.block_hashes
+            .keys()
+            .min()
+            .ok_or(ProverDBError::Custom(
+                "no block hashes required (should at least contain parent hash)".to_string(),
+            ))
+            .map(|num| *num >= oldest_valid_block)
     }
 }

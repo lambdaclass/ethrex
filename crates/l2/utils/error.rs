@@ -16,7 +16,7 @@ pub enum ProverInputError {
     #[error("ProverDB error: {0}")]
     ProverDBError(#[from] ProverDBError),
     #[error("Internal error: {0}")]
-    InternalError(String)
+    InternalError(String),
 }
 
 #[derive(Debug, thiserror::Error)]

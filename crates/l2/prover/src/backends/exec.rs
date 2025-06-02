@@ -53,7 +53,11 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn s
     let (Some(oldest_block_header), Some(parent_block_header)) =
         (block_headers.first(), block_headers.last())
     else {
-        return Err("no block headers required (should at least contain parent header)".to_string().into());
+        return Err(
+            "no block headers required (should at least contain parent header)"
+                .to_string()
+                .into(),
+        );
     };
 
     // Validate block hashes. The batch's parent hash is checked in the first validate_block() call.
