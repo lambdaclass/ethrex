@@ -17,6 +17,7 @@ const TOP_N_SELECTORS: usize = 10;
 struct BlockStats {
     destinations: HashMap<String, i64>,
     selector: HashMap<String, i64>,
+    selector_by_gas: HashMap<String, i64>,
 }
 
 fn categorize_selector(sel: [u8; 4]) -> String {
@@ -83,6 +84,10 @@ impl BlockStats {
                     .selector
                     .entry(categorize_selector(selector))
                     .or_insert(0) += 1;
+                *self
+                    .selector_by_gas
+                    .entry(categorize_selector(selector))
+                    .or_insert(0) += tx.gas_limit() as i64;
             }
         }
     }
@@ -91,6 +96,8 @@ impl BlockStats {
         destinations.sort_by_key(|(_, c)| -**c);
         let mut selectors: Vec<(_, _)> = self.selector.iter().collect();
         selectors.sort_by_key(|(_, c)| -**c);
+        let mut selectors_by_gas: Vec<(_, _)> = self.selector_by_gas.iter().collect();
+        selectors_by_gas.sort_by_key(|(_, c)| -**c);
 
 
         vec![
@@ -103,6 +110,20 @@ impl BlockStats {
                         .radius(vec!["40%", "55%"])
                         .data(
                             truncate_to(selectors, TOP_N_SELECTORS)
+                                .iter()
+                                .map(|(name, count)| (*count as f64, name.as_str()))
+                                .collect(),
+                        ),
+            )),
+            ("selectors_by_gas".to_string(), Chart::new()
+                .tooltip(Tooltip::new().trigger(Trigger::Item))
+                .legend(Legend::new())
+                .series(
+                    Pie::new()
+                        .name(&format!("Top{TOP_N_SELECTORS} selectors by gas limit"))
+                        .radius(vec!["40%", "55%"])
+                        .data(
+                            truncate_to(selectors_by_gas, TOP_N_SELECTORS)
                                 .iter()
                                 .map(|(name, count)| (*count as f64, name.as_str()))
                                 .collect(),
