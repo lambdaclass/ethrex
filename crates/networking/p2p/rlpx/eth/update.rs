@@ -24,7 +24,7 @@ impl BlockRangeUpdate {
         let block_header = storage
             .get_block_header(lastest_block)?
             .ok_or(RLPxError::NotFound(format!("Block {lastest_block}")))?;
-        let lastest_block_hash = block_header.compute_block_hash();
+        let lastest_block_hash = block_header.hash();
 
         Ok(Self {
             earliest_block: 0,
