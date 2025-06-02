@@ -527,17 +527,21 @@ impl StoreEngine for Store {
         }
     }
 
-    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
+    fn open_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
         let db = Box::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
             self.db.clone(),
             hashed_address.0,
         ));
-        Trie::open(db, storage_root)
+        Ok(Trie::open(db, storage_root))
     }
 
-    fn open_state_trie(&self, state_root: H256) -> Trie {
+    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone()));
-        Trie::open(db, state_root)
+        Ok(Trie::open(db, state_root))
     }
 
     async fn set_canonical_block(
