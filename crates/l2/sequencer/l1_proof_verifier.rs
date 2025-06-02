@@ -23,8 +23,7 @@ use super::{
     utils::{resolve_network, send_verify_tx, sleep_random},
 };
 
-const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatchAligned(uint256,bytes,bytes32,bytes32[])";
+const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatchAligned(uint256,bytes,bytes32[])";
 
 pub async fn start_l1_proof_verifier(cfg: SequencerConfig) -> Result<(), SequencerError> {
     let l1_proof_verifier = L1ProofVerifier::new(
@@ -170,7 +169,6 @@ impl L1ProofVerifier {
         let calldata_values = [
             Value::Uint(U256::from(batch_number)),
             Value::Bytes(public_inputs.into()),
-            Value::FixedBytes(vk.into()),
             Value::Array(merkle_path),
         ];
 
