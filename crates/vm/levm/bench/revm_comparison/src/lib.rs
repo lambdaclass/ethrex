@@ -4,10 +4,7 @@ use ethrex_common::{
     Address as EthrexAddress, U256,
 };
 use ethrex_levm::{
-    db::{cache, gen_db::GeneralizedDatabase, CacheDB},
-    errors::TxResult,
-    vm::{LevmCallTracer, VM},
-    Environment,
+    calltracer::LevmCallTracer, db::{cache, gen_db::GeneralizedDatabase, CacheDB}, errors::TxResult, vm::VM, Environment
 };
 use ethrex_vm::ProverDB;
 use revm::{
