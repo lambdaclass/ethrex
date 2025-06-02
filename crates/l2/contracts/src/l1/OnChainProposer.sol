@@ -33,6 +33,7 @@ contract OnChainProposer is
         bytes32 stateDiffKZGVersionedHash;
         bytes32 processedDepositLogsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
+        bytes32 lastBlockHash;
     }
 
     /// @notice The commitments of the committed batches.
@@ -229,7 +230,8 @@ contract OnChainProposer is
         bytes32 newStateRoot,
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 processedDepositLogsRollingHash
+        bytes32 processedDepositLogsRollingHash,
+        bytes32 lastBlockHash
     ) external override onlySequencer {
         // TODO: Refactor validation
         require(
@@ -239,6 +241,10 @@ contract OnChainProposer is
         require(
             batchCommitments[batchNumber].newStateRoot == bytes32(0),
             "OnChainProposer: tried to commit an already committed batch"
+        );
+        require(
+            lastBlockHash != bytes32(0),
+            "OnChainProposer: lastBlockHash cannot be zero"
         );
 
         // Check if commitment is equivalent to blob's KZG commitment.
@@ -263,7 +269,8 @@ contract OnChainProposer is
             newStateRoot,
             stateDiffKZGVersionedHash,
             processedDepositLogsRollingHash,
-            withdrawalsLogsMerkleRoot
+            withdrawalsLogsMerkleRoot,
+            lastBlockHash
         );
         emit BatchCommitted(newStateRoot);
 
@@ -423,7 +430,7 @@ contract OnChainProposer is
         bytes calldata publicData
     ) internal view {
         require(
-            publicData.length == 128,
+            publicData.length == 160,
             "OnChainProposer: invaid public data length"
         );
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -448,6 +455,12 @@ contract OnChainProposer is
             batchCommitments[batchNumber].processedDepositLogsRollingHash ==
                 depositsLogHash,
             "OnChainProposer: deposits hash public input does not match with committed deposits"
+        );
+        bytes32 lastBlockHash = bytes32(publicData[128:160]);
+        require(
+            batchCommitments[lastVerifiedBatch].lastBlockHash ==
+                initialStateRoot,
+            "OnChainProposer: last block hash public inputs don't match with last block hash"
         );
     }
 

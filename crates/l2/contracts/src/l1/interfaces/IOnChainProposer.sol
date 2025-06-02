@@ -40,12 +40,14 @@ interface IOnChainProposer {
     /// of the batch to be committed.
     /// @param processedDepositLogsRollingHash the rolling hash of the processed
     /// deposits logs of the batch to be committed.
+    /// @param lastBlockHash the hash of the last block of the batch to be committed.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 processedDepositLogsRollingHash
+        bytes32 processedDepositLogsRollingHash,
+        bytes32 lastBlockHash,
     ) external;
 
     /// @notice Method used to verify a batch of L2 blocks.
