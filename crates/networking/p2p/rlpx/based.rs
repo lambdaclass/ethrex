@@ -10,8 +10,7 @@ use super::{
     utils::{snappy_compress, snappy_decompress},
 };
 
-// MOVE THIS TO BASED MOD
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NewBlockMessage {
     pub block: Block,
 }

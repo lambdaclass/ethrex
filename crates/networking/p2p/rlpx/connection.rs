@@ -587,12 +587,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         debug!("Block received by peer already exists, ignoring it");
                         return Ok(());
                     }
-                    if let Err(e) = self.blockchain.add_block(&req.block).await {
-                        log_peer_warn(&self.node, &format!("Error adding new block: {e}"));
-                        return Err(RLPxError::BadRequest(format!(
-                            "Error adding new block: {e}"
-                        )));
-                    }
+                    let _ = self
+                        .blockchain
+                        .add_block(&req.block)
+                        .await
+                        .inspect_err(|e| {
+                            log_peer_warn(&self.node, &format!("Error adding new block: {e}"));
+                        });
+
                     let block_hash = req.block.hash();
                     apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
                         .await
@@ -604,7 +606,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         "Received new block but peer does not support based protocol, ignoring it"
                     );
                 }
-                // broadcast here the new block
+                self.broadcast_message(Message::NewBlock(req))?;
             }
             // Send response messages to the backend
             message @ Message::AccountRange(_)
@@ -632,6 +634,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     let new_msg = Message::Transactions(Transactions {
                         transactions: cloned,
                     });
+                    self.send(new_msg).await?;
+                }
+                Message::NewBlock(ref block_msg) => {
+                    let new_msg = Message::NewBlock(block_msg.clone());
                     self.send(new_msg).await?;
                 }
                 msg => {
@@ -705,6 +711,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let task_id = tokio::task::id();
                 let Ok(_) = self.connection_broadcast_send.send((task_id, txs)) else {
                     let error_message = "Could not broadcast received transactions";
+                    log_peer_error(&self.node, error_message);
+                    return Err(RLPxError::BroadcastError(error_message.to_owned()));
+                };
+                Ok(())
+            }
+            block_msg @ Message::NewBlock(_) => {
+                let block = Arc::new(block_msg);
+                let task_id = tokio::task::id();
+                let Ok(_) = self.connection_broadcast_send.send((task_id, block)) else {
+                    let error_message = "Could not broadcast received block";
                     log_peer_error(&self.node, error_message);
                     return Err(RLPxError::BroadcastError(error_message.to_owned()));
                 };

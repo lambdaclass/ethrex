@@ -1,4 +1,4 @@
-use ethrex_blockchain::error::MempoolError;
+use ethrex_blockchain::error::{ChainError, MempoolError};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_storage::error::StoreError;
 use thiserror::Error;
@@ -47,6 +47,8 @@ pub(crate) enum RLPxError {
     SendMessage(String),
     #[error("Error when inserting transaction in the mempool: {0}")]
     MempoolError(#[from] MempoolError),
+    #[error("Error when adding a block to the blockchain: {0}")]
+    BlockchainError(#[from] ChainError),
     #[error("Io Error: {0}")]
     IoError(#[from] std::io::Error),
     #[error("Failed to decode message due to invalid frame: {0}")]
