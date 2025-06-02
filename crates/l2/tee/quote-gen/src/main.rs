@@ -150,14 +150,6 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
         parent_header = block.header;
     }
 
-    // Calculate account updates based on state diff
-    #[cfg(feature = "l2")]
-    let Ok(state_diff_updates) = state_diff.to_account_updates(&state_trie) else {
-        return Err("Failed to calculate account updates from state diffs"
-            .to_string()
-            .into());
-    };
-
     // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
     let Ok(withdrawals_merkle_root) = compute_withdrawals_merkle_root(withdrawal_hashes) else {
@@ -185,13 +177,7 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
         return Err("invalid final state trie".to_string());
     }
 
-    // Check state diffs are valid
-    #[cfg(feature = "l2")]
-    if state_diff_updates != acc_account_updates {
-        return Err("invalid state diffs".to_string().into());
-    }
-
-    // This could be replaced with something like a ProverConfig.
+    // TODO: this could be replaced with something like a ProverConfig.
     let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
 
     // Check state diffs are valid

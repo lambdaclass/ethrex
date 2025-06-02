@@ -332,12 +332,12 @@ impl ProofCoordinator {
 
         let response = if !self.rollup_store.contains_batch(&batch_to_verify).await? {
             let response = ProofData::empty_batch_response();
-            debug!("Sending empty BatchResponse");
+            info!("Sending empty BatchResponse");
             response
         } else {
             let input = self.create_prover_input(batch_to_verify).await?;
             let response = ProofData::batch_response(batch_to_verify, input);
-            debug!("Sending BatchResponse for block_number: {batch_to_verify}");
+            info!("Sending BatchResponse for batch: {batch_to_verify}");
             response
         };
 
@@ -346,7 +346,6 @@ impl ProofCoordinator {
             .write_all(&buffer)
             .await
             .map_err(ProverServerError::ConnectionError)
-            .map(|_| info!("BatchResponse sent for batch number: {batch_to_verify}"))
     }
 
     async fn handle_submit(
