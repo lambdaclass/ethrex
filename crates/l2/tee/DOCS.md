@@ -54,14 +54,18 @@ You can enable the prover by setting `ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true` 
 
 For development purposes, you can use the flag `ETHREX_TDX_DEV_MODE=true` to disable quote verification. This allows you to run the quote generator even without having TDX-capable hardware.
 
-To run in production mode, ensure the proof coordinator is listening on 0.0.0.0 and run `mkosi vm -f`.
+Ensure the proof coordinator is reachable at 172.17.0.1. You can bring up the network by first starting the L2 components:
 
 ```
-make init-l1
-ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true make deploy-l1
-ETHREX_PROOF_COORDINATOR_DEV_MODE=false PROOF_COORDINATOR_ADDRESS=0.0.0.0 make init-l2
-cd tee/quote-gen
-make run
+// cd crates/l2
+make init ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true ETHREX_PROOF_COORDINATOR_DEV_MODE=false PROOF_COORDINATOR_ADDRESS=0.0.0.0
+```
+
+And in another terminal, running the VM:
+
+```
+// cd crates/l2
+make -C tee/quote-gen run
 ```
 
 ## Troubleshooting
