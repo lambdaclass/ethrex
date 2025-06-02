@@ -1,5 +1,4 @@
 use ethrex_common::{types::ChainConfig, Address as CoreAddress, H256 as CoreH256};
-use ethrex_trie::{Node, NodeRLP, PathRLP, Trie};
 use revm::{
     primitives::{
         AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
@@ -10,8 +9,8 @@ use revm::{
 
 use crate::{db::DynVmDatabase, prover_db::ProverDB};
 use crate::{
-    db::VmDatabase,
     errors::{EvmError, ProverDBError},
+    VmDatabase,
 };
 
 /// State used when running the EVM. The state can be represented with a [VmDbWrapper] database, or
@@ -50,7 +49,7 @@ impl EvmState {
     /// Gets the stored chain config
     pub fn chain_config(&self) -> Result<ChainConfig, EvmError> {
         match self {
-            EvmState::Store(db) => Ok(db.database.get_chain_config()),
+            EvmState::Store(db) => db.database.get_chain_config(),
             EvmState::Execution(db) => Ok(db.db.get_chain_config()),
         }
     }
@@ -129,21 +128,20 @@ impl revm::Database for DynVmDatabase {
             None => return Ok(None),
             Some(acc_info) => acc_info,
         };
-        let code = <dyn VmDatabase>::get_account_code(self.as_ref(), acc_info.code_hash)?
-            .map(|b| RevmBytecode::new_raw(RevmBytes(b)));
+        let code = self.code_by_hash(acc_info.code_hash.0.into())?;
 
         Ok(Some(RevmAccountInfo {
             balance: RevmU256::from_limbs(acc_info.balance.0),
             nonce: acc_info.nonce,
             code_hash: RevmB256::from(acc_info.code_hash.0),
-            code,
+            code: Some(code),
         }))
     }
 
     fn code_by_hash(&mut self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
-        <dyn VmDatabase>::get_account_code(self.as_ref(), CoreH256::from(code_hash.as_ref()))?
-            .map(|b| RevmBytecode::new_raw(RevmBytes(b)))
-            .ok_or_else(|| EvmError::DB(format!("No code for hash {code_hash}")))
+        let code =
+            <dyn VmDatabase>::get_account_code(self.as_ref(), CoreH256::from(code_hash.as_ref()))?;
+        Ok(RevmBytecode::new_raw(RevmBytes(code)))
     }
 
     fn storage(&mut self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
@@ -157,9 +155,8 @@ impl revm::Database for DynVmDatabase {
     }
 
     fn block_hash(&mut self, number: u64) -> Result<RevmB256, Self::Error> {
-        <dyn VmDatabase>::get_block_hash(self.as_ref(), number)?
+        <dyn VmDatabase>::get_block_hash(self.as_ref(), number)
             .map(|hash| RevmB256::from_slice(&hash.0))
-            .ok_or_else(|| EvmError::DB(format!("Block {number} not found")))
     }
 }
 
@@ -174,21 +171,20 @@ impl revm::DatabaseRef for DynVmDatabase {
             None => return Ok(None),
             Some(acc_info) => acc_info,
         };
-        let code = <dyn VmDatabase>::get_account_code(self.as_ref(), acc_info.code_hash)?
-            .map(|b| RevmBytecode::new_raw(RevmBytes(b)));
+        let code = self.code_by_hash_ref(acc_info.code_hash.0.into())?;
 
         Ok(Some(RevmAccountInfo {
             balance: RevmU256::from_limbs(acc_info.balance.0),
             nonce: acc_info.nonce,
             code_hash: RevmB256::from(acc_info.code_hash.0),
-            code,
+            code: Some(code),
         }))
     }
 
     fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
-        <dyn VmDatabase>::get_account_code(self.as_ref(), CoreH256::from(code_hash.as_ref()))?
-            .map(|b| RevmBytecode::new_raw(RevmBytes(b)))
-            .ok_or_else(|| EvmError::DB(format!("No code for hash {code_hash}")))
+        let code =
+            <dyn VmDatabase>::get_account_code(self.as_ref(), CoreH256::from(code_hash.as_ref()))?;
+        Ok(RevmBytecode::new_raw(RevmBytes(code)))
     }
 
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
@@ -202,50 +198,7 @@ impl revm::DatabaseRef for DynVmDatabase {
     }
 
     fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
-        <dyn VmDatabase>::get_block_hash(self.as_ref(), number)?
+        <dyn VmDatabase>::get_block_hash(self.as_ref(), number)
             .map(|hash| RevmB256::from_slice(&hash.0))
-            .ok_or_else(|| EvmError::DB(format!("Block {number} not found")))
-    }
-}
-
-/// Get all potential child nodes of a node whose value was deleted.
-///
-/// After deleting a value from a (partial) trie it's possible that the node containing the value gets
-/// replaced by its child, whose prefix is possibly modified by appending some nibbles to it.
-/// If we don't have this child node (because we're modifying a partial trie), then we can't
-/// perform the deletion. If we have the final proof of exclusion of the deleted value, we can
-/// calculate all posible child nodes.
-pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Node>> {
-    // TODO: Perhaps it's possible to calculate the child nodes instead of storing all possible ones.
-    let trie = Trie::from_nodes(
-        proof.first(),
-        &proof.iter().skip(1).cloned().collect::<Vec<_>>(),
-    )
-    .unwrap();
-
-    // return some only if this is a proof of exclusion
-    if trie.get(key).unwrap().is_none() {
-        let final_node = Node::decode_raw(proof.last().unwrap()).unwrap();
-        match final_node {
-            Node::Extension(mut node) => {
-                let mut variants = Vec::with_capacity(node.prefix.len());
-                while {
-                    variants.push(Node::from(node.clone()));
-                    node.prefix.next().is_some()
-                } {}
-                Some(variants)
-            }
-            Node::Leaf(mut node) => {
-                let mut variants = Vec::with_capacity(node.partial.len());
-                while {
-                    variants.push(Node::from(node.clone()));
-                    node.partial.next().is_some()
-                } {}
-                Some(variants)
-            }
-            _ => None,
-        }
-    } else {
-        None
     }
 }

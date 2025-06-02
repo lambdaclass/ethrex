@@ -4,12 +4,13 @@ use crate::{
     runner::{EFTestRunnerError, InternalError},
     types::{EFTest, EFTestTransaction},
 };
+use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{types::Genesis, H256, U256};
 use ethrex_levm::db::{gen_db::GeneralizedDatabase, CacheDB};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{
     backends::revm::db::{evm_state, EvmState},
-    DynVmDatabase, StoreVmDatabase,
+    DynVmDatabase,
 };
 
 /// Loads initial state, used for REVM as it contains EvmState.
@@ -21,14 +22,10 @@ pub async fn load_initial_state(test: &EFTest) -> (EvmState, H256, Store) {
 
     let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
         storage.clone(),
-        genesis.get_block().header.compute_block_hash(),
+        genesis.get_block().hash(),
     ));
 
-    (
-        evm_state(vm_db),
-        genesis.get_block().header.compute_block_hash(),
-        storage,
-    )
+    (evm_state(vm_db), genesis.get_block().hash(), storage)
 }
 
 /// Loads initial state, function for LEVM as it does not require EvmState
@@ -38,7 +35,7 @@ pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
-    let block_hash = genesis.get_block().header.compute_block_hash();
+    let block_hash = genesis.get_block().hash();
 
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(storage, block_hash));
 

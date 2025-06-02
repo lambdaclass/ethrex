@@ -7,7 +7,7 @@ use redb::{AccessGuard, Database, Key, TableDefinition, Value};
 
 use crate::{
     api::StoreEngineRollup,
-    rlp::{BlockNumbersRLP, WithdrawalHashesRLP},
+    rlp::{BlockNumbersRLP, OperationsCountRLP, WithdrawalHashesRLP},
 };
 
 const BATCHES_BY_BLOCK_NUMBER_TABLE: TableDefinition<BlockNumber, u64> =
@@ -18,6 +18,9 @@ const WITHDRAWALS_BY_BATCH: TableDefinition<u64, WithdrawalHashesRLP> =
 
 const BLOCK_NUMBERS_BY_BATCH: TableDefinition<u64, BlockNumbersRLP> =
     TableDefinition::new("BlockNumbersByBatch");
+
+const OPERATIONS_COUNTS: TableDefinition<u64, OperationsCountRLP> =
+    TableDefinition::new("OperationsCount");
 
 const LAST_SENT_BATCH_PROOF: TableDefinition<u64, u64> = TableDefinition::new("LastSentBatchProof");
 
@@ -93,6 +96,7 @@ pub fn init_db() -> Result<Database, StoreError> {
 
     table_creation_txn.open_table(BATCHES_BY_BLOCK_NUMBER_TABLE)?;
     table_creation_txn.open_table(WITHDRAWALS_BY_BATCH)?;
+    table_creation_txn.open_table(OPERATIONS_COUNTS)?;
     table_creation_txn.open_table(BLOCK_NUMBERS_BY_BATCH)?;
     table_creation_txn.open_table(LAST_SENT_BATCH_PROOF)?;
     table_creation_txn.commit()?;
@@ -173,6 +177,46 @@ impl StoreEngineRollup for RedBStoreRollup {
             .await?
             .is_some();
         Ok(exists)
+    }
+
+    async fn update_operations_count(
+        &self,
+        transaction_inc: u64,
+        deposits_inc: u64,
+        withdrawals_inc: u64,
+    ) -> Result<(), StoreError> {
+        let (transaction_count, withdrawals_count, deposits_count) = {
+            let current_operations = self.get_operations_count().await?;
+            (
+                current_operations[0] + transaction_inc,
+                current_operations[1] + withdrawals_inc,
+                current_operations[2] + deposits_inc,
+            )
+        };
+
+        self.write(
+            OPERATIONS_COUNTS,
+            0,
+            OperationsCountRLP::from_bytes(
+                vec![transaction_count, withdrawals_count, deposits_count].encode_to_vec(),
+            ),
+        )
+        .await
+    }
+
+    async fn get_operations_count(&self) -> Result<[u64; 3], StoreError> {
+        let operations = self
+            .read(OPERATIONS_COUNTS, 0)
+            .await?
+            .map(|rlp| rlp.value().to());
+        match operations {
+            Some(mut operations) => Ok([
+                operations.pop().unwrap_or_default(),
+                operations.pop().unwrap_or_default(),
+                operations.pop().unwrap_or_default(),
+            ]),
+            _ => Ok([0, 0, 0]),
+        }
     }
 
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {

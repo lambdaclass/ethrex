@@ -51,7 +51,7 @@ pub fn to_batch_proof(
     Ok(BatchProof::ProofCalldata(to_calldata(proof)))
 }
 
-fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
+pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
     let ProgramInput {
         blocks,
         parent_block_header,

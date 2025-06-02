@@ -6,7 +6,7 @@ use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
-use crate::{ProverDB, ProverDBError};
+use crate::ProverDB;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
@@ -15,8 +15,7 @@ use ethrex_common::types::{
 use ethrex_common::Address;
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-use ethrex_levm::db::CacheDB;
-use ethrex_storage::Store;
+use ethrex_levm::db::{CacheDB, Database};
 use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;
@@ -84,14 +83,16 @@ impl Evm {
         }
     }
 
+    pub fn new_from_db(store: Arc<impl Database + 'static>) -> Self {
+        Evm::LEVM {
+            db: GeneralizedDatabase::new(store, CacheDB::new()),
+        }
+    }
+
     pub fn from_prover_db(db: ProverDB) -> Self {
         Evm::LEVM {
             db: GeneralizedDatabase::new(Arc::new(db), CacheDB::new()),
         }
-    }
-
-    pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, ProverDBError> {
-        LEVM::to_prover_db(blocks, store).await
     }
 
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
@@ -210,7 +211,7 @@ impl Evm {
                 Ok(())
             }
             Evm::LEVM { db } => {
-                let chain_config = db.store.get_chain_config();
+                let chain_config = db.store.get_chain_config()?;
                 let fork = chain_config.fork(block_header.timestamp);
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {

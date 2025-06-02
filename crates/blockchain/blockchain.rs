@@ -4,6 +4,7 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 mod smoke_test;
+pub mod vm;
 
 use constants::MAX_INITCODE_SIZE;
 use error::MempoolError;
@@ -17,17 +18,16 @@ use ethrex_common::types::{
     BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
-
 use ethrex_common::{Address, H256};
+use ethrex_storage::error::StoreError;
+use ethrex_storage::Store;
+use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
-
-use ethrex_storage::error::StoreError;
-use ethrex_storage::Store;
-use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine, StoreVmDatabase};
 use tracing::info;
+use vm::StoreVmDatabase;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -549,7 +549,7 @@ pub fn validate_receipts_root(
 pub async fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> {
     let latest_block_number = storage.get_latest_block_number().await?;
     if let Some(latest_valid_header) = storage.get_block_header(latest_block_number)? {
-        let latest_valid_hash = latest_valid_header.compute_block_hash();
+        let latest_valid_hash = latest_valid_header.hash();
         return Ok(latest_valid_hash);
     }
     Err(ChainError::StoreError(StoreError::Custom(

@@ -11,6 +11,10 @@ on:
       job_type:
         required: true
         type: string
+    outputs:
+      report_artifact_name:
+        description: "The name of the hive report artifact"
+        value: ${{ jobs.hive-report.outputs.artifact_name }}
 
 jobs:
   run-hive:
@@ -85,7 +89,7 @@ jobs:
           fi
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --ethrex.flags "--evm ${{ inputs.evm }}" --sim.parallelism 16 ${{ env.HIVE_FLAGS }}
+        run: cd hive && ./hive --client-file ../test_data/hive_clients.yml --client ethrex --sim ${{ matrix.test.simulation }} --ethrex.flags "--evm ${{ inputs.evm }}" --sim.parallelism 16 ${{ env.HIVE_FLAGS }}
         continue-on-error: true
 
       - name: Upload results
@@ -99,6 +103,8 @@ jobs:
     name: Generate and Save report (${{ inputs.evm }})
     needs: run-hive
     runs-on: ubuntu-latest
+    outputs:
+      artifact_name: results_${{inputs.evm}}_${{ inputs.job_type }}.md
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4

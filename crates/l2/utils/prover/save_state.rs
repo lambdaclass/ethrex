@@ -394,12 +394,12 @@ pub fn batch_number_has_all_needed_proofs(
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use ethrex_blockchain::Blockchain;
+    use ethrex_blockchain::{vm::StoreVmDatabase, Blockchain};
     use ethrex_levm::db::gen_db::GeneralizedDatabase;
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::{
         backends::levm::{CacheDB, LEVM},
-        DynVmDatabase, StoreVmDatabase,
+        DynVmDatabase,
     };
 
     use super::*;
