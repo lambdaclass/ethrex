@@ -35,3 +35,35 @@ impl RLPxMessage for NewBlockMessage {
         Ok(NewBlockMessage { block })
     }
 }
+
+#[derive(Debug)]
+pub struct BatchSealedMessage {
+    pub batch_number: u64,
+    pub block_numbers: Vec<u64>,
+}
+impl RLPxMessage for BatchSealedMessage {
+    const CODE: u8 = 0x1;
+
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.batch_number)
+            .encode_field(&self.block_numbers)
+            .finish();
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (batch_number, decoder) = decoder.decode_field("batch_number")?;
+        let (block_numbers, decoder) = decoder.decode_field("block_numbers")?;
+        decoder.finish()?;
+        Ok(BatchSealedMessage {
+            batch_number,
+            block_numbers,
+        })
+    }
+}
