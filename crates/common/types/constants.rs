@@ -17,6 +17,7 @@ pub const MIN_GAS_TIP: u64 = 1000000;
 pub const BYTES_PER_FIELD_ELEMENT: usize = 32;
 pub const FIELD_ELEMENTS_PER_BLOB: usize = 4096;
 pub const BYTES_PER_BLOB: usize = BYTES_PER_FIELD_ELEMENT * FIELD_ELEMENTS_PER_BLOB;
+pub const BYTES_PER_BLOB_F64: f64 = BYTES_PER_BLOB as f64;
 /// The maximum number of bytes that can be "safely" stored in a blob. This is, prepend
 /// a zero byte for every 32 bytes of data to ensure they not exceed the field modulus.
 pub const SAFE_BYTES_PER_BLOB: usize = BYTES_PER_BLOB * 31 / 32;
