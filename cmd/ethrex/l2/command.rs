@@ -73,7 +73,8 @@ impl Command {
 
                 let network = get_network(network.clone());
 
-                let store = init_store(&data_dir, &network).await;
+                let genesis = network.get_genesis();
+                let store = init_store(&data_dir, genesis).await;
                 let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
                 let blockchain = init_blockchain(opts.node_opts.evm, store.clone());

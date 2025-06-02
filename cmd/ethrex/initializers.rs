@@ -1,13 +1,15 @@
 use crate::{
     cli::Options,
-    networks,
     utils::{
         get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
         read_node_config_file,
     },
     DEFAULT_JWT_PATH, DEFAULT_STORE_DIR,
+    networks::{self, Network, PublicNetwork},
+    utils::{get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file, read_node_config_file},
 };
 use ethrex_blockchain::Blockchain;
+use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{public_key_from_signing_key, P2PContext},
@@ -65,7 +67,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub async fn init_store(data_dir: &str, network: &str) -> Store {
+pub async fn init_store(data_dir: &str, network: &str, genesis: Genesis) -> Store {
     let path = Path::new(data_dir).join(DEFAULT_STORE_DIR);
     let data_dir_path = path.display().to_string();
     let store = if path.ends_with("memory") {
@@ -83,7 +85,6 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
         }
         Store::new(&data_dir_path, engine_type).expect("Failed to create Store")
     };
-    let genesis = read_genesis_file(network);
     store
         .add_initial_state(genesis.clone())
         .await
@@ -174,7 +175,7 @@ pub async fn init_rpc_api(
 #[allow(dead_code)]
 pub async fn init_network(
     opts: &Options,
-    network: &str,
+    network: &Network,
     data_dir: &str,
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
@@ -255,30 +256,29 @@ pub fn get_network(network: String) -> String {
         "mainnet" => String::from(networks::MAINNET_GENESIS_PATH),
         _ => network,
     }
-}
 
 #[allow(dead_code)]
-pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node> {
+pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
-    if network == networks::HOLESKY_GENESIS_PATH {
-        info!("Adding holesky preset bootnodes");
-        bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
-    }
-
-    if network == networks::SEPOLIA_GENESIS_PATH {
-        info!("Adding sepolia preset bootnodes");
-        bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
-    }
-
-    if network == networks::HOODI_GENESIS_PATH {
-        info!("Adding hoodi preset bootnodes");
-        bootnodes.extend(networks::HOODI_BOOTNODES.clone());
-    }
-
-    if network == networks::MAINNET_GENESIS_PATH {
-        info!("Adding mainnet preset bootnodes");
-        bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
+    match network {
+        Network::PublicNetwork(PublicNetwork::Holesky) => {
+            info!("Adding holesky preset bootnodes");
+            bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
+        }
+        Network::PublicNetwork(PublicNetwork::Hoodi) => {
+            info!("Addig hoodi preset bootnodes");
+            bootnodes.extend(networks::HOODI_BOOTNODES.clone());
+        }
+        Network::PublicNetwork(PublicNetwork::Mainnet) => {
+            info!("Adding mainnet preset bootnodes");
+            bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
+        }
+        Network::PublicNetwork(PublicNetwork::Sepolia) => {
+            info!("Adding sepolia preset bootnodes");
+            bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
+        }
+        _ => {}
     }
 
     if bootnodes.is_empty() {
