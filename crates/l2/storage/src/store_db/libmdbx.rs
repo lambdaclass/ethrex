@@ -5,7 +5,7 @@ use std::{
 };
 
 use ethrex_common::{
-    types::{requests::Deposit, Blob, BlockNumber},
+    types::{Blob, BlockNumber},
     H256,
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -71,7 +71,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
         table_info!(OperationsCount),
         table_info!(BlobsBundles),
         table_info!(StateRoots),
-        table_info!(DepositLogsHashes),
+        table_info!(DepositLogsHash),
     ]
     .into_iter()
     .collect();
@@ -151,6 +151,47 @@ impl StoreEngineRollup for Store {
             BlockNumbersRLP::from_bytes(block_numbers.encode_to_vec()),
         )
         .await
+    }
+
+    async fn store_deposit_logs_hash_by_batch_number(
+        &self,
+        batch_number: u64,
+        deposit_logs_hash: H256,
+    ) -> Result<(), StoreError> {
+        self.write::<DepositLogsHash>(
+            batch_number,
+            Rlp::from_bytes(deposit_logs_hash.encode_to_vec()),
+        )
+        .await
+    }
+
+    async fn get_deposit_logs_hash_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, StoreError> {
+        Ok(self
+            .read::<DepositLogsHash>(batch_number)
+            .await?
+            .map(|hash| hash.to()))
+    }
+
+    async fn store_state_root_by_batch_number(
+        &self,
+        batch_number: u64,
+        state_root: H256,
+    ) -> Result<(), StoreError> {
+        self.write::<StateRoots>(batch_number, Rlp::from_bytes(state_root.encode_to_vec()))
+            .await
+    }
+
+    async fn get_state_root_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, StoreError> {
+        Ok(self
+            .read::<StateRoots>(batch_number)
+            .await?
+            .map(|hash| hash.to()))
     }
 
     async fn store_blob_bundle_by_batch_number(
@@ -251,6 +292,6 @@ table!(
 );
 
 table!(
-    /// State roots by batch number
-    ( DepositLogsHashes ) u64 => Rlp<H256>
+    /// Deposit logs hash by batch number
+    ( DepositLogsHash ) u64 => Rlp<H256>
 );

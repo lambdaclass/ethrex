@@ -51,6 +51,28 @@ pub trait StoreEngineRollup: Debug + Send + Sync + RefUnwindSafe {
         batch_number: u64,
     ) -> Result<Option<Vec<BlockNumber>>, StoreError>;
 
+    async fn store_deposit_logs_hash_by_batch_number(
+        &self,
+        batch_number: u64,
+        deposit_logs_hash: H256,
+    ) -> Result<(), StoreError>;
+
+    async fn get_deposit_logs_hash_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, StoreError>;
+
+    async fn store_state_root_by_batch_number(
+        &self,
+        batch_number: u64,
+        state_root: H256,
+    ) -> Result<(), StoreError>;
+
+    async fn get_state_root_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, StoreError>;
+
     async fn store_blob_bundle_by_batch_number(
         &self,
         batch_number: u64,

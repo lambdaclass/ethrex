@@ -1,7 +1,7 @@
 use crate::{config::EthrexL2Config, utils::config::confirm};
 use clap::Subcommand;
 use ethrex_common::{
-    types::{bytes_from_blob, BlockHeader, BYTES_PER_BLOB},
+    types::{batch::Batch, bytes_from_blob, BlockHeader, BYTES_PER_BLOB},
     Address,
 };
 use ethrex_l2::sequencer::state_diff::StateDiff;
@@ -290,16 +290,19 @@ impl Command {
                         new_block.number, new_block.state_root
                     );
 
-                    last_block_number = new_block.number;
+                    let batch = Batch {
+                        number: batch_number,
+                        first_block: first_block_number,
+                        last_block: new_block.number,
+                        state_root: new_block.state_root,
+                        deposit_logs_hash: todo!(),
+                        withdrawal_hashes,
+                        blobs_bundle: todo!(),
+                    }
 
                     // Store batch info in L2 storage
                     rollup_store
-                        .store_batch(
-                            batch_number,
-                            first_block_number,
-                            last_block_number,
-                            withdrawal_hashes,
-                        )
+                        .store_batch(batch)
                         .await
                         .expect("Error storing batch");
                 }
