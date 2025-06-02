@@ -23,7 +23,7 @@ use crate::{
     },
     types::Node,
 };
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
 use ethrex_common::{
     types::{Block, MempoolTransaction, Transaction},
     H256, H512,
@@ -53,6 +53,8 @@ use super::{
 
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const PERIODIC_BLOCK_BROADCAST_INTERVAL: std::time::Duration =
+    std::time::Duration::from_millis(500);
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
 
@@ -123,7 +125,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             negotiated_snap_capability: None,
             next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
             next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
-            next_block_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL, // CHANGE
+            next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
             broadcasted_txs: HashSet::new(),
             broadcasted_blocks: 0,
             client_version,
@@ -415,8 +417,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
         if Instant::now() >= self.next_block_broadcast {
             self.send_new_block().await?;
-            // CHANGE CONSTANT
-            self.next_block_broadcast = Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL;
+            self.next_block_broadcast = Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL;
         }
         Ok(())
     }
@@ -456,28 +457,26 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn send_new_block(&mut self) -> Result<(), RLPxError> {
         if self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
-            let a = self.storage.get_latest_block_number().await?;
-            if a == self.broadcasted_blocks {
+            let latest_block_number = self.storage.get_latest_block_number().await?;
+            if latest_block_number == self.broadcasted_blocks {
                 return Ok(());
             }
-            println!(
-                "Broadcasting new block, current: {}, last broadcasted: {}",
-                a, self.broadcasted_blocks
-            );
-            let new_block_body = self.storage.get_block_body(a).await?.unwrap();
-            let new_block_header = self.storage.get_block_header(a)?.unwrap();
-            let new_block = Block {
-                header: new_block_header,
-                body: new_block_body,
-            };
-            self.blockchain
-                .add_block(&new_block)
-                .await
-                .map_err(|_| RLPxError::BadRequest("INVALID BLOCK".to_owned()))?;
+            for i in self.broadcasted_blocks + 1..=latest_block_number {
+                println!(
+                    "Broadcasting new block, current: {}, last broadcasted: {}",
+                    i, self.broadcasted_blocks
+                );
+                let new_block_body = self.storage.get_block_body(i).await?.unwrap();
+                let new_block_header = self.storage.get_block_header(i)?.unwrap();
+                let new_block = Block {
+                    header: new_block_header,
+                    body: new_block_body,
+                };
 
-            self.send(Message::NewBlock(NewBlockMessage { block: new_block }))
-                .await?;
-            self.broadcasted_blocks = a;
+                self.send(Message::NewBlock(NewBlockMessage { block: new_block }))
+                    .await?;
+            }
+            self.broadcasted_blocks = latest_block_number;
         }
         Ok(())
     }
@@ -582,7 +581,33 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::TrieNodes(response)).await?
             }
             Message::NewBlock(req) => {
-                println!("New block received: {:?}", req.block.hash());
+                if self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
+                    if let Ok(Some(_)) = self.storage.get_block_header(req.block.header.number) {
+                        println!("Block received by peer already exists, ignoring it");
+                        return Ok(());
+                    }
+                    if let Err(e) = self.blockchain.add_block(&req.block).await {
+                        log_peer_warn(&self.node, &format!("Error adding new block: {}", e));
+                        return Err(RLPxError::BadRequest(format!(
+                            "Error adding new block: {e}"
+                        )));
+                    }
+                    let block_hash = req.block.hash();
+                    apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
+                        .await
+                        .map_err(|e| {
+                            RLPxError::BadRequest(format!("Error adding new block: {e}"))
+                        })?;
+                    println!(
+                        "New block added: {:?} with number: {:?}",
+                        req.block.hash(),
+                        req.block.header.number
+                    );
+                } else {
+                    println!(
+                        "Received new block but peer does not support based protocol, ignoring it"
+                    );
+                }
                 // broadcast here the new block
             }
             // Send response messages to the backend

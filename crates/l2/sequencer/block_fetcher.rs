@@ -29,6 +29,7 @@ pub struct BlockFetcher {
     sequencer_state: Arc<Mutex<SequencerState>>,
     fetch_interval_ms: u64,
     last_l1_block_fetched: U256,
+    latest_batch: u64,
     fetch_block_step: U256,
 }
 
@@ -73,6 +74,7 @@ impl BlockFetcher {
             sequencer_state,
             fetch_interval_ms: cfg.based.block_fetcher.fetch_interval_ms,
             last_l1_block_fetched,
+            latest_batch: 0,
             fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
         })
     }
@@ -100,28 +102,18 @@ impl BlockFetcher {
         while !self.node_is_up_to_date().await? {
             info!("Node is not up to date. Syncing via L1");
 
-            let last_l2_block_number_known = self.store.get_latest_block_number().await?;
-
-            let last_l2_batch_number_known = self
-                .rollup_store
-                .get_batch_number_by_block(last_l2_block_number_known)
-                .await?
-                .ok_or(BlockFetcherError::InternalError(format!(
-                    "Failed to get last batch number known for block {last_l2_block_number_known}"
-                )))?;
-
             let last_l2_committed_batch_number = self
                 .eth_client
                 .get_last_committed_batch(self.on_chain_proposer_address)
                 .await?;
 
-            let l2_batches_behind = last_l2_committed_batch_number.checked_sub(last_l2_batch_number_known).ok_or(
+            let l2_batches_behind = last_l2_committed_batch_number.checked_sub(self.latest_batch).ok_or(
                 BlockFetcherError::InternalError(
                     "Failed to calculate batches behind. Last batch number known is greater than last committed batch number.".to_string(),
                 ),
             )?;
 
-            info!("Node is {l2_batches_behind} batches behind. Last batch number known: {last_l2_batch_number_known}, last committed batch number: {last_l2_committed_batch_number}");
+            info!("Node is {l2_batches_behind} batches behind. Last batch number known: {}, last committed batch number: {last_l2_committed_batch_number}", self.latest_batch);
 
             let batch_committed_logs = self.get_logs().await?;
 
@@ -145,6 +137,7 @@ impl BlockFetcher {
                 self.store_batch(&batch).await?;
 
                 self.seal_batch(&batch, batch_number).await?;
+                self.latest_batch = batch_number.as_u64();
             }
 
             sleep(Duration::from_millis(self.fetch_interval_ms)).await;
@@ -208,16 +201,6 @@ impl BlockFetcher {
     async fn filter_logs(&self, logs: &[RpcLog]) -> Result<Vec<(RpcLog, U256)>, BlockFetcherError> {
         let mut filtered_logs = Vec::new();
 
-        let last_block_number_known = self.store.get_latest_block_number().await?;
-
-        let last_batch_number_known = self
-            .rollup_store
-            .get_batch_number_by_block(last_block_number_known)
-            .await?
-            .ok_or(BlockFetcherError::InternalError(format!(
-                "Failed to get last batch number known for block {last_block_number_known}"
-            )))?;
-
         // Filter missing batches logs
         for batch_committed_log in logs.iter().cloned() {
             let committed_batch_number = U256::from_big_endian(
@@ -231,7 +214,7 @@ impl BlockFetcher {
                     .as_bytes(),
             );
 
-            if committed_batch_number > last_batch_number_known.into() {
+            if committed_batch_number > self.latest_batch.into() {
                 filtered_logs.push((batch_committed_log, committed_batch_number));
             }
         }
@@ -305,6 +288,11 @@ impl BlockFetcher {
 
     async fn store_batch(&self, batch: &[Block]) -> Result<(), BlockFetcherError> {
         for block in batch.iter() {
+            let a = self.store.get_block_body(block.header.number).await;
+            if let Ok(Some(_)) = a {
+                println!("Block {} already exists in store", block.header.number);
+                continue;
+            }
             self.blockchain.add_block(block).await?;
 
             let block_hash = block.hash();
