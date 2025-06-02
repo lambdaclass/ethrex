@@ -7804,8 +7804,10 @@ name = "revm_comparison"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "ethrex-blockchain",
  "ethrex-common",
  "ethrex-levm",
+ "ethrex-storage",
  "ethrex-vm",
  "hex",
  "revm 9.0.0",
