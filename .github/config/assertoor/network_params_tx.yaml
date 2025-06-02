@@ -19,7 +19,7 @@ spamoor_params:
     - scenario: blobs
       config:
         # The eip limits our blob transactions to 6 per block, we keep it slightly under that.
-        throughput: 5
+        throughput: 6
 
 network_params:
   electra_fork_epoch: 1
