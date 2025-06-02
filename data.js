@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748877835665,
+  "lastUpdate": 1748882274342,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10135,6 +10135,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183892288932,
             "range": "± 604464521",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "51a01439aa13e69e377b04950d51410688325d15",
+          "message": "feat(l1): drop unwraps vm (#3001)\n\n**Motivation**\n\nDissallow unwraps on l1.\n\n**Description**\n\nDrop unwraps on crate vm. Resolves partially #2879.",
+          "timestamp": "2025-06-02T15:50:27Z",
+          "tree_id": "c85a351ffa49da24b07fbe561ece9676d37f5415",
+          "url": "https://github.com/lambdaclass/ethrex/commit/51a01439aa13e69e377b04950d51410688325d15"
+        },
+        "date": 1748882270147,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181239613738,
+            "range": "± 1393082597",
             "unit": "ns/iter"
           }
         ]
