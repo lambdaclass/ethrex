@@ -35,16 +35,17 @@ impl Blockchain {
         // Check if we need to re-execute parent blocks
         let blocks_to_re_execute =
             get_missing_state_parents(block.header.parent_hash, &self.storage, reexec).await?;
+        // Base our Evm's state on the newest parent block which's state we have available
         let parent_hash = blocks_to_re_execute
             .last()
             .unwrap_or(&block)
             .header
             .parent_hash;
-        // Run parents to rebuild pre-state
         let mut vm = Evm::new(
             self.evm_engine,
             StoreVmDatabase::new(self.storage.clone(), parent_hash),
         );
+        // Run parents to rebuild pre-state
         for block in blocks_to_re_execute.iter().rev() {
             vm.rerun_block(block, None)?;
         }
