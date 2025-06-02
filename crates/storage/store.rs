@@ -24,9 +24,11 @@ use tracing::info;
 
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
-// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
-// This will always be the amount yielded by snapshot reads unless there are less elements left
+/// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
+/// This will always be the amount yielded by snapshot reads unless there are less elements left
 pub const MAX_SNAPSHOT_READS: usize = 100;
+/// Panic message shown when the Store is initialized ith a genesis that differs from the one already stored
+pub const GENESIS_DIFF_PANIC_MESSAGE: &str = "Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2";
 
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -470,7 +472,7 @@ impl Store {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
             } else {
-                panic!("Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2");
+                panic!("{}", GENESIS_DIFF_PANIC_MESSAGE);
             }
         }
         // Store genesis accounts
@@ -1158,7 +1160,7 @@ mod tests {
         Bloom, H160,
     };
     use ethrex_rlp::decode::RLPDecode;
-    use std::{fs, panic, str::FromStr};
+    use std::{fs, str::FromStr};
 
     use super::*;
 
@@ -1231,7 +1233,7 @@ mod tests {
         let add_initial_state_handle =
             tokio::task::spawn(async move { store.add_initial_state(genesis_hive).await });
         let panic = add_initial_state_handle.await.unwrap_err().into_panic();
-        assert_eq!(panic.downcast_ref::<&str>().unwrap(), &"Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2");
+        assert_eq!(panic.downcast_ref::<&str>().unwrap(), &GENESIS_DIFF_PANIC_MESSAGE);
     }
 
     fn remove_test_dbs(path: &str) {
