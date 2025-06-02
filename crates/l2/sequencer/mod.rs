@@ -40,21 +40,21 @@ pub async fn start_l2(
     let execution_cache = Arc::new(ExecutionCache::default());
 
     L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone()).await;
-    if let Err(err) = L1Committer::spawn(
+    let _ = L1Committer::spawn(
         store.clone(),
         rollup_store.clone(),
         execution_cache.clone(),
         cfg.clone(),
     )
     .await
-    {
+    .inspect_err(|err| {
         error!("Error starting Committer: {err}");
-    };
-    if let Err(err) =
-        ProofCoordinator::spawn(store.clone(), rollup_store.clone(), cfg.clone()).await
-    {
-        error!("Error starting Proof Coordinator: {err}");
-    };
+    });
+    let _ = ProofCoordinator::spawn(store.clone(), rollup_store.clone(), cfg.clone())
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Proof Coordinator: {err}");
+        });
 
     let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
