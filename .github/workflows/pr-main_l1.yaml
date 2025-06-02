@@ -90,7 +90,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup Hive
-        run: make setup-hive
+        run: git clone --single-branch --branch master https://github.com/lambdaclass/hive && cd hive && git checkout --detach 4a1ed079ce5ebb46240e4ef9141d72e7236bca36 && go build .;
       - name: Upload hive artifacts
         uses: actions/upload-artifact@v4
         with:
