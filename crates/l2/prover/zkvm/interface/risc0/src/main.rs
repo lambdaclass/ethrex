@@ -37,6 +37,7 @@ fn main() {
     };
 
     let last_block = blocks.last().expect("empty batch");
+    let last_block_hash = last_block.header.hash();
     let last_block_state_root = last_block.header.state_root;
     let mut parent_header = parent_block_header;
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
@@ -132,5 +133,6 @@ fn main() {
         withdrawals_merkle_root,
         #[cfg(feature = "l2")]
         deposit_logs_hash,
+        last_block_hash,
     });
 }
