@@ -76,7 +76,7 @@ impl L1ProofSender {
             let response = eth_client
                 .call(
                     committer_cfg.on_chain_proposer_address,
-                    calldata.into(),
+                    calldata,
                     Overrides::default(),
                 )
                 .await?;
