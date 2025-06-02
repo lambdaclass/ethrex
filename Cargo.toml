@@ -4,9 +4,6 @@ members = [
   "cmd/ef_tests/state",
   "cmd/ethrex",
   "cmd/ethrex_l2",
-  "cmd/hive_report",
-  "cmd/loc",
-  "cmd/load_test",
   "cmd/ethrex_replay",
   "crates/blockchain",
   "crates/blockchain/dev",
@@ -25,6 +22,10 @@ members = [
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/bench/revm_comparison",
+  "tooling/genesis",
+  "tooling/hive_report",
+  "tooling/load_test",
+  "tooling/loc"
 ]
 resolver = "2"
 
@@ -62,7 +63,7 @@ serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 libmdbx = { version = "=0.5.3", features = ["orm"] }
 bytes = { version = "1.6.0", features = ["serde"] }
-tokio = { version = "1.41.1", features = ["full"] }
+tokio = { version = "1.41.1"}
 thiserror = "2.0.9"
 hex = "0.4.3"
 hex-literal = "0.4.1"
