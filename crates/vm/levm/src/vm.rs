@@ -171,6 +171,10 @@ impl LevmCallTracer {
         if !self.active {
             return;
         }
+        if self.only_top_call && !self.callframes.is_empty() {
+            // Only create callframe if it's the first one to be created.
+            return;
+        }
         let callframe = TracerCallFrame::new(call_type, from, to, value, gas, input);
         self.callframes.push(callframe);
     }
@@ -200,8 +204,16 @@ impl LevmCallTracer {
     }
 
     /// Exits trace call using the ExecutionReport.
-    pub fn exit_report(&mut self, report: &ExecutionReport) -> Result<(), InternalError> {
+    pub fn exit_report(
+        &mut self,
+        report: &ExecutionReport,
+        is_top_call: bool,
+    ) -> Result<(), InternalError> {
         if !self.active {
+            return Ok(());
+        }
+        if self.only_top_call && !is_top_call {
+            // We just want to register top call
             return Ok(());
         }
         let (gas_used, output) = (report.gas_used, report.output.clone());
@@ -222,7 +234,7 @@ impl LevmCallTracer {
         gas_used: u64,
         error: Option<String>,
     ) -> Result<(), InternalError> {
-        if !self.active {
+        if !self.active || self.only_top_call {
             return Ok(());
         }
         self.exit(gas_used, Bytes::new(), error, None)
@@ -434,7 +446,7 @@ impl<'a> VM<'a> {
             hook.finalize_execution(self, report)?;
         }
 
-        self.tracer.exit_report(report)?;
+        self.tracer.exit_report(report, true)?;
 
         //TODO: Remove this
         // let a = serde_json::to_string_pretty(&self.tracer.callframes.pop().unwrap()).unwrap();

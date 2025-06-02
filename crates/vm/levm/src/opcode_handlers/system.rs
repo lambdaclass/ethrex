@@ -909,7 +909,7 @@ impl<'a> VM<'a> {
             }
         };
 
-        self.tracer.exit_report(tx_report)?;
+        self.tracer.exit_report(tx_report, false)?;
         Ok(())
     }
 
@@ -954,7 +954,7 @@ impl<'a> VM<'a> {
             }
         };
 
-        self.tracer.exit_report(tx_report)?;
+        self.tracer.exit_report(tx_report, false)?;
         Ok(())
     }
 
