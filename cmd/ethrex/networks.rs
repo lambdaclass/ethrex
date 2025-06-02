@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::{fmt::{self}, path::{Path, PathBuf}};
 
 use ethrex_common::types::Genesis;
 use ethrex_p2p::types::Node;
@@ -64,6 +64,24 @@ impl From<&str> for Network {
 impl From<PathBuf> for Network {
     fn from(value: PathBuf) -> Self {
         Network::GenesisPath(value)
+    }
+}
+
+impl Default for Network{
+    fn default() -> Self {
+        Network::PublicNetwork(PublicNetwork::Mainnet)
+    }
+}
+
+impl fmt::Display for Network {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Network::PublicNetwork(PublicNetwork::Holesky) => write!(f,"holesky"),
+            Network::PublicNetwork(PublicNetwork::Hoodi) => write!(f,"hoodi"),
+            Network::PublicNetwork(PublicNetwork::Mainnet) => write!(f,"mainnet"),
+            Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f,"sepolia"),
+            Network::GenesisPath(path_buf) => write!(f,"{:?}", path_buf),
+        }
     }
 }
 

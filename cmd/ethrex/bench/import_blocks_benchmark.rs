@@ -18,12 +18,12 @@ fn block_import() {
     let network = Network::from("../../test_data/genesis-perf-ci.json");
 
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let _ = rt.block_on(import_blocks(
+    rt.block_on(import_blocks(
         "../../test_data/l2-1k-erc20.rlp",
         data_dir,
         network.get_genesis(),
         evm_engine,
-    ));
+    )).expect("Failed to import blocks on the Tokio runtime");
 }
 
 pub fn import_blocks_benchmark(c: &mut Criterion) {

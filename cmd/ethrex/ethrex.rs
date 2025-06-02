@@ -5,7 +5,7 @@ use ethrex::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
         init_metrics, init_rpc_api, init_store, init_tracing,
     },
-    utils::{read_genesis_file, set_datadir, store_node_config_file, NodeConfigFile},
+    utils::{ set_datadir, store_node_config_file, NodeConfigFile},
 };
 use ethrex_p2p::network::peer_table;
 #[cfg(feature = "sync-test")]
@@ -57,7 +57,7 @@ async fn main() -> eyre::Result<()> {
 
     let network = get_network(&opts);
 
-    let genesis = read_genesis_file(network.get_genesis_path());
+    let genesis = network.get_genesis();
     let store = init_store(&data_dir, genesis).await;
 
     #[cfg(feature = "sync-test")]
