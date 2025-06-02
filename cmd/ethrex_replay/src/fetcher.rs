@@ -1,8 +1,16 @@
+<<<<<<< HEAD
 use std::collections::{HashMap, HashSet};
 use std::hash::RandomState;
 
 use crate::cache::{load_cache, load_cache_batch, write_cache, write_cache_batch, Cache};
 use crate::rpc::{db::RpcDB, get_block, get_latest_block_number};
+=======
+use crate::cache::Cache;
+use crate::rpc::db::to_exec_db_from_witness;
+use crate::rpc::get_witness;
+
+use crate::rpc::{get_block, get_latest_block_number};
+>>>>>>> c89e98339 (feat use executionWitness for ethrex_replay)
 use ethrex_common::types::ChainConfig;
 use ethrex_common::{Address, H256};
 use eyre::WrapErr;
@@ -19,10 +27,10 @@ pub async fn get_blockdata(
     chain_config: ChainConfig,
     block_number: usize,
 ) -> eyre::Result<Cache> {
-    if let Ok(cache) = load_cache(block_number) {
-        return Ok(cache);
-    }
-    let block = get_block(rpc_url, block_number)
+    // if let Ok(cache) = load_cache(block_number) {
+    //     return Ok(cache);
+    // }
+    let block = get_block(&rpc_url, block_number)
         .await
         .wrap_err("failed to fetch block")?;
 
@@ -32,20 +40,16 @@ pub async fn get_blockdata(
         .header;
 
     println!("populating rpc db cache");
-    let rpc_db = RpcDB::with_cache(rpc_url, chain_config, block_number - 1, &block)
-        .await
-        .wrap_err("failed to create rpc db")?;
+    let witness = get_witness(&rpc_url, block_number).await.wrap_err("err")?;
 
-    let db = rpc_db
-        .to_exec_db(&block)
-        .wrap_err("failed to build execution db")?;
+    let db = to_exec_db_from_witness(chain_config, witness).unwrap();
 
     let cache = Cache {
         blocks: vec![block],
         parent_block_header,
         db,
     };
-    write_cache(&cache).expect("failed to write cache");
+    // write_cache(&cache).expect("failed to write cache");
     Ok(cache)
 }
 

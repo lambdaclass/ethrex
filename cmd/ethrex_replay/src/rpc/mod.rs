@@ -9,6 +9,7 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
+use ethrex_rpc::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_storage::hash_address;
 use ethrex_trie::Trie;
 
@@ -222,6 +223,24 @@ async fn get_code(rpc_url: &str, block_number: usize, address: &Address) -> eyre
     let res = response.json::<serde_json::Value>().await?;
     let owner_bytes = decode_hex(get_result(res)?)?;
     Ok(Bytes::from_owner(owner_bytes))
+}
+
+pub async fn get_witness(
+    rpc_url: &str,
+    block_number: usize,
+) -> eyre::Result<ExecutionWitnessResult> {
+    let block_number = format!("0x{block_number:x}");
+    let request = &json!({
+        "id": 1,
+        "jsonrpc": "2.0",
+        "method": "debug_executionWitness",
+        "params": [block_number]
+    });
+
+    let response = CLIENT.post(rpc_url).json(request).send().await?;
+    let res = response.json::<serde_json::Value>().await?;
+    let result: Result<ExecutionWitnessResult, eyre::Error> = get_result(res);
+    result
 }
 
 fn get_result<T: DeserializeOwned>(response: serde_json::Value) -> eyre::Result<T> {

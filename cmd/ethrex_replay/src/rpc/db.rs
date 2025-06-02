@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use crate::constants::RPC_RATE_LIMIT;
 use crate::rpc::{get_account, get_block, retry};
 
+use crate::rpc::ExecutionWitnessResult;
 use bytes::Bytes;
-use ethrex_common::types::ChainConfig;
+use ethrex_common::types::{code_hash, ChainConfig};
 use ethrex_common::{
     types::{AccountInfo, AccountState, Block, TxKind},
     Address, H256, U256,
@@ -12,7 +13,9 @@ use ethrex_common::{
 use ethrex_l2::utils::prover::db::get_potential_child_nodes;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::db::Database as LevmDatabase;
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{hash_address, hash_key};
+use ethrex_trie::{Node, Trie};
 use ethrex_vm::backends::levm::{CacheDB, LEVM};
 use ethrex_vm::{ProverDB, ProverDBError};
 use futures_util::future::join_all;
@@ -418,6 +421,8 @@ impl RpcDB {
             chain_config,
             state_proofs,
             storage_proofs,
+            state_trie: Arc::new(Mutex::new(Trie::from_nodes(None, &Vec::new()).unwrap())),
+            storage_tries: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 }
@@ -522,4 +527,88 @@ impl LevmDatabase for RpcDB {
     fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
         Ok(self.chain_config)
     }
+}
+
+pub fn to_exec_db_from_witness(
+    chain_config: ChainConfig,
+    witness: ExecutionWitnessResult,
+) -> Result<ethrex_vm::ProverDB, ProverDBError> {
+    let mut code = HashMap::new();
+    for witness_code in witness.codes {
+        code.insert(code_hash(&witness_code), witness_code);
+    }
+
+    let mut block_hashes = HashMap::new();
+
+    let initial_state_hash = witness
+        .block_headers
+        .first()
+        .expect("no headers?")
+        .state_root;
+
+    for header in witness.block_headers.iter() {
+        block_hashes.insert(header.number, header.hash());
+    }
+
+    let mut initial_node = None;
+
+    for node in witness.state.iter() {
+        let x = Node::decode_raw(node).expect("invalid node");
+        let hash = x.compute_hash().finalize();
+        if hash == initial_state_hash {
+            initial_node = Some(node.clone());
+            break;
+        }
+    }
+
+    let state_trie =
+        Trie::from_nodes(initial_node.as_ref(), &witness.state).expect("failed to create trie");
+
+    let root = state_trie.hash_no_commit();
+
+    dbg!(hex::encode(root));
+
+    let mut storage_tries = HashMap::new();
+    for (addr, nodes) in witness.keys {
+        let hashed_address = hash_address(&addr);
+        let Some(encoded_state) = state_trie
+            .get(&hashed_address)
+            .expect("Failed to get from trie")
+        else {
+            todo!()
+        };
+
+        let state =
+            AccountState::decode(&encoded_state).expect("Failed to get state from encoded state");
+
+        let mut initial_node = None;
+
+        for node in nodes.iter() {
+            let x = Node::decode_raw(node).expect("invalid node");
+            let hash = x.compute_hash().finalize();
+            if hash == state.storage_root {
+                initial_node = Some(node);
+                break;
+            }
+        }
+
+        let storage_trie = Trie::from_nodes(initial_node, &nodes).unwrap();
+
+        storage_tries.insert(addr, storage_trie);
+    }
+
+    let state_trie = Arc::new(Mutex::new(state_trie));
+    let storage_tries = Arc::new(Mutex::new(storage_tries));
+
+    Ok(ProverDB {
+        accounts: HashMap::new(),
+        code,
+        storage: HashMap::new(),
+        block_hashes,
+        chain_config,
+        state_proofs: (None, Vec::new()),
+        storage_proofs: HashMap::new(),
+        state_trie,
+        storage_tries,
+    })
 }

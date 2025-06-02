@@ -3287,6 +3287,7 @@ dependencies = [
  "ethrex-levm",
  "ethrex-prover",
  "ethrex-rlp",
+ "ethrex-rpc",
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
