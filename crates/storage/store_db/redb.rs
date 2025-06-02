@@ -539,8 +539,7 @@ impl StoreEngine for RedBStore {
             .read_sync(
                 BLOCK_NUMBERS_TABLE,
                 <H256 as Into<BlockHashRLP>>::into(block_hash),
-            )
-            .await?
+            )?
             .map(|b| b.value()))
     }
 
@@ -677,7 +676,6 @@ impl StoreEngine for RedBStore {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read_sync(CANONICAL_BLOCK_HASHES_TABLE, block_number)
-            .await
             .map(|o| o.map(|hash_rlp| hash_rlp.value().to()))
     }
 

@@ -34,8 +34,16 @@ impl VmDatabase for StoreVmDatabase {
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         // First check if our block is canonical, if it is then it's ancestor will also be canonical and we can look it up directly
-        if self.store.is_canonical_sync(self.block_hash)? {
-            if let Some(hash) = self.store.get_canonical_block_hash_sync(block_number)? {
+        if self
+            .store
+            .is_canonical_sync(self.block_hash)
+            .map_err(|err| EvmError::DB(err.to_string()))?
+        {
+            if let Some(hash) = self
+                .store
+                .get_canonical_block_hash_sync(block_number)
+                .map_err(|err| EvmError::DB(err.to_string()))?
+            {
                 return Ok(hash);
             }
         // If our block is not canonical then we must look for the target in our block's ancestors
