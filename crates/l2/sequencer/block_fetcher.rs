@@ -290,7 +290,7 @@ impl BlockFetcher {
         for block in batch.iter() {
             let a = self.store.get_block_body(block.header.number).await;
             if let Ok(Some(_)) = a {
-                println!("Block {} already exists in store", block.header.number);
+                debug!("Block {} already exists in store", block.header.number);
                 continue;
             }
             self.blockchain.add_block(block).await?;
@@ -334,7 +334,7 @@ impl BlockFetcher {
             )
             .await?;
 
-        info!("Sealed batch {batch_number}."); //. First block: {}, last block: {}",);
+        info!("Sealed batch {batch_number}.");
 
         Ok(())
     }

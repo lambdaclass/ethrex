@@ -155,13 +155,12 @@ impl Message {
                 _ => Err(RLPDecodeError::MalformedData),
             }
         } else {
+            // based capability
             if msg_id == BASED_CAPABILITY_OFFSET + NewBlockMessage::CODE {
-                // based capability
-                let block = NewBlockMessage::decode(data)?;
-                println!("{:?}", &block.block.hash());
-                return Ok(Message::NewBlock(block));
+                Ok(Message::NewBlock(NewBlockMessage::decode(data)?))
+            } else {
+                Err(RLPDecodeError::MalformedData)
             }
-            Err(RLPDecodeError::MalformedData)
         }
     }
 

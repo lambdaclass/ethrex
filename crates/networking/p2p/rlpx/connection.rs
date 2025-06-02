@@ -44,7 +44,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::{
     eth::transactions::NewPooledTransactionHashes, message::NewBlockMessage, p2p::DisconnectReason,
@@ -462,7 +462,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 return Ok(());
             }
             for i in self.broadcasted_blocks + 1..=latest_block_number {
-                println!(
+                debug!(
                     "Broadcasting new block, current: {}, last broadcasted: {}",
                     i, self.broadcasted_blocks
                 );
@@ -581,13 +581,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::TrieNodes(response)).await?
             }
             Message::NewBlock(req) => {
+                // LOOK IF THIS CHECK IS NECESSARY??
                 if self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
                     if let Ok(Some(_)) = self.storage.get_block_header(req.block.header.number) {
-                        println!("Block received by peer already exists, ignoring it");
+                        debug!("Block received by peer already exists, ignoring it");
                         return Ok(());
                     }
                     if let Err(e) = self.blockchain.add_block(&req.block).await {
-                        log_peer_warn(&self.node, &format!("Error adding new block: {}", e));
+                        log_peer_warn(&self.node, &format!("Error adding new block: {e}"));
                         return Err(RLPxError::BadRequest(format!(
                             "Error adding new block: {e}"
                         )));
@@ -598,13 +599,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         .map_err(|e| {
                             RLPxError::BadRequest(format!("Error adding new block: {e}"))
                         })?;
-                    println!(
-                        "New block added: {:?} with number: {:?}",
-                        req.block.hash(),
-                        req.block.header.number
-                    );
                 } else {
-                    println!(
+                    warn!(
                         "Received new block but peer does not support based protocol, ignoring it"
                     );
                 }
