@@ -6,8 +6,8 @@ use ethrex_common::types::GenesisAccount;
 use ethrex_common::U256;
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::{compile_contract, COMMON_BRIDGE_L2_ADDRESS};
+use genesis_tool::genesis::write_genesis_as_json;
 use std::{collections::HashMap, io::ErrorKind, path::Path};
-use tools::genesis::write_genesis_as_json;
 mod cli;
 mod error;
 
