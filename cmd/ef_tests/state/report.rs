@@ -1,12 +1,10 @@
 use crate::runner::{EFTestRunnerError, InternalError};
-use alloy_rlp::Encodable;
 use colored::Colorize;
 use ethrex_common::{
     types::{Account, AccountUpdate, Fork},
     Address, H256,
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::EvmError;
 use itertools::Itertools;
 use revm::primitives::{EVMError as RevmError, ExecutionResult as RevmExecutionResult};
