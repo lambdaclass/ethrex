@@ -11,8 +11,6 @@ use secp256k1::SecretKey;
 use std::collections::HashMap;
 use tracing::{debug, error, info};
 
-static ELF: &[u8] = include_bytes!("../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf");
-
 use crate::{
     sequencer::errors::ProofSenderError,
     utils::prover::{
@@ -60,6 +58,7 @@ struct L1ProofSender {
     l1_chain_id: u64,
     network: Network,
     fee_estimate: FeeEstimationType,
+    aligned_sp1_elf_path: String,
 }
 
 impl L1ProofSender {
@@ -79,6 +78,7 @@ impl L1ProofSender {
 
         let network = resolve_network(&aligned_cfg.network)?;
         let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
+        let aligned_sp1_elf_path = aligned_cfg.aligned_sp1_elf_path.clone();
 
         Ok(Self {
             eth_client,
@@ -91,6 +91,7 @@ impl L1ProofSender {
             l1_chain_id,
             network,
             fee_estimate,
+            aligned_sp1_elf_path,
         })
     }
 
@@ -142,12 +143,14 @@ impl L1ProofSender {
 
     async fn send_proof_to_aligned(&self, batch_number: u64) -> Result<(), ProofSenderError> {
         let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
+        let elf = std::fs::read(self.aligned_sp1_elf_path.clone())
+            .map_err(|_| ProofSenderError::InternalError("Failed to read ELF file".to_owned()))?;
 
         let verification_data = VerificationData {
             proving_system: ProvingSystemId::SP1,
             proof: proof.proof(),
             proof_generator_addr: self.l1_address.0.into(),
-            vm_program_code: Some(ELF.to_vec()),
+            vm_program_code: Some(elf),
             verification_key: None,
             pub_input: None,
         };

@@ -93,8 +93,10 @@ impl From<SequencerOptions> for SequencerConfig {
             aligned: AlignedConfig {
                 aligned_verifier_interval_ms: opts.aligned_opts.aligned_verifier_interval_ms,
                 beacon_url: opts.aligned_opts.beacon_url,
-                network: opts.aligned_opts.network,
+                network: opts.aligned_opts.aligned_network,
                 fee_estimate: opts.aligned_opts.fee_estimate,
+                aligned_sp1_vk_path: opts.aligned_opts.aligned_sp1_vk_path,
+                aligned_sp1_elf_path: opts.aligned_opts.aligned_sp1_elf_path,
             },
         }
     }
@@ -405,7 +407,7 @@ pub struct AlignedOptions {
         help = "L1 network name for Aligned sdk",
         help_heading = "Aligned options"
     )]
-    pub network: String,
+    pub aligned_network: String,
     #[arg(
         long = "Aligned-fee-estimate",
         default_value = "instant",
@@ -415,6 +417,24 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub fee_estimate: String,
+    #[arg(
+        long,
+        default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
+        value_name = "PATH",
+        env = "ALIGNED_SP1_VERIFICATION_KEY_PATH",
+        help_heading = "Aligned options",
+        help = "Path to the SP1 verification key. This is used for proof verification."
+    )]
+    pub aligned_sp1_vk_path: String,
+    #[arg(
+        long,
+        default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf", env!("CARGO_MANIFEST_DIR")),
+        value_name = "PATH",
+        env = "ALIGNED_SP1_ELF_PATH",
+        help_heading = "Aligned options",
+        help = "Path to the SP1 elf. This is used for proof verification."
+    )]
+    pub aligned_sp1_elf_path: String,
 }
 
 impl Default for AlignedOptions {
@@ -422,8 +442,16 @@ impl Default for AlignedOptions {
         Self {
             aligned_verifier_interval_ms: 5000,
             beacon_url: "http://127.0.0.1:58801".to_string(),
-            network: "devnet".to_string(),
+            aligned_network: "devnet".to_string(),
             fee_estimate: "instant".to_string(),
+            aligned_sp1_vk_path: format!(
+                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            aligned_sp1_elf_path: format!(
+                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
+                env!("CARGO_MANIFEST_DIR")
+            ),
         }
     }
 }
