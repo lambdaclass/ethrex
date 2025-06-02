@@ -27,9 +27,7 @@ use super::{
 
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
-#[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_transactions::METRICS_TX;
+use ethrex_metrics::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX};
 
 pub struct BlockProducer {
     block_time_ms: u64,
@@ -73,7 +71,7 @@ impl BlockProducer {
         sequencer_state: Arc<Mutex<SequencerState>>,
     ) {
         loop {
-            if let Err(err) = self
+            let _ = self
                 .main_logic(
                     store.clone(),
                     blockchain.clone(),
@@ -81,9 +79,7 @@ impl BlockProducer {
                     sequencer_state.clone(),
                 )
                 .await
-            {
-                error!("Block Producer Error: {}", err);
-            }
+                .inspect_err(|e| error!("Block Producer Error: {e}"));
 
             sleep(Duration::from_millis(self.block_time_ms)).await;
         }
