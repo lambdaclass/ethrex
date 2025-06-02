@@ -73,11 +73,11 @@ pub fn prove(input: ProgramInput) -> Result<ProveOutput, Box<dyn std::error::Err
     Ok(ProveOutput::new(proof, setup.vk.clone()))
 }
 
-pub fn verify(output: &ProveOutput) -> Result<bool, Box<dyn std::error::Error>> {
+pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
     let setup = &*PROVER_SETUP;
     setup.client.verify(&output.proof, &output.vk)?;
 
-    Ok(true)
+    Ok(())
 }
 
 pub fn to_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::error::Error>> {
