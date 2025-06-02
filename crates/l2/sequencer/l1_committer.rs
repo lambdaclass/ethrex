@@ -225,7 +225,7 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
             let _ = METRICS_L2
                 .set_block_type_and_block_number(
                     MetricsL2BlockType::LastCommittedBlock,
-                    last_block_of_batch,
+                    batch.last_block,
                 )
                 .inspect_err(|e| {
                     tracing::error!(

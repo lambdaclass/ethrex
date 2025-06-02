@@ -298,7 +298,7 @@ impl Command {
                         deposit_logs_hash: todo!(),
                         withdrawal_hashes,
                         blobs_bundle: todo!(),
-                    }
+                    };
 
                     // Store batch info in L2 storage
                     rollup_store
