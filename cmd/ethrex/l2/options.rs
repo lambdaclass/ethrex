@@ -419,7 +419,7 @@ pub struct AlignedOptions {
     pub fee_estimate: String,
     #[arg(
         long,
-        default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
+        default_value_t = format!("{}/../../crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ALIGNED_SP1_VERIFICATION_KEY_PATH",
         help_heading = "Aligned options",
@@ -428,7 +428,7 @@ pub struct AlignedOptions {
     pub aligned_sp1_vk_path: String,
     #[arg(
         long,
-        default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf", env!("CARGO_MANIFEST_DIR")),
+        default_value_t = format!("{}/../../crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
         env = "ALIGNED_SP1_ELF_PATH",
         help_heading = "Aligned options",
