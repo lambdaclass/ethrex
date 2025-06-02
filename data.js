@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748894315960,
+  "lastUpdate": 1748895440796,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10285,6 +10285,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182021326121,
             "range": "± 562179185",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "eb78b10c5e37ebea18022336e5f8acb2cbaf6a37",
+          "message": "feat(l2): image reproducibility (#2901)\n\n**Motivation**\n\nThe current process isn't reproducible, needing changes of the\nmeasurements every time the image is re-created, even if there were no\ncode changes.\n\n**Description**\n\nNix is used to make a reproducible image and a reproducible VMM+VBIOS\n(which affect the MRTD).\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-06-02T19:30:32Z",
+          "tree_id": "58a45978c2ce5853a56c854c2253ac60ef99af87",
+          "url": "https://github.com/lambdaclass/ethrex/commit/eb78b10c5e37ebea18022336e5f8acb2cbaf6a37"
+        },
+        "date": 1748895436524,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181968239174,
+            "range": "± 417414937",
             "unit": "ns/iter"
           }
         ]
