@@ -50,16 +50,6 @@ pub async fn start_l2(
         return;
     };
 
-    let Ok(needed_proof_types) = get_needed_proof_types(
-        cfg.proof_coordinator.dev_mode,
-        cfg.eth.rpc_url.clone(),
-        cfg.l1_committer.on_chain_proposer_address,
-    )
-    .await
-    .inspect_err(|e| error!("Error starting Proposer: {e}")) else {
-        return;
-    };
-
     L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone()).await;
     if let Err(err) = L1Committer::spawn(
         store.clone(),
@@ -81,7 +71,7 @@ pub async fn start_l2(
     ));
     task_set.spawn(l1_proof_sender::start_l1_proof_sender(
         cfg.clone(),
-        rollup_store,
+        rollup_store.clone(),
         needed_proof_types.clone(),
     ));
     if needed_proof_types.contains(&ProverType::Aligned) {
