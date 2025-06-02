@@ -23,20 +23,15 @@ use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 
-use super::{
-    errors::SequencerError,
-    utils::random_duration,
-};
+use super::{errors::SequencerError, utils::random_duration};
 
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
 
-
-    const DEV_MODE_ADDRESS: H160 = H160([
+const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0xAA,
 ]);
-
 
 #[derive(Clone)]
 pub struct L1ProofSenderState {
