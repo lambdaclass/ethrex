@@ -29,7 +29,7 @@ pub struct BlockFetcher {
     sequencer_state: Arc<Mutex<SequencerState>>,
     fetch_interval_ms: u64,
     last_l1_block_fetched: U256,
-    latest_batch: u64,
+    latest_batch_stored: u64,
     fetch_block_step: U256,
 }
 
@@ -74,7 +74,7 @@ impl BlockFetcher {
             sequencer_state,
             fetch_interval_ms: cfg.based.block_fetcher.fetch_interval_ms,
             last_l1_block_fetched,
-            latest_batch: 0,
+            latest_batch_stored: 0,
             fetch_block_step: cfg.based.block_fetcher.fetch_block_step.into(),
         })
     }
@@ -107,13 +107,13 @@ impl BlockFetcher {
                 .get_last_committed_batch(self.on_chain_proposer_address)
                 .await?;
 
-            let l2_batches_behind = last_l2_committed_batch_number.checked_sub(self.latest_batch).ok_or(
+            let l2_batches_behind = last_l2_committed_batch_number.checked_sub(self.latest_batch_stored).ok_or(
                 BlockFetcherError::InternalError(
                     "Failed to calculate batches behind. Last batch number known is greater than last committed batch number.".to_string(),
                 ),
             )?;
 
-            info!("Node is {l2_batches_behind} batches behind. Last batch number known: {}, last committed batch number: {last_l2_committed_batch_number}", self.latest_batch);
+            info!("Node is {l2_batches_behind} batches behind. Last batch number known: {}, last committed batch number: {last_l2_committed_batch_number}", self.latest_batch_stored);
 
             let batch_committed_logs = self.get_logs().await?;
 
@@ -137,7 +137,7 @@ impl BlockFetcher {
                 self.store_batch(&batch).await?;
 
                 self.seal_batch(&batch, batch_number).await?;
-                self.latest_batch = batch_number.as_u64();
+                self.latest_batch_stored = batch_number.as_u64();
             }
 
             sleep(Duration::from_millis(self.fetch_interval_ms)).await;
@@ -214,7 +214,7 @@ impl BlockFetcher {
                     .as_bytes(),
             );
 
-            if committed_batch_number > self.latest_batch.into() {
+            if committed_batch_number > self.latest_batch_stored.into() {
                 filtered_logs.push((batch_committed_log, committed_batch_number));
             }
         }
@@ -288,8 +288,7 @@ impl BlockFetcher {
 
     async fn store_batch(&self, batch: &[Block]) -> Result<(), BlockFetcherError> {
         for block in batch.iter() {
-            let a = self.store.get_block_body(block.header.number).await;
-            if let Ok(Some(_)) = a {
+            if let Ok(Some(_)) = self.store.get_block_header(block.header.number) {
                 debug!("Block {} already exists in store", block.header.number);
                 continue;
             }

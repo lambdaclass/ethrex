@@ -1,6 +1,7 @@
 use crate::{
     kademlia::PeerChannels,
     rlpx::{
+        based::NewBlockMessage,
         error::RLPxError,
         eth::{
             backend,
@@ -47,8 +48,7 @@ use tokio_util::codec::Framed;
 use tracing::{debug, warn};
 
 use super::{
-    eth::transactions::NewPooledTransactionHashes, message::NewBlockMessage, p2p::DisconnectReason,
-    utils::log_peer_warn,
+    eth::transactions::NewPooledTransactionHashes, p2p::DisconnectReason, utils::log_peer_warn,
 };
 
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
@@ -89,7 +89,7 @@ pub(crate) struct RLPxConnection<S> {
     next_tx_broadcast: Instant,
     next_block_broadcast: Instant,
     broadcasted_txs: HashSet<H256>,
-    broadcasted_blocks: u64,
+    latest_broadcasted_block: u64,
     client_version: String,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
@@ -127,7 +127,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
             next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
             broadcasted_txs: HashSet::new(),
-            broadcasted_blocks: 0,
+            latest_broadcasted_block: 0,
             client_version,
             connection_broadcast_send: connection_broadcast,
         }
@@ -458,13 +458,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn send_new_block(&mut self) -> Result<(), RLPxError> {
         if self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
             let latest_block_number = self.storage.get_latest_block_number().await?;
-            if latest_block_number == self.broadcasted_blocks {
+            if latest_block_number == self.latest_broadcasted_block {
                 return Ok(());
             }
-            for i in self.broadcasted_blocks + 1..=latest_block_number {
+            for i in self.latest_broadcasted_block + 1..=latest_block_number {
                 debug!(
                     "Broadcasting new block, current: {}, last broadcasted: {}",
-                    i, self.broadcasted_blocks
+                    i, self.latest_broadcasted_block
                 );
                 let new_block_body = self.storage.get_block_body(i).await?.unwrap();
                 let new_block_header = self.storage.get_block_header(i)?.unwrap();
@@ -476,7 +476,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::NewBlock(NewBlockMessage { block: new_block }))
                     .await?;
             }
-            self.broadcasted_blocks = latest_block_number;
+            self.latest_broadcasted_block = latest_block_number;
         }
         Ok(())
     }
