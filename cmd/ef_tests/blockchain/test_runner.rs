@@ -145,7 +145,7 @@ pub async fn build_store_for_test(test: &TestUnit) -> Store {
 fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
     let block_number = test.genesis_block_header.number.low_u64();
     let db_block_header = db.get_block_header(block_number).unwrap().unwrap();
-    let computed_genesis_block_hash = db_block_header.compute_block_hash();
+    let computed_genesis_block_hash = db_block_header.hash();
     // Check genesis block hash
     assert_eq!(test.genesis_block_header.hash, computed_genesis_block_hash);
     // Check genesis state root
@@ -211,7 +211,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
         .get_block_header(last_block_number)
         .unwrap()
         .unwrap()
-        .compute_block_hash();
+        .hash();
     assert_eq!(
         test.lastblockhash, last_block_hash,
         "Last block number does not match"

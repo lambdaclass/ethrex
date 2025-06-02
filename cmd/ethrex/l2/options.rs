@@ -345,7 +345,7 @@ pub struct ProofCoordinatorOptions {
         help_heading = "L1 Prover Server options"
     )]
     pub proof_send_interval_ms: u64,
-    #[clap(
+    #[arg(
         long = "proof-coordinator-dev-mode",
         default_value = "true",
         value_name = "BOOLEAN",

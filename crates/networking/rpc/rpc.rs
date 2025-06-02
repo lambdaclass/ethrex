@@ -23,6 +23,7 @@ use crate::eth::{
     fee_market::FeeHistoryRequest,
     filter::{self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewFilterRequest},
     gas_price::GasPrice,
+    gas_tip_estimator::GasTipEstimator,
     logs::LogsFilter,
     transaction::{
         CallRequest, CreateAccessListRequest, EstimateGasRequest, GetRawTransaction,
@@ -59,7 +60,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
@@ -87,6 +88,7 @@ pub struct RpcApiContext {
     pub syncer: Arc<SyncManager>,
     pub peer_handler: PeerHandler,
     pub node_data: NodeData,
+    pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     #[cfg(feature = "l2")]
     pub valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")]
@@ -153,6 +155,7 @@ pub async fn start_api(
             local_node_record,
             client_version,
         },
+        gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         #[cfg(feature = "l2")]
         valid_delegation_addresses,
         #[cfg(feature = "l2")]

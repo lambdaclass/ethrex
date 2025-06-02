@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.82.0
 
       - name: Set up Rust cache
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -94,6 +94,12 @@ jobs:
           RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex_prover -s SIGINT
+
+      - name: Destroy Docker containers
+        if: always()
+        run: |
+          cd crates/l2
+          docker compose -f docker-compose-l2.yaml down -t 0
 
       - name: Ensure admin permissions in _work
         if: always()
