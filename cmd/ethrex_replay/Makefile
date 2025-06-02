@@ -25,6 +25,8 @@ prove-sp1:
 	SP1_PROVER=cpu cargo r -r --features sp1 -- prove block ${REPLAY_ARGS}
 prove-sp1-gpu:
 	SP1_PROVER=cuda cargo r -r --features "sp1,gpu" -- prove block ${REPLAY_ARGS}
+prove-sp1-gpu-ci:
+        SP1_PROVER=cuda cargo r -r --features "sp1,gpu,ci" -- prove block ${REPLAY_ARGS}
 prove-risc0:
 	cargo r -r --no-default-features --features risc0 -- prove block ${REPLAY_ARGS}
 prove-risc0-gpu:
