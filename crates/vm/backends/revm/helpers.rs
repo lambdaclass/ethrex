@@ -10,11 +10,9 @@ use revm::{
 // Rename imported types for clarity
 use revm_primitives::{AccessList as RevmAccessList, SpecId};
 
-use crate::{errors::EvmError, execution_result::ExecutionResult};
+use crate::{backends::revm::db::EvmState, errors::EvmError, execution_result::ExecutionResult};
 
-use super::{
-    access_list_inspector, block_env, db::EvmState, run_without_commit, tx_env_from_generic,
-};
+use super::{access_list_inspector, block_env, run_without_commit, tx_env_from_generic};
 
 // Executes a single GenericTransaction, doesn't commit the result or perform state transitions
 pub fn simulate_tx_from_generic(
@@ -84,22 +82,11 @@ fn create_access_list_inner(
         })
         .with_external_context(&mut access_list_inspector);
     let tx_result = {
-        match state {
-            EvmState::Store(db) => {
-                let mut evm = evm_builder
-                    .with_db(db)
-                    .append_handler_register(inspector_handle_register)
-                    .build();
-                evm.transact()?
-            }
-            EvmState::Execution(db) => {
-                let mut evm = evm_builder
-                    .with_db(db)
-                    .append_handler_register(inspector_handle_register)
-                    .build();
-                evm.transact().map_err(EvmError::from)?
-            }
-        }
+        let mut evm = evm_builder
+            .with_db(&mut state.inner)
+            .append_handler_register(inspector_handle_register)
+            .build();
+        evm.transact()?
     };
 
     let access_list = access_list_inspector.into_access_list();
