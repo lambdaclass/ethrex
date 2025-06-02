@@ -1,4 +1,6 @@
 use bytes::Bytes;
+use ethrex_blockchain::vm::StoreVmDatabase;
+use ethrex_common::H256;
 use ethrex_common::{
     types::{code_hash, Account, AccountInfo, EIP1559Transaction, Transaction, TxKind},
     Address as EthrexAddress, U256,
@@ -9,7 +11,8 @@ use ethrex_levm::{
     vm::VM,
     Environment,
 };
-use ethrex_vm::ProverDB;
+use ethrex_storage::Store;
+use ethrex_vm::DynVmDatabase;
 use revm::{
     db::BenchmarkDB,
     primitives::{address, Address, Bytecode, TransactTo},
@@ -55,13 +58,9 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
         ),
     ];
 
-    let mut prover_db = ProverDB::default();
-
-    accounts.iter().for_each(|(address, account)| {
-        prover_db.accounts.insert(*address, account.info.clone());
-    });
-
-    let mut db = GeneralizedDatabase::new(Arc::new(prover_db), CacheDB::new());
+    let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
+    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
+    let mut db = GeneralizedDatabase::new(Arc::new(store), CacheDB::new());
 
     cache::insert_account(
         &mut db.cache,
