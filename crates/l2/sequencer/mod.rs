@@ -63,13 +63,15 @@ pub async fn start_l2(
     let _ = L1ProofSender::spawn(cfg.clone()).await.inspect_err(|err| {
         error!("Error starting Proof Coordinator: {err}");
     });
-    BlockProducer::spawn(
+    let _ = BlockProducer::spawn(
         store.clone(),
         blockchain,
         execution_cache.clone(),
         cfg.clone(),
     )
-    .await;
+    .await.inspect_err(|err| {
+        error!("Error starting Block Producer: {err}");
+    });
 
     let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     #[cfg(feature = "metrics")]

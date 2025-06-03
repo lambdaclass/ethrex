@@ -79,11 +79,15 @@ impl BlockProducer {
         blockchain: Arc<Blockchain>,
         execution_cache: Arc<ExecutionCache>,
         cfg: SequencerConfig,
-    ) {
+    ) -> Result<(), BlockProducerError> {
         let state =
             BlockProducerState::new(&cfg.block_producer, store, blockchain, execution_cache);
         let mut block_producer = BlockProducer::start(state);
-        let _ = block_producer.cast(InMessage::Produce).await;
+        block_producer
+            .cast(InMessage::Produce)
+            .await
+            .map_err(BlockProducerError::GenServerError)?;
+        Ok(())
     }
 }
 
