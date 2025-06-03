@@ -63,7 +63,7 @@ c-kzg = [
   "ethrex-p2p/c-kzg",
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics"]
-libmdbx = ["ethrex-storage/libmdbx"]
+libmdbx = ["ethrex-storage/libmdbx", "ethrex-storage-rollup?/libmdbx"]
 redb = ["dep:redb", "ethrex-storage/redb"]
 blst = ["ethrex-vm/blst"]
 l2 = [
