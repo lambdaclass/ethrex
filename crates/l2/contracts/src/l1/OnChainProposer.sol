@@ -1,28 +1,39 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
-import "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
-import "../../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "./interfaces/IOnChainProposer.sol";
 import {CommonBridge} from "./CommonBridge.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
+import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
+
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
-contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
+contract OnChainProposer is
+    IOnChainProposer,
+    Initializable,
+    UUPSUpgradeable,
+    Ownable2StepUpgradeable
+{
     /// @notice Committed batches data.
     /// @dev This struct holds the information about the committed batches.
     /// @dev processedDepositLogsRollingHash is the Merkle root of the logs of the
     /// deposits that were processed in the batch being committed. The amount of
     /// logs that is encoded in this root are to be removed from the
     /// pendingDepositLogs queue of the CommonBridge contract.
+    /// @dev withdrawalsLogsMerkleRoot is the Merkle root of the Merkle tree containing
+    /// all the withdrawals that were processed in the batch being committed
     struct BatchCommitmentInfo {
         bytes32 newStateRoot;
         bytes32 stateDiffKZGVersionedHash;
         bytes32 processedDepositLogsRollingHash;
+        bytes32 withdrawalsLogsMerkleRoot;
     }
 
     /// @notice The commitments of the committed batches.
@@ -54,6 +65,9 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     address public PICOVERIFIER;
     address public R0VERIFIER;
     address public SP1VERIFIER;
+    address public TDXVERIFIER;
+
+    bytes32 public SP1_VERIFICATION_KEY;
 
     /// @notice Address used to avoid the verification process.
     /// @dev If the `R0VERIFIER` or the `SP1VERIFIER` contract address is set to this address,
@@ -63,13 +77,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
 
     /// @notice Indicates whether the contract operates in validium mode.
     /// @dev This value is immutable and can only be set during contract deployment.
-    bool public immutable VALIDIUM;
-
-    /// @notice Constructor to initialize the immutable validium value.
-    /// @param _validium A boolean indicating if the contract operates in validium mode.
-    constructor(bool _validium) {
-        VALIDIUM = _validium;
-    }
+    bool public VALIDIUM;
 
     modifier onlySequencer() {
         require(
@@ -79,28 +87,25 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         _;
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @notice Initializes the contract.
+    /// @dev This method is called only once after the contract is deployed.
+    /// @dev It sets the bridge address.
+    /// @param _validium initialize the contract in validium mode.
+    /// @param owner the address of the owner who can perform upgrades.
+    /// @param r0verifier the address of the risc0 groth16 verifier.
+    /// @param sp1verifier the address of the sp1 groth16 verifier.
     function initialize(
-        address bridge,
+        bool _validium,
+        address owner,
         address r0verifier,
         address sp1verifier,
         address picoverifier,
+        address tdxverifier,
+        bytes32 sp1Vk,
+        bytes32 genesisStateRoot,
         address[] calldata sequencerAddresses
-    ) public nonReentrant {
-        // Set the CommonBridge address
-        require(
-            BRIDGE == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
-            bridge != address(0),
-            "OnChainProposer: bridge is the zero address"
-        );
-        require(
-            bridge != address(this),
-            "OnChainProposer: bridge is the contract address"
-        );
-        BRIDGE = bridge;
+    ) public initializer {
+        VALIDIUM = _validium;
 
         // Set the PicoGroth16Verifier address
         require(
@@ -147,9 +152,57 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         );
         SP1VERIFIER = sp1verifier;
 
+        // Set the TDXVerifier address
+        require(
+            TDXVERIFIER == address(0),
+            "OnChainProposer: contract already initialized"
+        );
+        require(
+            tdxverifier != address(0),
+            "OnChainProposer: tdxverifier is the zero address"
+        );
+        require(
+            tdxverifier != address(this),
+            "OnChainProposer: tdxverifier is the contract address"
+        );
+        TDXVERIFIER = tdxverifier;
+        
+        // Set the SP1 program verification key
+        require(
+            SP1_VERIFICATION_KEY == bytes32(0),
+            "OnChainProposer: contract already initialized"
+        );
+        SP1_VERIFICATION_KEY = sp1Vk;
+        
+        batchCommitments[0] = BatchCommitmentInfo(
+            genesisStateRoot,
+            bytes32(0),
+            bytes32(0),
+            bytes32(0)
+        );
+
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
         }
+
+        OwnableUpgradeable.__Ownable_init(owner);
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function initializeBridgeAddress(address bridge) public onlyOwner {
+        require(
+            BRIDGE == address(0),
+            "OnChainProposer: bridge already initialized"
+        );
+        require(
+            bridge != address(0),
+            "OnChainProposer: bridge is the zero address"
+        );
+        require(
+            bridge != address(this),
+            "OnChainProposer: bridge is the contract address"
+        );
+        BRIDGE = bridge;
     }
 
     /// @inheritdoc IOnChainProposer
@@ -191,7 +244,8 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         batchCommitments[batchNumber] = BatchCommitmentInfo(
             newStateRoot,
             stateDiffKZGVersionedHash,
-            processedDepositLogsRollingHash
+            processedDepositLogsRollingHash,
+            withdrawalsLogsMerkleRoot
         );
         emit BatchCommitted(newStateRoot);
 
@@ -207,17 +261,19 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     function verifyBatch(
         uint256 batchNumber,
         //risc0
-        bytes calldata risc0BlockProof,
+        bytes memory risc0BlockProof,
         bytes32 risc0ImageId,
-        bytes32 risc0JournalDigest,
+        bytes calldata risc0Journal,
         //sp1
-        bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,
-        bytes calldata sp1ProofBytes,
+        bytes memory sp1ProofBytes,
         //pico
         bytes32 picoRiscvVkey,
         bytes calldata picoPublicValues,
-        uint256[8] calldata picoProof
+        uint256[8] calldata picoProof,
+        //tdx
+        bytes calldata tdxPublicValues,
+        bytes memory tdxSignature
     ) external override onlySequencer {
         // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
@@ -233,6 +289,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
 
         if (PICOVERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
+            _verifyPublicData(batchNumber, picoPublicValues);
             IPicoVerifier(PICOVERIFIER).verifyPicoProof(
                 picoRiscvVkey,
                 picoPublicValues,
@@ -242,19 +299,30 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
 
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
+            _verifyPublicData(batchNumber, risc0Journal);
             IRiscZeroVerifier(R0VERIFIER).verify(
                 risc0BlockProof,
                 risc0ImageId,
-                risc0JournalDigest
+                sha256(risc0Journal)
             );
         }
 
         if (SP1VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
+            _verifyPublicData(batchNumber, sp1PublicValues[16:]);
             ISP1Verifier(SP1VERIFIER).verifyProof(
-                sp1ProgramVKey,
+                SP1_VERIFICATION_KEY,
                 sp1PublicValues,
                 sp1ProofBytes
+            );
+        }
+
+        if (TDXVERIFIER != DEV_MODE) {
+            // If the verification fails, it will revert.
+            _verifyPublicData(batchNumber, tdxPublicValues);
+            ITDXVerifier(TDXVERIFIER).verify(
+                tdxPublicValues,
+                tdxSignature
             );
         }
 
@@ -274,4 +342,40 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
 
         emit BatchVerified(lastVerifiedBatch);
     }
+
+    function _verifyPublicData(
+        uint256 batchNumber,
+        bytes calldata publicData
+    ) internal view {
+        require(publicData.length == 128, "OnChainProposer: invaid public data length");
+        bytes32 initialStateRoot = bytes32(publicData[0:32]);
+        require(
+            batchCommitments[lastVerifiedBatch].newStateRoot ==
+                initialStateRoot,
+            "OnChainProposer: initial state root public inputs don't match with initial state root"
+        );
+        bytes32 finalStateRoot = bytes32(publicData[32:64]);
+        require(
+            batchCommitments[batchNumber].newStateRoot == finalStateRoot,
+            "OnChainProposer: final state root public inputs don't match with final state root"
+        );
+        bytes32 withdrawalsMerkleRoot = bytes32(publicData[64:96]);
+        require(
+            batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
+                withdrawalsMerkleRoot,
+            "OnChainProposer: withdrawals public inputs don't match with committed withdrawals"
+        );
+        bytes32 depositsLogHash = bytes32(publicData[96:128]);
+        require(
+            batchCommitments[batchNumber].processedDepositLogsRollingHash ==
+                depositsLogHash,
+            "OnChainProposer: deposits hash public input does not match with committed deposits"
+        );
+    }
+
+    /// @notice Allow owner to upgrade the contract.
+    /// @param newImplementation the address of the new implementation
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal virtual override onlyOwner {}
 }

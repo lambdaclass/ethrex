@@ -1,7 +1,7 @@
 use crate::utils::prover::errors::SaveStateError;
 use crate::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use directories::ProjectDirs;
-use ethrex_storage::AccountUpdate;
+use ethrex_common::types::AccountUpdate;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::fs::{create_dir, read_dir, File};
@@ -11,6 +11,7 @@ use std::{
     fs::create_dir_all,
     io::{BufWriter, Write},
 };
+use tracing::info;
 
 #[cfg(not(test))]
 /// The default directory for data storage when not running tests.
@@ -77,6 +78,7 @@ impl From<&StateType> for StateFileType {
 fn get_proof_file_name_from_prover_type(prover_type: &ProverType, batch_number: u64) -> String {
     match prover_type {
         ProverType::Exec => format!("proof_exec_{batch_number}.json"),
+        ProverType::TDX => format!("proof_tdx_{batch_number}.json"),
         ProverType::RISC0 => format!("proof_risc0_{batch_number}.json"),
         ProverType::SP1 => format!("proof_sp1_{batch_number}.json").to_owned(),
         ProverType::Pico => format!("proof_pico_{batch_number}.json").to_owned(),
@@ -377,6 +379,7 @@ pub fn batch_number_has_all_needed_proofs(
 
         // If the proof is missing return false
         if !proof_exists {
+            info!("Missing {prover_type} proof");
             has_all_proofs = false;
             break;
         }
@@ -388,12 +391,12 @@ pub fn batch_number_has_all_needed_proofs(
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use ethrex_blockchain::Blockchain;
+    use ethrex_blockchain::{vm::StoreVmDatabase, Blockchain};
     use ethrex_levm::db::gen_db::GeneralizedDatabase;
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::{
         backends::levm::{CacheDB, LEVM},
-        StoreWrapper,
+        DynVmDatabase,
     };
 
     use super::*;
@@ -414,7 +417,7 @@ mod tests {
         let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../test_data"));
 
         let chain_file_path = path.join("l2-loadtest.rlp");
-        let genesis_file_path = path.join("genesis-l2-ci.json");
+        let genesis_file_path = path.join("genesis-perf-ci.json");
 
         // Create an InMemory Store to later perform an execute_block so we can have the Vec<AccountUpdate>.
         let in_memory_db =
@@ -455,14 +458,11 @@ mod tests {
         // Write all the account_updates and proofs for each block
         // TODO: Update. We are executing only the last block and using the block_number as batch_number
         for block in &blocks {
-            let store = StoreWrapper {
-                store: in_memory_db.clone(),
-                block_hash: block.hash(),
-            };
-            let mut db = GeneralizedDatabase::new(Arc::new(store.clone()), CacheDB::new());
+            let store: DynVmDatabase =
+                Box::new(StoreVmDatabase::new(in_memory_db.clone(), block.hash()));
+            let mut db = GeneralizedDatabase::new(Arc::new(store), CacheDB::new());
             LEVM::execute_block(blocks.last().unwrap(), &mut db)?;
-            let fork = db.store.get_chain_config().fork(block.header.timestamp);
-            let account_updates = LEVM::get_state_transitions(&mut db, fork)?;
+            let account_updates = LEVM::get_state_transitions(&mut db)?;
 
             account_updates_vec.push(account_updates.clone());
 

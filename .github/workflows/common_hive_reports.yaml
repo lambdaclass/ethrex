@@ -11,6 +11,10 @@ on:
       job_type:
         required: true
         type: string
+    outputs:
+      report_artifact_name:
+        description: "The name of the hive report artifact"
+        value: ${{ jobs.hive-report.outputs.artifact_name }}
 
 jobs:
   run-hive:
@@ -31,6 +35,16 @@ jobs:
               simulation: ethereum/engine,
             }
           - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
+          - {
+              name: "Consume Engine tests",
+              file_name: consume-engine,
+              simulation: ethereum/eest/consume-engine,
+            }
+          - {
+              name: "Consume RLP tests",
+              file_name: consume-rlp,
+              simulation: ethereum/eest/consume-rlp,
+            }
 
     steps:
       - name: Checkout sources
@@ -59,8 +73,15 @@ jobs:
       - name: Setup Hive
         run: make setup-hive
 
+      - name: Set custom hive flags
+        run: |
+          if [[ "${{ matrix.test.simulation }}" == "ethereum/eest/consume-engine" || "${{ matrix.test.simulation }}" == "ethereum/eest/consume-rlp" ]]; then
+            EEST_FIXTURES=$(cat cmd/ef_tests/blockchain/.fixtures_url)
+            echo "HIVE_FLAGS="--sim.buildarg fixtures=$EEST_FIXTURES"" >> $GITHUB_ENV
+          fi
+
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --ethrex.flags "--evm ${{ inputs.evm }}" --sim.parallelism 16
+        run: cd hive && ./hive --client-file ../test_data/hive_clients.yml --client ethrex --sim ${{ matrix.test.simulation }} --ethrex.flags "--evm ${{ inputs.evm }}" --sim.parallelism 16 ${{ env.HIVE_FLAGS }}
         continue-on-error: true
 
       - name: Upload results
@@ -74,12 +95,14 @@ jobs:
     name: Generate and Save report (${{ inputs.evm }})
     needs: run-hive
     runs-on: ubuntu-latest
+    outputs:
+      artifact_name: results_${{inputs.evm}}_${{ inputs.job_type }}.md
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.82.0
 
       - name: Download all results
         uses: actions/download-artifact@v4

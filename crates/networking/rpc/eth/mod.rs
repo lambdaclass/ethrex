@@ -6,8 +6,8 @@ pub(crate) mod filter;
 pub(crate) mod logs;
 pub(crate) mod transaction;
 
-pub(crate) mod fee_calculator;
 pub(crate) mod gas_price;
+pub(crate) mod gas_tip_estimator;
 pub(crate) mod max_priority_fee;
 
 #[cfg(test)]
@@ -70,6 +70,7 @@ pub mod test_utils {
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*DEFAULT_REQUESTS_HASH),
+            ..Default::default()
         }
     }
 
@@ -88,7 +89,7 @@ pub mod test_utils {
             let block = Block::new(block_header.clone(), block_body);
             storage.add_block(block).await.unwrap();
             storage
-                .set_canonical_block(block_num, block_header.compute_block_hash())
+                .set_canonical_block(block_num, block_header.hash())
                 .await
                 .unwrap();
             storage.update_latest_block_number(block_num).await.unwrap();
@@ -173,6 +174,12 @@ pub mod test_utils {
                 }
             }
             add_blocks_with_transactions(storage, block_num, txs).await;
+        }
+    }
+
+    pub async fn add_empty_blocks(storage: &Store, block_count: u64) {
+        for block_num in 1..=block_count {
+            add_blocks_with_transactions(storage, block_num, vec![]).await;
         }
     }
 }

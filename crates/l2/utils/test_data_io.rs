@@ -2,10 +2,9 @@
 #![allow(clippy::expect_used)]
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::{Block, Genesis};
+use ethrex_common::types::{Block, Genesis, ELASTICITY_MULTIPLIER};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::Evm;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
@@ -15,7 +14,7 @@ use std::{
     path::PathBuf,
 };
 
-use super::error::ProverInputError;
+use super::{error::ProverInputError, prover::db::to_prover_db};
 
 // From cmd/ethrex
 pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
@@ -84,14 +83,15 @@ pub async fn generate_program_input(
     let parent_block_header = store
         .get_block_header_by_hash(block.header.parent_hash)?
         .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
-
+    let elasticity_multiplier = ELASTICITY_MULTIPLIER;
     let blocks = vec![block];
-    let db = Evm::to_execution_db(&store, &blocks).await?;
+    let db = to_prover_db(&store, &blocks).await?;
 
     Ok(ProgramInput {
         db,
         blocks,
         parent_block_header,
+        elasticity_multiplier,
     })
 }
 

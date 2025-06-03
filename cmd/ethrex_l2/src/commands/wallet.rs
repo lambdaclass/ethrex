@@ -10,7 +10,7 @@ use hex::FromHexError;
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    #[clap(about = "Get the balance of the wallet.")]
+    #[command(about = "Get the balance of the wallet.")]
     Balance {
         #[arg(long = "token")]
         token_address: Option<Address>,
@@ -21,17 +21,17 @@ pub(crate) enum Command {
         #[arg(long = "wei", required = false, default_value_t = false)]
         wei: bool,
     },
-    #[clap(about = "Deposit funds into some wallet.")]
+    #[command(about = "Deposit funds into some wallet.")]
     Deposit {
         // TODO: Parse ether instead.
         #[arg(long = "amount", value_parser = U256::from_dec_str)]
         amount: U256,
-        #[clap(
+        #[arg(
             long = "token",
             help = "Specify the token address, the base token is used as default."
         )]
         token_address: Option<Address>,
-        #[clap(
+        #[arg(
             long = "to",
             help = "Specify the wallet in which you want to deposit your funds."
         )]
@@ -41,13 +41,13 @@ pub(crate) enum Command {
         #[arg(long, short = 'e', required = false)]
         explorer_url: bool,
     },
-    #[clap(about = "Finalize a pending withdrawal.")]
+    #[command(about = "Finalize a pending withdrawal.")]
     ClaimWithdraw {
         l2_withdrawal_tx_hash: H256,
         #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
     },
-    #[clap(about = "Transfer funds to another wallet.")]
+    #[command(about = "Transfer funds to another wallet.")]
     Transfer {
         // TODO: Parse ether instead.
         #[arg(long = "amount", value_parser = U256::from_dec_str)]
@@ -60,7 +60,7 @@ pub(crate) enum Command {
         nonce: Option<u64>,
         #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
-        #[clap(
+        #[arg(
             long = "l1",
             required = false,
             help = "If set it will do an L1 transfer, defaults to an L2 transfer"
@@ -69,7 +69,7 @@ pub(crate) enum Command {
         #[arg(long, short = 'e', required = false)]
         explorer_url: bool,
     },
-    #[clap(about = "Withdraw funds from the wallet.")]
+    #[command(about = "Withdraw funds from the wallet.")]
     Withdraw {
         // TODO: Parse ether instead.
         #[arg(long = "amount", value_parser = U256::from_dec_str)]
@@ -78,7 +78,7 @@ pub(crate) enum Command {
         to: Option<Address>,
         #[arg(long = "nonce")]
         nonce: Option<u64>,
-        #[clap(
+        #[arg(
             long = "token",
             help = "Specify the token address, the base token is used as default."
         )]
@@ -88,20 +88,20 @@ pub(crate) enum Command {
         #[arg(long, short = 'e', required = false)]
         explorer_url: bool,
     },
-    #[clap(about = "Get the withdrawal merkle proof of a transaction.")]
+    #[command(about = "Get the withdrawal merkle proof of a transaction.")]
     WithdrawalProof {
         #[arg(long = "hash")]
         tx_hash: H256,
     },
-    #[clap(about = "Get the wallet address.")]
+    #[command(about = "Get the wallet address.")]
     Address,
-    #[clap(about = "Get the wallet private key.")]
+    #[command(about = "Get the wallet private key.")]
     PrivateKey,
-    #[clap(about = "Send a transaction")]
+    #[command(about = "Send a transaction")]
     Send {
         #[arg(long = "to")]
         to: Address,
-        #[clap(
+        #[arg(
             long = "value",
             value_parser = U256::from_dec_str,
             default_value = "0",
@@ -111,7 +111,7 @@ pub(crate) enum Command {
         value: U256,
         #[arg(long = "calldata", value_parser = decode_hex, required = false, default_value = "")]
         calldata: Bytes,
-        #[clap(
+        #[arg(
             long = "l1",
             required = false,
             help = "If set it will do an L1 transfer, defaults to an L2 transfer"
@@ -130,19 +130,19 @@ pub(crate) enum Command {
         #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
     },
-    #[clap(about = "Make a call to a contract")]
+    #[command(about = "Make a call to a contract")]
     Call {
         #[arg(long = "to")]
         to: Address,
         #[arg(long = "calldata", value_parser = decode_hex, required = false, default_value = "")]
         calldata: Bytes,
-        #[clap(
+        #[arg(
             long = "l1",
             required = false,
             help = "If set it will do an L1 transfer, defaults to an L2 transfer"
         )]
         l1: bool,
-        #[clap(
+        #[arg(
             long = "value",
             value_parser = U256::from_dec_str,
             default_value = "0",
@@ -157,17 +157,17 @@ pub(crate) enum Command {
         #[arg(long = "gas-price", required = false)]
         max_fee_per_gas: Option<u64>,
     },
-    #[clap(about = "Deploy a contract")]
+    #[command(about = "Deploy a contract")]
     Deploy {
         #[arg(long = "bytecode", value_parser = decode_hex)]
         bytecode: Bytes,
-        #[clap(
+        #[arg(
             long = "l1",
             required = false,
             help = "If set it will do an L1 transfer, defaults to an L2 transfer"
         )]
         l1: bool,
-        #[clap(
+        #[arg(
             long = "value",
             value_parser = U256::from_dec_str,
             default_value = "0",
@@ -199,8 +199,8 @@ fn decode_hex(s: &str) -> Result<Bytes, FromHexError> {
 
 impl Command {
     pub async fn run(self, cfg: EthrexL2Config) -> eyre::Result<()> {
-        let eth_client = EthClient::new(&cfg.network.l1_rpc_url);
-        let rollup_client = EthClient::new(&cfg.network.l2_rpc_url);
+        let eth_client = EthClient::new(&cfg.network.l1_rpc_url)?;
+        let rollup_client = EthClient::new(&cfg.network.l2_rpc_url)?;
         let from = cfg.wallet.address;
         match self {
             Command::Balance {
@@ -331,7 +331,6 @@ impl Command {
                             },
                             nonce,
                             from: Some(cfg.wallet.address),
-                            gas_limit: Some(21000 * 100),
                             ..Default::default()
                         },
                     )
@@ -371,8 +370,6 @@ impl Command {
                             nonce,
                             from: Some(cfg.wallet.address),
                             value: Some(amount),
-                            gas_limit: Some(21000 * 2),
-                            max_fee_per_gas: Some(800000000),
                             ..Default::default()
                         },
                     )

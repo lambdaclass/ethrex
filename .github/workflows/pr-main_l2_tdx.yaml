@@ -1,0 +1,81 @@
+name: L2 Prover (TDX)
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "crates/l2/tee/**"
+      - "crates/l2/contracts/**"
+      - "test_data/**"
+      - ".github/workflows/pr-main_l2_tdx.yaml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # "Test" is a required check, don't change the name
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85.0
+
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
+
+      - name: Build prover
+        run: |
+          cd crates/l2/tee/quote-gen
+          cargo build --release
+
+      - name: Build test
+        run: |
+          cargo test l2 --no-run --release
+
+      - name: Build L2
+        run: |
+          cargo build --release --bin ethrex --features l2,rollup_storage_libmdbx,metrics
+
+      - name: Install rex
+        run: |
+          cd /tmp
+          git clone https://github.com/lambdaclass/rex
+          cd rex
+          cargo build --release
+          cp target/release/rex /usr/local/bin
+
+      - name: Run L1 and deploy
+        run: |
+          cd crates/l2
+          touch .env
+          make init-local-l1;
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true \
+          ETHREX_TDX_DEV_MODE=true \
+          make deploy-l1
+
+      - name: Start Sequencer and test
+        run: |
+          cd crates/l2
+          ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
+          ETHREX_WATCHER_BLOCK_DELAY=0 \
+          make init-l2 &
+          sleep 30
+          ETHREX_TDX_DEV_MODE=true tee/quote-gen/target/release/quote-gen &
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+          

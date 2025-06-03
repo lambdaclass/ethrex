@@ -1,27 +1,29 @@
 use std::{
     fs::{metadata, read_dir},
     io::{self, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::fork_choice::apply_fork_choice;
+use ethrex_blockchain::{error::ChainError, fork_choice::apply_fork_choice};
+use ethrex_common::types::Genesis;
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
     initializers::{init_blockchain, init_store},
+    networks::{Network, PublicNetwork},
     utils::{self, get_client_version, set_datadir},
     DEFAULT_DATADIR,
 };
 
-#[cfg(any(feature = "l2", feature = "based"))]
+#[cfg(feature = "l2")]
 use crate::l2;
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author = "Lambdaclass", version=get_client_version(), about, about = "ethrex Execution client")]
+#[command(name="ethrex", author = "Lambdaclass", version=get_client_version(), about = "ethrex Execution client")]
 pub struct CLI {
     #[command(flatten)]
     pub opts: Options,
@@ -33,13 +35,15 @@ pub struct CLI {
 pub struct Options {
     #[arg(
         long = "network",
+        default_value_t = Network::default(),
         value_name = "GENESIS_FILE_PATH",
         help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
         long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.",
         help_heading = "Node options",
-        env = "ETHREX_NETWORK"
+        env = "ETHREX_NETWORK",
+        value_parser = clap::value_parser!(Network),
     )]
-    pub network: Option<String>,
+    pub network: Network,
     #[arg(long = "bootnodes", value_parser = clap::value_parser!(Node), value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help = "Comma separated enode URLs for P2P discovery bootstrap.", help_heading = "P2P options")]
     pub bootnodes: Vec<Node>,
     #[arg(
@@ -95,7 +99,7 @@ pub struct Options {
     pub dev: bool,
     #[arg(
         long = "evm",
-        default_value = "levm",
+        default_value_t = EvmEngine::default(),
         value_name = "EVM_BACKEND",
         help = "Has to be `levm` or `revm`",
         value_parser = utils::parse_evm_engine,
@@ -200,7 +204,7 @@ impl Default for Options {
             p2p_port: Default::default(),
             discovery_addr: Default::default(),
             discovery_port: Default::default(),
-            network: Default::default(),
+            network: Network::PublicNetwork(PublicNetwork::Mainnet),
             bootnodes: Default::default(),
             datadir: Default::default(),
             syncmode: Default::default(),
@@ -221,7 +225,7 @@ pub enum Subcommand {
     RemoveDB {
         #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_DATADIR, required = false)]
         datadir: String,
-        #[clap(long = "force", help = "Force remove the database without confirmation", action = clap::ArgAction::SetTrue)]
+        #[arg(long = "force", help = "Force remove the database without confirmation", action = clap::ArgAction::SetTrue)]
         force: bool,
     },
     #[command(name = "import", about = "Import blocks to the database")]
@@ -235,7 +239,20 @@ pub enum Subcommand {
         #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
     },
-    #[cfg(any(feature = "l2", feature = "based"))]
+    #[command(
+        name = "compute-state-root",
+        about = "Compute the state root from a genesis file"
+    )]
+    ComputeStateRoot {
+        #[arg(
+            required = true,
+            long = "path",
+            value_name = "GENESIS_FILE_PATH",
+            help = "Path to the genesis json file"
+        )]
+        genesis_path: PathBuf,
+    },
+    #[cfg(feature = "l2")]
     #[command(subcommand)]
     L2(l2::Command),
 }
@@ -259,14 +276,16 @@ impl Subcommand {
                     .await?;
                 }
 
-                let network = opts
-                    .network
-                    .as_ref()
-                    .expect("--network is required and it was not provided");
-
-                import_blocks(&path, &opts.datadir, network, opts.evm).await;
+                let network = &opts.network;
+                import_blocks(&path, &opts.datadir, network.get_genesis(), opts.evm).await?;
             }
-            #[cfg(any(feature = "l2", feature = "based"))]
+            Subcommand::ComputeStateRoot { genesis_path } => {
+                let state_root = Network::from(genesis_path)
+                    .get_genesis()
+                    .compute_state_root();
+                println!("{:#x}", state_root);
+            }
+            #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
         }
         Ok(())
@@ -300,13 +319,15 @@ pub fn remove_db(datadir: &str, force: bool) {
     }
 }
 
-pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
+pub async fn import_blocks(
+    path: &str,
+    data_dir: &str,
+    genesis: Genesis,
+    evm: EvmEngine,
+) -> Result<(), ChainError> {
     let data_dir = set_datadir(data_dir);
-
-    let store = init_store(&data_dir, network).await;
-
+    let store = init_store(&data_dir, genesis).await;
     let blockchain = init_blockchain(evm, store.clone());
-
     let path_metadata = metadata(path).expect("Failed to read path");
     let blocks = if path_metadata.is_dir() {
         let mut blocks = vec![];
@@ -324,9 +345,7 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
         info!("Importing blocks from chain file: {path}");
         utils::read_chain_file(path)
     };
-
     let size = blocks.len();
-
     for block in &blocks {
         let hash = block.hash();
 
@@ -334,22 +353,34 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
             "Adding block {} with hash {:#x}.",
             block.header.number, hash
         );
-
-        if let Err(error) = blockchain.add_block(block).await {
-            warn!(
-                "Failed to add block {} with hash {:#x}: {}.",
-                block.header.number, hash, error
-            );
-            return;
+        // Check if the block is already in the blockchain, if it is do nothing, if not add it
+        match store.get_block_number(hash).await {
+            Ok(Some(_)) => {
+                info!("Block {} is already in the blockchain", block.hash());
+                continue;
+            }
+            Ok(None) => {
+                if let Err(error) = blockchain.add_block(block).await {
+                    warn!(
+                        "Failed to add block {} with hash {:#x}",
+                        block.header.number, hash
+                    );
+                    return Err(error);
+                }
+            }
+            Err(_) => {
+                return Err(ChainError::Custom(String::from(
+                    "Couldn't check if block is already in the blockchain",
+                )));
+            }
         }
     }
-
     if let Some(last_block) = blocks.last() {
         let hash = last_block.hash();
         if let Err(error) = apply_fork_choice(&store, hash, hash, hash).await {
             warn!("Failed to apply fork choice: {}", error);
         }
     }
-
     info!("Added {size} blocks to blockchain");
+    Ok(())
 }

@@ -6,8 +6,6 @@ use crate::{
 };
 use ethrex_common::{U256, U512};
 
-use super::bitwise_comparison::checked_shift_right;
-
 // Arithmetic Operations (11)
 // Opcodes: ADD, SUB, MUL, DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP, SIGNEXTEND
 
@@ -220,12 +218,11 @@ impl<'a> VM<'a> {
 
     // EXP operation
     pub fn op_exp(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let current_call_frame = self.current_call_frame_mut()?;
         let base = current_call_frame.stack.pop()?;
         let exponent = current_call_frame.stack.pop()?;
 
-        let gas_cost = gas_cost::exp(exponent, fork)?;
+        let gas_cost = gas_cost::exp(exponent)?;
 
         current_call_frame.increase_consumed_gas(gas_cost)?;
 
@@ -258,7 +255,8 @@ impl<'a> VM<'a> {
                 InternalError::ArithmeticOperationOverflow,
             ))?;
 
-        let shifted_value = checked_shift_right(value_to_extend, sign_bit_index)?;
+        #[expect(clippy::arithmetic_side_effects)]
+        let shifted_value = value_to_extend >> sign_bit_index;
         let sign_bit = shifted_value & U256::one();
 
         let sign_bit_mask = checked_shift_left(U256::one(), sign_bit_index)?

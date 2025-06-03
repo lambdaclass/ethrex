@@ -130,7 +130,8 @@ impl Mempool {
         &self,
         filter: &dyn Fn(&Transaction) -> bool,
     ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
-        let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> = HashMap::new();
+        let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> =
+            HashMap::with_capacity(128);
         let tx_pool = self
             .transaction_pool
             .read()
@@ -140,7 +141,7 @@ impl Mempool {
             if filter(tx) {
                 txs_by_sender
                     .entry(tx.sender())
-                    .or_default()
+                    .or_insert_with(|| Vec::with_capacity(128))
                     .push(tx.clone())
             }
         }
@@ -176,7 +177,7 @@ impl Mempool {
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?
             .get(&transaction_hash)
-            .map(|e| e.clone().into());
+            .map(|e| e.transaction().clone());
 
         Ok(tx)
     }
@@ -197,6 +198,38 @@ impl Mempool {
         };
 
         Ok(nonce)
+    }
+
+    pub fn get_mempool_size(&self) -> Result<(usize, usize), MempoolError> {
+        let txs_size = {
+            let pool_lock = self
+                .transaction_pool
+                .read()
+                .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+            pool_lock.len()
+        };
+        let blobs_size = {
+            let pool_lock = self
+                .blobs_bundle_pool
+                .lock()
+                .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+            pool_lock.len()
+        };
+
+        Ok((txs_size, blobs_size))
+    }
+
+    /// Returns all transactions currently in the pool
+    pub fn content(&self) -> Result<Vec<Transaction>, MempoolError> {
+        let pooled_transactions = self
+            .transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        Ok(pooled_transactions
+            .iter()
+            .map(|(_, mem_tx)| mem_tx.transaction())
+            .cloned()
+            .collect())
     }
 }
 
@@ -293,7 +326,7 @@ mod tests {
     async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
         let store = Store::new("test", EngineType::InMemory)?;
         let block_number = header.number;
-        let block_hash = header.compute_block_hash();
+        let block_hash = header.hash();
         store.add_block_header(block_hash, header).await?;
         store.set_canonical_block(block_number, block_hash).await?;
         store.update_latest_block_number(block_number).await?;

@@ -9,7 +9,6 @@ use crate::engine::{
     },
     ExchangeCapabilitiesRequest,
 };
-use crate::eth;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -24,6 +23,7 @@ use crate::eth::{
     fee_market::FeeHistoryRequest,
     filter::{self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewFilterRequest},
     gas_price::GasPrice,
+    gas_tip_estimator::GasTipEstimator,
     logs::LogsFilter,
     transaction::{
         CallRequest, CreateAccessListRequest, EstimateGasRequest, GetRawTransaction,
@@ -37,8 +37,7 @@ use crate::utils::{
     RpcSuccessResponse,
 };
 use crate::{admin, net};
-#[cfg(feature = "based")]
-use crate::{EngineClient, EthClient};
+use crate::{eth, mempool};
 use axum::extract::State;
 use axum::{routing::post, Json, Router};
 use axum_extra::{
@@ -47,8 +46,7 @@ use axum_extra::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
-#[cfg(feature = "based")]
-use ethrex_common::Public;
+use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
@@ -62,7 +60,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
@@ -75,9 +73,6 @@ cfg_if::cfg_if! {
     }
 }
 
-#[cfg(feature = "based")]
-use crate::based::versioned_message::SignedMessage;
-
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum RpcRequestWrapper {
@@ -89,18 +84,11 @@ enum RpcRequestWrapper {
 pub struct RpcApiContext {
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
-    pub jwt_secret: Bytes,
-    pub local_p2p_node: Node,
-    pub local_node_record: NodeRecord,
     pub active_filters: ActiveFilters,
     pub syncer: Arc<SyncManager>,
-    pub client_version: String,
-    #[cfg(feature = "based")]
-    pub gateway_eth_client: EthClient,
-    #[cfg(feature = "based")]
-    pub gateway_auth_client: EngineClient,
-    #[cfg(feature = "based")]
-    pub gateway_pubkey: Public,
+    pub peer_handler: PeerHandler,
+    pub node_data: NodeData,
+    pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     #[cfg(feature = "l2")]
     pub valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")]
@@ -109,24 +97,20 @@ pub struct RpcApiContext {
     pub rollup_store: StoreRollup,
 }
 
+#[derive(Debug, Clone)]
+pub struct NodeData {
+    pub jwt_secret: Bytes,
+    pub local_p2p_node: Node,
+    pub local_node_record: NodeRecord,
+    pub client_version: String,
+}
+
 pub trait RpcHandler: Sized {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr>;
 
     async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
         request.handle(context).await
-    }
-
-    /// Relay the request to the gateway client, if the request fails, fallback to the local node
-    /// The default implementation of this method is to call `RpcHandler::call` method because
-    /// not all requests need to be relayed to the gateway client, and the only ones that have to
-    /// must override this method.
-    #[cfg(feature = "based")]
-    async fn relay_to_gateway_or_fallback(
-        req: &RpcRequest,
-        context: RpcApiContext,
-    ) -> Result<Value, RpcErr> {
-        Self::call(req, context).await
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
@@ -150,10 +134,8 @@ pub async fn start_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     syncer: SyncManager,
+    peer_handler: PeerHandler,
     client_version: String,
-    #[cfg(feature = "based")] gateway_eth_client: EthClient,
-    #[cfg(feature = "based")] gateway_auth_client: EngineClient,
-    #[cfg(feature = "based")] gateway_pubkey: Public,
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")] sponsor_pk: SecretKey,
     #[cfg(feature = "l2")] rollup_store: StoreRollup,
@@ -164,18 +146,16 @@ pub async fn start_api(
     let service_context = RpcApiContext {
         storage,
         blockchain,
-        jwt_secret,
-        local_p2p_node,
-        local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(syncer),
-        client_version,
-        #[cfg(feature = "based")]
-        gateway_eth_client,
-        #[cfg(feature = "based")]
-        gateway_auth_client,
-        #[cfg(feature = "based")]
-        gateway_pubkey,
+        peer_handler,
+        node_data: NodeData {
+            jwt_secret,
+            local_p2p_node,
+            local_node_record,
+            client_version,
+        },
+        gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         #[cfg(feature = "l2")]
         valid_delegation_addresses,
         #[cfg(feature = "l2")]
@@ -212,7 +192,7 @@ pub async fn start_api(
         .into_future();
     info!("Starting HTTP server at {http_addr}");
 
-    if cfg!(any(feature = "l2", feature = "based")) {
+    if cfg!(feature = "l2") {
         info!("Not starting Auth-RPC server. The address passed as argument is {authrpc_addr}");
 
         let _ = tokio::try_join!(http_server)
@@ -279,7 +259,7 @@ pub async fn handle_authrpc_request(
             ));
         }
     };
-    match authenticate(&service_context.jwt_secret, auth_header) {
+    match authenticate(&service_context.node_data.jwt_secret, auth_header) {
         Err(error) => Json(rpc_response(req.id, Err(error))),
         Ok(()) => {
             // Proceed with the request
@@ -297,11 +277,10 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
+        Ok(RpcNamespace::Mempool) => map_mempool_requests(req, context).await,
         Ok(RpcNamespace::Engine) => Err(RpcErr::Internal(
             "Engine namespace not allowed in map_http_requests".to_owned(),
         )),
-        #[cfg(feature = "based")]
-        Ok(RpcNamespace::Based) => map_based_requests(req, context),
         Err(rpc_err) => Err(rpc_err),
         #[cfg(feature = "l2")]
         Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context).await,
@@ -361,15 +340,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getFilterChanges" => {
             FilterChangesRequest::stateful_call(req, context.storage, context.active_filters).await
         }
-        "eth_sendRawTransaction" => {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
-                    SendRawTransactionRequest::relay_to_gateway_or_fallback(req, context).await
-                } else {
-                    SendRawTransactionRequest::call(req, context).await
-                }
-            }
-        }
+        "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context).await,
         "eth_getProof" => GetProofRequest::call(req, context).await,
         "eth_gasPrice" => GasPrice::call(req, context).await,
         "eth_maxPriorityFeePerGas" => {
@@ -397,24 +368,8 @@ pub async fn map_engine_requests(
         "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context).await,
         "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
-        "engine_forkchoiceUpdatedV3" => {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
-                    ForkChoiceUpdatedV3::relay_to_gateway_or_fallback(req, context).await
-                } else {
-                    ForkChoiceUpdatedV3::call(req, context).await
-                }
-            }
-        }
-        "engine_newPayloadV4" => {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
-                    NewPayloadV4Request::relay_to_gateway_or_fallback(req, context).await
-                } else {
-                    NewPayloadV4Request::call(req, context).await
-                }
-            }
-        }
+        "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
+        "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
         "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
         "engine_newPayloadV1" => NewPayloadV1Request::call(req, context).await,
@@ -422,15 +377,7 @@ pub async fn map_engine_requests(
             ExchangeTransitionConfigV1Req::call(req, context).await
         }
         "engine_getPayloadV4" => GetPayloadV4Request::call(req, context).await,
-        "engine_getPayloadV3" => {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
-                    GetPayloadV3Request::relay_to_gateway_or_fallback(req, context).await
-                } else {
-                    GetPayloadV3Request::call(req, context).await
-                }
-            }
-        }
+        "engine_getPayloadV3" => GetPayloadV3Request::call(req, context).await,
         "engine_getPayloadV2" => GetPayloadV2Request::call(req, context).await,
         "engine_getPayloadV1" => GetPayloadV1Request::call(req, context).await,
         "engine_getPayloadBodiesByHashV1" => {
@@ -445,19 +392,15 @@ pub async fn map_engine_requests(
 
 pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "admin_nodeInfo" => admin::node_info(
-            context.storage,
-            context.local_p2p_node,
-            context.local_node_record,
-            context.client_version,
-        ),
+        "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
+        "admin_peers" => admin::peers(&context),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
 
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "web3_clientVersion" => Ok(Value::String(context.client_version)),
+        "web3_clientVersion" => Ok(Value::String(context.node_data.client_version)),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
@@ -470,13 +413,14 @@ pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value
     }
 }
 
-#[cfg(feature = "based")]
-pub fn map_based_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_mempool_requests(
+    req: &RpcRequest,
+    contex: RpcApiContext,
+) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "based_env" => SignedMessage::call_env(req, context),
-        "based_newFrag" => SignedMessage::call_new_frag(req, context),
-        "based_sealFrag" => SignedMessage::call_seal_frag(req, context),
-        unknown_based_method => Err(RpcErr::MethodNotFound(unknown_based_method.to_owned())),
+        // TODO: The endpoint name matches geth's endpoint for compatibility, consider changing it in the future
+        "txpool_content" => mempool::content(contex).await,
+        unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
     }
 }
 
@@ -543,9 +487,9 @@ mod tests {
             .await
             .unwrap();
         let context = default_context_with_storage(storage).await;
-        let local_p2p_node = context.local_p2p_node;
+        let local_p2p_node = context.node_data.local_p2p_node.clone();
 
-        let enr_url = context.local_node_record.enr_url().unwrap();
+        let enr_url = context.node_data.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result);
         let blob_schedule = serde_json::json!({
@@ -558,7 +502,7 @@ mod tests {
             "result": {
                 "enode": "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@127.0.0.1:30303",
                 "enr": enr_url,
-                "id": hex::encode(Keccak256::digest(local_p2p_node.node_id)),
+                "id": hex::encode(Keccak256::digest(local_p2p_node.public_key)),
                 "ip": "127.0.0.1",
                 "name": "ethrex/test",
                 "ports": {
@@ -630,39 +574,6 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[],"gasUsed":"0x5208"}}"#,
         );
         assert_eq!(response.to_string(), expected_response.to_string());
-    }
-
-    #[tokio::test]
-    async fn create_access_list_create() {
-        // Create Request
-        // Request taken from https://github.com/ethereum/execution-apis/blob/main/tests/eth_createAccessList/create-al-contract.io
-        let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","gas":"0xea60","gasPrice":"0x44103f2","input":"0x010203040506","nonce":"0x0","to":"0x7dcd17433742f4c0ca53122ab541d0ba67fc27df"},"0x00"]}"#;
-        let request: RpcRequest = serde_json::from_str(body).unwrap();
-        // Setup initial storage
-        let storage =
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let genesis = read_execution_api_genesis_file();
-        storage
-            .add_initial_state(genesis)
-            .await
-            .expect("Failed to add genesis block to DB");
-        // Process request
-        let context = default_context_with_storage(storage).await;
-
-        let result = map_http_requests(&request, context).await;
-        let response =
-            serde_json::from_value::<RpcSuccessResponse>(rpc_response(request.id, result))
-                .expect("Request failed");
-        let expected_response_string = r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[{"address":"0x7dcd17433742f4c0ca53122ab541d0ba67fc27df","storageKeys":["0x0000000000000000000000000000000000000000000000000000000000000000","0x13a08e3cd39a1bc7bf9103f63f83273cced2beada9f723945176d6b983c65bd2"]}],"gasUsed":"0xca3c"}}"#;
-        let expected_response =
-            serde_json::from_str::<RpcSuccessResponse>(expected_response_string).unwrap();
-        // Due to the scope of this test, we don't have the full state up to date which can cause variantions in gas used due to the difference in the blockchain state
-        // So we will skip checking the gas_used and only check that the access list is correct
-        // The gas_used will be checked when running the hive test framework
-        assert_eq!(
-            response.result["accessList"],
-            expected_response.result["accessList"]
-        )
     }
 
     fn example_chain_config() -> ChainConfig {

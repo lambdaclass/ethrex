@@ -29,8 +29,6 @@ pub enum RpcErr {
     InvalidForkChoiceState(String),
     InvalidPayloadAttributes(String),
     UnknownPayload(String),
-    #[cfg(feature = "based")]
-    InvalidBasedMessage(String),
     #[cfg(feature = "l2")]
     InvalidEthrexL2Message(String),
 }
@@ -132,12 +130,6 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: format!("Unknown payload: {context}"),
             },
-            #[cfg(feature = "based")]
-            RpcErr::InvalidBasedMessage(context) => RpcErrorMetadata {
-                code: -38003,
-                data: None,
-                message: format!("Invalid based message: {context}"),
-            },
             #[cfg(feature = "l2")]
             RpcErr::InvalidEthrexL2Message(reason) => RpcErrorMetadata {
                 code: -39000,
@@ -172,10 +164,9 @@ pub enum RpcNamespace {
     Debug,
     Web3,
     Net,
+    Mempool,
     #[cfg(feature = "l2")]
     EthrexL2,
-    #[cfg(feature = "based")]
-    Based,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -204,10 +195,10 @@ impl RpcRequest {
                 "debug" => Ok(RpcNamespace::Debug),
                 "web3" => Ok(RpcNamespace::Web3),
                 "net" => Ok(RpcNamespace::Net),
+                // TODO: The namespace is set to match geth's namespace for compatibility, consider changing it in the future
+                "txpool" => Ok(RpcNamespace::Mempool),
                 #[cfg(feature = "l2")]
                 "ethrex" => Ok(RpcNamespace::EthrexL2),
-                #[cfg(feature = "based")]
-                "based" => Ok(RpcNamespace::Based),
                 _ => Err(RpcErr::MethodNotFound(self.method.clone())),
             }
         } else {
@@ -342,17 +333,18 @@ pub mod test_utils {
     use ethrex_blockchain::Blockchain;
     use ethrex_common::H512;
     use ethrex_p2p::{
+        peer_handler::PeerHandler,
         sync_manager::SyncManager,
         types::{Node, NodeRecord},
     };
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
+    use tokio::sync::Mutex as TokioMutex;
 
-    use crate::rpc::{start_api, RpcApiContext};
-    #[cfg(feature = "based")]
-    use crate::{EngineClient, EthClient};
-    #[cfg(feature = "based")]
-    use bytes::Bytes;
+    use crate::{
+        eth::gas_tip_estimator::GasTipEstimator,
+        rpc::{start_api, NodeData, RpcApiContext},
+    };
     #[cfg(feature = "l2")]
     use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
     #[cfg(feature = "l2")]
@@ -360,26 +352,16 @@ pub mod test_utils {
 
     pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
     pub fn example_p2p_node() -> Node {
-        let node_id_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
-        Node {
-            ip: "127.0.0.1".parse().unwrap(),
-            udp_port: 30303,
-            tcp_port: 30303,
-            node_id: node_id_1,
-        }
+        let public_key_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
+        Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1)
     }
 
     pub fn example_local_node_record() -> NodeRecord {
-        let node_id_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
-        let node = Node {
-            ip: "127.0.0.1".parse().unwrap(),
-            udp_port: 30303,
-            tcp_port: 30303,
-            node_id: node_id_1,
-        };
+        let public_key_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
+        let node = Node::new("127.0.0.1".parse().unwrap(), 30303, 30303, public_key_1);
         let signer = SigningKey::random(&mut rand::rngs::OsRng);
 
-        NodeRecord::from_node(node, 0, &signer).unwrap()
+        NodeRecord::from_node(&node, 1, &signer).unwrap()
     }
 
     // Util to start an api for testing on ports 8500 and 8501,
@@ -405,10 +387,6 @@ pub mod test_utils {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
-        #[cfg(feature = "based")]
-        let gateway_eth_client = EthClient::new("");
-        #[cfg(feature = "based")]
-        let gateway_auth_client = EngineClient::new("", Bytes::default());
         #[cfg(feature = "l2")]
         let valid_delegation_addresses = Vec::new();
         #[cfg(feature = "l2")]
@@ -425,13 +403,8 @@ pub mod test_utils {
             local_p2p_node,
             example_local_node_record(),
             SyncManager::dummy(),
+            PeerHandler::dummy(),
             "ethrex/test".to_string(),
-            #[cfg(feature = "based")]
-            gateway_eth_client,
-            #[cfg(feature = "based")]
-            gateway_auth_client,
-            #[cfg(feature = "based")]
-            Default::default(),
             #[cfg(feature = "l2")]
             valid_delegation_addresses,
             #[cfg(feature = "l2")]
@@ -447,18 +420,16 @@ pub mod test_utils {
         RpcApiContext {
             storage,
             blockchain,
-            jwt_secret: Default::default(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
-            client_version: "ethrex/test".to_string(),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
+            peer_handler: PeerHandler::dummy(),
+            node_data: NodeData {
+                jwt_secret: Default::default(),
+                local_p2p_node: example_p2p_node(),
+                local_node_record: example_local_node_record(),
+                client_version: "ethrex/test".to_string(),
+            },
+            gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]

@@ -15,9 +15,9 @@ pub enum EvmError {
     #[error("Invalid Header: {0}")]
     Header(String),
     #[error("DB error: {0}")]
-    DB(#[from] StoreError),
+    DB(String),
     #[error("Execution DB error: {0}")]
-    ExecutionDB(#[from] ExecutionDBError),
+    ProverDB(#[from] ProverDBError),
     #[error("{0}")]
     Precompile(String),
     #[error("Invalid EVM or EVM not supported: {0}")]
@@ -26,14 +26,20 @@ pub enum EvmError {
     Custom(String),
     #[error("Levm Database error: {0}")]
     LevmDatabaseError(#[from] DatabaseError),
+    #[error("Invalid deposit request layout")]
+    InvalidDepositRequest,
+    #[error("System contract: {0} has no code after deployment")]
+    SystemContractEmpty(String),
+    #[error("System call failed: {0}")]
+    SystemContractCallFailed(String),
 }
 
 #[derive(Debug, Error)]
-pub enum ExecutionDBError {
+pub enum ProverDBError {
     #[error("Database error: {0}")]
     Database(#[from] DatabaseError),
     #[error("Store error: {0}")]
-    Store(#[from] StoreError),
+    Store(String),
     #[error("Evm error: {0}")]
     Evm(#[from] Box<EvmError>), // boxed to avoid cyclic definition
     #[error("Trie error: {0}")]
@@ -50,17 +56,15 @@ pub enum ExecutionDBError {
     StorageValueNotFound(RevmAddress, RevmU256),
     #[error("Hash of block with number {0} not found")]
     BlockHashNotFound(u64),
-    #[error("Missing state trie of block {0} while trying to create ExecutionDB")]
+    #[error("Missing state trie of block {0} while trying to create ProverDB")]
     NewMissingStateTrie(BlockHash),
-    #[error(
-        "Missing storage trie of block {0} and address {1} while trying to create ExecutionDB"
-    )]
+    #[error("Missing storage trie of block {0} and address {1} while trying to create ProverDB")]
     NewMissingStorageTrie(BlockHash, Address),
-    #[error("Missing account {0} info while trying to create ExecutionDB")]
+    #[error("Missing account {0} info while trying to create ProverDB")]
     NewMissingAccountInfo(Address),
-    #[error("Missing storage of address {0} and key {1} while trying to create ExecutionDB")]
+    #[error("Missing storage of address {0} and key {1} while trying to create ProverDB")]
     NewMissingStorage(Address, H256),
-    #[error("Missing code of hash {0} while trying to create ExecutionDB")]
+    #[error("Missing code of hash {0} while trying to create ProverDB")]
     NewMissingCode(H256),
     #[error("The account {0} is not included in the stored pruned state trie")]
     MissingAccountInStateTrie(H160),
@@ -97,19 +101,31 @@ impl From<RevmError<StoreError>> for EvmError {
         match value {
             RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
             RevmError::Header(err) => EvmError::Header(err.to_string()),
-            RevmError::Database(err) => EvmError::DB(err),
+            RevmError::Database(err) => EvmError::DB(err.to_string()),
             RevmError::Custom(err) => EvmError::Custom(err),
             RevmError::Precompile(err) => EvmError::Precompile(err),
         }
     }
 }
 
-impl From<RevmError<ExecutionDBError>> for EvmError {
-    fn from(value: RevmError<ExecutionDBError>) -> Self {
+impl From<RevmError<EvmError>> for EvmError {
+    fn from(value: RevmError<EvmError>) -> Self {
         match value {
             RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
             RevmError::Header(err) => EvmError::Header(err.to_string()),
-            RevmError::Database(err) => EvmError::ExecutionDB(err),
+            RevmError::Database(err) => EvmError::DB(err.to_string()),
+            RevmError::Custom(err) => EvmError::Custom(err),
+            RevmError::Precompile(err) => EvmError::Precompile(err),
+        }
+    }
+}
+
+impl From<RevmError<ProverDBError>> for EvmError {
+    fn from(value: RevmError<ProverDBError>) -> Self {
+        match value {
+            RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
+            RevmError::Header(err) => EvmError::Header(err.to_string()),
+            RevmError::Database(err) => EvmError::ProverDB(err),
             RevmError::Custom(err) => EvmError::Custom(err),
             RevmError::Precompile(err) => EvmError::Precompile(err),
         }
@@ -124,5 +140,11 @@ impl From<VMError> for EvmError {
             // If an error is not internal it means it is a transaction validation error.
             EvmError::Transaction(value.to_string())
         }
+    }
+}
+
+impl From<StoreError> for ProverDBError {
+    fn from(err: StoreError) -> Self {
+        ProverDBError::Store(err.to_string())
     }
 }

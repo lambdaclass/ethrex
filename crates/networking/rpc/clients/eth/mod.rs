@@ -11,7 +11,8 @@ use bytes::Bytes;
 use errors::{
     EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockByHashError,
     GetBlockByNumberError, GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError,
-    GetNonceError, GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
+    GetMaxPriorityFeeError, GetNonceError, GetTransactionByHashError, GetTransactionReceiptError,
+    SendRawTransactionError,
 };
 use eth_sender::Overrides;
 use ethrex_common::{
@@ -23,7 +24,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
-use reqwest::Client;
+use reqwest::{Client, Url};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -43,7 +44,11 @@ pub enum RpcResponse {
 #[derive(Debug, Clone)]
 pub struct EthClient {
     client: Client,
-    pub url: String,
+    pub urls: Vec<Url>,
+    pub max_number_of_retries: u64,
+    pub backoff_factor: u64,
+    pub min_retry_delay: u64,
+    pub max_retry_delay: u64,
     pub maximum_allowed_max_fee_per_gas: Option<u64>,
     pub maximum_allowed_max_fee_per_blob_gas: Option<u64>,
 }
@@ -90,7 +95,7 @@ const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 // 0x08c379a0 == Error(String)
 pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct WithdrawalProof {
     pub batch_number: u64,
     pub index: usize,
@@ -99,31 +104,78 @@ pub struct WithdrawalProof {
 }
 
 impl EthClient {
-    pub fn new(url: &str) -> Self {
-        Self {
-            client: Client::new(),
-            url: url.to_string(),
-            maximum_allowed_max_fee_per_gas: None,
-            maximum_allowed_max_fee_per_blob_gas: None,
-        }
+    pub fn new(url: &str) -> Result<EthClient, EthClientError> {
+        Self::new_with_config(
+            vec![url],
+            MAX_NUMBER_OF_RETRIES,
+            BACKOFF_FACTOR,
+            MIN_RETRY_DELAY,
+            MAX_RETRY_DELAY,
+            None,
+            None,
+        )
     }
 
-    pub fn new_with_maximum_fees(
-        url: &str,
-        max_fee_per_gas: u64,
-        max_fee_per_blob_gas: u64,
-    ) -> Self {
-        Self {
+    pub fn new_with_config(
+        urls: Vec<&str>,
+        max_number_of_retries: u64,
+        backoff_factor: u64,
+        min_retry_delay: u64,
+        max_retry_delay: u64,
+        maximum_allowed_max_fee_per_gas: Option<u64>,
+        maximum_allowed_max_fee_per_blob_gas: Option<u64>,
+    ) -> Result<Self, EthClientError> {
+        let urls = urls
+            .iter()
+            .map(|url| {
+                Url::parse(url)
+                    .map_err(|_| EthClientError::ParseUrlError("Failed to parse urls".to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self {
             client: Client::new(),
-            url: url.to_string(),
-            maximum_allowed_max_fee_per_gas: Some(max_fee_per_gas),
-            maximum_allowed_max_fee_per_blob_gas: Some(max_fee_per_blob_gas),
-        }
+            urls,
+            max_number_of_retries,
+            backoff_factor,
+            min_retry_delay,
+            max_retry_delay,
+            maximum_allowed_max_fee_per_gas,
+            maximum_allowed_max_fee_per_blob_gas,
+        })
+    }
+
+    pub fn new_with_multiple_urls(urls: Vec<String>) -> Result<EthClient, EthClientError> {
+        Self::new_with_config(
+            urls.iter().map(AsRef::as_ref).collect(),
+            MAX_NUMBER_OF_RETRIES,
+            BACKOFF_FACTOR,
+            MIN_RETRY_DELAY,
+            MAX_RETRY_DELAY,
+            None,
+            None,
+        )
     }
 
     async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EthClientError> {
+        let mut response = Err(EthClientError::Custom("All rpc calls failed".to_string()));
+
+        for url in self.urls.iter() {
+            response = self.send_request_to_url(url, &request).await;
+            if response.is_ok() {
+                return response;
+            }
+        }
+        response
+    }
+
+    async fn send_request_to_url(
+        &self,
+        rpc_url: &Url,
+        request: &RpcRequest,
+    ) -> Result<RpcResponse, EthClientError> {
         self.client
-            .post(&self.url)
+            .post(rpc_url.as_str())
             .header("content-type", "application/json")
             .body(serde_json::ser::to_string(&request).map_err(|error| {
                 EthClientError::FailedToSerializeRequestBody(format!("{error}: {request:?}"))
@@ -215,7 +267,7 @@ impl EthClient {
     ) -> Result<H256, EthClientError> {
         let mut number_of_retries = 0;
 
-        'outer: while number_of_retries < MAX_NUMBER_OF_RETRIES {
+        'outer: while number_of_retries < self.max_number_of_retries {
             if let Some(max_fee_per_gas) = self.maximum_allowed_max_fee_per_gas {
                 let tx_max_fee = match wrapped_tx {
                     WrappedTransaction::EIP4844(tx) => &mut tx.tx.max_fee_per_gas,
@@ -245,15 +297,16 @@ impl EthClient {
                 .await?;
 
             if number_of_retries > 0 {
-                warn!("Resending Transaction after bumping gas, attempts [{number_of_retries}/{MAX_NUMBER_OF_RETRIES}]\nTxHash: {tx_hash:#x}");
+                warn!("Resending Transaction after bumping gas, attempts [{number_of_retries}/{}]\nTxHash: {tx_hash:#x}", self.max_number_of_retries);
             }
 
             let mut receipt = self.get_transaction_receipt(tx_hash).await?;
 
             let mut attempt = 1;
-            let attempts_to_wait_in_seconds = BACKOFF_FACTOR
+            let attempts_to_wait_in_seconds = self
+                .backoff_factor
                 .pow(number_of_retries as u32)
-                .clamp(MIN_RETRY_DELAY, MAX_RETRY_DELAY);
+                .clamp(self.min_retry_delay, self.max_retry_delay);
             while receipt.is_none() {
                 if attempt >= (attempts_to_wait_in_seconds / WAIT_TIME_FOR_RECEIPT_SECONDS) {
                     // We waited long enough for the receipt but did not find it, bump gas
@@ -411,6 +464,25 @@ impl EthClient {
                     error_response.error.message, error_data
                 ))
                 .into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn get_max_priority_fee(&self) -> Result<u64, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "eth_maxPriorityFeePerGas".to_string(),
+            params: None,
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+                .map_err(GetMaxPriorityFeeError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetMaxPriorityFeeError::RPCError(error_response.error.message).into())
             }
             Err(error) => Err(error),
         }
@@ -742,6 +814,7 @@ impl EthClient {
         };
 
         transaction.from = from;
+        transaction.nonce = None;
         self.estimate_gas(transaction).await
     }
 
@@ -757,7 +830,6 @@ impl EthClient {
         calldata: Bytes,
         overrides: Overrides,
     ) -> Result<EIP1559Transaction, EthClientError> {
-        let mut get_gas_price = 1;
         let mut tx = EIP1559Transaction {
             to: overrides.to.clone().unwrap_or(TxKind::Call(to)),
             chain_id: if let Some(chain_id) = overrides.chain_id {
@@ -770,16 +842,12 @@ impl EthClient {
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
-                gas_price
-            } else {
-                get_gas_price = self.get_gas_price().await?.try_into().map_err(|_| {
-                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
-                })?;
-
-                get_gas_price
-            },
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(get_gas_price),
+            max_fee_per_gas: self
+                .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
+                .await?,
+            max_priority_fee_per_gas: self
+                .priority_fee_from_override_or_rpc(overrides.max_priority_fee_per_gas)
+                .await?,
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
@@ -813,7 +881,7 @@ impl EthClient {
         blobs_bundle: BlobsBundle,
     ) -> Result<WrappedEIP4844Transaction, EthClientError> {
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
-        let mut get_gas_price = 1;
+
         let tx = EIP4844Transaction {
             to,
             chain_id: if let Some(chain_id) = overrides.chain_id {
@@ -826,16 +894,12 @@ impl EthClient {
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
-                gas_price
-            } else {
-                get_gas_price = self.get_gas_price().await?.try_into().map_err(|_| {
-                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
-                })?;
-
-                get_gas_price
-            },
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(get_gas_price),
+            max_fee_per_gas: self
+                .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
+                .await?,
+            max_priority_fee_per_gas: self
+                .priority_fee_from_override_or_rpc(overrides.max_priority_fee_per_gas)
+                .await?,
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
@@ -871,7 +935,6 @@ impl EthClient {
         calldata: Bytes,
         overrides: Overrides,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
-        let mut get_gas_price = 1;
         let mut tx = PrivilegedL2Transaction {
             to: TxKind::Call(to),
             recipient,
@@ -885,16 +948,12 @@ impl EthClient {
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
-                gas_price
-            } else {
-                get_gas_price = self.get_gas_price().await?.try_into().map_err(|_| {
-                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
-                })?;
-
-                get_gas_price
-            },
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(get_gas_price),
+            max_fee_per_gas: self
+                .get_fee_from_override_or_get_gas_price(overrides.max_fee_per_gas)
+                .await?,
+            max_priority_fee_per_gas: self
+                .priority_fee_from_override_or_rpc(overrides.max_priority_fee_per_gas)
+                .await?,
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
@@ -1127,6 +1186,35 @@ impl EthClient {
         withdrawal_proof.ok_or(EthClientError::Custom(
             "Withdrawal proof is None".to_owned(),
         ))
+    }
+
+    async fn get_fee_from_override_or_get_gas_price(
+        &self,
+        maybe_gas_fee: Option<u64>,
+    ) -> Result<u64, EthClientError> {
+        if let Some(gas_fee) = maybe_gas_fee {
+            return Ok(gas_fee);
+        }
+        self.get_gas_price()
+            .await
+            .map_err(EthClientError::from)?
+            .try_into()
+            .map_err(|_| EthClientError::Custom("Failed to get gas for fee".to_owned()))
+    }
+
+    async fn priority_fee_from_override_or_rpc(
+        &self,
+        maybe_priority_fee: Option<u64>,
+    ) -> Result<u64, EthClientError> {
+        if let Some(priority_fee) = maybe_priority_fee {
+            return Ok(priority_fee);
+        }
+
+        if let Ok(priority_fee) = self.get_max_priority_fee().await {
+            return Ok(priority_fee);
+        }
+
+        self.get_fee_from_override_or_get_gas_price(None).await
     }
 }
 
