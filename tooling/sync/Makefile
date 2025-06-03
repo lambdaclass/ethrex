@@ -17,7 +17,7 @@ create_data_dir:
 	mkdir -p ~/.local/share/$(NETWORK)_data
 
 gen_jwt: create_data_dir
-	openssl rand -hex 32 | tr -d "\n" | sudo tee ~/.local/share/$(NETWORK)_data/jwt.hex
+	openssl rand -hex 32 | tr -d "\n" | tee ~/.local/share/$(NETWORK)_data/jwt.hex
 
 start_geth: create_data_dir
 	mkdir -p $(NETWORK)_data
