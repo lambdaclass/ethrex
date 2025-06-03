@@ -117,7 +117,10 @@ impl L1ProofSender {
         let state =
             L1ProofSenderState::new(&cfg.proof_coordinator, &cfg.l1_committer, &cfg.eth).await?;
         let mut l1_proof_sender = L1ProofSender::start(state);
-        let _ = l1_proof_sender.cast(InMessage::Send).await;
+        l1_proof_sender
+            .cast(InMessage::Send)
+            .await
+            .map_err(ProofSenderError::GenServerError)?;
         Ok(())
     }
 }
