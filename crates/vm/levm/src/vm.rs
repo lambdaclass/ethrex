@@ -12,7 +12,6 @@ use crate::{
     TransientStorage,
 };
 use bytes::Bytes;
-use derive_more::derive::Debug;
 use ethrex_common::{
     types::{Transaction, TxKind},
     Address, H256, U256,
