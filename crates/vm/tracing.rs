@@ -46,7 +46,7 @@ pub struct Call {
 }
 
 #[derive(Serialize, Debug)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[serde(rename_all = "UPPERCASE")]
 pub enum CallType {
     Call,
     CallCode,
