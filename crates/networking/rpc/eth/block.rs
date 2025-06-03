@@ -351,33 +351,36 @@ impl RpcHandler for ExecutionWitness {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested execution witness for block: {}", self.block);
-        let block_number = match self.block.resolve_block_number(&context.storage).await? {
-            Some(block_number) => block_number,
-            _ => return Ok(Value::Null),
+        let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
+            return Ok(Value::Null);
         };
-        let header = match context.storage.get_block_header(block_number)? {
-            Some(header) => header,
-            _ => return Err(RpcErr::Internal("Could not get block header".to_owned())),
-        };
+        let header = context
+            .storage
+            .get_block_header(block_number)?
+            .ok_or(RpcErr::Internal("Could not get block header".to_string()))?;
 
-        let parent_header = match context.storage.get_block_header(block_number - 1)? {
-            Some(header) => header,
-            _ => return Err(RpcErr::Internal("Could not get block header".to_owned())),
-        };
+        let parent_header = context
+            .storage
+            .get_block_header_by_hash(header.parent_hash)?
+            .ok_or(RpcErr::Internal(
+                "Could not get parent block header".to_string(),
+            ))?;
 
-        let block = match context.storage.get_block_by_hash(header.hash()).await {
-            Ok(Some(block)) => block,
-            _ => return Err(RpcErr::Internal("Could not get block".to_owned())),
-        };
+        let block = context
+            .storage
+            .get_block_by_hash(header.hash())
+            .await?
+            .ok_or(RpcErr::Internal("Could not get block body".to_string()))?;
 
         let (state_rlp, codes, storage_tries, blocks_used) = context
             .blockchain
             .generate_witness_for_blocks(&[block])
             .await
-            .map_err(|e| RpcErr::Internal(e.to_string()))?;
+            .map_err(|e| RpcErr::Internal(format!("Failed to build execution witness {e}")))?;
+
         let mut block_headers = vec![parent_header];
-        for (block_number, _block_hash) in blocks_used {
-            if let Ok(Some(block_header)) = context.storage.get_block_header(block_number) {
+        for (_block_number, block_hash) in blocks_used {
+            if let Ok(Some(block_header)) = context.storage.get_block_header_by_hash(block_hash) {
                 block_headers.push(block_header);
             }
         }
