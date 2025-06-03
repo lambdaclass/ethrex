@@ -97,7 +97,7 @@ pub enum ProofSenderError {
     InternalError(String),
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
-    #[error("GenServer Error")]
+    #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
 
