@@ -16,7 +16,7 @@ use ethrex_common::{
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::{EvmError, ProverDB};
+use ethrex_vm::ProverDB;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use spawned_concurrency::{CallResponse, CastResponse, GenServer};
@@ -516,9 +516,7 @@ async fn create_prover_input(
     let blocks = fetch_blocks(state, block_numbers).await?;
 
     // Create prover_db
-    let db = to_prover_db(&state.store.clone(), &blocks)
-        .await
-        .map_err(EvmError::ProverDB)?;
+    let db = to_prover_db(&state.store.clone(), &blocks).await?;
 
     // Get the block_header of the parent of the first block
     let parent_hash = blocks
