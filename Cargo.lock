@@ -2767,19 +2767,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
-name = "dialoguer"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "658bce805d770f407bc62102fca7c2c64ceef2fbcb2b8bd19d2765ce093980de"
-dependencies = [
- "console",
- "shell-words",
- "tempfile",
- "thiserror 1.0.69",
- "zeroize",
-]
-
-[[package]]
 name = "digest"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3565,6 +3552,7 @@ dependencies = [
  "ethrex-vm",
  "eyre",
  "hex",
+ "itertools 0.14.0",
  "k256",
  "keccak-hash",
  "lazy_static",
@@ -3742,6 +3730,7 @@ dependencies = [
  "bytes",
  "concat-kdf",
  "ctr",
+ "ethereum-types",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-rlp",
@@ -3854,6 +3843,7 @@ dependencies = [
  "bytes",
  "cfg-if",
  "envy",
+ "ethereum-types",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-p2p",
@@ -4017,43 +4007,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
- "tracing",
- "tracing-subscriber 0.3.19",
-]
-
-[[package]]
-name = "ethrex_l2_cli"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "clap 4.5.39",
- "clap_complete",
- "colored",
- "dialoguer",
- "dirs 5.0.1",
- "ethereum-types 0.15.1",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-l2",
- "ethrex-rlp",
- "ethrex-rpc",
- "ethrex-sdk",
- "ethrex-storage",
- "ethrex-storage-rollup",
- "eyre",
- "hex",
- "itertools 0.13.0",
- "keccak-hash",
- "log",
- "reqwest 0.12.18",
- "secp256k1",
- "serde",
- "serde_json",
- "sha2",
- "spinoff",
- "strum 0.26.3",
- "tokio",
- "toml 0.8.22",
  "tracing",
  "tracing-subscriber 0.3.19",
 ]
@@ -10170,12 +10123,6 @@ checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
 ]
-
-[[package]]
-name = "shell-words"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24188a676b6ae68c3b2cb3a01be17fbf7240ce009799bb56d5b1409051e78fde"
 
 [[package]]
 name = "shlex"
