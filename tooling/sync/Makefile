@@ -1,10 +1,8 @@
 .PHONY = start_geth_holesky start_lighthouse_holesky gen_jwt
 
 ETHREX_DIR ?= "../.."
-ifndef SYNC_NETWORK
 ifndef NETWORK
 $(error "Sync network not provided")
-endif
 endif
 NETWORK ?= $(SYNC_NETWORK)
 EVM ?= levm
@@ -45,7 +43,7 @@ ifndef BLOCK_NUM
 	$(error "Sync block number not set)
 endif
 	cd $(ETHREX_DIR) && git checkout main
-	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(BLOCK_NUM)-$(LOGNAME).log	
+	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(BLOCK_NUM)-$(LOGNAME).log
 
 flamegraph-branch:
 ifndef BLOCK_NUM
@@ -62,55 +60,55 @@ flamegraph-holesky:
 		--discovery.port 30303 \
 		--network holesky \
 		--datadir "${EVM}_holesky_data/ethrex" \
-		--authrpc.jwtsecret "/tools/sync/holesky_data/jwt.hex" \
+		--authrpc.jwtsecret "tooling/sync/holesky_data/jwt.hex" \
 		--bootnodes $(HOLESKY_BOOTNODES) \
-		--evm $(EVM) && cp ethrex/flamegraph.svg flamegraphs/ethrex-holesky-$(EVM)--flamegraph-$(CURRENT_DATETIME)-main$(LOGNAME).svg	
+		--evm $(EVM) \
 
 flamegraph-hoodi:
-	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) SYNC_BLOCK_NUM=$(BLOCK_NUM)  CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
+	-cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) SYNC_BLOCK_NUM=$(BLOCK_NUM)  CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
 		--http.port 8545 \
 		--authrpc.port 8551 \
 		--p2p.port 30303\
 		--discovery.port 30303 \
 		--network hoodi \
 		--datadir "${EVM}_hoodi_data/ethrex" \
-		--authrpc.jwtsecret "tools/sync/hoodi_data/jwt.hex" \
+		--authrpc.jwtsecret "tooling/sync/hoodi_data/jwt.hex" \
 		--bootnodes $(HOODI_BOOTNODES) \
-		--evm $(EVM) && cp ethrex/flamegraph.svg flamegraphs/ethrex-hoodi-$(EVM)--flamegraph-$(CURRENT_DATETIME)-main$(LOGNAME).svg	
+		--evm $(EVM)
 
 start-lighthouse:
 	make $(NETWORK)-lighthouse
 
 holesky-lighthouse:
 	lighthouse bn \
-		--network $(NETWORK) \
+		--network holesky \
 		--execution-endpoint http://localhost:${ENGINE_PORT} \
-		--execution-jwt ${NETWORK}_data/jwt.hex \
+		--execution-jwt holesky_data/jwt.hex \
 		--checkpoint-sync-url $(HOLESKY_CHECKPOINT_SYNC_URL) \
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--datadir $(EVM)_${NETWORK}_data/lighthouse_${NODE_NAME}/ \
+		--datadir $(EVM)_holesky_data/lighthouse_${NODE_NAME}/ \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
 hoodi-lighthouse:
 	lighthouse bn \
-		--network $(NETWORK) \
+		--network holesky \
 		--execution-endpoint http://localhost:${ENGINE_PORT} \
-		--execution-jwt ${NETWORK}_data/jwt.hex \
+		--execution-jwt holesky_data/jwt.hex \
 		--checkpoint-sync-url $(HOODI_CHECKPOINT_SYNC_URL) \
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--datadir $(EVM)_${NETWORK}_data/lighthouse_${NODE_NAME}/ \
+		--datadir $(EVM)_holesky_data/lighthouse_${NODE_NAME}/ \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
 
 
 backup-db:
-	mkdir -p /home/admin/.local/share/ethrex_db_backups/db_backup_$(EVM)_$(NETWORK)_$(CURRENT_DATETIME)
-	rsync -ah --info=progress2 /home/admin/.local/share/$(EVM)_$(NETWORK)_data/ethrex/mdbx.* /home/admin/.local/share/ethrex_db_backups/db_backup_$(EVM)_$(NETWORK)_$(CURRENT_DATETIME)
-	cp ./logs/ethrex-sync-holesky-levm.log /home/admin/.local/share/ethrex_db_backups/db_backup_$(EVM)_$(NETWORK)_$(CURRENT_DATETIME)/ethrex_sync_holesky_levm.log
+	mkdir -p ~/.local/share/ethrex_db_backups/db_backup_$(EVM)_$(NETWORK)_$(CURRENT_DATETIME)
+	rsync -ah --info=progress2 ~/.local/share/$(EVM)_$(NETWORK)_data/ethrex/mdbx.* ~/.local/share/ethrex_db_backups/db_backup_$(EVM)_$(NETWORK)_$(CURRENT_DATETIME)
+	cp ./logs/ethrex-sync-$(NETWORK)-$(EVM).log ~/.local/share/ethrex_db_backups/db_backup_$(EVM)_$(NETWORK)_$(CURRENT_DATETIME)/ethrex_sync_$(NETWORK)_$(EVM).log
 
 
 start_ethrex_hoodi:
@@ -143,4 +141,7 @@ tail-syncing-logs:
 
 tail-metrics-logs:
 	tail -f logs/$(LOGNAME) -n 2000 | grep -A4 -e "METRICS"
+
+copy-flamegraph:	
+	rsync -ah --info=progress2  $(ETHREX_DIR)/flamegraph.svg flamegraphs/flamegraph-$(LOGNAME).svg	
 
