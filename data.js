@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748963135406,
+  "lastUpdate": 1748967008863,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10525,6 +10525,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179968658476,
             "range": "± 508049007",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5a1380dc1b8bb3435ce75253399f5ac95c88f32d",
+          "message": "fix(l2): store batch before sending (#2978)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nThere's a bug where the L1 committer sends a transaction and it's not\nconfirmed within the expected period, so the committer assumes a failure\nand returns an error. Then, if the transaction is eventually executed,\nthe batch is never stored. This provokes that the proof coordinator\ndoesn't have the batch to send to the prover, so the batch is never\nverified.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nStore the batch before sending the commitment transaction. Then, in the\nproof sender, check that the next batch to verify corresponds with the\nlast committed block.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-06-03T15:23:56Z",
+          "tree_id": "c07ea5c9c3c9ce927bb194d213c2e8e04514d0c6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5a1380dc1b8bb3435ce75253399f5ac95c88f32d"
+        },
+        "date": 1748967004416,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178970684652,
+            "range": "± 474527419",
             "unit": "ns/iter"
           }
         ]
