@@ -64,7 +64,7 @@ sequenceDiagram
   2. `rzup install cargo-risczero 1.2.0`
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
   1. `curl -L https://sp1up.succinct.xyz | bash`
-  2. `sp1up --version 4.1.7`
+  2. `sp1up --version 5.0.0`
 - [Pico](https://docs.brevis.network/)
   1. `cargo +nightly install --git https://github.com/brevis-network/pico pico-cli`
   2. `rustup install nightly-2024-11-27`
