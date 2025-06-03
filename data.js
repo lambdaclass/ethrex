@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748979730072,
+  "lastUpdate": 1748984002317,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10765,6 +10765,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179587597717,
             "range": "± 616603424",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "c2f75cd5c266e2a5082d73d14d1aabb720e2c445",
+          "message": "chore(l2): remove `ethrex_l2` CLI (#2991)\n\n**Motivation**\n\n- https://github.com/lambdaclass/ethrex/issues/2328\n- https://github.com/lambdaclass/ethrex/issues/2330\n\n**Description**\n\nResolves #2328\nResolves #2330",
+          "timestamp": "2025-06-03T20:04:28Z",
+          "tree_id": "396db6d57841f3efbc5a5b1017d5bc60dee86d97",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c2f75cd5c266e2a5082d73d14d1aabb720e2c445"
+        },
+        "date": 1748983997639,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184573717187,
+            "range": "± 664234528",
             "unit": "ns/iter"
           }
         ]
