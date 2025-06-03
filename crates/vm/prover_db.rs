@@ -12,7 +12,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{EvmError, VmDatabase};
+use crate::{EvmError, ProverDBError, VmDatabase};
 
 /// In-memory EVM database for single batch execution data.
 ///
@@ -109,10 +109,7 @@ impl VmDatabase for ProverDB {
             .lock()
             .map_err(|_| EvmError::DB("Failed to lock state trie".to_string()))?;
         let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie_lock
-            .get(&hashed_address)
-            .map_err(|_| EvmError::DB("Failed to get account from trie".to_string()))?
-        else {
+        let Ok(Some(encoded_state)) = state_trie_lock.get(&hashed_address) else {
             return Ok(None);
         };
         let state = AccountState::decode(&encoded_state)
@@ -146,14 +143,13 @@ impl VmDatabase for ProverDB {
             return Ok(None);
         };
         let hashed_key = hash_key(&key);
-        storage_trie
-            .get(&hashed_key)
-            .map_err(|_| EvmError::DB("failed to read storage from trie".to_string()))?
-            .map(|rlp| {
-                U256::decode(&rlp)
-                    .map_err(|_| EvmError::DB("failed to read storage from trie".to_string()))
-            })
-            .transpose()
+        if let Ok(Some(encoded_key)) = storage_trie.get(&hashed_key) {
+            U256::decode(&encoded_key)
+                .map_err(|_| EvmError::DB("failed to read storage from trie".to_string()))
+                .map(Some)
+        } else {
+            Ok(None)
+        }
     }
 
     fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, EvmError> {
