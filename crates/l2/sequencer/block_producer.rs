@@ -20,10 +20,7 @@ use tracing::{debug, error, info};
 
 use crate::{BlockProducerConfig, SequencerConfig};
 
-use super::{
-    errors::BlockProducerError,
-    execution_cache::ExecutionCache,
-};
+use super::{errors::BlockProducerError, execution_cache::ExecutionCache};
 
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
