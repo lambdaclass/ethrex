@@ -1,8 +1,9 @@
-use ethrex_common::types::Account;
+use ethrex_common::types::{Account, AccountInfo, AccountState};
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
-use ethrex_levm::constants::EMPTY_CODE_HASH;
 use ethrex_levm::db::Database as LevmDatabase;
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_storage::{hash_address, hash_key};
 
 use crate::db::DynVmDatabase;
 use crate::{ProverDB, VmDatabase};
@@ -194,12 +195,9 @@ impl LevmDatabase for ProverDB {
         })
     }
 
-    fn account_exists(&self, address: CoreAddress) -> bool {
-        if let Ok(account) = self.get_account(address) {
-            !account.is_empty()
-        } else {
-            false
-        }
+    fn account_exists(&self, address: CoreAddress) -> Result<bool, DatabaseError> {
+        let account = self.get_account(address)?;
+        Ok(!account.is_empty())
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
