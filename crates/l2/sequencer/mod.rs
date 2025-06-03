@@ -8,6 +8,7 @@ use ethrex_storage_rollup::StoreRollup;
 use execution_cache::ExecutionCache;
 use l1_committer::L1Committer;
 use l1_watcher::L1Watcher;
+use proof_coordinator::ProofCoordinator;
 use tokio::task::JoinSet;
 use tracing::{error, info};
 
@@ -39,23 +40,23 @@ pub async fn start_l2(
     let execution_cache = Arc::new(ExecutionCache::default());
 
     L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone()).await;
-    if let Err(err) = L1Committer::spawn(
+    let _ = L1Committer::spawn(
         store.clone(),
         rollup_store.clone(),
         execution_cache.clone(),
         cfg.clone(),
     )
     .await
-    {
+    .inspect_err(|err| {
         error!("Error starting Committer: {err}");
-    };
+    });
+    let _ = ProofCoordinator::spawn(store.clone(), rollup_store.clone(), cfg.clone())
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Proof Coordinator: {err}");
+        });
 
-    let mut task_set = JoinSet::new();
-    task_set.spawn(proof_coordinator::start_proof_coordinator(
-        store.clone(),
-        rollup_store.clone(),
-        cfg.clone(),
-    ));
+    let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
     task_set.spawn(start_block_producer(
         store.clone(),
