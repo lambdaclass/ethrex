@@ -163,12 +163,9 @@ fn map_call_trace(
                 &revm_calls_copy,
                 &mut used_idxs,
                 revert_reason_or_error,
+                only_top_call,
                 with_log,
             ));
-        }
-        if only_top_call {
-            // Keep only the first call + subcalls
-            break;
         }
     }
     call_trace
@@ -179,19 +176,23 @@ fn map_call(
     revm_calls: &Vec<CallTraceNode>,
     used_idxs: &mut HashSet<usize>,
     revert_reason_or_error: &String,
+    only_top_call: bool,
     with_log: bool,
 ) -> Call {
     let mut subcalls = vec![];
-    for child_idx in &revm_call.children {
-        if let Some(child) = revm_calls.get(*child_idx) {
-            subcalls.push(map_call(
-                child.clone(),
-                revm_calls,
-                used_idxs,
-                revert_reason_or_error,
-                with_log,
-            ));
-            used_idxs.insert(*child_idx);
+    if !only_top_call {
+        for child_idx in &revm_call.children {
+            if let Some(child) = revm_calls.get(*child_idx) {
+                subcalls.push(map_call(
+                    child.clone(),
+                    revm_calls,
+                    used_idxs,
+                    revert_reason_or_error,
+                    only_top_call,
+                    with_log,
+                ));
+                used_idxs.insert(*child_idx);
+            }
         }
     }
     let to = Address::from_slice(revm_call.trace.address.0.as_slice());
