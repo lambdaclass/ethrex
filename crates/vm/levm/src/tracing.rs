@@ -193,7 +193,7 @@ fn clear_reverted_logs(callframe: &mut TracingCallframe) {
         callframe.logs.clear();
     }
     for subcall in &mut callframe.calls {
-        subcall.clear_reverted_logs();
+        clear_reverted_logs(subcall);
     }
 }
 
