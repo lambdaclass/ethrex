@@ -14,7 +14,7 @@ use serde::{
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
     #[serde(
-        serialize_with = "serialize_proofs",
+        serialize_with = "crate::types::account_proof::serialize_proofs",
         deserialize_with = "deserialize_state"
     )]
     pub state: Vec<Vec<u8>>,
@@ -24,22 +24,11 @@ pub struct ExecutionWitnessResult {
     )]
     pub codes: Vec<Bytes>,
     #[serde(
-        serialize_with = "serialize_keys",
-        deserialize_with = "deserialize_keys"
+        serialize_with = "serialize_storage_tries",
+        deserialize_with = "deserialize_storage_tries"
     )]
     pub storage_tries: HashMap<H160, Vec<Vec<u8>>>,
     pub block_headers: Vec<BlockHeader>,
-}
-
-pub fn serialize_proofs<S>(value: &Vec<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let mut seq_serializer = serializer.serialize_seq(Some(value.len()))?;
-    for encoded_node in value {
-        seq_serializer.serialize_element(&format!("0x{}", hex::encode(encoded_node)))?;
-    }
-    seq_serializer.end()
 }
 
 pub fn serialize_code<S>(value: &Vec<Bytes>, serializer: S) -> Result<S::Ok, S::Error>
@@ -53,7 +42,7 @@ where
     seq_serializer.end()
 }
 
-pub fn serialize_keys<S>(
+pub fn serialize_storage_tries<S>(
     map: &HashMap<H160, Vec<Vec<u8>>>,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
@@ -145,7 +134,9 @@ where
     deserializer.deserialize_seq(BytesVecVisitor)
 }
 
-pub fn deserialize_keys<'de, D>(deserializer: D) -> Result<HashMap<H160, Vec<Vec<u8>>>, D::Error>
+pub fn deserialize_storage_tries<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<H160, Vec<Vec<u8>>>, D::Error>
 where
     D: Deserializer<'de>,
 {
