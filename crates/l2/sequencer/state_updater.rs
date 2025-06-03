@@ -106,12 +106,10 @@ impl StateUpdater {
         match (current_state.clone(), new_state.clone()) {
             (SequencerState::Sequencing, SequencerState::Sequencing)
             | (SequencerState::Following, SequencerState::Following) => {}
-            (SequencerState::Sequencing, SequencerState::Following) => {
-                info!("Now the follower sequencer. Stopping sequencing.");
+            (SequencerState::Sequencing, SequencerState::Following)
+            | (SequencerState::Following, SequencerState::Sequencing) => {
+                info!("Now the state is {new_state}");
                 self.revert_uncommitted_state().await?;
-            }
-            (SequencerState::Following, SequencerState::Sequencing) => {
-                info!("Now the lead sequencer. Starting sequencing.");
             }
         };
 

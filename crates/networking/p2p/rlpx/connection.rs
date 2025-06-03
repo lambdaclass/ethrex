@@ -441,8 +441,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             .iter()
             .any(|cap| self.capabilities.contains(cap))
         {
-            let filter =
-                |tx: &Transaction| -> bool { !self.broadcasted_txs.contains(&tx.compute_hash()) };
+            let filter = |tx: &Transaction| -> bool {
+                !self.broadcasted_txs.contains(&tx.compute_hash())
+                    && !matches!(&tx, Transaction::PrivilegedL2Transaction(_))
+            };
             let txs: Vec<MempoolTransaction> = self
                 .blockchain
                 .mempool
