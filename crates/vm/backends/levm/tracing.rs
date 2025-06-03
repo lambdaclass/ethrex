@@ -125,7 +125,7 @@ fn map_levm_callframe(callframe: TracerCallFrame) -> Result<Call, EvmError> {
         error: callframe.error,
         revert_reason: callframe.revert_reason,
         calls: subcalls,
-        logs: Some(map_call_logs(callframe.logs)), //TODO: Stop using Option and use empty vec instead
+        logs: map_call_logs(callframe.logs),
     };
 
     Ok(call)

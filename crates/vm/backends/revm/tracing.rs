@@ -214,13 +214,11 @@ fn map_call(
             .is_revert()
             .then(|| revert_reason_or_error.clone()),
         calls: subcalls,
-        logs: with_log.then(|| {
-            revm_call
-                .logs
-                .into_iter()
-                .map(|revm_log| map_log(revm_log, to))
-                .collect()
-        }),
+        logs: revm_call
+            .logs
+            .into_iter()
+            .map(|revm_log| map_log(revm_log, to))
+            .collect(),
     }
 }
 
