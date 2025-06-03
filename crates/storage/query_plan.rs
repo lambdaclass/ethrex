@@ -15,7 +15,7 @@ pub struct QueryPlan {
 }
 
 impl QueryPlan {
-    pub fn apply_to_store(self) -> Result<(), StoreError> {
+    pub fn apply_to_store(self, store: Store) -> Result<(), StoreError> {
         Ok(())
     }
 }

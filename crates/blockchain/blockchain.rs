@@ -132,7 +132,7 @@ impl Blockchain {
         block: &Block,
         execution_result: BlockExecutionResult,
         account_updates: &[AccountUpdate],
-    ) -> Result<QueryPlan, ChainError> {
+    ) -> Result<(), ChainError> {
         // Apply the account updates over the last block's state and compute the new state root
         let (new_state_root, state_query_plan, accounts_query_plan) = self
             .storage
@@ -143,11 +143,15 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
 
-        Ok(QueryPlan {
+        let query_plan = QueryPlan {
             account_updates: (state_query_plan, accounts_query_plan),
             block: block.clone(),
             receipts: (block.hash(), execution_result.receipts),
-        })
+        };
+
+        query_plan.apply_to_store()?;
+
+        Ok(())
     }
 
     pub async fn store_block(
@@ -180,7 +184,7 @@ impl Blockchain {
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();
-        let result = self.store_block(block, res, &updates).await;
+        let result = self.store_block_with_query_plan(block, res, &updates).await;
         let stored = Instant::now();
         Self::print_add_block_logs(block, since, executed, stored);
         result
