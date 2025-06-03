@@ -14,13 +14,14 @@ use ethrex_storage::Store;
 use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
 use payload_builder::build_payload;
-use tokio::time::sleep;
+use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
+use spawned_rt::mpsc::Sender;
 use tracing::{debug, error, info};
 
 use crate::{BlockProducerConfig, SequencerConfig};
 
 use super::{
-    errors::{BlockProducerError, SequencerError},
+    errors::BlockProducerError,
     execution_cache::ExecutionCache,
 };
 
@@ -28,33 +29,32 @@ use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX};
 
+#[derive(Clone)]
 pub struct BlockProducerState {
+    store: Store,
+    blockchain: Arc<Blockchain>,
+    execution_cache: Arc<ExecutionCache>,
     block_time_ms: u64,
     coinbase_address: Address,
     elasticity_multiplier: u64,
 }
 
-pub async fn start_block_producer(
-    store: Store,
-    blockchain: Arc<Blockchain>,
-    execution_cache: Arc<ExecutionCache>,
-    cfg: SequencerConfig,
-) -> Result<(), SequencerError> {
-    let proposer = BlockProducerState::new(&cfg.block_producer);
-    
-        run(&proposer, store.clone(), blockchain, execution_cache)
-        .await;
-    Ok(())
-}
-
 impl BlockProducerState {
-    pub fn new(config: &BlockProducerConfig) -> Self {
+    pub fn new(
+        config: &BlockProducerConfig,
+        store: Store,
+        blockchain: Arc<Blockchain>,
+        execution_cache: Arc<ExecutionCache>,
+    ) -> Self {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
             elasticity_multiplier,
         } = config;
         Self {
+            store,
+            blockchain,
+            execution_cache,
             block_time_ms: *block_time_ms,
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
@@ -62,18 +62,75 @@ impl BlockProducerState {
     }
 }
 
-pub async fn run(
-    state: &BlockProducerState,
-    store: Store,
-    blockchain: Arc<Blockchain>,
-    execution_cache: Arc<ExecutionCache>,
-) {
-    loop {
-        let _ = produce_block(state, store.clone(), blockchain.clone(), execution_cache.clone())
-            .await
-            .inspect_err(|e| error!("Block Producer Error: {e}"));
+#[derive(Clone)]
+pub enum InMessage {
+    Produce,
+}
 
-        sleep(Duration::from_millis(state.block_time_ms)).await;
+#[allow(dead_code)]
+#[derive(Clone, PartialEq)]
+pub enum OutMessage {
+    Done,
+    Error,
+}
+
+pub struct BlockProducer;
+
+impl BlockProducer {
+    pub async fn spawn(
+        store: Store,
+        blockchain: Arc<Blockchain>,
+        execution_cache: Arc<ExecutionCache>,
+        cfg: SequencerConfig,
+    ) {
+        let state =
+            BlockProducerState::new(&cfg.block_producer, store, blockchain, execution_cache);
+        let mut block_producer = BlockProducer::start(state);
+        let _ = block_producer.cast(InMessage::Produce).await;
+    }
+}
+
+impl GenServer for BlockProducer {
+    type InMsg = InMessage;
+    type OutMsg = OutMessage;
+    type State = BlockProducerState;
+
+    type Error = BlockProducerError;
+
+    fn new() -> Self {
+        Self {}
+    }
+
+    async fn handle_call(
+        &mut self,
+        _message: Self::InMsg,
+        _tx: &Sender<GenServerInMsg<Self>>,
+        _state: &mut Self::State,
+    ) -> CallResponse<Self::OutMsg> {
+        CallResponse::Reply(OutMessage::Done)
+    }
+
+    async fn handle_cast(
+        &mut self,
+        _message: Self::InMsg,
+        tx: &Sender<GenServerInMsg<Self>>,
+        state: &mut Self::State,
+    ) -> CastResponse {
+        // Right now we only have the Produce message, so we ignore the message
+        let _ = produce_block(
+            state,
+            state.store.clone(),
+            state.blockchain.clone(),
+            state.execution_cache.clone(),
+        )
+        .await
+        .inspect_err(|e| error!("Block Producer Error: {e}"));
+        send_after(
+            Duration::from_millis(state.block_time_ms),
+            tx.clone(),
+            Self::InMsg::Produce,
+        );
+        CastResponse::NoReply
     }
 }
 

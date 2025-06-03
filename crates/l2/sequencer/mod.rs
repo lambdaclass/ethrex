@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::SequencerConfig;
-use block_producer::start_block_producer;
+use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -59,14 +59,15 @@ pub async fn start_l2(
     let _ = L1ProofSender::spawn(cfg.clone()).await.inspect_err(|err| {
         error!("Error starting Proof Coordinator: {err}");
     });
-
-    let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
-    task_set.spawn(start_block_producer(
+    BlockProducer::spawn(
         store.clone(),
         blockchain,
-        execution_cache,
+        execution_cache.clone(),
         cfg.clone(),
-    ));
+    )
+    .await;
+
+    let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
 
