@@ -1,7 +1,7 @@
-name: RPC Prover (SP1 Backend)
+name: RPC Prover (SP1 Backend) (Office GPU)
 on:
   push:
-    branches: ["main"]
+    branches: ["**"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -33,7 +33,18 @@ jobs:
         with:
           cache-on-failure: "true"
 
+      - name: Check sp1 is installed
+        id: sp1_check
+        run: |
+          set +e
+          . "$HOME/.cargo/env"
+          cargo +succinct --version
+          echo "result=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
       - name: RISC-V SP1 toolchain install
+        # Only install if cargo +succinct --version returned an error
+        if: steps.sp1_check.outputs.result == '1'
         run: |
           . "$HOME/.cargo/env"
           curl -L https://sp1.succinct.xyz | bash
@@ -54,18 +65,18 @@ jobs:
           cd cmd/ethrex_replay
           make prove-sp1-gpu-ci BLOCK_NUMBER=22240087
 
-      - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          name: "L1 block proving benchmark"
-          tool: "customBiggerIsBetter"
-          output-file-path: cmd/ethrex_replay/bench_latest.json
-          benchmark-data-dir-path: "."
-          # Access token to deploy GitHub Pages branch
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          # Push and deploy GitHub pages branch automatically
-          auto-push: true
-          comment-on-alert: true
+      # - name: Store benchmark result
+      #   uses: benchmark-action/github-action-benchmark@v1
+      #   with:
+      #     name: "L1 block proving benchmark"
+      #     tool: "customBiggerIsBetter"
+      #     output-file-path: crates/l2/prover/bench/bench_latest.json
+      #     benchmark-data-dir-path: "."
+      #     # Access token to deploy GitHub Pages branch
+      #     github-token: ${{ secrets.GITHUB_TOKEN }}
+      #     # Push and deploy GitHub pages branch automatically
+      #     auto-push: true
+      #     comment-on-alert: true
 
       - name: Ensure admin permissions in _work
         if: always()
