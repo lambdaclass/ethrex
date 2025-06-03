@@ -1,7 +1,7 @@
 use crate::cache::Cache;
 use ethrex_common::types::{AccountUpdate, Receipt, ELASTICITY_MULTIPLIER};
 use ethrex_levm::db::{gen_db::GeneralizedDatabase, CacheDB};
-use ethrex_vm::{backends::levm::LEVM, Evm};
+use ethrex_vm::{backends::levm::LEVM, DynVmDatabase, Evm, EvmEngine};
 use eyre::Ok;
 use std::sync::Arc;
 use zkvm_interface::io::ProgramInput;
@@ -47,20 +47,21 @@ pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<Acc
         .first()
         .ok_or(eyre::Error::msg("missing block data"))?;
     let mut remaining_gas = block.header.gas_limit;
-    let mut store = {
-        // GeneralizedDatabase::new explicitly requires an Arc
-        // TODO: refactor GeneralizedDatabase and/or Database to avoid this
-        let store = Arc::new(cache.db);
+    let mut prover_db = cache.db;
+
+    // GeneralizedDatabase::new explicitly requires an Arc
+    // TODO: refactor GeneralizedDatabase and/or Database to avoid this
+    {
+        let store: Arc<DynVmDatabase> = Arc::new(Box::new(prover_db.clone()));
         let mut db = GeneralizedDatabase::new(store.clone(), CacheDB::new());
         LEVM::prepare_block(block, &mut db)?;
-        drop(db); // Arc::into_inner requires that a single reference is alive
-        Arc::into_inner(store).ok_or(eyre::Error::msg("couldn't get store out of Arc<>"))?
-    };
+    }
+
     for (tx, tx_sender) in block.body.get_transactions_with_sender() {
-        let mut vm = Evm::from_prover_db(store.clone());
+        let mut vm = Evm::new(EvmEngine::LEVM, prover_db.clone());
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
-        store.apply_account_updates(&account_updates);
+        prover_db.apply_account_updates(&account_updates);
         if format!("0x{:x}", tx.compute_hash()) == tx_id {
             return Ok((receipt, account_updates));
         }
