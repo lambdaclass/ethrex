@@ -88,6 +88,7 @@ async fn main() -> Result<(), DeployerError> {
         sp1_verifier_address,
         pico_verifier_address,
         risc0_verifier_address,
+        opts.aligned_aggregator_address,
         tdx_verifier_address,
         opts.env_file_path,
     )?;
@@ -591,6 +592,7 @@ fn write_contract_addresses_to_env(
     pico_verifier_address: Address,
     risc0_verifier_address: Address,
     tdx_verifier_address: Address,
+    aligned_aggregator_address: Address,
     env_file_path: Option<PathBuf>,
 ) -> Result<(), DeployerError> {
     trace!("Writing contract addresses to .env file");
@@ -628,6 +630,10 @@ fn write_contract_addresses_to_env(
     writeln!(
         writer,
         "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={risc0_verifier_address:#x}"
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS={aligned_aggregator_address:#x}"
     )?;
     writeln!(
         writer,
