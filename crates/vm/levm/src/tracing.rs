@@ -1,7 +1,7 @@
 use crate::errors::{ExecutionReport, InternalError, TxResult};
 use bytes::Bytes;
 use ethrex_common::{
-    tracing::{CallLog, CallType, TracingCall},
+    tracing::{CallLog, CallType, TracingCallframe},
     types::Log,
     Address, U256,
 };
@@ -11,7 +11,7 @@ use ethrex_common::{
 #[derive(Debug, Default)]
 pub struct LevmCallTracer {
     /// Stack for tracer callframes, at the end of execution there will be only one element.
-    pub callframes: Vec<TracingCall>,
+    pub callframes: Vec<TracingCallframe>,
     /// If true, trace only the top call (a.k.a. the external transaction)
     pub only_top_call: bool,
     /// If true, trace logs
@@ -57,7 +57,7 @@ impl LevmCallTracer {
             // Only create callframe if it's the first one to be created.
             return;
         }
-        let callframe = TracingCall::new(call_type, from, to, value, gas, input.clone());
+        let callframe = TracingCallframe::new(call_type, from, to, value, gas, input.clone());
         self.callframes.push(callframe);
     }
 
@@ -154,7 +154,7 @@ impl LevmCallTracer {
         Ok(())
     }
 
-    fn current_callframe_mut(&mut self) -> Result<&mut TracingCall, InternalError> {
+    fn current_callframe_mut(&mut self) -> Result<&mut TracingCallframe, InternalError> {
         self.callframes
             .last_mut()
             .ok_or(InternalError::CouldNotAccessLastCallframe)

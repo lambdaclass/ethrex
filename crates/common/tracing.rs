@@ -5,15 +5,16 @@ use serde::Serialize;
 
 /// Collection of traces of each call frame as defined in geth's `callTracer` output
 /// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
-pub type CallTrace = Vec<TracingCall>;
+pub type CallTrace = Vec<TracingCallframe>;
 
 /// Trace of each call frame as defined in geth's `callTracer` output
 /// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
 #[derive(Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct TracingCall {
+pub struct TracingCallframe {
     /// Type of the Call
-    pub r#type: CallType,
+    #[serde(rename = "type")]
+    pub call_type: CallType,
     /// Address that initiated the call
     pub from: Address,
     /// Address that received the call
@@ -37,7 +38,7 @@ pub struct TracingCall {
     /// Revert reason if the call reverted
     pub revert_reason: Option<String>,
     /// List of nested sub-calls
-    pub calls: Vec<TracingCall>,
+    pub calls: Vec<TracingCallframe>,
     /// Logs (if enabled)
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub logs: Vec<CallLog>,
@@ -65,8 +66,9 @@ pub struct CallLog {
     pub position: u64,
 }
 
-// These methods below are implemented for LEVM tracing.
-impl TracingCall {
+/// These methods below are implemented for LEVM tracing.
+/// If necessary they could be removed and be implemented as functions in levm crate.
+impl TracingCallframe {
     pub fn new(
         r#type: CallType,
         from: Address,
@@ -76,7 +78,7 @@ impl TracingCall {
         input: Bytes,
     ) -> Self {
         Self {
-            r#type,
+            call_type: r#type,
             from,
             to,
             value,

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use ethrex_common::tracing::{CallLog, CallTrace, CallType, TracingCall};
+use ethrex_common::tracing::{CallLog, CallTrace, CallType, TracingCallframe};
 use ethrex_common::{types::Block, Address, H256, U256};
 use revm::{inspector_handle_register, Evm};
 use revm_inspectors::tracing::{
@@ -174,7 +174,7 @@ fn map_call(
     revert_reason_or_error: &String,
     only_top_call: bool,
     with_log: bool,
-) -> TracingCall {
+) -> TracingCallframe {
     let mut subcalls = vec![];
     if !only_top_call {
         for child_idx in &revm_call.children {
@@ -192,8 +192,8 @@ fn map_call(
         }
     }
     let to = Address::from_slice(revm_call.trace.address.0.as_slice());
-    TracingCall {
-        r#type: map_call_type(revm_call.kind()),
+    TracingCallframe {
+        call_type: map_call_type(revm_call.kind()),
         from: Address::from_slice(revm_call.trace.caller.0.as_slice()),
         to,
         value: U256(*revm_call.trace.value.as_limbs()),
