@@ -436,9 +436,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-rlp"
-version = "0.3.11"
+version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d6c1d995bff8d011f7cd6c81820d51825e6e06d6db73914c1630ecf544d83d6"
+checksum = "5f70d83b765fdc080dbcd4f4db70d8d23fe4761f2f02ebfa9146b833900634b4"
 dependencies = [
  "alloy-rlp-derive",
  "arrayvec",
@@ -447,9 +447,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-rlp-derive"
-version = "0.3.11"
+version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a40e1ef334153322fd878d07e86af7a529bcb86b2439525920a88eba87bcf943"
+checksum = "64b728d511962dda67c1bc7ea7c03736ec275ed2cf4c35d9585298ac9ccf3b73"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2594,19 +2594,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
-name = "dialoguer"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "658bce805d770f407bc62102fca7c2c64ceef2fbcb2b8bd19d2765ce093980de"
-dependencies = [
- "console",
- "shell-words",
- "tempfile",
- "thiserror 1.0.69",
- "zeroize",
-]
-
-[[package]]
 name = "digest"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2807,6 +2794,7 @@ dependencies = [
 name = "ef_tests-state"
 version = "0.1.0"
 dependencies = [
+ "alloy-rlp",
  "bytes",
  "clap 4.5.36",
  "clap_complete",
@@ -3045,6 +3033,7 @@ dependencies = [
  "ethrex-vm",
  "eyre",
  "hex",
+ "itertools 0.14.0",
  "k256",
  "keccak-hash",
  "lazy_static",
@@ -3219,6 +3208,7 @@ dependencies = [
  "bytes",
  "concat-kdf",
  "ctr",
+ "ethereum-types",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-rlp",
@@ -3329,6 +3319,7 @@ dependencies = [
  "bytes",
  "cfg-if",
  "envy",
+ "ethereum-types",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-p2p",
@@ -3459,7 +3450,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-levm",
  "ethrex-rlp",
- "ethrex-storage",
  "ethrex-trie",
  "hex",
  "lazy_static",
@@ -3493,43 +3483,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
- "tracing",
- "tracing-subscriber 0.3.19",
-]
-
-[[package]]
-name = "ethrex_l2_cli"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "clap 4.5.36",
- "clap_complete",
- "colored",
- "dialoguer",
- "dirs 5.0.1",
- "ethereum-types",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-l2",
- "ethrex-rlp",
- "ethrex-rpc",
- "ethrex-sdk",
- "ethrex-storage",
- "ethrex-storage-rollup",
- "eyre",
- "hex",
- "itertools 0.13.0",
- "keccak-hash",
- "log",
- "reqwest",
- "secp256k1",
- "serde",
- "serde_json",
- "sha2",
- "spinoff",
- "strum 0.26.3",
- "tokio",
- "toml 0.8.20",
  "tracing",
  "tracing-subscriber 0.3.19",
 ]
@@ -7802,8 +7755,10 @@ name = "revm_comparison"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "ethrex-blockchain",
  "ethrex-common",
  "ethrex-levm",
+ "ethrex-storage",
  "ethrex-vm",
  "hex",
  "revm 9.0.0",
@@ -8768,12 +8723,6 @@ checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
 ]
-
-[[package]]
-name = "shell-words"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24188a676b6ae68c3b2cb3a01be17fbf7240ce009799bb56d5b1409051e78fde"
 
 [[package]]
 name = "shlex"
@@ -11317,6 +11266,7 @@ dependencies = [
 name = "zkvm_interface"
 version = "0.1.0"
 dependencies = [
+ "ethrex-blockchain",
  "ethrex-common",
  "ethrex-rlp",
  "ethrex-storage",

@@ -241,6 +241,26 @@ fn decode_hex(hex: String) -> eyre::Result<Vec<u8>> {
     Ok(hex::decode(trimmed)?)
 }
 
+pub async fn get_tx_block(tx: &str, rpc_url: &str) -> eyre::Result<usize> {
+    let request = &json!({
+        "id": 1,
+        "jsonrpc": "2.0",
+        "method": "eth_getTransactionByHash",
+        "params": [tx]
+    });
+
+    let response = CLIENT.post(rpc_url).json(request).send().await?;
+
+    let res = response.json::<serde_json::Value>().await?;
+    let res = res.get("result").ok_or(eyre::Error::msg("result key"))?;
+    let block_number = res
+        .get("blockNumber")
+        .and_then(|v| v.as_str())
+        .ok_or(eyre::Error::msg("bad blockNumber key"))?;
+    let block_number = usize::from_str_radix(block_number.trim_start_matches("0x"), 16)?;
+    Ok(block_number)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
