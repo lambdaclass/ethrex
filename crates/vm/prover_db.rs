@@ -12,7 +12,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{EvmError, ProverDBError, VmDatabase};
+use crate::{EvmError, VmDatabase};
 
 /// In-memory EVM database for single batch execution data.
 ///
