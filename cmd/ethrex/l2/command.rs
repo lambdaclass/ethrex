@@ -281,6 +281,8 @@ impl Command {
             } => {
                 cfg_if::cfg_if! {
                     if #[cfg(feature = "libmdbx")] {
+                        use ethrex_common::H256;
+
                         // Init stores
                         let store = Store::new_from_genesis(
                             store_path.to_str().expect("Invalid store path"),
