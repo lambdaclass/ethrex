@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748969752331,
+  "lastUpdate": 1748969761681,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10645,6 +10645,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182406419685,
             "range": "± 355992513",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "391693256e861202189df9ba079999ab6cd2ab71",
+          "message": "chore(core): add workspace level clippy.toml. (#3004)\n\n**Motivation**\nHave a single clippy.toml for all crates",
+          "timestamp": "2025-06-03T16:09:29Z",
+          "tree_id": "218c2313b381bd112061ae695441270186a7c245",
+          "url": "https://github.com/lambdaclass/ethrex/commit/391693256e861202189df9ba079999ab6cd2ab71"
+        },
+        "date": 1748969757382,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181942308376,
+            "range": "± 437098903",
             "unit": "ns/iter"
           }
         ]
