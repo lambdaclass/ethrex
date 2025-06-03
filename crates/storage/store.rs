@@ -472,7 +472,7 @@ impl Store {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
             } else {
-                panic!("{}", GENESIS_DIFF_PANIC_MESSAGE);
+                panic!("{GENESIS_DIFF_PANIC_MESSAGE}");
             }
         }
         // Store genesis accounts
