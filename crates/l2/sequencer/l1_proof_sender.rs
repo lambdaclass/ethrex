@@ -135,7 +135,7 @@ impl L1ProofSender {
         })?;
 
         if batch_number_has_all_needed_proofs(batch_to_send, &self.needed_proof_types)
-            .inspect_err(|_| info!("Missing proofs for batch {batch_to_verify}, skipping sending"))
+            .inspect_err(|_| info!("Missing proofs for batch {batch_to_send}, skipping sending"))
             .unwrap_or_default()
         {
             self.send_proof(batch_to_send).await?;
