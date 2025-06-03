@@ -4,13 +4,14 @@ use crate::{
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
-    opcodes::Opcode,
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
 use bytes::Bytes;
+use ethrex_common::tracing::CallType::{
+    self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL,
+};
 use ethrex_common::{types::Fork, Address, U256};
-use Opcode::{CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -659,8 +660,8 @@ impl<'a> VM<'a> {
 
         // Log CREATE in tracer
         let call_type = match salt {
-            Some(_) => Opcode::CREATE2,
-            None => Opcode::CREATE,
+            Some(_) => CallType::CREATE2,
+            None => CallType::CREATE,
         };
         self.tracer
             .enter(call_type, deployer, new_address, value, gas_limit, &code);

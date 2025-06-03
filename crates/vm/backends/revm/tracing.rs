@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use ethrex_common::tracing::{CallLog, CallTrace, CallType, TracingCall};
 use ethrex_common::{types::Block, Address, H256, U256};
 use revm::{inspector_handle_register, Evm};
 use revm_inspectors::tracing::{
@@ -8,12 +9,7 @@ use revm_inspectors::tracing::{
 };
 use revm_primitives::{BlockEnv, ExecutionResult as RevmExecutionResult, SpecId, TxEnv};
 
-use crate::{
-    backends::revm::run_evm,
-    helpers::spec_id,
-    tracing::{CallLog, CallTrace, CallType, TracingCall},
-    EvmError,
-};
+use crate::{backends::revm::run_evm, helpers::spec_id, EvmError};
 
 use super::{block_env, db::EvmState, tx_env, REVM};
 
@@ -224,14 +220,14 @@ fn map_call(
 
 fn map_call_type(revm_call_type: CallKind) -> CallType {
     match revm_call_type {
-        CallKind::Call => CallType::Call,
-        CallKind::StaticCall => CallType::StaticCall,
-        CallKind::CallCode => CallType::CallCode,
-        CallKind::DelegateCall => CallType::DelegateCall,
-        CallKind::AuthCall => CallType::Call, //TODO: check this
-        CallKind::Create => CallType::Create,
-        CallKind::Create2 => CallType::Create2,
-        CallKind::EOFCreate => CallType::Create, //TODO: check this
+        CallKind::Call => CallType::CALL,
+        CallKind::StaticCall => CallType::STATICCALL,
+        CallKind::CallCode => CallType::CALLCODE,
+        CallKind::DelegateCall => CallType::DELEGATECALL,
+        CallKind::AuthCall => CallType::CALL, //TODO: check this
+        CallKind::Create => CallType::CREATE,
+        CallKind::Create2 => CallType::CREATE2,
+        CallKind::EOFCreate => CallType::CREATE, //TODO: check this
     }
 }
 

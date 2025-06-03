@@ -1,16 +1,8 @@
+use ethrex_common::tracing::CallTrace;
 use ethrex_common::types::Block;
-use ethrex_levm::{
-    db::gen_db::GeneralizedDatabase,
-    opcodes::Opcode,
-    tracing::{LevmCallTracer, TracerCallFrame},
-    vm::VM,
-};
+use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
 
-use crate::{
-    backends::levm::LEVM,
-    tracing::{CallLog, CallTrace, CallType, TracingCall},
-    EvmError,
-};
+use crate::{backends::levm::LEVM, EvmError};
 
 impl LEVM {
     /// Execute all transactions of the block up until a certain transaction specified in `stop_index`.
@@ -74,59 +66,7 @@ impl LEVM {
             .pop()
             .ok_or(EvmError::Custom("Could not get trace".to_string()))?;
 
-        let call = map_levm_callframe(callframe)?;
-
         // We only return the top call because a transaction only has one call with subcalls...
-        Ok(vec![call])
+        Ok(vec![callframe])
     }
-}
-
-fn map_call_type(opcode: Opcode) -> Result<CallType, EvmError> {
-    let call_type = match opcode {
-        Opcode::CALL => CallType::Call,
-        Opcode::STATICCALL => CallType::StaticCall,
-        Opcode::CALLCODE => CallType::CallCode,
-        Opcode::DELEGATECALL => CallType::DelegateCall,
-        Opcode::CREATE => CallType::Create,
-        Opcode::CREATE2 => CallType::Create2,
-        Opcode::SELFDESTRUCT => CallType::SelfDestruct,
-        _ => return Err(EvmError::Custom("Invalid call type".to_string())),
-    };
-    Ok(call_type)
-}
-
-//TODO: See if we should use the same struct
-fn map_call_logs(logs: Vec<ethrex_levm::tracing::TracerLog>) -> Vec<CallLog> {
-    logs.into_iter()
-        .map(|levm_log| CallLog {
-            address: levm_log.address,
-            topics: levm_log.topics,
-            data: levm_log.data,
-            position: levm_log.position as u64, //TODO: u64 or usize?
-        })
-        .collect()
-}
-
-fn map_levm_callframe(callframe: TracerCallFrame) -> Result<TracingCall, EvmError> {
-    let mut subcalls = vec![];
-    for subcall in callframe.calls {
-        subcalls.push(map_levm_callframe(subcall)?);
-    }
-
-    let call = TracingCall {
-        r#type: map_call_type(callframe.call_type)?,
-        from: callframe.from,
-        to: callframe.to,
-        value: callframe.value,
-        gas: callframe.gas,
-        gas_used: callframe.gas_used,
-        input: callframe.input,
-        output: callframe.output,
-        error: callframe.error,
-        revert_reason: callframe.revert_reason,
-        calls: subcalls,
-        logs: map_call_logs(callframe.logs),
-    };
-
-    Ok(call)
 }

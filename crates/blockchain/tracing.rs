@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use ethrex_common::{types::Block, H256};
+use ethrex_common::{tracing::CallTrace, types::Block, H256};
 use ethrex_storage::Store;
-use ethrex_vm::{tracing::CallTrace, Evm, EvmError};
+use ethrex_vm::{Evm, EvmError};
 
 use crate::{error::ChainError, vm::StoreVmDatabase, Blockchain};
 

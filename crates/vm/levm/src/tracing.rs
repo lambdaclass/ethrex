@@ -1,11 +1,9 @@
+use crate::errors::{ExecutionReport, InternalError, TxResult};
 use bytes::Bytes;
-use ethrex_common::{types::Log, Address, U256};
-use keccak_hash::H256;
-use serde::Serialize;
-
-use crate::{
-    errors::{ExecutionReport, InternalError, TxResult},
-    opcodes::Opcode,
+use ethrex_common::{
+    tracing::{CallLog, CallType, TracingCall},
+    types::Log,
+    Address, U256,
 };
 
 /// Geth's callTracer (https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers)
@@ -13,51 +11,13 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct LevmCallTracer {
     /// Stack for tracer callframes, at the end of execution there will be only one element.
-    pub callframes: Vec<TracerCallFrame>,
+    pub callframes: Vec<TracingCall>,
     /// If true, trace only the top call (a.k.a. the external transaction)
     pub only_top_call: bool,
     /// If true, trace logs
     pub with_log: bool,
     /// If active is set to false it won't trace.
     pub active: bool,
-}
-
-/// Regular callframe but with data only for tracing purposes.
-/// Contains subcalls
-#[derive(Debug, Clone, Serialize, Default)]
-pub struct TracerCallFrame {
-    #[serde(rename = "type")]
-    pub call_type: Opcode,
-    pub from: Address,
-    pub to: Address,
-    #[serde(serialize_with = "to_hex")]
-    pub value: U256,
-    #[serde(serialize_with = "to_hex")]
-    pub gas: u64,
-    #[serde(rename = "gasUsed", serialize_with = "to_hex")]
-    pub gas_used: u64,
-    #[serde(serialize_with = "to_hex")]
-    pub input: Bytes,
-    #[serde(serialize_with = "to_hex")]
-    pub output: Bytes,
-    #[serde(serialize_with = "option_string_empty_as_str")]
-    pub error: Option<String>,
-    #[serde(rename = "revertReason", serialize_with = "option_string_empty_as_str")]
-    pub revert_reason: Option<String>,
-    pub calls: Vec<TracerCallFrame>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub logs: Vec<TracerLog>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct TracerLog {
-    pub address: Address,
-    pub topics: Vec<H256>,
-    #[serde(serialize_with = "to_hex")]
-    pub data: Bytes,
-    /// Idea taken from geth, see https://github.com/ethereum/go-ethereum/pull/28389
-    #[serde(serialize_with = "to_hex")]
-    pub position: usize,
 }
 
 impl LevmCallTracer {
@@ -83,7 +43,7 @@ impl LevmCallTracer {
     /// Starts trace call.
     pub fn enter(
         &mut self,
-        call_type: Opcode,
+        call_type: CallType,
         from: Address,
         to: Address,
         value: U256,
@@ -97,7 +57,7 @@ impl LevmCallTracer {
             // Only create callframe if it's the first one to be created.
             return;
         }
-        let callframe = TracerCallFrame::new(call_type, from, to, value, gas, input.clone());
+        let callframe = TracingCall::new(call_type, from, to, value, gas, input.clone());
         self.callframes.push(callframe);
     }
 
@@ -180,79 +140,23 @@ impl LevmCallTracer {
         }
         let callframe = self.current_callframe_mut()?;
 
-        let log = TracerLog {
+        let log = CallLog {
             address: log.address,
             topics: log.topics,
             data: log.data,
-            position: callframe.calls.len(),
+            position: match callframe.calls.len().try_into() {
+                Ok(pos) => pos,
+                Err(_) => return Err(InternalError::ConversionError),
+            },
         };
 
         callframe.logs.push(log);
         Ok(())
     }
 
-    fn current_callframe_mut(&mut self) -> Result<&mut TracerCallFrame, InternalError> {
+    fn current_callframe_mut(&mut self) -> Result<&mut TracingCall, InternalError> {
         self.callframes
             .last_mut()
             .ok_or(InternalError::CouldNotAccessLastCallframe)
     }
-}
-
-impl TracerCallFrame {
-    pub fn new(
-        call_type: Opcode,
-        from: Address,
-        to: Address,
-        value: U256,
-        gas: u64,
-        input: Bytes,
-    ) -> Self {
-        Self {
-            call_type,
-            from,
-            to,
-            value,
-            gas,
-            input,
-            ..Default::default()
-        }
-    }
-
-    pub fn process_output(
-        &mut self,
-        gas_used: u64,
-        output: Bytes,
-        error: Option<String>,
-        revert_reason: Option<String>,
-    ) {
-        self.gas_used = gas_used;
-        self.output = output;
-        self.error = error;
-        self.revert_reason = revert_reason;
-    }
-
-    /// Clear logs of callframe if it reverted and repeat the same with its subcalls.
-    pub fn clear_reverted_logs(&mut self) {
-        if self.error.is_some() {
-            self.logs.clear();
-        }
-        for subcall in &mut self.calls {
-            subcall.clear_reverted_logs();
-        }
-    }
-}
-
-fn to_hex<T, S>(x: &T, s: S) -> Result<S::Ok, S::Error>
-where
-    T: std::fmt::LowerHex,
-    S: serde::Serializer,
-{
-    s.serialize_str(&format!("0x{:x}", x))
-}
-
-fn option_string_empty_as_str<S>(x: &Option<String>, s: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    s.serialize_str(x.as_deref().unwrap_or(""))
 }

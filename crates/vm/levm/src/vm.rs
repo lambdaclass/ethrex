@@ -6,13 +6,13 @@ use crate::{
     environment::Environment,
     errors::{ExecutionReport, OpcodeResult, VMError},
     hooks::hook::Hook,
-    opcodes::Opcode,
     precompiles::execute_precompile,
     tracing::LevmCallTracer,
     TransientStorage,
 };
 use bytes::Bytes;
 use ethrex_common::{
+    tracing::CallType,
     types::{Transaction, TxKind},
     Address, H256, U256,
 };
@@ -95,9 +95,9 @@ impl<'a> VM<'a> {
         self.call_frames.push(initial_call_frame);
 
         let call_type = if self.is_create() {
-            Opcode::CREATE
+            CallType::CREATE
         } else {
-            Opcode::CALL
+            CallType::CALL
         };
         self.tracer.enter(
             call_type,

@@ -1,72 +1,8 @@
-use bytes::Bytes;
-use ethrex_common::{serde_utils, H256};
-use ethrex_common::{types::Block, Address, U256};
-use serde::Serialize;
+use ethrex_common::tracing::CallTrace;
+use ethrex_common::types::Block;
 
 use crate::backends::levm::LEVM;
 use crate::{backends::revm::REVM, Evm, EvmError};
-
-/// Collection of traces of each call frame as defined in geth's `callTracer` output
-/// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
-pub type CallTrace = Vec<TracingCall>;
-
-/// Trace of each call frame as defined in geth's `callTracer` output
-/// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TracingCall {
-    /// Type of the Call
-    pub r#type: CallType,
-    /// Address that initiated the call
-    pub from: Address,
-    /// Address that received the call
-    pub to: Address,
-    /// Amount transfered
-    pub value: U256,
-    /// Gas provided for the call
-    #[serde(with = "serde_utils::u64::hex_str")]
-    pub gas: u64,
-    /// Gas used by the call
-    #[serde(with = "serde_utils::u64::hex_str")]
-    pub gas_used: u64,
-    /// Call data
-    #[serde(with = "serde_utils::bytes")]
-    pub input: Bytes,
-    /// Return data
-    #[serde(with = "serde_utils::bytes")]
-    pub output: Bytes,
-    /// Error returned if the call failed
-    pub error: Option<String>,
-    /// Revert reason if the call reverted
-    pub revert_reason: Option<String>,
-    /// List of nested sub-calls
-    pub calls: Vec<TracingCall>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    /// Logs (if enabled)
-    pub logs: Vec<CallLog>,
-}
-
-#[derive(Serialize, Debug)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum CallType {
-    Call,
-    CallCode,
-    StaticCall,
-    DelegateCall,
-    Create,
-    Create2,
-    SelfDestruct,
-}
-
-#[derive(Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct CallLog {
-    pub address: Address,
-    pub topics: Vec<H256>,
-    #[serde(with = "serde_utils::bytes")]
-    pub data: Bytes,
-    pub position: u64,
-}
 
 impl Evm {
     /// Runs a single tx with the call tracer and outputs its trace
