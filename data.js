@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748977516370,
+  "lastUpdate": 1748979730072,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10735,6 +10735,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182860815406,
             "range": "± 283706712",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2bc5f91285c01658980af1b16b9cf14b8c3917e0",
+          "message": "refactor(l2): implement proof_coordinator using spawned library (#2985)\n\nMotivation\n\n[spawned](https://github.com/lambdaclass/spawned) goal is to simplify\nconcurrency implementations and decouple any runtime implementation from\nthe code.\nOn this PR we aim to replace the proof_coordinator with a spawned\nimplementation to learn if this approach is beneficial.\n\nDescription\n\nReplaces proof_coordinator task spawn with a series of spawned\ngen_server implementation.\n\n---------\n\nCo-authored-by: Esteban Dimitroff Hodi <esteban.dimitroff@lambdaclass.com>",
+          "timestamp": "2025-06-03T18:55:45Z",
+          "tree_id": "d97d8aaef0891bf18934c82e9112f4afa13c68a8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2bc5f91285c01658980af1b16b9cf14b8c3917e0"
+        },
+        "date": 1748979725556,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179587597717,
+            "range": "± 616603424",
             "unit": "ns/iter"
           }
         ]
