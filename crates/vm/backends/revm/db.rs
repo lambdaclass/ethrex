@@ -1,4 +1,5 @@
-use ethrex_common::{types::ChainConfig, Address as CoreAddress, H256 as CoreH256};
+use ethrex_common::types::ChainConfig;
+use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use revm::primitives::{
     AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
@@ -7,63 +8,45 @@ use revm::primitives::{
 use crate::db::DynVmDatabase;
 use crate::{errors::EvmError, VmDatabase};
 
-/// State used when running the EVM. The state can be represented with a [VmDbWrapper] database, or
-/// with a [ProverDB] in case we only want to store the necessary data for some particular
-/// execution, for example when proving in L2 mode.
+/// State used when running the EVM. The state can be represented with a [VmDbWrapper] database
 ///
 /// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
-pub enum EvmState {
-    Store(revm::db::State<DynVmDatabase>),
-    Execution(Box<revm::db::CacheDB<DynVmDatabase>>),
+pub struct EvmState {
+    pub inner: revm::db::State<DynVmDatabase>,
 }
 
 // Needed because revm::db::State is not cloneable and we need to
 // restore the previous EVM state after executing a transaction in L2 mode whose resulting state diff doesn't fit in a blob.
 impl Clone for EvmState {
     fn clone(&self) -> Self {
-        match self {
-            EvmState::Store(state) => EvmState::Store(revm::db::State::<DynVmDatabase> {
-                cache: state.cache.clone(),
-                database: state.database.clone(),
-                transition_state: state.transition_state.clone(),
-                bundle_state: state.bundle_state.clone(),
-                use_preloaded_bundle: state.use_preloaded_bundle,
-                block_hashes: state.block_hashes.clone(),
-            }),
-            EvmState::Execution(execution) => {
-                EvmState::Execution(Box::new(Into::<revm::db::CacheDB<DynVmDatabase>>::into(
-                    *execution.clone(),
-                )))
-            }
-        }
+        let inner = revm::db::State::<DynVmDatabase> {
+            cache: self.inner.cache.clone(),
+            database: self.inner.database.clone(),
+            transition_state: self.inner.transition_state.clone(),
+            bundle_state: self.inner.bundle_state.clone(),
+            use_preloaded_bundle: self.inner.use_preloaded_bundle,
+            block_hashes: self.inner.block_hashes.clone(),
+        };
+
+        Self { inner }
     }
 }
 
 impl EvmState {
     /// Gets the stored chain config
     pub fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        match self {
-            EvmState::Store(db) => db.database.get_chain_config(),
-            EvmState::Execution(db) => db.db.get_chain_config(),
-        }
+        self.inner.database.get_chain_config()
     }
 }
 
 /// Builds EvmState from a Store
 pub fn evm_state(db: DynVmDatabase) -> EvmState {
-    EvmState::Store(
-        revm::db::State::builder()
-            .with_database(db)
-            .with_bundle_update()
-            .without_state_clear()
-            .build(),
-    )
-}
-
-impl From<DynVmDatabase> for EvmState {
-    fn from(value: DynVmDatabase) -> Self {
-        EvmState::Execution(Box::new(revm::db::CacheDB::new(value)))
-    }
+    let inner = revm::db::State::builder()
+        .with_database(db)
+        .with_bundle_update()
+        .without_state_clear()
+        .build();
+    EvmState { inner }
 }
 
 impl revm::Database for DynVmDatabase {
