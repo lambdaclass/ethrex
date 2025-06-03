@@ -8,9 +8,9 @@ use crate::{
     opcodes::Opcode,
 };
 
-#[derive(Debug, Default)]
 /// Geth's callTracer (https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers)
 /// Use `LevmCallTracer::disabled()` when tracing is not wanted.
+#[derive(Debug, Default)]
 pub struct LevmCallTracer {
     /// Stack for tracer callframes, at the end of execution there will be only one element.
     pub callframes: Vec<TracerCallFrame>,
@@ -22,6 +22,8 @@ pub struct LevmCallTracer {
     pub active: bool,
 }
 
+/// Regular callframe but with data only for tracing purposes.
+/// Contains subcalls
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct TracerCallFrame {
     #[serde(rename = "type")]
@@ -70,8 +72,7 @@ impl LevmCallTracer {
 
     /// This is to keep LEVM's code clean, like `self.tracer.enter(...)`,
     /// instead of something more complex or uglier when we don't want to trace.
-    /// (For now that we only implement one tracer I think is the most convenient solution.
-    /// In the future a NoOpTracer may be more convenient)
+    /// (For now that we only implement one tracer it may be the most convenient solution)
     pub fn disabled() -> Self {
         LevmCallTracer {
             active: false,
@@ -139,11 +140,8 @@ impl LevmCallTracer {
             return Ok(());
         }
         if is_top_call {
-            // After finishing transaction execution clear all logs that reverted.
-            self.callframes
-                .last_mut()
-                .ok_or(InternalError::CouldNotAccessLastCallframe)?
-                .clear_reverted_logs();
+            // After finishing transaction execution clear all logs of callframes that reverted.
+            self.current_callframe_mut()?.clear_reverted_logs();
         }
         let (gas_used, output) = (report.gas_used, report.output.clone());
 
@@ -180,10 +178,7 @@ impl LevmCallTracer {
             // Register logs for top call only.
             return Ok(());
         }
-        let callframe = self
-            .callframes
-            .last_mut()
-            .ok_or(InternalError::CouldNotAccessLastCallframe)?;
+        let callframe = self.current_callframe_mut()?;
 
         let log = TracerLog {
             address: log.address,
@@ -194,6 +189,12 @@ impl LevmCallTracer {
 
         callframe.logs.push(log);
         Ok(())
+    }
+
+    fn current_callframe_mut(&mut self) -> Result<&mut TracerCallFrame, InternalError> {
+        self.callframes
+            .last_mut()
+            .ok_or(InternalError::CouldNotAccessLastCallframe)
     }
 }
 
@@ -230,13 +231,13 @@ impl TracerCallFrame {
         self.revert_reason = revert_reason;
     }
 
-    /// Clear logs from callframe if it reverted and repeat with its subcalls.
+    /// Clear logs of callframe if it reverted and repeat the same with its subcalls.
     pub fn clear_reverted_logs(&mut self) {
         if self.error.is_some() {
             self.logs.clear();
-            for subcall in &mut self.calls {
-                subcall.clear_reverted_logs();
-            }
+        }
+        for subcall in &mut self.calls {
+            subcall.clear_reverted_logs();
         }
     }
 }
