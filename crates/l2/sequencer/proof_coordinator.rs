@@ -19,7 +19,7 @@ use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{EvmError, ProverDB};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, net::IpAddr};
+use std::net::IpAddr;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},

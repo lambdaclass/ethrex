@@ -56,7 +56,7 @@ impl<'de> Deserialize<'de> for Cache {
     }
 }
 
-pub fn load_cache(block_number: usize) -> Result<Cache, String> {
+pub fn load_cache(block_number: usize) -> eyre::Result<Cache> {
     let file_name = format!("cache_{}.json", block_number);
     let file = BufReader::new(File::open(file_name)?);
     Ok(serde_json::from_reader(file)?)
