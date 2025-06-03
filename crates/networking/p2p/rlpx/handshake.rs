@@ -66,6 +66,7 @@ where
         context.broadcast,
         #[cfg(feature = "l2")]
         context.store_rollup.clone(),
+        context.based,
     ))
 }
 
@@ -96,6 +97,7 @@ where
         context.broadcast,
         #[cfg(feature = "l2")]
         context.store_rollup.clone(),
+        context.based,
     ))
 }
 
