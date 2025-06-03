@@ -6,7 +6,11 @@ use ethrex_common::{
     Address as EthrexAddress, U256,
 };
 use ethrex_levm::{
-    tracing::LevmCallTracer, db::{cache, gen_db::GeneralizedDatabase, CacheDB}, errors::TxResult, vm::VM, Environment
+    db::{cache, gen_db::GeneralizedDatabase, CacheDB},
+    errors::TxResult,
+    tracing::LevmCallTracer,
+    vm::VM,
+    Environment,
 };
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
