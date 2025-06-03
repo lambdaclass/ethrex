@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748985050630,
+  "lastUpdate": 1748989146945,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10825,6 +10825,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177599041730,
             "range": "± 608553697",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5946f28ef5a3898692fbfe1c72a2275bf43e8666",
+          "message": "fix(l1): cache block hashes when adding blocks in batch (#3034)\n\n**Motivation**\nWhen adding blocks in batches, transactions in blocks may need to read\nthe hash of a previous block in the batch. This poses an issue, as we\nadd all blocks after the full batch has been executed ad we don't have\nthose hashes stored.\nPreviously, this issue was tackled by storing the block headers before\nexecuting and storing the full block batch. This also required us to\nmake the fixes on #2831 (as we might have the headers of blocks we have\nnot yet executed during full sync).\nThis stopped being a suitable solution once #3022 was merged, as block\nhashes are now searched using the block the state is based on's\nancestors. As the state is based on the first block in the batch's\nparents, later blocks are not able to access the hashes of previous\nblocks in the batch.\nThis PR aims to fix both issues by adding a `block_hash_cache` to the\n`StoreVmDatabase` were we would add the hashes of all blocks in the\nbatch, and use it when fetching block hashes before looking at the\nStore. This way we can access block hashes for previously executed\nblocks in the batch without prematurely adding data from blocks yet to\nbe executed to the state. Allowing us to rollback fixes from #2831\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add `block_hash_cache` to `VmStoreDatabase`\n* Cache block hashes of the full batch before executing in\n`Blockchain::add_block_batch`\n* No longer store block headers before execution during full sync\n* Rollback fixes from #2831 (no longer needed due to the above change)\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-03T21:33:39Z",
+          "tree_id": "d70d21de94325f09c325a65dcfd7be216c797498",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5946f28ef5a3898692fbfe1c72a2275bf43e8666"
+        },
+        "date": 1748989142082,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 175634136605,
+            "range": "± 761116793",
             "unit": "ns/iter"
           }
         ]
