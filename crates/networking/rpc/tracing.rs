@@ -20,11 +20,14 @@ pub struct TraceTransactionRequest {
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct TraceConfig {
+    #[serde(default)]
     tracer: TracerType,
     // This differs for each different tracer so we will parse it afterwards when we know the type
+    #[serde(default)]
     tracer_config: Option<Value>,
-    #[serde(with = "serde_utils::duration::opt")]
+    #[serde(default, with = "serde_utils::duration::opt")]
     timeout: Option<Duration>,
+    #[serde(default)]
     reexec: Option<usize>,
 }
 
