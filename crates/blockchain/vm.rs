@@ -1,21 +1,41 @@
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountInfo, BlockHash, ChainConfig, EMPTY_KECCACK_HASH},
+    types::{AccountInfo, BlockHash, BlockNumber, ChainConfig, EMPTY_KECCACK_HASH},
     Address, H256, U256,
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::HashMap};
 
 #[derive(Clone)]
 pub struct StoreVmDatabase {
     pub store: Store,
     pub block_hash: BlockHash,
+    // Used to store known block hashes
+    // We use this when executing blocks in batches, as we will only add the blocks at the end
+    // And may need to access hashes of blocks previously executed in the batch
+    pub block_hash_cache: HashMap<BlockNumber, BlockHash>,
 }
 
 impl StoreVmDatabase {
     pub fn new(store: Store, block_hash: BlockHash) -> Self {
-        StoreVmDatabase { store, block_hash }
+        StoreVmDatabase {
+            store,
+            block_hash,
+            block_hash_cache: HashMap::new(),
+        }
+    }
+
+    pub fn new_with_block_hash_cache(
+        store: Store,
+        block_hash: BlockHash,
+        block_hash_cache: HashMap<BlockNumber, BlockHash>,
+    ) -> Self {
+        StoreVmDatabase {
+            store,
+            block_hash,
+            block_hash_cache,
+        }
     }
 }
 
@@ -33,6 +53,10 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
+        // Check if we have it cached
+        if let Some(block_hash) = self.block_hash_cache.get(&block_number) {
+            return Ok(*block_hash);
+        }
         // First check if our block is canonical, if it is then it's ancestor will also be canonical and we can look it up directly
         if self
             .store
