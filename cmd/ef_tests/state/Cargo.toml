@@ -29,7 +29,8 @@ revm = { version = "19.0.0", features = [
     "optional_no_base_fee",
     "optional_block_gas_limit",
 ], default-features = false }
-tokio.workspace = true
+alloy-rlp = "0.3.12"
+tokio= { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 hex = "0.4.3"

@@ -1097,6 +1097,56 @@ impl Store {
             .set_latest_valid_ancestor(bad_block, latest_valid)
             .await
     }
+
+    /// Takes a block hash and returns an iterator to its ancestors. Block headers are returned
+    /// in reverse order, starting from the given block and going up to the genesis block.
+    pub fn ancestors(&self, block_hash: BlockHash) -> AncestorIterator {
+        AncestorIterator {
+            store: self.clone(),
+            next_hash: block_hash,
+        }
+    }
+
+    /// Get the canonical block hash for a given block number.
+    pub fn get_canonical_block_hash_sync(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        self.engine.get_canonical_block_hash_sync(block_number)
+    }
+
+    /// Checks if a given block belongs to the current canonical chain. Returns false if the block is not known
+    pub fn is_canonical_sync(&self, block_hash: BlockHash) -> Result<bool, StoreError> {
+        let Some(block_number) = self.engine.get_block_number_sync(block_hash)? else {
+            return Ok(false);
+        };
+        Ok(self
+            .engine
+            .get_canonical_block_hash_sync(block_number)?
+            .is_some_and(|h| h == block_hash))
+    }
+}
+
+pub struct AncestorIterator {
+    store: Store,
+    next_hash: BlockHash,
+}
+
+impl Iterator for AncestorIterator {
+    type Item = Result<(BlockHash, BlockHeader), StoreError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next_hash = self.next_hash;
+        match self.store.get_block_header_by_hash(next_hash) {
+            Ok(Some(header)) => {
+                let ret_hash = self.next_hash;
+                self.next_hash = header.parent_hash;
+                Some(Ok((ret_hash, header)))
+            }
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        }
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {

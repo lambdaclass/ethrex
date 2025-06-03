@@ -12,11 +12,11 @@ use ethrex_common::{
     Address, U256,
 };
 use ethrex_metrics::metrics;
-
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
-#[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
+use ethrex_metrics::{
+    metrics_blocks::METRICS_BLOCKS,
+    metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX},
+};
 use ethrex_storage::Store;
 use ethrex_vm::{backends::CallFrameBackup, Evm, EvmError};
 use std::ops::Div;
@@ -108,6 +108,7 @@ pub async fn fill_transactions(
 
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
+    let latest_block_number = store.get_latest_block_number().await?;
     let (mut plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context)?;
     // Execute and add transactions to payload (if suitable)
     loop {
@@ -163,8 +164,21 @@ pub async fn fill_transactions(
             // Pull transaction from the mempool
             debug!("Ignoring replay-protected transaction: {}", tx_hash);
             txs.pop();
-            blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+            blockchain.remove_transaction_from_pool(&tx_hash)?;
             continue;
+        }
+
+        let maybe_sender_acc_info = store
+            .get_account_info(latest_block_number, head_tx.tx.sender())
+            .await?;
+
+        if let Some(acc_info) = maybe_sender_acc_info {
+            if head_tx.nonce() < acc_info.nonce {
+                debug!("Removing transaction with nonce too low from mempool: {tx_hash:#x}");
+                txs.pop();
+                blockchain.remove_transaction_from_pool(&tx_hash)?;
+                continue;
+            }
         }
 
         // Execute tx
@@ -417,7 +431,7 @@ fn calculate_tx_diff_size(
     if is_deposit_l2(head_tx) {
         tx_state_diff_size += deposits_log_len;
     }
-    if is_withdrawal_l2(&head_tx.clone().into(), receipt)? {
+    if is_withdrawal_l2(&head_tx.clone().into(), receipt) {
         tx_state_diff_size += withdrawals_log_len;
     }
 

@@ -99,50 +99,58 @@ impl BlockStats {
         let mut selectors_by_gas: Vec<(_, _)> = self.selector_by_gas.iter().collect();
         selectors_by_gas.sort_by_key(|(_, c)| -**c);
 
-
         vec![
-            ("selectors".to_string(), Chart::new()
-                .tooltip(Tooltip::new().trigger(Trigger::Item))
-                .legend(Legend::new())
-                .series(
-                    Pie::new()
-                        .name(&format!("Top{TOP_N_SELECTORS} selectors"))
-                        .radius(vec!["40%", "55%"])
-                        .data(
-                            truncate_to(selectors, TOP_N_SELECTORS)
-                                .iter()
-                                .map(|(name, count)| (*count as f64, name.as_str()))
-                                .collect(),
-                        ),
-            )),
-            ("selectors_by_gas".to_string(), Chart::new()
-                .tooltip(Tooltip::new().trigger(Trigger::Item))
-                .legend(Legend::new())
-                .series(
-                    Pie::new()
-                        .name(&format!("Top{TOP_N_SELECTORS} selectors by gas limit"))
-                        .radius(vec!["40%", "55%"])
-                        .data(
-                            truncate_to(selectors_by_gas, TOP_N_SELECTORS)
-                                .iter()
-                                .map(|(name, count)| (*count as f64, name.as_str()))
-                                .collect(),
-                        ),
-            )),
-            ("destinations".to_string(), Chart::new()
-                .tooltip(Tooltip::new().trigger(Trigger::Item))
-                .legend(Legend::new())
-                .series(
-                    Pie::new()
-                        .name(&format!("Top{TOP_N_DESTINATIONS} destinations"))
-                        .radius(vec!["40%", "55%"])
-                        .data(
-                            truncate_to(destinations, TOP_N_DESTINATIONS)
-                                .iter()
-                                .map(|(name, count)| (*count as f64, name.as_str()))
-                                .collect(),
-                        ),
-            )),
+            (
+                "selectors".to_string(),
+                Chart::new()
+                    .tooltip(Tooltip::new().trigger(Trigger::Item))
+                    .legend(Legend::new())
+                    .series(
+                        Pie::new()
+                            .name(format!("Top{TOP_N_SELECTORS} selectors"))
+                            .radius(vec!["40%", "55%"])
+                            .data(
+                                truncate_to(selectors, TOP_N_SELECTORS)
+                                    .iter()
+                                    .map(|(name, count)| (*count as f64, name.as_str()))
+                                    .collect(),
+                            ),
+                    ),
+            ),
+            (
+                "selectors_by_gas".to_string(),
+                Chart::new()
+                    .tooltip(Tooltip::new().trigger(Trigger::Item))
+                    .legend(Legend::new())
+                    .series(
+                        Pie::new()
+                            .name(format!("Top{TOP_N_SELECTORS} selectors by gas limit"))
+                            .radius(vec!["40%", "55%"])
+                            .data(
+                                truncate_to(selectors_by_gas, TOP_N_SELECTORS)
+                                    .iter()
+                                    .map(|(name, count)| (*count as f64, name.as_str()))
+                                    .collect(),
+                            ),
+                    ),
+            ),
+            (
+                "destinations".to_string(),
+                Chart::new()
+                    .tooltip(Tooltip::new().trigger(Trigger::Item))
+                    .legend(Legend::new())
+                    .series(
+                        Pie::new()
+                            .name(format!("Top{TOP_N_DESTINATIONS} destinations"))
+                            .radius(vec!["40%", "55%"])
+                            .data(
+                                truncate_to(destinations, TOP_N_DESTINATIONS)
+                                    .iter()
+                                    .map(|(name, count)| (*count as f64, name.as_str()))
+                                    .collect(),
+                            ),
+                    ),
+            ),
         ]
     }
 }
