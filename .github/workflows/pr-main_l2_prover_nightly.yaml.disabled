@@ -46,27 +46,3 @@ jobs:
         run: cargo +nightly install --git https://github.com/brevis-network/pico pico-cli
       - name: ${{ matrix.action.command }} Command
         run: cargo +nightly-2024-11-27 ${{ matrix.action.command }} ${{ matrix.action.args }}
-
-  test:
-    # "Test" is a required check, don't change the name
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-      - name: Rust toolchain install
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          toolchain: nightly-2024-11-27
-          components: rust-src
-      # https://pico-docs.brevis.network/getting-started/installation
-      - name: Install pico-cli
-        run: cargo +nightly install --git https://github.com/brevis-network/pico pico-cli
-      - name: Build
-        run: |
-          cd crates/l2/prover
-          cargo +nightly-2024-11-27 build --release -F pico
-      - name: Test Prover Execution
-        run: |
-          cd crates/l2/prover
-          RUST_LOG=info make perf-pico
