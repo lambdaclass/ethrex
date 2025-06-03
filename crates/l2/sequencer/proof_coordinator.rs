@@ -150,6 +150,7 @@ impl ProofCoordinatorState {
         proposer_config: &BlockProducerConfig,
         store: Store,
         rollup_store: StoreRollup,
+        needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProverServerError> {
         let eth_client = EthClient::new_with_config(
             eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
@@ -201,6 +202,7 @@ impl ProofCoordinator {
         store: Store,
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
+        needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProverServerError> {
         let state = ProofCoordinatorState::new(
             &cfg.proof_coordinator,
@@ -209,6 +211,7 @@ impl ProofCoordinator {
             &cfg.block_producer,
             store,
             rollup_store,
+            needed_proof_types,
         )
         .await?;
         let listener = TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?;
@@ -436,7 +439,6 @@ async fn handle_request(
 }
 
 async fn handle_submit(
-    &self,
     stream: &mut TcpStream,
     batch_number: u64,
     batch_proof: BatchProof,

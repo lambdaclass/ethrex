@@ -180,7 +180,6 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                 withdrawal_hashes,
                 deposit_logs_hash,
                 last_block_of_batch,
-                last_added_block_hash,
             ) = prepare_batch_from_block(state, last_committed_batch.last_block).await?;
 
             if last_committed_batch.last_block == last_block_of_batch {
@@ -196,7 +195,6 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                 deposit_logs_hash,
                 withdrawal_hashes,
                 blobs_bundle,
-                last_added_block_hash,
             };
 
             state.rollup_store.store_batch(batch.clone()).await?;
@@ -251,7 +249,7 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
 async fn prepare_batch_from_block(
     state: &mut CommitterState,
     mut last_added_block_number: BlockNumber,
-) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber, H256), CommitterError> {
+) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
     let first_block_of_batch = last_added_block_number + 1;
     let mut blobs_bundle = BlobsBundle::default();
 
@@ -261,7 +259,6 @@ async fn prepare_batch_from_block(
     let mut withdrawal_hashes = vec![];
     let mut deposit_logs_hashes = vec![];
     let mut new_state_root = H256::default();
-    let mut last_added_block_hash = H256::default();
 
     #[cfg(feature = "metrics")]
     let mut tx_count = 0_u64;
@@ -389,7 +386,6 @@ async fn prepare_batch_from_block(
             .hash_no_commit();
 
         last_added_block_number += 1;
-        last_added_block_hash = block_to_commit_header.hash();
     }
 
     metrics!(if let (Ok(deposits_count), Ok(withdrawals_count)) = (
@@ -416,7 +412,6 @@ async fn prepare_batch_from_block(
         withdrawal_hashes,
         deposit_logs_hash,
         last_added_block_number,
-        last_added_block_hash,
     ))
 }
 
@@ -569,13 +564,15 @@ async fn send_commitment(
 
     let withdrawal_logs_merkle_root = get_withdrawals_merkle_root(batch.withdrawal_hashes.clone())?;
 
+    let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
+
     let calldata_values = vec![
         Value::Uint(U256::from(batch.number)),
         Value::FixedBytes(batch.state_root.0.to_vec().into()),
         Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
         Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
         Value::FixedBytes(batch.deposit_logs_hash.0.to_vec().into()),
-        Value::FixedBytes(batch.last_block_hash.0.to_vec().into()),
+        Value::FixedBytes(last_block_hash.0.to_vec().into()),
     ];
 
     let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;
@@ -654,6 +651,18 @@ async fn send_commitment(
     info!("Commitment sent: {commit_tx_hash:#x}");
 
     Ok(commit_tx_hash)
+}
+
+fn get_last_block_hash(
+    store: &Store,
+    last_block_number: BlockNumber,
+) -> Result<H256, CommitterError> {
+    store
+        .get_block_header(last_block_number)?
+        .map(|header| header.hash())
+        .ok_or(CommitterError::InternalError(
+            "Failed to get last block hash from storage".to_owned(),
+        ))
 }
 
 /// Estimates the gas price for blob transactions based on the current state of the blockchain.

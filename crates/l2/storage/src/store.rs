@@ -66,7 +66,6 @@ impl Store {
             deposit_logs_hash: H256::zero(),
             withdrawal_hashes: Vec::new(),
             blobs_bundle: BlobsBundle::empty(),
-            last_block_hash: H256::zero(),
         })
         .await?;
         // Sets the lastest sent batch proof to 0
