@@ -160,6 +160,7 @@ impl GenServer for L1Committer {
 }
 
 async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), CommitterError> {
+    info!("Running committer main loop");
     // Get the batch to commit
     let last_committed_batch_number = state
         .eth_client
