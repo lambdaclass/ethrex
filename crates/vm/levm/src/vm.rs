@@ -105,7 +105,7 @@ impl<'a> VM<'a> {
             callee,
             self.tx.value(),
             self.env.gas_limit,
-            &self.tx.data(),
+            self.tx.data(),
         );
 
         Ok(())
