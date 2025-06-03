@@ -12,11 +12,11 @@ use ethrex_common::{
     Address, U256,
 };
 use ethrex_metrics::metrics;
-
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
-#[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
+use ethrex_metrics::{
+    metrics_blocks::METRICS_BLOCKS,
+    metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX},
+};
 use ethrex_storage::Store;
 use ethrex_vm::{backends::CallFrameBackup, Evm, EvmError};
 use std::ops::Div;
@@ -417,7 +417,7 @@ fn calculate_tx_diff_size(
     if is_deposit_l2(head_tx) {
         tx_state_diff_size += deposits_log_len;
     }
-    if is_withdrawal_l2(&head_tx.clone().into(), receipt)? {
+    if is_withdrawal_l2(&head_tx.clone().into(), receipt) {
         tx_state_diff_size += withdrawals_log_len;
     }
 

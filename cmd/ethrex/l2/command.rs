@@ -10,7 +10,7 @@ use crate::{
 };
 use clap::Subcommand;
 use ethrex_common::{
-    types::{bytes_from_blob, BlockHeader, BYTES_PER_BLOB},
+    types::{batch::Batch, bytes_from_blob, BlobsBundle, BlockHeader, BYTES_PER_BLOB},
     Address, U256,
 };
 use ethrex_l2::{sequencer::state_diff::StateDiff, SequencerConfig};
@@ -90,7 +90,8 @@ impl Command {
 
                 let network = get_network(&opts.node_opts);
 
-                let store = init_store(&data_dir, &network).await;
+                let genesis = network.get_genesis();
+                let store = init_store(&data_dir, genesis).await;
                 let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
                 let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
@@ -379,18 +380,27 @@ impl Command {
 
                             last_block_number = new_block.number;
 
+                            let batch = Batch {
+                                number: batch_number,
+                                first_block: first_block_number,
+                                last_block: new_block.number,
+                                state_root: new_block.state_root,
+                                deposit_logs_hash: H256::zero(),
+                                withdrawal_hashes,
+                                blobs_bundle: BlobsBundle::empty(),
+                            };
+
                             // Store batch info in L2 storage
                             rollup_store
-                                .store_batch(
-                                    batch_number,
-                                    first_block_number,
-                                    last_block_number,
-                                    withdrawal_hashes,
-                                )
+                                .store_batch(batch)
                                 .await
                                 .expect("Error storing batch");
                         }
                         store.update_latest_block_number(last_block_number).await?;
+                    } else {
+                        return Err(eyre::eyre!(
+                            "Reconstruction is only supported with the libmdbx feature enabled."
+                        ));
                     }
                 }
             }
