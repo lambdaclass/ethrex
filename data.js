@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748967008863,
+  "lastUpdate": 1748968255600,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10555,6 +10555,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178970684652,
             "range": "± 474527419",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9a20560eaa2e012f18b1b215645c957b5e7182e2",
+          "message": "chore(l2): remove perf_zkvm tests (#3019)\n\n**Motivation**\n\nThese tests are superseded by the integration tests and the replay\ntests. I encountered them as an inconvenience because of the need to\nrevisit them whenever making changes to the prover's features.",
+          "timestamp": "2025-06-03T15:44:33Z",
+          "tree_id": "2a4efa44516eb01eeb4081b725a0198446f24032",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9a20560eaa2e012f18b1b215645c957b5e7182e2"
+        },
+        "date": 1748968251121,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181928000632,
+            "range": "± 332727407",
             "unit": "ns/iter"
           }
         ]
