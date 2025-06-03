@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748968255600,
+  "lastUpdate": 1748969191561,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10585,6 +10585,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181928000632,
             "range": "± 332727407",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2e7bbbd05ce195c9749cfad45441a1062ca663d1",
+          "message": "chore(l1, l2): remove `storage` dep from `vm` (#2986)\n\n**Motivation**\nDecouple storage crate from vm crate\n\n**Description**\n- Implements `VmDatabase` from `ProverDB`.\n- Removes the last bit of references to `storage` from within `vm`.",
+          "timestamp": "2025-06-03T15:51:31Z",
+          "tree_id": "37264d7117a7f2f62ca162368459ffad19a0b450",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2e7bbbd05ce195c9749cfad45441a1062ca663d1"
+        },
+        "date": 1748969186942,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182842204944,
+            "range": "± 728687881",
             "unit": "ns/iter"
           }
         ]
