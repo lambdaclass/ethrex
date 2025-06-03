@@ -70,9 +70,15 @@ impl Blockchain {
     }
 
     pub async fn default_with_store(store: Store) -> Self {
-        let block_number = store.get_latest_block_number().await.unwrap();
-        let block_header = store.get_block_header(block_number).unwrap().unwrap();
-        let state_trie = store.open_state_trie(block_header.state_root);
+        let state_trie = store
+            .get_latest_block_number()
+            .await
+            .map(|block_number| {
+                let block_header = store.get_block_header(block_number).unwrap().unwrap();
+                store.open_state_trie(block_header.state_root)
+            })
+            .ok()
+            .unwrap_or_else(Trie::stateless);
 
         Self {
             evm_engine: EvmEngine::default(),

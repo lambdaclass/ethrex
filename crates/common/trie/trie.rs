@@ -299,7 +299,7 @@ impl Trie {
 
     /// Creates a new stateless trie. This trie won't be able to store any nodes so all data will be lost after calculating the hash
     /// Only use it for proof verification or computing a hash from an iterator
-    pub(crate) fn stateless() -> Trie {
+    pub fn stateless() -> Trie {
         // We will only be using the trie's cache so we don't need a working DB
         struct NullTrieDB;
 

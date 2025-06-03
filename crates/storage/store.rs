@@ -326,7 +326,7 @@ impl Store {
         self.apply_account_updates_from_trie(state_trie, account_updates)
             .await?;
 
-        Ok(state_trie.hash_no_commit())
+        Ok(state_trie.hash()?)
     }
 
     pub async fn apply_account_updates_from_trie(
