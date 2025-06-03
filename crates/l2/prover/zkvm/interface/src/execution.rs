@@ -106,7 +106,7 @@ pub fn stateless_validation_l2(
     let mut deposits_hashes = vec![];
 
     // Get L2 withdrawals and deposits for this block
-    for block in blocks {
+    for (block, receipts) in blocks.iter().zip(receipts) {
         let block_withdrawals = get_block_withdrawals(&block.body.transactions, &receipts)
             .map_err(StatelessExecutionError::WithdrawalError)?;
         let block_deposits = get_block_deposits(&block.body.transactions);
@@ -140,7 +140,7 @@ pub fn stateless_validation_l2(
 
 struct StatelessResult {
     #[cfg(feature = "l2")]
-    receipts: Vec<ethrex_common::types::Receipt>,
+    receipts: Vec<Vec<ethrex_common::types::Receipt>>,
     initial_state_hash: H256,
     final_state_hash: H256,
 }
@@ -205,7 +205,7 @@ fn execute_stateless(
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
         parent_header = &block.header;
-        acc_receipts.extend(receipts);
+        acc_receipts.push(receipts);
     }
 
     // Update state trie
