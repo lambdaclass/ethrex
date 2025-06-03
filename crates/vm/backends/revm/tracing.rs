@@ -105,27 +105,13 @@ fn run_evm_with_call_tracer(
             .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
             .with_spec_id(spec_id)
             .with_external_context(revm_inspectors::tracing::TracingInspector::new(config));
-
-        match state {
-            EvmState::Store(db) => {
-                let mut evm = evm_builder
-                    .with_db(db)
-                    .append_handler_register(inspector_handle_register)
-                    .build();
-                let res = evm.transact_commit()?;
-                let trace = evm.into_context().external.into_traces();
-                (trace, res)
-            }
-            EvmState::Execution(db) => {
-                let mut evm = evm_builder
-                    .with_db(db)
-                    .append_handler_register(inspector_handle_register)
-                    .build();
-                let res = evm.transact_commit()?;
-                let trace = evm.into_context().external.into_traces();
-                (trace, res)
-            }
-        }
+        let mut evm = evm_builder
+            .with_db(&mut state.inner)
+            .append_handler_register(inspector_handle_register)
+            .build();
+        let res = evm.transact_commit()?;
+        let trace = evm.into_context().external.into_traces();
+        (trace, res)
     };
     let revert_reason_or_error = result_to_err_or_revert_string(result);
     Ok(map_call_trace(

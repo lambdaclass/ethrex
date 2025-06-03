@@ -3543,6 +3543,7 @@ dependencies = [
 name = "zkvm_interface"
 version = "0.1.0"
 dependencies = [
+ "ethrex-blockchain",
  "ethrex-common",
  "ethrex-rlp",
  "ethrex-storage",
