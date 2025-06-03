@@ -47,9 +47,9 @@ impl<'a> VM<'a> {
             ),
         };
 
-        current_call_frame.logs.push(log.clone());
+        self.tracer.log(&log)?;
 
-        self.tracer.log(log)?;
+        self.current_call_frame_mut()?.logs.push(log);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

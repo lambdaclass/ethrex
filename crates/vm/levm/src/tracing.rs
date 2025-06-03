@@ -130,7 +130,7 @@ impl LevmCallTracer {
 
     /// Registers log when opcode log is executed.
     /// Note: Logs of callframes that reverted will be removed at end of execution.
-    pub fn log(&mut self, log: Log) -> Result<(), InternalError> {
+    pub fn log(&mut self, log: &Log) -> Result<(), InternalError> {
         if !self.active || !self.with_log {
             return Ok(());
         }
@@ -142,8 +142,8 @@ impl LevmCallTracer {
 
         let log = CallLog {
             address: log.address,
-            topics: log.topics,
-            data: log.data,
+            topics: log.topics.clone(),
+            data: log.data.clone(),
             position: match callframe.calls.len().try_into() {
                 Ok(pos) => pos,
                 Err(_) => return Err(InternalError::ConversionError),
