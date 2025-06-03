@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748969191561,
+  "lastUpdate": 1748969752331,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10615,6 +10615,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182842204944,
             "range": "± 728687881",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "07ea0d43658d9c62fe42a85cda1a44309820bd2f",
+          "message": "feat(l2): make eth client send transactions to all configured rpc urls (#3029)\n\n**Motivation**\n\nRelying on only one rpc url to process our transactions has resulted in\nproblems, where that specific node sometimes does not correctly\npropagate it and things get stuck, but sending the tx to another node\nimmediately fixes the whole thing.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-03T16:07:48Z",
+          "tree_id": "627498d33df9e429de7e997b0e578c787e5c2d5f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/07ea0d43658d9c62fe42a85cda1a44309820bd2f"
+        },
+        "date": 1748969747677,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182406419685,
+            "range": "± 355992513",
             "unit": "ns/iter"
           }
         ]
