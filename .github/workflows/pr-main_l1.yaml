@@ -283,7 +283,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client-file test_data/hive_clients.yml --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 8
+        run: chmod +x hive && ./hive --client-file test_data/hive_clients.yml --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 1
         # We use 8 here instead of 16 due to performance issues in some tests
         # Notably the tests "Invalid Missing Ancestor Syncing ReOrG" in engine cancun
 
