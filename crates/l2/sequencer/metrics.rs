@@ -10,18 +10,10 @@ use ethrex_rpc::clients::eth::EthClient;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error};
+use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
+use spawned_rt::mpsc::Sender;
 
-pub async fn start_metrics_gatherer(
-    cfg: SequencerConfig,
-    rollup_store: StoreRollup,
-    l2_url: String,
-) -> Result<(), SequencerError> {
-    let mut metrics_gatherer =
-        MetricsGathererState::new(rollup_store, &cfg.l1_committer, &cfg.eth, l2_url).await?;
-    run(&mut metrics_gatherer).await;
-    Ok(())
-}
-
+#[derive(Clone)]
 pub struct MetricsGathererState {
     l1_eth_client: EthClient,
     l2_eth_client: EthClient,
@@ -46,6 +38,67 @@ impl MetricsGathererState {
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             check_interval: Duration::from_millis(1000),
         })
+    }
+}
+
+pub enum InMessage {
+    Gather,
+}
+
+#[derive(Clone, PartialEq)]
+pub enum OutMessage {
+    Done,
+}
+
+pub struct MetricsGatherer;
+
+impl MetricsGatherer {
+    pub async fn spawn(
+    cfg: SequencerConfig,
+    rollup_store: StoreRollup,
+    l2_url: String,
+    ) -> Result<(), MetricsGathererError> {
+        let state= MetricsGathererState::new(rollup_store, &cfg.l1_committer, &cfg.eth, l2_url).await?;
+        let mut metrics = MetricsGatherer::start(state);
+        metrics
+            .cast(InMessage::Gather)
+            .await
+            .map_err(MetricsGathererError::GenServerError)
+    }
+}
+
+impl GenServer for MetricsGatherer {
+    type InMsg = InMessage;
+    type OutMsg = OutMessage;
+    type State = MetricsGathererState;
+
+    type Error = MetricsGathererError;
+
+    fn new() -> Self {
+        Self {}
+    }
+
+    async fn handle_call(
+        &mut self,
+        _message: Self::InMsg,
+        _tx: &Sender<GenServerInMsg<Self>>,
+        _state: &mut Self::State,
+    ) -> CallResponse<Self::OutMsg> {
+        CallResponse::Reply(OutMessage::Done)
+    }
+
+    async fn handle_cast(
+        &mut self,
+        _message: Self::InMsg,
+        tx: &Sender<GenServerInMsg<Self>>,
+        state: &mut Self::State,
+    ) -> CastResponse {
+        // Right now we only have the Gather message, so we ignore the message
+        let _ = gather_metrics(state)
+            .await
+            .inspect_err(|err| error!("Metrics Gatherer Error: {}", err));
+        send_after(state.check_interval, tx.clone(), Self::InMsg::Gather);
+        CastResponse::NoReply
     }
 }
 

@@ -10,7 +10,8 @@ use l1_committer::L1Committer;
 use l1_proof_sender::L1ProofSender;
 use l1_watcher::L1Watcher;
 use proof_coordinator::ProofCoordinator;
-use tokio::task::JoinSet;
+#[cfg(feature = "metrics")]
+use metrics::MetricsGatherer;
 use tracing::{error, info};
 
 pub mod block_producer;
@@ -73,23 +74,11 @@ pub async fn start_l2(
         error!("Error starting Block Producer: {err}");
     });
 
-    let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     #[cfg(feature = "metrics")]
-    task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
-
-    while let Some(res) = task_set.join_next().await {
-        match res {
-            Ok(Ok(_)) => {}
-            Ok(Err(err)) => {
-                error!("Error starting Proposer: {err}");
-                task_set.abort_all();
-                break;
-            }
-            Err(err) => {
-                error!("JoinSet error: {err}");
-                task_set.abort_all();
-                break;
-            }
-        };
-    }
+    let _ = MetricsGatherer::spawn(
+        cfg, rollup_store, l2_url
+    )
+    .await.inspect_err(|err| {
+        error!("Error starting Block Producer: {err}");
+    });
 }
