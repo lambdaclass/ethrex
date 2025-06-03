@@ -1,4 +1,5 @@
 pub mod db;
+mod tracing;
 
 use super::BlockExecutionResult;
 use crate::constants::{

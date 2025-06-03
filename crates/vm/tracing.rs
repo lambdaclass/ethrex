@@ -3,6 +3,7 @@ use ethrex_common::{serde_utils, H256};
 use ethrex_common::{types::Block, Address, U256};
 use serde::Serialize;
 
+use crate::backends::levm::LEVM;
 use crate::{backends::revm::REVM, Evm, EvmError};
 
 /// Collection of traces of each call frame as defined in geth's `callTracer` output
@@ -83,13 +84,7 @@ impl Evm {
             Evm::REVM { state } => {
                 REVM::trace_tx_calls(block, tx_index, state, only_top_call, with_log)
             }
-            Evm::LEVM { db: _ } =>
-            // Tracing is not implemented for levm
-            {
-                Err(EvmError::Custom(
-                    "Transaction Tracing not supported for LEVM".to_string(),
-                ))
-            }
+            Evm::LEVM { db } => LEVM::trace_tx_calls(db, block, tx_index, only_top_call, with_log),
         }
     }
 
@@ -104,13 +99,7 @@ impl Evm {
     ) -> Result<(), EvmError> {
         match self {
             Evm::REVM { state } => REVM::rerun_block(block, state, stop_index),
-            Evm::LEVM { db: _ } =>
-            // Tracing is not implemented for levm
-            {
-                Err(EvmError::Custom(
-                    "Block Rerun not supported for LEVM".to_string(),
-                ))
-            }
+            Evm::LEVM { db } => LEVM::rerun_block(db, block, stop_index),
         }
     }
 }
