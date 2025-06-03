@@ -48,11 +48,12 @@ pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<Acc
         .ok_or(eyre::Error::msg("missing block data"))?;
     let mut remaining_gas = block.header.gas_limit;
     let mut store = {
+        // GeneralizedDatabase::new explicitly requires an Arc
+        // TODO: refactor GeneralizedDatabase and/or Database to avoid this
         let store = Arc::new(cache.db);
         let mut db = GeneralizedDatabase::new(store.clone(), CacheDB::new());
         LEVM::prepare_block(block, &mut db)?;
-        drop(db);
-        // TODO: refactor GeneralizedDatabase and Database to avoid this
+        drop(db); // Arc::into_inner requires that a single reference is alive
         Arc::into_inner(store).ok_or(eyre::Error::msg("couldn't get store out of Arc<>"))?
     };
     for (tx, tx_sender) in block.body.get_transactions_with_sender() {
