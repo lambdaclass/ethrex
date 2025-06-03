@@ -45,6 +45,7 @@ pub struct VM<'a> {
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
+    /// When enabled, it "logs" relevant information during execution
     pub tracer: LevmCallTracer,
 }
 

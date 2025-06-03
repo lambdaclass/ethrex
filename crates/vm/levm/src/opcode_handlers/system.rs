@@ -347,6 +347,7 @@ impl<'a> VM<'a> {
             gas_limit,
             calldata.clone(),
         );
+
         self.generic_call(
             gas_limit,
             value,

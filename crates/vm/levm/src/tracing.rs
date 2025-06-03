@@ -22,7 +22,7 @@ pub struct LevmCallTracer {
     pub active: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct TracerCallFrame {
     #[serde(rename = "type")]
     pub call_type: Opcode,
@@ -101,6 +101,7 @@ impl LevmCallTracer {
     }
 
     /// Exits trace call.
+    /// Has no validations because it's a private method.
     fn exit(
         &mut self,
         gas_used: u64,
@@ -146,11 +147,12 @@ impl LevmCallTracer {
         }
         let (gas_used, output) = (report.gas_used, report.output.clone());
 
-        let (error, revert_reason) = if let TxResult::Revert(ref err) = report.result {
-            let reason = String::from_utf8(report.output.to_vec()).ok();
-            (Some(err.to_string()), reason)
-        } else {
-            (None, None)
+        let (error, revert_reason) = match report.result {
+            TxResult::Revert(ref err) => {
+                let reason = String::from_utf8(report.output.to_vec()).ok();
+                (Some(err.to_string()), reason)
+            }
+            _ => (None, None),
         };
 
         self.exit(gas_used, output, error, revert_reason)
@@ -168,6 +170,8 @@ impl LevmCallTracer {
         self.exit(gas_used, Bytes::new(), error, None)
     }
 
+    /// Registers log when opcode log is executed.
+    /// Note: Logs of callframes that reverted will be removed at end of execution.
     pub fn log(&mut self, log: Log) -> Result<(), InternalError> {
         if !self.active || !self.with_log {
             return Ok(());
@@ -208,13 +212,8 @@ impl TracerCallFrame {
             to,
             value,
             gas,
-            gas_used: 0,
             input,
-            output: Bytes::new(),
-            error: None,
-            revert_reason: None,
-            calls: Vec::new(),
-            logs: Vec::new(),
+            ..Default::default()
         }
     }
 

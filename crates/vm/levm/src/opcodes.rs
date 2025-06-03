@@ -1,8 +1,9 @@
 use serde::Serialize;
 
-#[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Serialize)]
+#[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Serialize, Default)]
 pub enum Opcode {
     // Stop and Arithmetic Operations
+    #[default]
     STOP = 0x00,
     ADD = 0x01,
     MUL = 0x02,
