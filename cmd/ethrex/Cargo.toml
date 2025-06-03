@@ -38,6 +38,7 @@ lazy_static.workspace = true
 secp256k1 = { workspace = true }
 keccak-hash.workspace = true
 reqwest.workspace = true
+itertools = "0.14.0"
 
 cfg-if = "1.0.0"
 
@@ -62,7 +63,7 @@ c-kzg = [
   "ethrex-p2p/c-kzg",
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics"]
-libmdbx = ["ethrex-storage/libmdbx"]
+libmdbx = ["ethrex-storage/libmdbx", "ethrex-storage-rollup?/libmdbx"]
 redb = ["dep:redb", "ethrex-storage/redb"]
 blst = ["ethrex-vm/blst"]
 l2 = [
