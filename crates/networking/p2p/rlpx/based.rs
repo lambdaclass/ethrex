@@ -1,5 +1,5 @@
 use bytes::BufMut;
-use ethrex_common::types::Block;
+use ethrex_common::{types::Block, H256};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -40,6 +40,7 @@ impl RLPxMessage for NewBlockMessage {
 pub struct BatchSealedMessage {
     pub batch_number: u64,
     pub block_numbers: Vec<u64>,
+    pub withdrawal_hashes: Vec<H256>,
 }
 impl RLPxMessage for BatchSealedMessage {
     const CODE: u8 = 0x1;
@@ -49,6 +50,7 @@ impl RLPxMessage for BatchSealedMessage {
         Encoder::new(&mut encoded_data)
             .encode_field(&self.batch_number)
             .encode_field(&self.block_numbers)
+            .encode_field(&self.withdrawal_hashes)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
@@ -60,10 +62,12 @@ impl RLPxMessage for BatchSealedMessage {
         let decoder = Decoder::new(&decompressed_data)?;
         let (batch_number, decoder) = decoder.decode_field("batch_number")?;
         let (block_numbers, decoder) = decoder.decode_field("block_numbers")?;
+        let (withdrawal_hashes, decoder) = decoder.decode_field("withdrawal_hashes")?;
         decoder.finish()?;
         Ok(BatchSealedMessage {
             batch_number,
             block_numbers,
+            withdrawal_hashes,
         })
     }
 }
