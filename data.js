@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748960556173,
+  "lastUpdate": 1748961134914,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10435,6 +10435,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181643861005,
             "range": "± 519377447",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "979a0e54e2f538e6d2b439a40756e5a285981fa6",
+          "message": "feat(l2): move block execution&validation logic to a single place (#2997)\n\n**Motivation**\n\nCurrently the block validation logic is duplicated across all five\nbackends (exec, sp1, pico, risc0, tdx). It's also useful to have a\nstateless block validation function publicly exposed.\n\n**Description**\n\nThis splits execution into four parts:\n* A shared part, that returns execution result data\n* L1 function, that assembles a L1 ProgramOutput\n* L2 function, that calculates deposits and withdrawals to assemble a L2\nProgramOutput\n* A common entry point, that calls L1 or L2 depending on the enabled\nfeature\n\nThis allows easily adding more use cases while keeping feature-gated\ncode to a minimum.\n\nThis works towards #2961 (running the ef_tests in stateless mode\nrequires the debug_executeWitness logic to be implemented).",
+          "timestamp": "2025-06-03T13:45:23Z",
+          "tree_id": "bf27db23c8e4b7ca58428a64dba6e4e9afcdb23a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/979a0e54e2f538e6d2b439a40756e5a285981fa6"
+        },
+        "date": 1748961129831,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180846326872,
+            "range": "± 303460095",
             "unit": "ns/iter"
           }
         ]
