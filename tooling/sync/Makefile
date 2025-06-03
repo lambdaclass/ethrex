@@ -18,10 +18,10 @@ CURRENT_DATETIME = $(shell date +'%y.%m.%d-%H.%M.%S')
 BATCH_SIZE ?= 1024
 
 create_data_dir:
-	mkdir -p $(NETWORK)_data
+	mkdir -p "~/.local/share/$(NETWORK)_data"
 
 gen_jwt: create_data_dir
-	openssl rand -hex 32 | tr -d "\n" | sudo tee $(NETWORK)_data/jwt.hex
+	openssl rand -hex 32 | tr -d "\n" | sudo tee "~/.local/share/$(NETWORK)_data/jwt.hex"
 
 start_geth: create_data_dir
 	mkdir -p $(NETWORK)_data
@@ -33,7 +33,6 @@ sync: create_data_dir
 ifndef BLOCK_NUM
 	$(error "Sync block number not set")
 endif	
-	mkdir -p $(NETWORK)_data
 #	samply record --unstable-presymbolicate --save-only -- 
 	make start_ethrex_$(NETWORK) >> ./logs/ethrex-sync-$(NETWORK)-$(EVM).log
 
@@ -59,8 +58,8 @@ flamegraph-holesky:
 		--p2p.port 30303\
 		--discovery.port 30303 \
 		--network holesky \
-		--datadir "${EVM}_holesky_data/ethrex" \
-		--authrpc.jwtsecret "tooling/sync/holesky_data/jwt.hex" \
+		--datadir "holesky_data/ethrex/$(EVM)" \
+		--authrpc.jwtsecret "~/.local/share/holesky_data/jwt.hex" \
 		--bootnodes $(HOLESKY_BOOTNODES) \
 		--evm $(EVM) \
 
@@ -71,8 +70,8 @@ flamegraph-hoodi:
 		--p2p.port 30303\
 		--discovery.port 30303 \
 		--network hoodi \
-		--datadir "${EVM}_hoodi_data/ethrex" \
-		--authrpc.jwtsecret "tooling/sync/hoodi_data/jwt.hex" \
+		--datadir "hoodi_data/ethrex/$(EVM)" \
+		--authrpc.jwtsecret "~/.local/share/hoodi_data/jwt.hex" \
 		--bootnodes $(HOODI_BOOTNODES) \
 		--evm $(EVM)
 
@@ -83,24 +82,24 @@ holesky-lighthouse:
 	lighthouse bn \
 		--network holesky \
 		--execution-endpoint http://localhost:${ENGINE_PORT} \
-		--execution-jwt holesky_data/jwt.hex \
+		--execution-jwt "~/.local/share/holesky_data/jwt.hex" \
 		--checkpoint-sync-url $(HOLESKY_CHECKPOINT_SYNC_URL) \
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--datadir $(EVM)_holesky_data/lighthouse_${NODE_NAME}/ \
+		--datadir "holesky_data/lighthouse_${NODE_NAME}_$(EVM)" \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
 hoodi-lighthouse:
 	lighthouse bn \
 		--network holesky \
 		--execution-endpoint http://localhost:${ENGINE_PORT} \
-		--execution-jwt holesky_data/jwt.hex \
+		--execution-jwt "~/.local/share/hoodi_data/jwt.hex" \
 		--checkpoint-sync-url $(HOODI_CHECKPOINT_SYNC_URL) \
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--datadir $(EVM)_holesky_data/lighthouse_${NODE_NAME}/ \
+		--datadir "holesky_data/lighthouse_${NODE_NAME}_$(EVM)" \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
 
@@ -118,8 +117,8 @@ start_ethrex_hoodi:
     		--p2p.port 30303\
     		--discovery.port 30303 \
     		--network hoodi \
-    		--datadir "$(EVM)_hoodi_data/ethrex" \
-    		--authrpc.jwtsecret "tools/sync/hoodi_data/jwt.hex" \
+    		--datadir "hoodi_data/ethrex/$(EVM)" \
+    		--authrpc.jwtsecret "~/.local/share/hoodi_data/jwt.hex" \
     		--bootnodes $(HOODI_BOOTNODES) \
     		--evm $(EVM)
 
@@ -130,8 +129,8 @@ start_ethrex_holesky:
     		--p2p.port 30303\
     		--discovery.port 30303 \
     		--network holesky \
-    		--datadir "$(EVM)_holesky_data/ethrex" \
-    		--authrpc.jwtsecret "tools/sync/holesky_data/jwt.hex" \
+    		--datadir "holesky_data/ethrex/$(EVM)" \
+    		--authrpc.jwtsecret "~/.local/share/holesky_data/jwt.hex" \
     		--bootnodes $(HOLESKY_BOOTNODES) \
     		--evm $(EVM)
 
