@@ -4,29 +4,53 @@ use crate::{
     types::EFTest,
     utils::{effective_gas_price, load_initial_state, load_initial_state_levm},
 };
+use alloy_rlp::Encodable;
 use bytes::Bytes;
 use ethrex_common::{
     types::{Account, AccountUpdate, Fork, TxKind},
     Address, H256,
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult};
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{
     self,
     backends::{self, revm::db::EvmState},
     fork_to_spec_id, DynVmDatabase, EvmError,
 };
+use keccak_hash::keccak;
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
     primitives::{
         AccessListItem, Authorization, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv,
-        EVMError as RevmError, ExecutionResult as RevmExecutionResult, SignedAuthorization,
+        EVMError as REVMError, ExecutionResult as RevmExecutionResult, SignedAuthorization,
         TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
     },
     Evm as Revm,
 };
 use std::collections::{HashMap, HashSet};
+
+fn levm_and_revm_logs_match(
+    levm_logs: &Vec<ethrex_common::types::Log>,
+    revm_logs: &Vec<revm::primitives::Log>,
+) -> bool {
+    let levm_keccak_logs = {
+        let logs = levm_logs;
+        let mut encoded_logs = Vec::new();
+        logs.encode(&mut encoded_logs);
+        keccak(encoded_logs)
+    };
+
+    let revm_keccak_logs = {
+        let logs = revm_logs;
+        let mut encoded_logs = Vec::new();
+        logs.encode(&mut encoded_logs);
+        keccak(encoded_logs)
+    };
+
+    levm_keccak_logs == revm_keccak_logs
+}
 
 pub async fn re_run_failed_ef_test(
     test: &EFTest,
@@ -207,18 +231,13 @@ pub fn prepare_revm_for_tx<'state>(
         .with_external_context(
             RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
         );
-    match initial_state {
-        EvmState::Store(db) => Ok(evm_builder.with_db(db).build()),
-        _ => Err(EFTestRunnerError::VMInitializationFailed(
-            "Expected LEVM state to be a Store".to_owned(),
-        )),
-    }
+    Ok(evm_builder.with_db(&mut initial_state.inner).build())
 }
 
 pub fn compare_levm_revm_execution_results(
     vector: &TestVector,
     levm_execution_report: &ExecutionReport,
-    revm_execution_result: Result<RevmExecutionResult, RevmError<EvmError>>,
+    revm_execution_result: Result<RevmExecutionResult, REVMError<EvmError>>,
     re_run_report: &mut TestReRunReport,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
@@ -231,7 +250,7 @@ pub fn compare_levm_revm_execution_results(
                         reason: _,
                         gas_used: revm_gas_used,
                         gas_refunded: revm_gas_refunded,
-                        logs: _,
+                        logs: revm_logs,
                         output: _,
                     },
                 ) => {
@@ -250,6 +269,15 @@ pub fn compare_levm_revm_execution_results(
                             revm_gas_refunded,
                             *fork,
                         );
+                    }
+
+                    if !levm_and_revm_logs_match(&levm_tx_report.logs, &revm_logs) {
+                        re_run_report.register_logs_mismatch(
+                            *vector,
+                            levm_tx_report.logs.clone(),
+                            revm_logs.clone(),
+                            *fork,
+                        )
                     }
                 }
                 (
@@ -472,7 +500,7 @@ pub async fn _run_ef_test_tx_revm(
 }
 
 pub async fn _ensure_post_state_revm(
-    revm_execution_result: Result<RevmExecutionResult, RevmError<EvmError>>,
+    revm_execution_result: Result<RevmExecutionResult, REVMError<EvmError>>,
     vector: &TestVector,
     test: &EFTest,
     revm_state: &mut EvmState,
