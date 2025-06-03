@@ -1,16 +1,18 @@
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountState, AccountUpdate, ChainConfig},
-    Address, H256,
+    types::{AccountInfo, AccountState, AccountUpdate, ChainConfig},
+    Address, H256, U256,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_storage::{hash_address, hash_key};
 use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
+use sha3::{Digest, Keccak256};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
+
+use crate::{EvmError, VmDatabase};
 
 /// In-memory EVM database for single batch execution data.
 ///
@@ -98,4 +100,85 @@ impl ProverDB {
             }
         }
     }
+}
+
+impl VmDatabase for ProverDB {
+    fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
+        let state_trie_lock = self
+            .state_trie
+            .lock()
+            .map_err(|_| EvmError::DB("Failed to lock state trie".to_string()))?;
+        let hashed_address = hash_address(&address);
+        let Some(encoded_state) = state_trie_lock
+            .get(&hashed_address)
+            .map_err(|_| EvmError::DB("Failed to get account from trie".to_string()))?
+        else {
+            return Ok(None);
+        };
+        let state = AccountState::decode(&encoded_state)
+            .map_err(|_| EvmError::DB("Failed to get decode account from trie".to_string()))?;
+
+        Ok(Some(AccountInfo {
+            balance: state.balance,
+            code_hash: state.code_hash,
+            nonce: state.nonce,
+        }))
+    }
+
+    fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
+        self.block_hashes
+            .get(&block_number)
+            .cloned()
+            .ok_or_else(|| {
+                EvmError::DB(format!(
+                    "Block hash not found for block number {block_number}"
+                ))
+            })
+    }
+
+    fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
+        let storage_tries_lock = self
+            .storage_tries
+            .lock()
+            .map_err(|_| EvmError::DB("Failed to lock storage tries".to_string()))?;
+
+        let Some(storage_trie) = storage_tries_lock.get(&address) else {
+            return Ok(None);
+        };
+        let hashed_key = hash_key(&key);
+        storage_trie
+            .get(&hashed_key)
+            .map_err(|_| EvmError::DB("failed to read storage from trie".to_string()))?
+            .map(|rlp| {
+                U256::decode(&rlp)
+                    .map_err(|_| EvmError::DB("failed to read storage from trie".to_string()))
+            })
+            .transpose()
+    }
+
+    fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, EvmError> {
+        Ok(self.get_chain_config())
+    }
+
+    fn get_account_code(&self, code_hash: H256) -> Result<bytes::Bytes, EvmError> {
+        match self.code.get(&code_hash) {
+            Some(code) => Ok(code.clone()),
+            None => Err(EvmError::DB(format!(
+                "Could not find code for hash {}",
+                code_hash
+            ))),
+        }
+    }
+}
+
+fn hash_address(address: &Address) -> Vec<u8> {
+    Keccak256::new_with_prefix(address.to_fixed_bytes())
+        .finalize()
+        .to_vec()
+}
+
+pub fn hash_key(key: &H256) -> Vec<u8> {
+    Keccak256::new_with_prefix(key.to_fixed_bytes())
+        .finalize()
+        .to_vec()
 }

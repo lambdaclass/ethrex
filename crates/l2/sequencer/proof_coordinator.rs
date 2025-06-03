@@ -16,7 +16,7 @@ use ethrex_common::{
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::{EvmError, ProverDB};
+use ethrex_vm::ProverDB;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
@@ -412,9 +412,7 @@ impl ProofCoordinator {
         let blocks = self.fetch_blocks(block_numbers).await?;
 
         // Create prover_db
-        let db = to_prover_db(&self.store.clone(), &blocks)
-            .await
-            .map_err(EvmError::ProverDB)?;
+        let db = to_prover_db(&self.store.clone(), &blocks).await?;
 
         // Get the block_header of the parent of the first block
         let parent_hash = blocks

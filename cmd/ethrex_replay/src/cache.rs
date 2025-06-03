@@ -63,7 +63,10 @@ pub fn load_cache(block_number: usize) -> eyre::Result<Cache> {
 }
 
 pub fn write_cache(cache: &Cache) -> eyre::Result<()> {
-    if cache.blocks.len() != 1 {
+    if cache.blocks.is_empty() {
+        return Err(eyre::Error::msg("cache can't be empty"));
+    }
+    if cache.blocks.len() > 1 {
         return Err(eyre::Error::msg("trying to save a multi-block cache"));
     }
     let file_name = format!("cache_{}.json", cache.blocks[0].header.number);

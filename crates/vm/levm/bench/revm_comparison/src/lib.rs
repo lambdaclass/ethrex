@@ -58,6 +58,7 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
         ),
     ];
 
+    // The store type for this bench shouldn't matter as all operations use the LEVM cache
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
     let mut db = GeneralizedDatabase::new(Arc::new(store), CacheDB::new());

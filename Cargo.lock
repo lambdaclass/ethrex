@@ -3461,7 +3461,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-levm",
  "ethrex-rlp",
- "ethrex-storage",
  "ethrex-trie",
  "hex",
  "lazy_static",
@@ -3469,6 +3468,7 @@ dependencies = [
  "revm-inspectors",
  "revm-primitives 15.2.0",
  "serde",
+ "sha3",
  "thiserror 2.0.12",
  "tracing",
 ]
@@ -11321,6 +11321,7 @@ dependencies = [
 name = "zkvm_interface"
 version = "0.1.0"
 dependencies = [
+ "ethrex-blockchain",
  "ethrex-common",
  "ethrex-rlp",
  "ethrex-storage",
