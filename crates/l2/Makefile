@@ -24,8 +24,6 @@ clean: clean-contract-deps ## 🧹 Cleans the localnet
 
 restart: restart-local-l1 deploy-l1 purge_prover_state restart-l2 ## 🔄 Restarts the localnet
 
-restart-based: restart-local-l1 deploy-l1-based purge_prover_state restart-l2-based ## 🔄 Restarts the Based localnet
-
 ## Same as restart but for testnet deployment. The local database is cleaned and the contracts are deployed again.
 restart-testnet:
 	down-l2 down-metrics rm-db-l2 update-system-contracts deploy-l1-testnet init-l2
@@ -130,22 +128,6 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--sequencer-registry-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--deposit-rich
 
-deploy-l1-based: ## 📜 Deploys the L1 contracts with a Based configuration
-	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
-	--private-keys-file-path ../../test_data/private_keys_l1.txt \
-	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
-	--genesis-l2-path ../../test_data/genesis-l2.json \
-	--contracts-path contracts \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-	--pico.verifier-address 0x00000000000000000000000000000000000000aa \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
-	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
-	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
-	--deploy-based-contracts \
-	--sequencer-registry-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
-	--deposit-rich
-
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 deploy-l1-testnet: ## 📜 Deploys the L1 contracts
 	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
@@ -159,11 +141,8 @@ update-system-contracts:
 # L2
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
 
-init-l2-based: init-metrics init-l2-no-metrics-based ## 🚀 Initializes an L2 Lambda ethrex Based Client with metrics
-
 BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
 ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
-SEQUENCER_REGISTRY_ADDRESS=$$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat .env | xargs); \
@@ -179,42 +158,7 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--datadir ${ethrex_L2_DEV_LIBMDBX} \
 	--bridge-address ${BRIDGE_ADDRESS} \
 	--on-chain-proposer-address ${ON_CHAIN_PROPOSER_ADDRESS} \
-	--proof-coordinator-listen-ip ${PROOF_COORDINATOR_ADDRESS} \
-	--state-updater.sequencer-registry ${SEQUENCER_REGISTRY_ADDRESS}
-
-init-l2-no-metrics-based: ## 🚀 Initializes an L2 Lambda ethrex Based Client
-	export $(shell cat .env | xargs); \
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- \
-	l2 init \
-	--watcher.block-delay 0 \
-	--network ${L2_GENESIS_FILE_PATH} \
-	--http.port ${L2_PORT} \
-	--http.addr ${L2_RPC_ADDRESS} \
-	--metrics \
-	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
-	--evm levm \
-	--datadir ${ethrex_L2_DEV_LIBMDBX} \
-	--bridge-address ${BRIDGE_ADDRESS} \
-	--on-chain-proposer-address ${ON_CHAIN_PROPOSER_ADDRESS} \
-	--proof-coordinator-listen-ip ${PROOF_COORDINATOR_ADDRESS} \
-	--based \
-	--state-updater.sequencer-registry ${SEQUENCER_REGISTRY_ADDRESS}
-
-init-based-node-2: ## 🚀 Initializes a second L2 Lambda ethrex Client for testing purposes
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 removedb --datadir ${ethrex_L2_2_DEV_LIBMDBX} --force;
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- \
-		l2 init \
-		--watcher.block-delay 0 \
-		--http.port 1730 \
-		--datadir ${ethrex_L2_2_DEV_LIBMDBX} \
-		--network ${L2_GENESIS_FILE_PATH} \
-		--committer-l1-private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 \
-		--proof-coordinator-l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-		--proof-coordinator-listen-port 4567 \
-		--bridge-address ${BRIDGE_ADDRESS} \
-		--on-chain-proposer-address ${ON_CHAIN_PROPOSER_ADDRESS} \
-		--state-updater.sequencer-registry ${SEQUENCER_REGISTRY_ADDRESS} \
-		--based
+	--proof-coordinator-listen-ip ${PROOF_COORDINATOR_ADDRESS}
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
@@ -226,8 +170,6 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 	pkill -f ethrex || exit 0
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
-
-restart-l2-based: down-l2 rm-db-l2 init-l2-based ## 🔄 Restarts the L2 Lambda ethrex Based Client
 
 PROVER_SRC_FILES := $(shell find prover/src -type f)
 
