@@ -1,4 +1,7 @@
-use crate::errors::{ExecutionReport, InternalError, TxResult};
+use crate::{
+    errors::{ExecutionReport, InternalError, TxResult, VMError},
+    vm::VM,
+};
 use bytes::Bytes;
 use ethrex_common::{
     tracing::{CallLog, CallType, TracingCallframe},
@@ -158,5 +161,14 @@ impl LevmCallTracer {
         self.callframes
             .last_mut()
             .ok_or(InternalError::CouldNotAccessLastCallframe)
+    }
+}
+
+impl<'a> VM<'a> {
+    pub fn get_trace_result(&mut self) -> Result<TracingCallframe, VMError> {
+        self.tracer
+            .callframes
+            .pop()
+            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))
     }
 }

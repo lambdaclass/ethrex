@@ -51,11 +51,7 @@ impl LEVM {
 
         vm.execute()?;
 
-        let callframe = vm
-            .tracer
-            .callframes
-            .pop()
-            .ok_or(EvmError::Custom("Could not get trace".to_string()))?;
+        let callframe = vm.get_trace_result()?;
 
         // We only return the top call because a transaction only has one call with subcalls
         Ok(vec![callframe])
