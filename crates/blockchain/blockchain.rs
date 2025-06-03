@@ -6,7 +6,7 @@ pub mod payload;
 mod smoke_test;
 pub mod vm;
 
-use constants::MAX_INITCODE_SIZE;
+use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
@@ -425,13 +425,17 @@ impl Blockchain {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
 
+        if !tx.is_contract_creation() && tx.data().len() >= MAX_TRANSACTION_DATA_SIZE {
+            return Err(MempoolError::TxMaxInitCodeSizeError);
+        }
+
         // Check gas limit is less than header's gas limit
         if header.gas_limit < tx.gas_limit() {
             return Err(MempoolError::TxGasLimitExceededError);
         }
 
         // Check priority fee is less or equal than gas fee gap
-        if tx.max_priority_fee().unwrap_or(0) > tx.max_fee_per_gas().unwrap_or(0) {
+        if tx.max_priority_fee().unwrap_or(0) >= tx.max_fee_per_gas().unwrap_or(0) {
             return Err(MempoolError::TxTipAboveFeeCapError);
         }
 
@@ -451,7 +455,7 @@ impl Blockchain {
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if tx.nonce() < sender_acc_info.nonce {
+            if tx.nonce() < sender_acc_info.nonce || tx.nonce() >= u64::MAX {
                 return Err(MempoolError::InvalidNonce);
             }
 
