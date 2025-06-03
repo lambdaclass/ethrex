@@ -80,7 +80,10 @@ impl L1Watcher {
             L1WatcherState::new(store.clone(), blockchain.clone(), &cfg.eth, &cfg.l1_watcher)?;
         let mut l1_watcher = L1Watcher::start(state);
         // Perform the check and suscribe a periodic Watch.
-        l1_watcher.cast(InMessage::Watch).await.map_err(L1WatcherError::GenServerError)?;
+        l1_watcher
+            .cast(InMessage::Watch)
+            .await
+            .map_err(L1WatcherError::GenServerError)?;
         Ok(())
     }
 }
