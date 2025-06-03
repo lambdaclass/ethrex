@@ -174,10 +174,7 @@ pub async fn fill_transactions(
 
         if let Some(acc_info) = maybe_sender_acc_info {
             if head_tx.nonce() < acc_info.nonce {
-                debug!(
-                    "Removing transaction with nonce too low from mempool: {}",
-                    tx_hash
-                );
+                debug!("Removing transaction with nonce too low from mempool: {tx_hash:#x}");
                 txs.pop();
                 blockchain.remove_transaction_from_pool(&tx_hash)?;
                 continue;
