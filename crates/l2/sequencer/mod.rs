@@ -40,7 +40,11 @@ pub async fn start_l2(
 
     let execution_cache = Arc::new(ExecutionCache::default());
 
-    L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone()).await;
+    let _ = L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone())
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Watcher: {err}");
+        });
     let _ = L1Committer::spawn(
         store.clone(),
         rollup_store.clone(),

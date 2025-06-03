@@ -115,7 +115,7 @@ impl L1Committer {
             execution_cache.clone(),
         )?;
         let mut l1_committer = L1Committer::start(state);
-        let _ = l1_committer.cast(InMessage::Commit).await;
+        l1_committer.cast(InMessage::Commit).await?;
         Ok(())
     }
 }
