@@ -2,13 +2,13 @@
 use crate::call_frame::CallFrameBackup;
 use crate::{
     call_frame::CallFrame,
-    tracing::LevmCallTracer,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
     errors::{ExecutionReport, OpcodeResult, VMError},
     hooks::hook::Hook,
     opcodes::Opcode,
     precompiles::execute_precompile,
+    tracing::LevmCallTracer,
     TransientStorage,
 };
 use bytes::Bytes;
@@ -106,7 +106,7 @@ impl<'a> VM<'a> {
             callee,
             self.tx.value(),
             self.env.gas_limit,
-            self.tx.data().clone(),
+            &self.tx.data(),
         );
 
         Ok(())

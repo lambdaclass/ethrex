@@ -10,6 +10,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{types::Fork, Address, U256};
+use Opcode::{CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -20,7 +21,7 @@ impl<'a> VM<'a> {
         let (
             gas,
             callee,
-            value_to_transfer,
+            value,
             current_memory_size,
             args_start_offset,
             args_size,
@@ -57,7 +58,7 @@ impl<'a> VM<'a> {
         };
 
         // VALIDATIONS
-        if self.current_call_frame()?.is_static && !value_to_transfer.is_zero() {
+        if self.current_call_frame()?.is_static && !value.is_zero() {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
         }
 
@@ -88,7 +89,7 @@ impl<'a> VM<'a> {
             current_memory_size,
             address_was_cold,
             account_is_empty,
-            value_to_transfer,
+            value,
             gas,
             gas_left,
         )?;
@@ -98,28 +99,22 @@ impl<'a> VM<'a> {
         callframe.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // OPERATION
-        let msg_sender = callframe.to; // The new sender will be the current contract.
+        let from = callframe.to; // The new sender will be the current contract.
         let to = callee; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
         let is_static = callframe.is_static;
-        let calldata = self.get_calldata(args_start_offset, args_size)?;
+        let data = self.get_calldata(args_start_offset, args_size)?;
 
-        self.tracer.enter(
-            Opcode::CALL,
-            msg_sender,
-            to,
-            value_to_transfer,
-            gas_limit,
-            calldata.clone(),
-        );
+        self.tracer.enter(CALL, from, to, value, gas_limit, &data);
+
         self.generic_call(
             gas_limit,
-            value_to_transfer,
-            msg_sender,
+            value,
+            from,
             to,
             code_address,
             true,
             is_static,
-            calldata,
+            data,
             return_data_start_offset,
             return_data_size,
             bytecode,
@@ -133,7 +128,7 @@ impl<'a> VM<'a> {
         let (
             gas,
             code_address,
-            value_to_transfer,
+            value,
             current_memory_size,
             args_start_offset,
             args_size,
@@ -194,7 +189,7 @@ impl<'a> VM<'a> {
             new_memory_size,
             current_memory_size,
             address_was_cold,
-            value_to_transfer,
+            value,
             gas,
             gas_left,
         )?;
@@ -204,28 +199,23 @@ impl<'a> VM<'a> {
         callframe.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // Sender and recipient are the same in this case. But the code executed is from another account.
-        let msg_sender = callframe.to;
+        let from = callframe.to;
         let to = callframe.to;
         let is_static = callframe.is_static;
-        let calldata = self.get_calldata(args_start_offset, args_size)?;
+        let data = self.get_calldata(args_start_offset, args_size)?;
 
-        self.tracer.enter(
-            Opcode::CALLCODE,
-            msg_sender,
-            code_address, // It is just specified for DELEGATECALL to put code_address here but I'm going to keep it the same here.
-            value_to_transfer,
-            gas_limit,
-            calldata.clone(),
-        );
+        self.tracer
+            .enter(CALLCODE, from, code_address, value, gas_limit, &data);
+
         self.generic_call(
             gas_limit,
-            value_to_transfer,
-            msg_sender,
+            value,
+            from,
             to,
             code_address,
             true,
             is_static,
-            calldata,
+            data,
             return_data_start_offset,
             return_data_size,
             bytecode,
@@ -333,30 +323,24 @@ impl<'a> VM<'a> {
         callframe.increase_consumed_gas(eip7702_gas_consumed)?;
 
         // OPERATION
-        let msg_sender = callframe.msg_sender;
+        let from = callframe.msg_sender;
         let value = callframe.msg_value;
         let to = callframe.to;
         let is_static = callframe.is_static;
-        let calldata = self.get_calldata(args_start_offset, args_size)?;
+        let data = self.get_calldata(args_start_offset, args_size)?;
 
-        self.tracer.enter(
-            Opcode::DELEGATECALL,
-            msg_sender,
-            code_address,
-            value,
-            gas_limit,
-            calldata.clone(),
-        );
+        self.tracer
+            .enter(DELEGATECALL, from, code_address, value, gas_limit, &data);
 
         self.generic_call(
             gas_limit,
             value,
-            msg_sender,
+            from,
             to,
             code_address,
             false,
             is_static,
-            calldata,
+            data,
             return_data_start_offset,
             return_data_size,
             bytecode,
@@ -437,27 +421,22 @@ impl<'a> VM<'a> {
 
         // OPERATION
         let value = U256::zero();
-        let msg_sender = callframe.to; // The new sender will be the current contract.
+        let from = callframe.to; // The new sender will be the current contract.
         let to = code_address; // In this case code_address and the sub-context account are the same. Unlike CALLCODE or DELEGATECODE.
-        let calldata = self.get_calldata(args_start_offset, args_size)?;
+        let data = self.get_calldata(args_start_offset, args_size)?;
 
-        self.tracer.enter(
-            Opcode::STATICCALL,
-            msg_sender,
-            to,
-            value,
-            gas_limit,
-            calldata.clone(),
-        );
+        self.tracer
+            .enter(STATICCALL, from, to, value, gas_limit, &data);
+
         self.generic_call(
             gas_limit,
             value,
-            msg_sender,
+            from,
             to,
             code_address,
             true,
             true,
-            calldata,
+            data,
             return_data_start_offset,
             return_data_size,
             bytecode,
@@ -572,7 +551,7 @@ impl<'a> VM<'a> {
         // Notes:
         //      If context is Static, return error.
         //      If executed in the same transaction a contract was created, the current account is registered to be destroyed
-        let (target_address, to) = {
+        let (beneficiary, to) = {
             let current_call_frame = self.current_call_frame_mut()?;
             if current_call_frame.is_static {
                 return Err(VMError::OpcodeNotAllowedInStaticContext);
@@ -584,24 +563,24 @@ impl<'a> VM<'a> {
 
         let (target_account_is_empty, target_account_is_cold) = {
             let (target_account, target_account_is_cold) =
-                self.db.access_account(&mut self.substate, target_address)?;
+                self.db.access_account(&mut self.substate, beneficiary)?;
             (target_account.is_empty(), target_account_is_cold)
         };
 
         let (current_account, _current_account_is_cold) =
             self.db.access_account(&mut self.substate, to)?;
-        let balance_to_transfer = current_account.info.balance;
+        let balance = current_account.info.balance;
 
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::selfdestruct(
                 target_account_is_cold,
                 target_account_is_empty,
-                balance_to_transfer,
+                balance,
             )?)?;
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
         if self.env.config.fork >= Fork::Cancun {
-            self.transfer(to, target_address, balance_to_transfer)?;
+            self.transfer(to, beneficiary, balance)?;
 
             // Selfdestruct is executed in the same transaction as the contract was created
             if self.substate.created_accounts.contains(&to) {
@@ -611,20 +590,14 @@ impl<'a> VM<'a> {
                 self.substate.selfdestruct_set.insert(to);
             }
         } else {
-            self.increase_account_balance(target_address, balance_to_transfer)?;
+            self.increase_account_balance(beneficiary, balance)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
 
             self.substate.selfdestruct_set.insert(to);
         }
 
-        self.tracer.enter(
-            Opcode::SELFDESTRUCT,
-            to,
-            target_address,
-            balance_to_transfer,
-            0,
-            Bytes::new(),
-        );
+        self.tracer
+            .enter(SELFDESTRUCT, to, beneficiary, balance, 0, &Bytes::new());
 
         self.tracer.exit_early(0, None)?;
 
@@ -695,7 +668,7 @@ impl<'a> VM<'a> {
             new_address,
             value,
             gas_limit,
-            code.clone(),
+            &code,
         );
 
         let new_depth = self

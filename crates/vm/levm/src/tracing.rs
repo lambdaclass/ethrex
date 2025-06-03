@@ -87,7 +87,7 @@ impl LevmCallTracer {
         to: Address,
         value: U256,
         gas: u64,
-        input: Bytes,
+        input: &Bytes, // For avoiding cloning when calling (cleaner code)
     ) {
         if !self.active {
             return;
@@ -96,7 +96,7 @@ impl LevmCallTracer {
             // Only create callframe if it's the first one to be created.
             return;
         }
-        let callframe = TracerCallFrame::new(call_type, from, to, value, gas, input);
+        let callframe = TracerCallFrame::new(call_type, from, to, value, gas, input.clone());
         self.callframes.push(callframe);
     }
 
