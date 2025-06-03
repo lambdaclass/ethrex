@@ -585,6 +585,7 @@ async fn make_deposits(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_contract_addresses_to_env(
     on_chain_proposer_address: Address,
     bridge_address: Address,
