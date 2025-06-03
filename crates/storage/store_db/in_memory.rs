@@ -1,7 +1,5 @@
 use crate::{
-    api::StoreEngine,
-    error::StoreError,
-    store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
+    api::StoreEngine, error::StoreError, query_plan::QueryPlan, store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS}
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -87,6 +85,10 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    async fn store_changes(&self, _query_plan: QueryPlan) -> Result<(), StoreError> {
+       todo!()
+    }
+    
     fn get_block_header(&self, block_number: u64) -> Result<Option<BlockHeader>, StoreError> {
         let store = self.inner();
         if let Some(hash) = store.canonical_hashes.get(&block_number) {

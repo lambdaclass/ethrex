@@ -149,7 +149,7 @@ impl Blockchain {
             receipts: (block.hash(), execution_result.receipts),
         };
 
-        query_plan.apply_to_store()?;
+        query_plan.apply_to_store(self.storage.clone()).await?;
 
         Ok(())
     }

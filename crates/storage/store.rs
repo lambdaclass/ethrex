@@ -1,5 +1,6 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
+use crate::query_plan::QueryPlan;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
@@ -44,6 +45,10 @@ pub enum EngineType {
 }
 
 impl Store {
+    pub async fn store_changes(&self, query_plan: QueryPlan) -> Result<(), StoreError> {
+        self.engine.store_changes(query_plan).await
+    }
+    
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting storage engine ({engine_type:?})");
         let store = match engine_type {
