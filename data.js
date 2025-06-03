@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748984002317,
+  "lastUpdate": 1748985050630,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10795,6 +10795,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184573717187,
             "range": "± 664234528",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f27cfff28fb91acb856f73c3989a72a3c4446768",
+          "message": "feat(l1): implement eth/69 (#2860)\n\n### **Motivation**\n\nA new version of the eth protocol has been released (eth/69) and some\nclients are supporting both eth/68 and eth/69 at the same time. We need\na way of being able to encode/decode the msg from both versions of the\nprotocol. Also, we need a way to remove easily the old version when it\nbecomes deprecated.\n\nThe new version includes changes in the status and receipts messages and\na new message RangeBlockUpdate.\n\n### **Description**\n\nA new file structure was created to accommodate the new implementation:\ncrates/networking/p2p/rlpx/eth/\ncrates/networking/p2p/rlpx/eth/eth68/ -> (status.rs and receipt.rs)\ncrates/networking/p2p/rlpx/eth/eth69/ -> (status.rs and receipt.rs)\n\nIn the new eth/69 protocol the messages status and receipts have been\nchanged, so a new intermediate structure was created to address this.\nThe encode for each version is decided by the type of the inner struct,\nbut the decode is not that straight forward as we don't know what\nversion of msg we received.\n\nFor the status msg was easier, as we received the eth version inside the\nmsg we can decide which version of the protocol we are using.\n\nFor the receipt msg, the only difference is the bloom field. A new\nfunction `has_bloom` has been implemented to detect when a msg have the\nbloom field to process it as a eth/68. The newer eth/69 receipts msg\nwon't have the bloom field (it can be calculated from the logs).\n\nAlso, as the new structure is a proxy to the different version of the\nstructure some new getters were needed.\n\nThe new msg BlockRangeUpdate was introduced with eth/69. This message\nincludes the earliest block available, the latest block available and\nthe its hash. This messages is been send once every epoch (aprox 6\nmins).\n\nIn some places, the `receipts` need to be encoded using the _bloom_\nfield to validate the receipt_root of a block header. The function\nencode_inner_with_bloom was used for these cases.\n\n### **Future improvements**\n\n- We're not using the received `BlockRangeUpdate` message, we can use\nthis information to discard peers quickly.\n- The function `has_bloom` probably could be improved or at least not\nuse private decode functions.\n- As mentioned before, this implementation is made with the assumption\nthat eth/68 is going to be deprecated in the future.\n- We are currently not running the latest version of hive that includes\nthe\n\nCloses #2805  & #2785\n\nReferences:\n[EIP-7642](https://eips.ethereum.org/EIPS/eip-7642#rationale)\n[geth\nimplementation](https://github.com/ethereum/go-ethereum/pull/29158)\n[eth/69](https://github.com/ethereum/devp2p/blob/master/caps/eth.md)",
+          "timestamp": "2025-06-03T20:24:44Z",
+          "tree_id": "3e9c49ee0929fa2f35986333d7358e83b75e9a46",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f27cfff28fb91acb856f73c3989a72a3c4446768"
+        },
+        "date": 1748985045249,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177599041730,
+            "range": "± 608553697",
             "unit": "ns/iter"
           }
         ]
