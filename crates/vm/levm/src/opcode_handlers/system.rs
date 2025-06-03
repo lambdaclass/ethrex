@@ -642,16 +642,16 @@ impl<'a> VM<'a> {
         );
 
         // Get account info of deployer
-        let deployer_address = self.current_call_frame()?.to;
+        let deployer = self.current_call_frame()?.to;
         let (deployer_balance, deployer_nonce) = {
-            let deployer_account = self.db.get_account(deployer_address)?;
+            let deployer_account = self.db.get_account(deployer)?;
             (deployer_account.info.balance, deployer_account.info.nonce)
         };
 
         // Calculate create address
         let new_address = match salt {
-            Some(salt) => calculate_create2_address(deployer_address, &code, salt)?,
-            None => calculate_create_address(deployer_address, deployer_nonce)?,
+            Some(salt) => calculate_create2_address(deployer, &code, salt)?,
+            None => calculate_create_address(deployer, deployer_nonce)?,
         };
 
         // Touch new contract
@@ -662,14 +662,8 @@ impl<'a> VM<'a> {
             Some(_) => Opcode::CREATE2,
             None => Opcode::CREATE,
         };
-        self.tracer.enter(
-            call_type,
-            deployer_address,
-            new_address,
-            value,
-            gas_limit,
-            &code,
-        );
+        self.tracer
+            .enter(call_type, deployer, new_address, value, gas_limit, &code);
 
         let new_depth = self
             .current_call_frame_mut()?
@@ -696,7 +690,7 @@ impl<'a> VM<'a> {
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
         if new_account.has_code_or_nonce() {
-            self.increment_account_nonce(deployer_address)?;
+            self.increment_account_nonce(deployer)?;
             self.current_call_frame_mut()?.stack.push(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
@@ -704,10 +698,10 @@ impl<'a> VM<'a> {
         }
 
         // Increment sender nonce (if Tx reverts it stays the same)
-        self.increment_account_nonce(deployer_address)?;
+        self.increment_account_nonce(deployer)?;
 
         let new_call_frame = CallFrame::new(
-            deployer_address,
+            deployer,
             new_address,
             new_address,
             code,
@@ -725,7 +719,7 @@ impl<'a> VM<'a> {
 
         // Changes that revert in case the Create fails.
         self.increment_account_nonce(new_address)?; // 0 -> 1
-        self.transfer(deployer_address, new_address, value)?;
+        self.transfer(deployer, new_address, value)?;
 
         self.backup_substate();
 
