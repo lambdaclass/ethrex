@@ -1515,7 +1515,10 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+<<<<<<< HEAD
  "serde_with",
+=======
+>>>>>>> main
  "spawned-concurrency",
  "spawned-rt",
  "thiserror 2.0.12",
@@ -5424,6 +5427,7 @@ dependencies = [
 name = "zkvm_interface"
 version = "0.1.0"
 dependencies = [
+ "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2-common",
  "ethrex-rlp",

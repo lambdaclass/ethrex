@@ -9,7 +9,8 @@ use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_storage::error::StoreError;
-use ethrex_vm::EvmError;
+use ethrex_trie::TrieError;
+use ethrex_vm::{EvmError, ProverDBError};
 use tokio::task::JoinError;
 
 #[derive(Debug, thiserror::Error)]
@@ -86,6 +87,8 @@ pub enum ProverServerError {
     BlobsBundleError(#[from] ethrex_common::types::BlobsBundleError),
     #[error("Failed to execute command: {0}")]
     ComandError(std::io::Error),
+    #[error("ProverServer failed failed because of a ProverDB error: {0}")]
+    ProverDBError(#[from] ProverDBError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -112,6 +115,8 @@ pub enum BlockProducerError {
     ChainError(#[from] ChainError),
     #[error("Block Producer failed because of a EvmError error: {0}")]
     EvmError(#[from] EvmError),
+    #[error("Block Producer failed because of a ProverDB error: {0}")]
+    ProverDBError(#[from] ProverDBError),
     #[error("Block Producer failed because of a InvalidForkChoice error: {0}")]
     InvalidForkChoice(#[from] InvalidForkChoice),
     #[error("Block Producer failed to produce block: {0}")]

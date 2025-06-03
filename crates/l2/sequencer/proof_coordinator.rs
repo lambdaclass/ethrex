@@ -17,7 +17,7 @@ use ethrex_l2_common::StateDiff;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::{EvmError, ProverDB};
+use ethrex_vm::ProverDB;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -432,9 +432,7 @@ impl ProofCoordinator {
         let blocks = self.fetch_blocks(block_numbers).await?;
 
         // Create prover_db
-        let db = to_prover_db(&self.store.clone(), &blocks)
-            .await
-            .map_err(EvmError::ProverDB)?;
+        let db = to_prover_db(&self.store.clone(), &blocks).await?;
 
         // Get the batch's first block
         let first_block = blocks.first().ok_or_else(|| {
