@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748969761681,
+  "lastUpdate": 1748977189879,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10675,6 +10675,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181942308376,
             "range": "± 437098903",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9534321dcc0e29150819f417b33e271f1db523bd",
+          "message": "fix(l2): fix transactions getting stuck in the mempool forever due to low nonce (#3035)\n\n**Motivation**\n\nThe changes make the payload builder check if a transaction has a stale\nnonce and discard it if so. This is not a full solution as I'm pretty\ncertain there could be other reasons for transactions to get stuck in\nthe mempool, though this is the only one we have encountered so far. In\nthe future we may want to have some more involved logic to eventually\nevict txs from the mempool but for now this suffices\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-06-03T18:12:56Z",
+          "tree_id": "e7ad1613211418ddb0a3a14f6d072b03655f3213",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9534321dcc0e29150819f417b33e271f1db523bd"
+        },
+        "date": 1748977185570,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183118391099,
+            "range": "± 1554349356",
             "unit": "ns/iter"
           }
         ]
