@@ -221,7 +221,7 @@ impl Command {
                     .state_trie(genesis_block_hash)?
                     .expect("Cannot open state trie");
 
-                let last_block_number = 0;
+                let mut last_block_number = 0;
 
                 // Iterate over each blob
                 let files: Vec<std::fs::DirEntry> = read_dir(blobs_dir)?.try_collect()?;
@@ -290,6 +290,8 @@ impl Command {
                         "Stored last block of blob. Block {}. State root {}",
                         new_block.number, new_block.state_root
                     );
+
+                    last_block_number = new_block.number;
 
                     let batch = Batch {
                         number: batch_number,
