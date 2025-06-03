@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748958489355,
+  "lastUpdate": 1748960556173,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10405,6 +10405,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182293405267,
             "range": "± 733979311",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f03c19b2b5b5424a37171d6e4f2ddef261aaa959",
+          "message": "fix(l1): fix misleading `apply_fork_choice` error (#3021)\n\n**Motivation**\nWhile the misleading errors reported by #1778 no longer exist, there is\none new misleading error. When no link between the fcu head and the\ncanonical chain is found, an error stating that the head and safe blocks\nare disconnected is returned, which doesn't make sense. This PR\nintroduces a separate error for when the head has no link to the\ncanonical chain\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Fix misleading error on `apply_fork_choice`\n* (Misc) Reorder code in `find_link_with_canonical_chain` so that the\nblock header is cloned after the first early return\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #1778",
+          "timestamp": "2025-06-03T13:35:49Z",
+          "tree_id": "b7d12701df092b42c4dfa499b5c811eddd0fbb31",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f03c19b2b5b5424a37171d6e4f2ddef261aaa959"
+        },
+        "date": 1748960551787,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181643861005,
+            "range": "± 519377447",
             "unit": "ns/iter"
           }
         ]
