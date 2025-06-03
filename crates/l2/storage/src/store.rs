@@ -37,12 +37,12 @@ pub enum EngineType {
 }
 
 impl Store {
-    pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
+    pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting l2 storage engine ({engine_type:?})");
         let store = match engine_type {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStoreRollup::new(path)?),
+                engine: Arc::new(LibmdbxStoreRollup::new(_path)?),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
