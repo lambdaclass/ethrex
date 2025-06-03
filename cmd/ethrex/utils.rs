@@ -1,4 +1,4 @@
-use crate::{decode, networks::Network, DEFAULT_CUSTOM_DIR, DEFAULT_PUBLIC_NETWORKS};
+use crate::{decode, networks::Network, DEFAULT_CUSTOM_DIR};
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
@@ -114,20 +114,26 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
 }
 
 pub fn get_data_sub_dir(datadir: &str, network: &Network) -> String {
-    let network_path = network.to_string().replace(".json", "");
-    let sub_path = if DEFAULT_PUBLIC_NETWORKS.contains(&network_path.to_lowercase().as_str()) {
-        Path::new(&network_path).to_path_buf()
-    } else {
-        Path::new(DEFAULT_CUSTOM_DIR).join(&network_path)
-    };
+    match network {
+        Network::PublicNetwork(_) => Path::new(datadir)
+            .join(Path::new(&network.to_string()))
+            .display()
+            .to_string(),
 
-    let final_path = Path::new(datadir).join(sub_path);
-    final_path.display().to_string()
+        Network::GenesisPath(path) => {
+            let final_path = path.display().to_string().replace(".json", "");
+            Path::new(datadir)
+                .join(Path::new(DEFAULT_CUSTOM_DIR))
+                .join(Path::new(&final_path))
+                .display()
+                .to_string()
+        }
+    }
 }
 
 pub fn get_datadir(datadir: &str, network: &Network) -> String {
-    let _data_path = &get_data_sub_dir(datadir, network);
-    let project_dir = ProjectDirs::from("", "", datadir).expect("Couldn't find home directory");
+    let data_path = &get_data_sub_dir(datadir, network);
+    let project_dir = ProjectDirs::from("", "", data_path).expect("Couldn't find home directory");
     project_dir
         .data_local_dir()
         .to_str()

@@ -6,7 +6,6 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{error::ChainError, fork_choice::apply_fork_choice};
-use ethrex_common::types::Genesis;
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
@@ -15,7 +14,7 @@ use crate::{
     initializers::{init_blockchain, init_store},
     networks::{Network, PublicNetwork},
     utils::{self, get_client_version, get_datadir},
-    DEFAULT_CUSTOM_DIR, DEFAULT_DATADIR,
+    DEFAULT_DATADIR,
 };
 use directories::ProjectDirs;
 
@@ -278,7 +277,7 @@ impl Subcommand {
                 }
 
                 let network = &opts.network;
-                import_blocks(&path, &opts.datadir, network.get_genesis(), opts.evm).await?;
+                import_blocks(&path, &opts.datadir, network, opts.evm).await?;
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let state_root = Network::from(genesis_path)
@@ -328,11 +327,11 @@ pub fn remove_db(datadir: &str, force: bool) {
 pub async fn import_blocks(
     path: &str,
     data_dir: &str,
-    genesis: Genesis,
+    network: &Network,
     evm: EvmEngine,
 ) -> Result<(), ChainError> {
-    let data_dir = get_datadir(data_dir, &Network::from(DEFAULT_CUSTOM_DIR));
-    let store = init_store(&data_dir, genesis).await;
+    let data_dir = get_datadir(data_dir, network);
+    let store = init_store(&data_dir, network.get_genesis()).await;
     let blockchain = init_blockchain(evm, store.clone());
     let path_metadata = metadata(path).expect("Failed to read path");
     let blocks = if path_metadata.is_dir() {
