@@ -6,9 +6,7 @@ use tokio::time::sleep;
 use ethrex_common::Bytes;
 use ethrex_l2_sdk::calldata::{encode_tuple, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
-use zkvm_interface::{
-    io::ProgramInput,
-};
+use zkvm_interface::io::ProgramInput;
 
 use keccak_hash::keccak;
 use secp256k1::{generate_keypair, rand, Message, SecretKey};
@@ -84,14 +82,10 @@ async fn do_loop(private_key: &SecretKey) -> Result<u64, String> {
     let signature = sign_eip191(&output, private_key);
     let calldata = ProofCalldata {
         prover_type: ProverType::TDX,
-        vec![Value::Bytes(output.into()), Value::Bytes(signature.into())],
+        calldata: vec![Value::Bytes(output.into()), Value::Bytes(signature.into())],
     };
 
-    submit_proof(
-        batch_number,
-        BatchProof::ProofCalldata(calldata),
-    )
-    .await?;
+    submit_proof(batch_number, BatchProof::ProofCalldata(calldata)).await?;
     Ok(batch_number)
 }
 
