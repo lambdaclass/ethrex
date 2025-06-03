@@ -16,11 +16,21 @@ impl Evm {
         only_top_call: bool,
         with_log: bool,
     ) -> Result<CallTrace, EvmError> {
+        let tx = block
+            .body
+            .transactions
+            .get(tx_index)
+            .ok_or(EvmError::Custom(
+                "Missing Transaction for Trace".to_string(),
+            ))?;
+
         match self {
             Evm::REVM { state } => {
-                REVM::trace_tx_calls(block, tx_index, state, only_top_call, with_log)
+                REVM::trace_tx_calls(&block.header, tx, state, only_top_call, with_log)
             }
-            Evm::LEVM { db } => LEVM::trace_tx_calls(db, block, tx_index, only_top_call, with_log),
+            Evm::LEVM { db } => {
+                LEVM::trace_tx_calls(db, &block.header, tx, only_top_call, with_log)
+            }
         }
     }
 

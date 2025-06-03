@@ -1,5 +1,5 @@
-use ethrex_common::tracing::CallTrace;
-use ethrex_common::types::Block;
+use ethrex_common::types::{Block, Transaction};
+use ethrex_common::{tracing::CallTrace, types::BlockHeader};
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
 
 use crate::{backends::levm::LEVM, EvmError};
@@ -41,21 +41,12 @@ impl LEVM {
     /// Run transaction with callTracer activated.
     pub fn trace_tx_calls(
         db: &mut GeneralizedDatabase,
-        block: &Block,
-        tx_index: usize,
+        block_header: &BlockHeader,
+        tx: &Transaction,
         only_top_call: bool,
         with_log: bool,
     ) -> Result<CallTrace, EvmError> {
-        //TODO: Just send transaction instead of index (?)
-        let tx = block
-            .body
-            .transactions
-            .get(tx_index)
-            .ok_or(EvmError::Custom(
-                "Missing Transaction for Trace".to_string(),
-            ))?;
-
-        let env = Self::setup_env(tx, tx.sender(), &block.header, db)?;
+        let env = Self::setup_env(tx, tx.sender(), block_header, db)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::new(only_top_call, with_log));
 
         vm.execute()?;
@@ -66,7 +57,7 @@ impl LEVM {
             .pop()
             .ok_or(EvmError::Custom("Could not get trace".to_string()))?;
 
-        // We only return the top call because a transaction only has one call with subcalls...
+        // We only return the top call because a transaction only has one call with subcalls
         Ok(vec![callframe])
     }
 }

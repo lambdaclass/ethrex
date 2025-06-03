@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use ethrex_common::tracing::{CallLog, CallTrace, CallType, TracingCallframe};
+use ethrex_common::types::{BlockHeader, Transaction};
 use ethrex_common::{types::Block, Address, H256, U256};
 use revm::{inspector_handle_register, Evm};
 use revm_inspectors::tracing::{
@@ -18,21 +19,14 @@ impl REVM {
     /// Asumes that the received state already contains changes from previous blocks and other
     /// transactions within its block
     pub fn trace_tx_calls(
-        block: &Block,
-        tx_index: usize,
+        block_header: &BlockHeader,
+        tx: &Transaction,
         state: &mut EvmState,
         only_top_call: bool,
         with_log: bool,
     ) -> Result<CallTrace, EvmError> {
-        let spec_id: SpecId = spec_id(&state.chain_config()?, block.header.timestamp);
-        let block_env = block_env(&block.header, spec_id);
-        let tx = block
-            .body
-            .transactions
-            .get(tx_index)
-            .ok_or(EvmError::Custom(
-                "Missing Transaction for Trace".to_string(),
-            ))?;
+        let spec_id: SpecId = spec_id(&state.chain_config()?, block_header.timestamp);
+        let block_env = block_env(block_header, spec_id);
         let tx_env = tx_env(tx, tx.sender());
         // Trace the transaction
         run_evm_with_call_tracer(tx_env, block_env, state, spec_id, only_top_call, with_log)
