@@ -290,7 +290,7 @@ impl RLPxMessage for PingMessage {
 
         let empty: &[u8] = &[];
         assert_eq!(payload, empty, "Ping payload should be &[]");
-        assert_eq!(remaining, empty, "iong remaining should be &[]");
+        assert_eq!(remaining, empty, "Ping remaining should be &[]");
         Ok(Self {})
     }
 }
