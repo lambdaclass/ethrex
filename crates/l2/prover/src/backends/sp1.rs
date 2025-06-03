@@ -83,11 +83,11 @@ pub fn prove(
     Ok(ProveOutput::new(proof, setup.vk.clone()))
 }
 
-pub fn verify(output: &ProveOutput) -> Result<bool, Box<dyn std::error::Error>> {
+pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
     let setup = &*PROVER_SETUP;
     setup.client.verify(&output.proof, &output.vk)?;
 
-    Ok(true)
+    Ok(())
 }
 
 pub fn to_batch_proof(

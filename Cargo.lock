@@ -2980,6 +2980,7 @@ dependencies = [
 name = "ef_tests-state"
 version = "0.1.0"
 dependencies = [
+ "alloy-rlp",
  "bytes",
  "clap 4.5.39",
  "clap_complete",

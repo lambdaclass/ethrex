@@ -1,3 +1,16 @@
+use super::{
+    configs::AlignedConfig,
+    errors::SequencerError,
+    utils::{get_latest_sent_batch, resolve_network, send_verify_tx, sleep_random},
+};
+use crate::{
+    sequencer::errors::ProofSenderError,
+    utils::prover::{
+        proving_systems::ProverType,
+        save_state::{batch_number_has_all_needed_proofs, read_proof, StateFileType},
+    },
+    CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
+};
 use aligned_sdk::{
     common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
     verification_layer::{estimate_fee, get_nonce_from_batcher, submit},
@@ -11,21 +24,6 @@ use secp256k1::SecretKey;
 use std::collections::HashMap;
 use tracing::{debug, error, info};
 
-use crate::{
-    sequencer::errors::ProofSenderError,
-    utils::prover::{
-        proving_systems::ProverType,
-        save_state::{batch_number_has_all_needed_proofs, read_proof, StateFileType},
-    },
-    CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-};
-
-use super::{
-    configs::AlignedConfig,
-    errors::SequencerError,
-    utils::{get_latest_sent_batch, resolve_network, send_verify_tx, sleep_random},
-};
-
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
 
@@ -34,7 +32,7 @@ pub async fn start_l1_proof_sender(
     rollup_store: StoreRollup,
     needed_proof_types: Vec<ProverType>,
 ) -> Result<(), SequencerError> {
-    let proof_sender = L1ProofSender::new(
+    L1ProofSender::new(
         &cfg.proof_coordinator,
         &cfg.l1_committer,
         &cfg.eth,
@@ -42,8 +40,9 @@ pub async fn start_l1_proof_sender(
         rollup_store,
         needed_proof_types,
     )
-    .await?;
-    proof_sender.run().await;
+    .await?
+    .run()
+    .await;
     Ok(())
 }
 
@@ -71,14 +70,28 @@ impl L1ProofSender {
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, SequencerError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
-
         let l1_chain_id = eth_client.get_chain_id().await?.try_into().map_err(|_| {
             ProofSenderError::InternalError("Failed to convert chain ID to U256".to_owned())
         })?;
-
         let network = resolve_network(&aligned_cfg.network)?;
         let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
         let aligned_sp1_elf_path = aligned_cfg.aligned_sp1_elf_path.clone();
+
+        if cfg.dev_mode {
+            return Ok(Self {
+                eth_client,
+                l1_address: cfg.l1_address,
+                l1_private_key: cfg.l1_private_key,
+                on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
+                needed_proof_types: vec![ProverType::Exec],
+                proof_send_interval_ms: cfg.proof_send_interval_ms,
+                rollup_storage,
+                l1_chain_id,
+                network,
+                fee_estimate,
+                aligned_sp1_elf_path,
+            });
+        }
 
         Ok(Self {
             eth_client,
@@ -99,9 +112,10 @@ impl L1ProofSender {
         info!("Running L1 Proof Sender");
         info!("Needed proof systems: {:?}", self.needed_proof_types);
         loop {
-            if let Err(err) = self.main_logic().await {
-                error!("L1 Proof Sender Error: {}", err);
-            }
+            let _ = self
+                .main_logic()
+                .await
+                .inspect_err(|err| error!("L1 Proof Sender Error: {err}"));
 
             sleep_random(self.proof_send_interval_ms).await;
         }
@@ -121,14 +135,13 @@ impl L1ProofSender {
         })?;
 
         if batch_number_has_all_needed_proofs(batch_to_send, &self.needed_proof_types)
-            .is_ok_and(|has_all_proofs| has_all_proofs)
+            .inspect_err(|_| info!("Missing proofs for batch {batch_to_verify}, skipping sending"))
+            .unwrap_or_default()
         {
             self.send_proof(batch_to_send).await?;
             self.rollup_storage
                 .set_lastest_sent_batch_proof(batch_to_send)
                 .await?;
-        } else {
-            info!("Missing proofs for batch {batch_to_send}, skipping sending");
         }
 
         Ok(())
