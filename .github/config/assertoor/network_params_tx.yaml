@@ -18,7 +18,7 @@ spamoor_params:
   spammers:
     - scenario: blobs
       config:
-        # The eip limits our blob transactions to 6 per block, we keep it slightly under that.
+        # The eip limits our blob transactions to 6 per block, so for max transactions we keep it at that
         throughput: 6
 
 network_params:
