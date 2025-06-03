@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748961134914,
+  "lastUpdate": 1748963065790,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10465,6 +10465,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180846326872,
             "range": "± 303460095",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "81f948505ff634a9dd805a852c0f9017fec68fdb",
+          "message": "feat(core): ethrex_replay transaction replay (#2982)\n\n**Motivation**\n\nSometimes we want to debug a specific transaction, and see the state\nchanges it performed.\n\n**Description**\n\nThis moves the (l1-only) block setup to it's own function so it can be\ncalled from run_tx.\n\nIt executes every transaction leading up to it in the block, ensuring to\nonly keep minimal state.\n\nMakes progress towards #2913",
+          "timestamp": "2025-06-03T14:18:18Z",
+          "tree_id": "c53b0e3b9a8ebada4d364d665401edc190f14c36",
+          "url": "https://github.com/lambdaclass/ethrex/commit/81f948505ff634a9dd805a852c0f9017fec68fdb"
+        },
+        "date": 1748963061605,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178707987790,
+            "range": "± 315461588",
             "unit": "ns/iter"
           }
         ]
