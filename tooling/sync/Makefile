@@ -30,7 +30,7 @@ start_geth: create_data_dir
 
 
 sync: create_data_dir
-ifndef BLOCK_NUM
+ifndef SYNC_BLOCK_NUM
 	$(error "Sync block number not set")
 endif	
 #	samply record --unstable-presymbolicate --save-only -- 
@@ -38,21 +38,21 @@ endif
 
 
 flamegraph-main:
-ifndef BLOCK_NUM
+ifndef SYNC_BLOCK_NUM
 	$(error "Sync block number not set)
 endif
 	cd $(ETHREX_DIR) && git checkout main
 	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(BLOCK_NUM)-$(LOGNAME).log
 
 flamegraph-branch:
-ifndef BLOCK_NUM
+ifndef SYNC_BLOCK_NUM
 	$(error "Sync block number not set")
 endif	
 	cd $(ETHREX_DIR) && git checkout $(BRANCH)
 	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-$(BRANCH)-block-$(BLOCK_NUM)-$(LOGNAME).log
 
 flamegraph-holesky:
-	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) SYNC_BLOCK_NUM=$(BLOCK_NUM)  CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
 		--http.port 8545 \
 		--authrpc.port 8551 \
 		--p2p.port 30303\
@@ -64,7 +64,7 @@ flamegraph-holesky:
 		--evm $(EVM) \
 
 flamegraph-hoodi:
-	-cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) SYNC_BLOCK_NUM=$(BLOCK_NUM)  CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
+	-cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
 		--http.port 8545 \
 		--authrpc.port 8551 \
 		--p2p.port 30303\
@@ -87,7 +87,7 @@ holesky-lighthouse:
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--datadir "holesky_data/lighthouse_${NODE_NAME}_$(EVM)" \
+		--datadir "~/.local/share/holesky_data/lighthouse_${NODE_NAME}_$(EVM)" \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
 hoodi-lighthouse:
@@ -99,7 +99,7 @@ hoodi-lighthouse:
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--datadir "hoodi_data/lighthouse_${NODE_NAME}_$(EVM)" \
+		--datadir "~/.local/share/hoodi_data/lighthouse_${NODE_NAME}_$(EVM)" \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
 
@@ -111,7 +111,7 @@ backup-db:
 
 
 start_ethrex_hoodi:
-	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) SYNC_BLOCK_NUM=$(BLOCK_NUM) RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
     		--http.port 8545 \
     		--authrpc.port 8551 \
     		--p2p.port 30303\
@@ -123,7 +123,7 @@ start_ethrex_hoodi:
     		--evm $(EVM)
 
 start_ethrex_holesky:
-	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) SYNC_BLOCK_NUM=$(BLOCK_NUM)  RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE)  RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
     		--http.port 8545 \
     		--authrpc.port 8551 \
     		--p2p.port 30303\
