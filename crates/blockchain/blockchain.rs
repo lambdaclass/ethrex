@@ -435,7 +435,7 @@ impl Blockchain {
         }
 
         // Check priority fee is less or equal than gas fee gap
-        if tx.max_priority_fee().unwrap_or(0) >= tx.max_fee_per_gas().unwrap_or(0) {
+        if tx.max_priority_fee().unwrap_or(0) > tx.max_fee_per_gas().unwrap_or(0) {
             return Err(MempoolError::TxTipAboveFeeCapError);
         }
 
@@ -455,7 +455,7 @@ impl Blockchain {
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if tx.nonce() < sender_acc_info.nonce || tx.nonce() >= u64::MAX {
+            if tx.nonce() < sender_acc_info.nonce || tx.nonce() == u64::MAX {
                 return Err(MempoolError::InvalidNonce);
             }
 
