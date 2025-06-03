@@ -217,7 +217,14 @@ impl Blockchain {
             .get_chain_config()
             .map_err(|e| (e.into(), None))?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), first_block_header.parent_hash);
+        // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
+        let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
+
+        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
+            self.storage.clone(),
+            first_block_header.parent_hash,
+            block_hash_cache,
+        );
         let mut vm = Evm::new(self.evm_engine, vm_db);
 
         let blocks_len = blocks.len();
