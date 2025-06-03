@@ -187,11 +187,9 @@ pub enum ProofCordInMessage {
     Listen { listener: TcpListener },
 }
 
-#[allow(dead_code)]
 #[derive(Clone, PartialEq)]
 pub enum ProofCordOutMessage {
     Done,
-    Error,
 }
 
 pub struct ProofCoordinator;
@@ -310,11 +308,9 @@ pub enum ConnInMessage {
     },
 }
 
-#[allow(dead_code)]
 #[derive(Clone, PartialEq)]
 pub enum ConnOutMessage {
     Done,
-    Error,
 }
 
 impl GenServer for ConnectionHandler {
