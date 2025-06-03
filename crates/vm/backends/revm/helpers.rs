@@ -7,7 +7,6 @@ use revm::{
     primitives::{BlockEnv, TxEnv},
     Evm,
 };
-
 // Rename imported types for clarity
 use revm_primitives::{AccessList as RevmAccessList, SpecId};
 
