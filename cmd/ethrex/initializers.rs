@@ -243,15 +243,8 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
     }
 }
 
-pub fn get_network(network: String) -> String {
-    // Set preset genesis from known networks
-    match network.to_lowercase().as_str() {
-        "holesky" => String::from(networks::HOLESKY_GENESIS_PATH),
-        "sepolia" => String::from(networks::SEPOLIA_GENESIS_PATH),
-        "hoodi" => String::from(networks::HOODI_GENESIS_PATH),
-        "mainnet" => String::from(networks::MAINNET_GENESIS_PATH),
-        _ => network,
-    }
+pub fn get_network(opts: &Options) -> Network {
+    opts.network.clone()
 }
 
 #[allow(dead_code)]

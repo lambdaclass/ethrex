@@ -2,8 +2,8 @@ use clap::Parser;
 use ethrex::{
     cli::CLI,
     initializers::{
-        get_local_node_record, get_local_p2p_node, get_signer, init_blockchain, init_metrics,
-        init_rpc_api, init_store, init_tracing,
+        get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
+        init_metrics, init_rpc_api, init_store, init_tracing,
     },
     utils::{get_datadir, store_node_config_file, NodeConfigFile},
 };
@@ -53,8 +53,9 @@ async fn main() -> eyre::Result<()> {
         return subcommand.run(&opts).await;
     }
 
-    let network = &opts.network.clone();
-    let data_dir = get_datadir(&opts.datadir, "network");
+    let network = get_network(&opts);
+
+    let data_dir = get_datadir(&opts.datadir, &network);
 
     let genesis = network.get_genesis();
 
@@ -114,7 +115,7 @@ async fn main() -> eyre::Result<()> {
             if opts.p2p_enabled {
                 init_network(
                     &opts,
-                    network,
+                    &network,
                     &data_dir,
                     local_p2p_node,
                     local_node_record.clone(),

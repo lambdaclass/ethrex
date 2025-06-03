@@ -17,6 +17,7 @@ use crate::{
     utils::{self, get_client_version, get_datadir},
     DEFAULT_CUSTOM_DIR, DEFAULT_DATADIR,
 };
+use directories::ProjectDirs;
 
 #[cfg(feature = "l2")]
 use crate::l2;
@@ -293,7 +294,12 @@ impl Subcommand {
 }
 
 pub fn remove_db(datadir: &str, force: bool) {
-    let data_dir = get_datadir(datadir, ""); //Removes all dbs
+    let data_dir = ProjectDirs::from("", "", datadir)
+        .expect("Couldn't find home directory")
+        .data_local_dir()
+        .to_str()
+        .expect("invalid data directory")
+        .to_owned(); //Removes all dbs
     let path = Path::new(&data_dir);
 
     if path.exists() {
@@ -315,7 +321,7 @@ pub fn remove_db(datadir: &str, force: bool) {
             }
         }
     } else {
-        warn!("Data directory does not exist: {}", data_dir);
+        warn!("Data directory does not exist: {:?}", data_dir);
     }
 }
 
@@ -325,7 +331,7 @@ pub async fn import_blocks(
     genesis: Genesis,
     evm: EvmEngine,
 ) -> Result<(), ChainError> {
-    let data_dir = get_datadir(data_dir, DEFAULT_CUSTOM_DIR);
+    let data_dir = get_datadir(data_dir, &Network::from(DEFAULT_CUSTOM_DIR));
     let store = init_store(&data_dir, genesis).await;
     let blockchain = init_blockchain(evm, store.clone());
     let path_metadata = metadata(path).expect("Failed to read path");
