@@ -1,9 +1,8 @@
-use ethrex_common::types::{code_hash, Account, AccountInfo, AccountState};
+use ethrex_common::types::Account;
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
+use ethrex_levm::constants::EMPTY_CODE_HASH;
 use ethrex_levm::db::Database as LevmDatabase;
-use ethrex_rlp::decode::RLPDecode;
-use ethrex_storage::{hash_address, hash_key};
 
 use crate::db::DynVmDatabase;
 use crate::{ProverDB, VmDatabase};
@@ -44,11 +43,13 @@ impl LevmDatabase for DatabaseLogger {
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
             .get_account(address)?;
+        // We have to treat the code as accessed because Account has access to the code
+        // And some parts of LEVM use the bytecode from the account instead of using get_account_code
         let mut code_accessed = self
             .code_accessed
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?;
-        code_accessed.push(code_hash(&account.code));
+        code_accessed.push(account.info.code_hash);
         Ok(account)
     }
 
