@@ -24,7 +24,7 @@ use secp256k1::{generate_keypair, rand, Message, SecretKey};
 mod sender;
 use sender::{get_batch, submit_proof, submit_quote};
 
-use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
+use ethrex_l2::utils::prover::proving_systems::{BatchProof, ProofCalldata, ProverType};
 
 const POLL_INTERVAL_MS: u64 = 5000;
 
@@ -200,13 +200,14 @@ async fn do_loop(private_key: &SecretKey) -> Result<u64, String> {
     let (batch_number, input) = get_batch().await?;
     let output = calculate_transition(input)?;
     let signature = sign_eip191(&output, private_key);
-    let calldata = vec![Value::Bytes(output.into()), Value::Bytes(signature.into())];
+    let calldata = ProofCalldata {
+        prover_type: ProverType::TDX,
+        vec![Value::Bytes(output.into()), Value::Bytes(signature.into())],
+    };
+
     submit_proof(
         batch_number,
-        ProofCalldata {
-            prover_type: ProverType::TDX,
-            calldata,
-        },
+        BatchProof::ProofCalldata(calldata),
     )
     .await?;
     Ok(batch_number)
