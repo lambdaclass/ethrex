@@ -1,7 +1,7 @@
 use crate::cache::Cache;
 use ethrex_common::types::{AccountUpdate, Receipt, ELASTICITY_MULTIPLIER};
 use ethrex_levm::db::{gen_db::GeneralizedDatabase, CacheDB};
-use ethrex_vm::{backends::levm::LEVM, Evm};
+use ethrex_vm::{backends::levm::LEVM, Evm, EvmEngine};
 use eyre::Ok;
 use std::sync::Arc;
 use zkvm_interface::io::ProgramInput;
@@ -57,7 +57,7 @@ pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<Acc
         Arc::into_inner(store).ok_or(eyre::Error::msg("couldn't get store out of Arc<>"))?
     };
     for (tx, tx_sender) in block.body.get_transactions_with_sender() {
-        let mut vm = Evm::from_prover_db(store.clone());
+        let mut vm = Evm::new(EvmEngine::LEVM, store.clone());
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
         store.apply_account_updates(&account_updates);
