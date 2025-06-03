@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748900872808,
+  "lastUpdate": 1748958489355,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10375,6 +10375,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181520375666,
             "range": "± 479756847",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ce5f05177cefe25a4098c56aa1be0d69cc571511",
+          "message": "refactor(core): remove proverdb from levm_bench (#3017)\n\n**Motivation**\n\nThe bench is using the proverdb for its execution, the proverDb is\nundergoing many changes. This pr changes the levm bench to use an in\nmemory db, this shouldn't affect performance numbers as everything was\nbeing added to the cache and read from there",
+          "timestamp": "2025-06-03T13:00:47Z",
+          "tree_id": "ec05a3147e9048dc0f81e5dea5dca24eec65ffbf",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ce5f05177cefe25a4098c56aa1be0d69cc571511"
+        },
+        "date": 1748958484865,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182293405267,
+            "range": "± 733979311",
             "unit": "ns/iter"
           }
         ]
