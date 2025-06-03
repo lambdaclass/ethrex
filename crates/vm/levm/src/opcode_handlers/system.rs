@@ -671,7 +671,7 @@ impl<'a> VM<'a> {
             .checked_add(1)
             .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
-        // Validations that push 0 to the stack and return reserved gas to deployer
+        // Validations that push 0 (FAIL) to the stack and return reserved gas to deployer
         // 1. Sender doesn't have enough balance to send value.
         // 2. Depth limit has been reached
         // 3. Sender nonce is max.
@@ -687,18 +687,17 @@ impl<'a> VM<'a> {
             }
         }
 
+        // Increment sender nonce (irreversible change)
+        self.increment_account_nonce(deployer)?;
+
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
         if new_account.has_code_or_nonce() {
-            self.increment_account_nonce(deployer)?;
             self.current_call_frame_mut()?.stack.push(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
-
-        // Increment sender nonce (if Tx reverts it stays the same)
-        self.increment_account_nonce(deployer)?;
 
         let new_call_frame = CallFrame::new(
             deployer,

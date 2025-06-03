@@ -242,10 +242,6 @@ impl<'a> VM<'a> {
 
         self.tracer.exit_report(report, true)?;
 
-        //TODO: Remove this
-        // let a = serde_json::to_string_pretty(&self.tracer.callframes.pop().unwrap()).unwrap();
-        // println!("{a}");
-
         Ok(())
     }
 }
