@@ -108,6 +108,7 @@ pub async fn fill_transactions(
 
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
+    let latest_block_number = store.get_latest_block_number().await?;
     let (mut plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context)?;
     // Execute and add transactions to payload (if suitable)
     loop {
@@ -163,8 +164,21 @@ pub async fn fill_transactions(
             // Pull transaction from the mempool
             debug!("Ignoring replay-protected transaction: {}", tx_hash);
             txs.pop();
-            blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+            blockchain.remove_transaction_from_pool(&tx_hash)?;
             continue;
+        }
+
+        let maybe_sender_acc_info = store
+            .get_account_info(latest_block_number, head_tx.tx.sender())
+            .await?;
+
+        if let Some(acc_info) = maybe_sender_acc_info {
+            if head_tx.nonce() < acc_info.nonce {
+                debug!("Removing transaction with nonce too low from mempool: {tx_hash:#x}");
+                txs.pop();
+                blockchain.remove_transaction_from_pool(&tx_hash)?;
+                continue;
+            }
         }
 
         // Execute tx
