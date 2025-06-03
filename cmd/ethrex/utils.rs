@@ -126,7 +126,7 @@ pub fn get_data_sub_dir(datadir: &str, network: &Network) -> String {
 }
 
 pub fn get_datadir(datadir: &str, network: &Network) -> String {
-    //let data_path = &get_data_sub_dir(datadir, network);
+    let _data_path = &get_data_sub_dir(datadir, network);
     let project_dir = ProjectDirs::from("", "", datadir).expect("Couldn't find home directory");
     project_dir
         .data_local_dir()

@@ -11,14 +11,12 @@ use ethrex_vm::EvmEngine;
 fn block_import() {
     let data_dir = DEFAULT_DATADIR;
 
-    let network = "../../test_data/genesis-perf-ci.json";
+    let network = Network::from("../../test_data/genesis-perf-ci.json");
 
-    get_datadir(data_dir, network);
+    get_datadir(data_dir, &network);
     remove_db(data_dir, true);
 
     let evm_engine = EvmEngine::default();
-
-    let network = Network::from("../../test_data/genesis-perf-ci.json");
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(

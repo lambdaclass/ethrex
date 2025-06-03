@@ -64,7 +64,7 @@ impl Command {
             Command::Init { opts } => {
                 let network = &opts.node_opts.network.clone();
 
-                let data_dir = get_datadir(&opts.node_opts.datadir, "DEFAULT_CUSTOM_DIR");
+                let data_dir = get_datadir(&opts.node_opts.datadir, network);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
                 let genesis = network.get_genesis();
