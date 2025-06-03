@@ -63,8 +63,7 @@ pub async fn get_rangedata(
         let data = get_blockdata(rpc_url, chain_config, block_number).await?;
         blocks.push(data);
     }
-    let first_cache = blocks.first().ok_or(eyre::Error::msg("empty range"))?;
-    let first_block = first_cache.blocks[0].clone();
+    let first_block = &blocks[0].blocks[0];
     let rpc_db = RpcDB::new(rpc_url, chain_config, from - 1);
     let mut used: HashMap<Address, HashSet<H256>> = HashMap::new();
     for block_data in blocks.iter() {
@@ -81,7 +80,7 @@ pub async fn get_rangedata(
         .map(|(address, storages)| (address, storages.into_iter().collect()))
         .collect();
     rpc_db.load_accounts(&to_fetch).await?;
-    let mut proverdb = rpc_db.to_exec_db(&first_block)?;
+    let mut proverdb = rpc_db.to_exec_db(first_block)?;
     proverdb.block_hashes = blocks
         .iter()
         .flat_map(|cache| cache.db.block_hashes.clone())
@@ -102,7 +101,7 @@ pub async fn get_rangedata(
     }
     let cache = Cache {
         blocks: blocks.iter().map(|cache| cache.blocks[0].clone()).collect(),
-        parent_block_header: first_cache.parent_block_header.clone(),
+        parent_block_header: blocks[0].parent_block_header.clone(),
         db: proverdb,
     };
     write_cache_batch(&cache)?;
