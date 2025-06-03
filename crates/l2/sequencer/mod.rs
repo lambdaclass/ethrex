@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use crate::SequencerConfig;
+use crate::{
+    based::{block_fetcher, sequencer_state::SequencerState, state_updater},
+    SequencerConfig,
+};
 use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -19,9 +22,6 @@ mod l1_watcher;
 pub mod metrics;
 pub mod proof_coordinator;
 pub mod state_diff;
-
-pub mod block_fetcher;
-pub mod state_updater;
 
 pub mod execution_cache;
 
@@ -118,21 +118,5 @@ pub async fn start_l2(
                 break;
             }
         };
-    }
-}
-
-#[derive(Debug, Default, Clone)]
-pub enum SequencerState {
-    Sequencing,
-    #[default]
-    Following,
-}
-
-impl std::fmt::Display for SequencerState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SequencerState::Sequencing => write!(f, "Sequencing"),
-            SequencerState::Following => write!(f, "Following"),
-        }
     }
 }

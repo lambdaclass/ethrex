@@ -9,11 +9,11 @@ use ethrex_storage_rollup::StoreRollup;
 use tokio::{sync::Mutex, time::sleep};
 use tracing::{debug, error, info, warn};
 
-use crate::{utils::parse::hash_to_address, SequencerConfig};
-
-use super::{
-    errors::{SequencerError, StateUpdaterError},
-    SequencerState,
+use crate::{
+    based::{error::StateUpdaterError, sequencer_state::SequencerState},
+    sequencer::errors::SequencerError,
+    utils::parse::hash_to_address,
+    SequencerConfig,
 };
 
 pub struct StateUpdater {

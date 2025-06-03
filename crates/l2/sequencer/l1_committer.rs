@@ -1,4 +1,5 @@
 use crate::{
+    based::sequencer_state::SequencerState,
     sequencer::{
         errors::CommitterError,
         state_diff::{get_nonce_diff, AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
@@ -38,10 +39,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
-use super::{
-    errors::BlobEstimationError, execution_cache::ExecutionCache, utils::random_duration,
-    SequencerState,
-};
+use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::random_duration};
 use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
 use spawned_rt::mpsc::Sender;
 

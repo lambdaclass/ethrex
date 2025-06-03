@@ -13,11 +13,11 @@ use keccak_hash::keccak;
 use tokio::{sync::Mutex, time::sleep};
 use tracing::{debug, error, info};
 
-use crate::{utils::helpers::is_withdrawal_l2, SequencerConfig};
-
-use super::{
-    errors::{BlockFetcherError, SequencerError},
-    SequencerState,
+use crate::{
+    based::{error::BlockFetcherError, sequencer_state::SequencerState},
+    sequencer::errors::SequencerError,
+    utils::helpers::is_withdrawal_l2,
+    SequencerConfig,
 };
 
 pub struct BlockFetcher {

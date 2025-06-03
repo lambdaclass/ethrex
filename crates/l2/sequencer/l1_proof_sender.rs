@@ -14,6 +14,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
 use crate::{
+    based::sequencer_state::SequencerState,
     sequencer::errors::ProofSenderError,
     utils::prover::{
         proving_systems::ProverType,
@@ -22,7 +23,7 @@ use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 
-use super::{errors::SequencerError, utils::sleep_random, SequencerState};
+use super::{errors::SequencerError, utils::sleep_random};
 
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
