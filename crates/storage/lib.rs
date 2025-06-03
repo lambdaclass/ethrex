@@ -1,5 +1,6 @@
 mod api;
 
+pub mod query_plan;
 #[cfg(any(feature = "libmdbx", feature = "redb"))]
 mod rlp;
 mod store;

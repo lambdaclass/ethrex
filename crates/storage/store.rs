@@ -15,7 +15,7 @@ use ethrex_common::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, NodeHash, Trie};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
@@ -310,6 +310,91 @@ impl Store {
         };
         let account_state = AccountState::decode(&encoded_state)?;
         Ok(Some(account_state.nonce))
+    }
+
+    /// Applies account updates based on the block's latest storage state
+    /// and returns the new state root after the updates have been applied.
+    pub async fn apply_account_updates_batch(
+        &self,
+        block_hash: BlockHash,
+        account_updates: &[AccountUpdate],
+    ) -> Result<
+        Option<(
+            H256,
+            Vec<(NodeHash, Vec<u8>)>,
+            Vec<(Vec<u8>, Vec<(NodeHash, Vec<u8>)>)>,
+        )>,
+        StoreError,
+    > {
+        let Some(state_trie) = self.state_trie(block_hash)? else {
+            return Ok(None);
+        };
+
+        let (state_trie_hash, state_query_plan, query_plan) = self
+            .apply_account_updates_from_trie_batch(state_trie, account_updates)
+            .await?;
+
+        Ok(Some((state_trie_hash, state_query_plan, query_plan)))
+    }
+
+    pub async fn apply_account_updates_from_trie_batch(
+        &self,
+        mut state_trie: Trie,
+        account_updates: &[AccountUpdate],
+    ) -> Result<
+        (
+            H256,
+            Vec<(NodeHash, Vec<u8>)>,
+            Vec<(Vec<u8>, Vec<(NodeHash, Vec<u8>)>)>,
+        ),
+        StoreError,
+    > {
+        let mut ret_vec_account = Vec::new();
+        for update in account_updates.iter() {
+            let hashed_address = hash_address(&update.address);
+            if update.removed {
+                // Remove account from trie
+                state_trie.remove(hashed_address)?;
+                continue;
+            }
+            // Add or update AccountState in the trie
+            // Fetch current state or create a new state to be inserted
+            let mut account_state = match state_trie.get(&hashed_address)? {
+                Some(encoded_state) => AccountState::decode(&encoded_state)?,
+                None => AccountState::default(),
+            };
+            if let Some(info) = &update.info {
+                account_state.nonce = info.nonce;
+                account_state.balance = info.balance;
+                account_state.code_hash = info.code_hash;
+                // Store updated code in DB
+                if let Some(code) = &update.code {
+                    self.add_account_code(info.code_hash, code.clone()).await?;
+                }
+            }
+            // Store the added storage in the account's storage trie and compute its new root
+            if !update.added_storage.is_empty() {
+                let mut storage_trie = self.engine.open_storage_trie(
+                    H256::from_slice(&hashed_address),
+                    account_state.storage_root,
+                );
+                for (storage_key, storage_value) in &update.added_storage {
+                    let hashed_key = hash_key(storage_key);
+                    if storage_value.is_zero() {
+                        storage_trie.remove(hashed_key)?;
+                    } else {
+                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                    }
+                }
+                let (storage_hash, storage_query_plan) = storage_trie.hash_prepare_batch();
+                account_state.storage_root = storage_hash;
+                ret_vec_account.push((hashed_address.clone(), storage_query_plan));
+            }
+            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+        }
+        let (state_hash, state_query_plan) = state_trie.hash_prepare_batch();
+
+        Ok((state_hash, state_query_plan, ret_vec_account))
     }
 
     /// Applies account updates based on the block's latest storage state

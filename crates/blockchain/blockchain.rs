@@ -19,8 +19,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
 use ethrex_common::{Address, H256};
-use ethrex_storage::error::StoreError;
-use ethrex_storage::Store;
+use ethrex_storage::{error::StoreError, query_plan::QueryPlan, Store};
 use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use mempool::Mempool;
 use std::collections::HashMap;
@@ -126,6 +125,29 @@ impl Blockchain {
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
 
         Ok(execution_result)
+    }
+
+    pub async fn store_block_with_query_plan(
+        &self,
+        block: &Block,
+        execution_result: BlockExecutionResult,
+        account_updates: &[AccountUpdate],
+    ) -> Result<QueryPlan, ChainError> {
+        // Apply the account updates over the last block's state and compute the new state root
+        let (new_state_root, state_query_plan, accounts_query_plan) = self
+            .storage
+            .apply_account_updates_batch(block.header.parent_hash, account_updates)
+            .await?
+            .ok_or(ChainError::ParentStateNotFound)?;
+
+        // Check state root matches the one in block header
+        validate_state_root(&block.header, new_state_root)?;
+
+        Ok(QueryPlan {
+            account_updates: (state_query_plan, accounts_query_plan),
+            block: block.clone(),
+            receipts: (block.hash(), execution_result.receipts),
+        })
     }
 
     pub async fn store_block(

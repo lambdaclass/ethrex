@@ -112,19 +112,17 @@ impl Trie {
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: PathRLP) -> Result<Option<ValueRLP>, TrieError> {
-        let value;
-        (self.root, value) = if self.root.is_valid() {
-            // If the trie is not empty, call the root node's removal logic.
-            let (node, value) = self
-                .root
-                .get_node(self.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?
-                .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
+        if !self.root.is_valid() {
+            return Ok(None);
+        }
 
-            (node.map(Into::into).unwrap_or_default(), value)
-        } else {
-            (NodeRef::default(), None)
-        };
+        // If the trie is not empty, call the root node's removal logic.
+        let (node, value) = self
+            .root
+            .get_node(self.db.as_ref())?
+            .ok_or(TrieError::InconsistentTree)?
+            .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
+        self.root = node.map(Into::into).unwrap_or_default();
 
         Ok(value)
     }
@@ -147,10 +145,10 @@ impl Trie {
         }
     }
 
-    pub fn hash_no_commit_with_batch(&mut self) -> Result<Vec<(NodeHash, Vec<u8>)>, TrieError> {
-        let ret = self.commit_vec_aka_state_diff()?;
-        let _ret_hash = self.hash_no_commit();
-        Ok(ret)
+    pub fn hash_prepare_batch(&mut self) -> (H256, Vec<(NodeHash, Vec<u8>)>) {
+        let query_plan = self.commit_vec_aka_state_diff();
+        let ret_hash = self.hash_no_commit();
+        (ret_hash, query_plan)
     }
 
     /// Compute the hash of the root node and flush any changes into the database.
@@ -167,13 +165,13 @@ impl Trie {
         Ok(())
     }
 
-    pub fn commit_vec_aka_state_diff(&mut self) -> Result<Vec<(NodeHash, Vec<u8>)>, TrieError> {
+    pub fn commit_vec_aka_state_diff(&mut self) -> Vec<(NodeHash, Vec<u8>)> {
         let mut acc = Vec::new();
         if self.root.is_valid() {
             self.root.commit(&mut acc);
         }
 
-        Ok(acc)
+        acc
     }
 
     /// Obtain a merkle proof for the given path.
