@@ -8,13 +8,13 @@ use crate::{backends::revm::REVM, Evm, EvmError};
 
 /// Collection of traces of each call frame as defined in geth's `callTracer` output
 /// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
-pub type CallTrace = Vec<Call>;
+pub type CallTrace = Vec<TracingCall>;
 
 /// Trace of each call frame as defined in geth's `callTracer` output
 /// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Call {
+pub struct TracingCall {
     /// Type of the Call
     pub r#type: CallType,
     /// Address that initiated the call
@@ -40,7 +40,7 @@ pub struct Call {
     /// Revert reason if the call reverted
     pub revert_reason: Option<String>,
     /// List of nested sub-calls
-    pub calls: Vec<Call>,
+    pub calls: Vec<TracingCall>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     /// Logs (if enabled)
     pub logs: Vec<CallLog>,

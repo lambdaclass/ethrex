@@ -11,7 +11,7 @@ use revm_primitives::{BlockEnv, ExecutionResult as RevmExecutionResult, SpecId, 
 use crate::{
     backends::revm::run_evm,
     helpers::spec_id,
-    tracing::{Call, CallLog, CallTrace, CallType},
+    tracing::{CallLog, CallTrace, CallType, TracingCall},
     EvmError,
 };
 
@@ -178,7 +178,7 @@ fn map_call(
     revert_reason_or_error: &String,
     only_top_call: bool,
     with_log: bool,
-) -> Call {
+) -> TracingCall {
     let mut subcalls = vec![];
     if !only_top_call {
         for child_idx in &revm_call.children {
@@ -196,7 +196,7 @@ fn map_call(
         }
     }
     let to = Address::from_slice(revm_call.trace.address.0.as_slice());
-    Call {
+    TracingCall {
         r#type: map_call_type(revm_call.kind()),
         from: Address::from_slice(revm_call.trace.caller.0.as_slice()),
         to,

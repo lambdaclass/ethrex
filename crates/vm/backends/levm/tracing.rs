@@ -8,7 +8,7 @@ use ethrex_levm::{
 
 use crate::{
     backends::levm::LEVM,
-    tracing::{Call, CallLog, CallTrace, CallType},
+    tracing::{CallLog, CallTrace, CallType, TracingCall},
     EvmError,
 };
 
@@ -107,13 +107,13 @@ fn map_call_logs(logs: Vec<ethrex_levm::tracing::TracerLog>) -> Vec<CallLog> {
         .collect()
 }
 
-fn map_levm_callframe(callframe: TracerCallFrame) -> Result<Call, EvmError> {
+fn map_levm_callframe(callframe: TracerCallFrame) -> Result<TracingCall, EvmError> {
     let mut subcalls = vec![];
     for subcall in callframe.calls {
         subcalls.push(map_levm_callframe(subcall)?);
     }
 
-    let call = Call {
+    let call = TracingCall {
         r#type: map_call_type(callframe.call_type)?,
         from: callframe.from,
         to: callframe.to,
