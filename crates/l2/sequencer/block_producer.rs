@@ -28,7 +28,7 @@ use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX};
 
-pub struct BlockProducer {
+pub struct BlockProducerState {
     block_time_ms: u64,
     coinbase_address: Address,
     elasticity_multiplier: u64,
@@ -40,15 +40,15 @@ pub async fn start_block_producer(
     execution_cache: Arc<ExecutionCache>,
     cfg: SequencerConfig,
 ) -> Result<(), SequencerError> {
-    let proposer = BlockProducer::new_from_config(&cfg.block_producer);
+    let proposer = BlockProducerState::new(&cfg.block_producer);
     
         run(&proposer, store.clone(), blockchain, execution_cache)
         .await;
     Ok(())
 }
 
-impl BlockProducer {
-    pub fn new_from_config(config: &BlockProducerConfig) -> Self {
+impl BlockProducerState {
+    pub fn new(config: &BlockProducerConfig) -> Self {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
@@ -63,13 +63,13 @@ impl BlockProducer {
 }
 
 pub async fn run(
-    state: &BlockProducer,
+    state: &BlockProducerState,
     store: Store,
     blockchain: Arc<Blockchain>,
     execution_cache: Arc<ExecutionCache>,
 ) {
     loop {
-        let _ = main_logic(state, store.clone(), blockchain.clone(), execution_cache.clone())
+        let _ = produce_block(state, store.clone(), blockchain.clone(), execution_cache.clone())
             .await
             .inspect_err(|e| error!("Block Producer Error: {e}"));
 
@@ -77,8 +77,8 @@ pub async fn run(
     }
 }
 
-pub async fn main_logic(
-    state: &BlockProducer,
+pub async fn produce_block(
+    state: &BlockProducerState,
     store: Store,
     blockchain: Arc<Blockchain>,
     execution_cache: Arc<ExecutionCache>,
