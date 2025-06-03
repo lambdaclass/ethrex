@@ -92,14 +92,14 @@ holesky-lighthouse:
 
 hoodi-lighthouse:
 	lighthouse bn \
-		--network holesky \
+		--network hoodi \
 		--execution-endpoint http://localhost:${ENGINE_PORT} \
 		--execution-jwt "~/.local/share/hoodi_data/jwt.hex" \
 		--checkpoint-sync-url $(HOODI_CHECKPOINT_SYNC_URL) \
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--datadir "holesky_data/lighthouse_${NODE_NAME}_$(EVM)" \
+		--datadir "hoodi_data/lighthouse_${NODE_NAME}_$(EVM)" \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
 
