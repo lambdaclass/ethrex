@@ -131,9 +131,9 @@ impl Blockchain {
         Ok(execution_result)
     }
 
-    pub async fn execute_block_with_witness(
+    pub async fn generate_witness_for_blocks(
         &self,
-        block: Block,
+        blocks: &[Block],
     ) -> Result<
         (
             Vec<Vec<u8>>,
@@ -143,99 +143,116 @@ impl Blockchain {
         ),
         ChainError,
     > {
-        let parent_hash = block.header.parent_hash;
-        let vm_db: DynVmDatabase =
-            Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
-        let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
-        let mut vm = Evm::new_from_db(logger.clone());
-
-        // Re-execute block with logger
-        let _ = vm.execute_block(&block)?;
-        // Gather account updates
-        let account_updates = vm.get_state_transitions()?;
-
-        let mut used_storage_tries = HashMap::new();
-        let mut codes = Vec::new();
-        // Get the used block hashes from the logger
-        let block_hashes = logger
-            .block_hashes_accessed
-            .lock()
-            .map_err(|_e| ChainError::Custom("Failed to get block hashes".to_string()))?
-            .clone();
-
         // Get state at previous block
-        let Some(mut trie) = self.storage.state_trie(parent_hash)? else {
-            return Err(ChainError::ParentNotFound);
-        };
-
+        let mut trie = {
+            let first_block = blocks
+                .first()
+                .ok_or(ChainError::Custom("Empty block batch".to_string()))?;
+            self.storage.state_trie(first_block.header.parent_hash)
+        }
+        .map_err(|_| ChainError::ParentNotFound)?
+        .ok_or(ChainError::ParentStateNotFound)?;
         // Record all accessed nodes
         trie.record_witness();
+        let mut encoded_storage_tries: HashMap<ethrex_common::H160, Vec<Vec<u8>>> = HashMap::new();
+        let mut block_hashes = HashMap::new();
+        let mut codes = Vec::new();
 
-        // Access all the accounts from the initial trie
-        // Record all the storage nodes for the initial state
-        for (account, keys) in logger
-            .state_accessed
-            .lock()
-            .map_err(|_e| ChainError::Custom("sdf Failed to execute with witness".to_string()))?
-            .iter()
-        {
-            // Access the account from the state trie to record the nodes used to access it
-            let _ = trie
-                .get(&hash_address(account))
-                .map_err(|_e| ChainError::Custom("Failed to access account from trie".to_string()));
-            // Get storage trie at before updates
-            if !keys.is_empty() {
-                if let Ok(Some(mut storage_trie)) = self.storage.storage_trie(parent_hash, *account)
-                {
-                    // Record accessed nodes
-                    storage_trie.record_witness();
-                    // Access all the keys
-                    for storage_key in keys {
-                        let hashed_key = hash_key(storage_key);
-                        storage_trie.get(&hashed_key).map_err(|_e| {
-                            ChainError::Custom("Failed to access storage key".to_string())
-                        })?;
+        for block in blocks {
+            let parent_hash = block.header.parent_hash;
+            let vm_db: DynVmDatabase =
+                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+            let mut vm = Evm::new_from_db(logger.clone());
+
+            // Re-execute block with logger
+            let _ = vm.execute_block(block)?;
+            // Gather account updates
+            let account_updates = vm.get_state_transitions()?;
+
+            let mut used_storage_tries = HashMap::new();
+            // Get the used block hashes from the logger
+            let logger_block_hashes = logger
+                .block_hashes_accessed
+                .lock()
+                .map_err(|_e| ChainError::Custom("Failed to get block hashes".to_string()))?
+                .clone();
+            block_hashes.extend(logger_block_hashes);
+
+            // Access all the accounts from the initial trie
+            // Record all the storage nodes for the initial state
+            for (account, keys) in logger
+                .state_accessed
+                .lock()
+                .map_err(|_e| ChainError::Custom("sdf Failed to execute with witness".to_string()))?
+                .iter()
+            {
+                // Access the account from the state trie to record the nodes used to access it
+                let _ = trie.get(&hash_address(account)).map_err(|_e| {
+                    ChainError::Custom("Failed to access account from trie".to_string())
+                });
+                // Get storage trie at before updates
+                if !keys.is_empty() {
+                    if let Ok(Some(mut storage_trie)) =
+                        self.storage.storage_trie(parent_hash, *account)
+                    {
+                        // Record accessed nodes
+                        storage_trie.record_witness();
+                        // Access all the keys
+                        for storage_key in keys {
+                            let hashed_key = hash_key(storage_key);
+                            storage_trie.get(&hashed_key).map_err(|_e| {
+                                ChainError::Custom("Failed to access storage key".to_string())
+                            })?;
+                        }
+                        // Store the tries to reuse when applying account updates
+                        used_storage_tries.insert(*account, storage_trie);
                     }
-                    // Store the tries to reuse when applying account updates
-                    used_storage_tries.insert(*account, storage_trie);
                 }
             }
-        }
-        // Store all the accessed evm bytecodes
-        for code_hash in logger
-            .code_accessed
-            .lock()
-            .map_err(|_e| ChainError::Custom("Failed to gather used bytecodes".to_string()))?
-            .iter()
-        {
-            let lock = logger
-                .store
+            // Store all the accessed evm bytecodes
+            for code_hash in logger
+                .code_accessed
                 .lock()
-                .map_err(|_e| ChainError::Custom("Failed to gather used bytecodes".to_string()))?;
-            let code = lock
-                .get_account_code(*code_hash)
-                .map_err(|_e| ChainError::Custom("Failed to get account code".to_string()))?;
-            codes.push(code);
+                .map_err(|_e| ChainError::Custom("Failed to gather used bytecodes".to_string()))?
+                .iter()
+            {
+                let lock = logger.store.lock().map_err(|_e| {
+                    ChainError::Custom("Failed to gather used bytecodes".to_string())
+                })?;
+                let code = lock
+                    .get_account_code(*code_hash)
+                    .map_err(|_e| ChainError::Custom("Failed to get account code".to_string()))?;
+                codes.push(code);
+            }
+
+            // Apply account updates to the trie recording all the necessary nodes to do so
+            let (updated_trie, storage_tries_after_update) = self
+                .storage
+                .apply_account_updates_from_trie_with_witness(
+                    trie,
+                    &account_updates,
+                    used_storage_tries,
+                )
+                .await?;
+            for (address, trie) in storage_tries_after_update {
+                let witness = trie.db().witness();
+                let witness = witness.into_iter().collect::<Vec<_>>();
+                match encoded_storage_tries.entry(address) {
+                    std::collections::hash_map::Entry::Occupied(mut entry) => {
+                        entry.get_mut().extend(witness);
+                    }
+                    std::collections::hash_map::Entry::Vacant(vacant) => {
+                        vacant.insert(witness);
+                    }
+                }
+            }
+            trie = updated_trie;
         }
-        // Apply account updates to the trie recording all the necessary nodes to do so
-        let (trie, storage_tries_after_update) = self
-            .storage
-            .apply_account_updates_from_trie_with_witness(
-                trie,
-                &account_updates,
-                used_storage_tries,
-            )
-            .await?;
-        // Get the witness
+
+        // Get the witness for the state trie
         let witnessed_trie = trie.db().witness();
         let used_trie_nodes = Vec::from_iter(witnessed_trie.into_iter());
-
-        // Gather all storage tries
-        let mut encoded_storage_tries = HashMap::new();
-        for (address, trie) in storage_tries_after_update {
-            let witness = trie.db().witness();
-            encoded_storage_tries.insert(address, witness.into_iter().collect::<Vec<_>>());
-        }
 
         Ok((used_trie_nodes, codes, encoded_storage_tries, block_hashes))
     }

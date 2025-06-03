@@ -372,7 +372,7 @@ impl RpcHandler for ExecutionWitness {
 
         let (state_rlp, codes, storage_tries, blocks_used) = context
             .blockchain
-            .execute_block_with_witness(block)
+            .generate_witness_for_blocks(&[block])
             .await
             .map_err(|e| RpcErr::Internal(e.to_string()))?;
         let mut block_headers = vec![parent_header];
