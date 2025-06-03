@@ -16,7 +16,7 @@ use ethrex_common::{
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::{EvmError, ProverDB};
+use ethrex_vm::ProverDB;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use spawned_concurrency::{CallResponse, CastResponse, GenServer};
