@@ -11,7 +11,7 @@ use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_common::types::{AccountUpdate, Block, BlockHeader};
 use ethrex_common::{Address, H256};
-use ethrex_vm::{Evm, EvmError, ProverDB, ProverDBError};
+use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDB, ProverDBError};
 use std::collections::HashMap;
 
 #[derive(Debug, thiserror::Error)]
@@ -185,7 +185,7 @@ fn execute_stateless(
         .map_err(StatelessExecutionError::BlockValidationError)?;
 
         // Execute block
-        let mut vm = Evm::from_prover_db(db.clone());
+        let mut vm = Evm::new(EvmEngine::LEVM, db.clone());
         let result = vm
             .execute_block(block)
             .map_err(StatelessExecutionError::EvmError)?;
