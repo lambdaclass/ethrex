@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
-use ethrex_common::{Address, H256, U256};
+use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::{
     clients::{eth::WrappedTransaction, Overrides},
@@ -9,6 +9,7 @@ use ethrex_rpc::{
 };
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
+use std::str::FromStr;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -24,6 +25,11 @@ use super::{errors::SequencerError, utils::sleep_random};
 
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
+
+const DEV_MODE_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0xAA,
+]);
 
 pub async fn start_l1_proof_sender(cfg: SequencerConfig) -> Result<(), SequencerError> {
     L1ProofSender::new(&cfg.proof_coordinator, &cfg.l1_committer, &cfg.eth)
@@ -67,11 +73,23 @@ impl L1ProofSender {
                 continue;
             };
             let calldata = Bytes::copy_from_slice(keccak(getter)[..4].as_ref());
-            let to = committer_cfg.on_chain_proposer_address;
-            let _response = eth_client.call(to, calldata, Overrides::default()).await?;
+            let response = eth_client
+                .call(
+                    committer_cfg.on_chain_proposer_address,
+                    calldata,
+                    Overrides::default(),
+                )
+                .await?;
+            // trim to 20 bytes, also removes 0x prefix
+            let trimmed_response = &response[26..];
 
-            info!("{prover_type} proof needed");
-            needed_proof_types.push(prover_type);
+            let address = Address::from_str(&format!("0x{trimmed_response}"))
+                .map_err(|_| ProofSenderError::FailedToParseOnChainProposerResponse(response))?;
+
+            if address != DEV_MODE_ADDRESS {
+                info!("{prover_type} proof needed");
+                needed_proof_types.push(prover_type);
+            }
         }
 
         Ok(Self {
@@ -102,6 +120,16 @@ impl L1ProofSender {
             .eth_client
             .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
+
+        let last_committed_batch = self
+            .eth_client
+            .get_last_committed_batch(self.on_chain_proposer_address)
+            .await?;
+
+        if last_committed_batch < batch_to_verify {
+            info!("Next batch to verify ({batch_to_verify}) is not yet committed");
+            return Ok(());
+        }
 
         if batch_number_has_all_needed_proofs(batch_to_verify, &self.needed_proof_types)
             .inspect_err(|_| info!("Missing proofs for batch {batch_to_verify}, skipping sending"))
