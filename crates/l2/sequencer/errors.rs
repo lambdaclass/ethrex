@@ -10,6 +10,7 @@ use ethrex_rpc::clients::EngineClientError;
 use ethrex_storage::error::StoreError;
 use ethrex_trie::TrieError;
 use ethrex_vm::{EvmError, ProverDBError};
+use spawned_concurrency::GenServerError;
 use tokio::task::JoinError;
 
 #[derive(Debug, thiserror::Error)]
@@ -96,6 +97,8 @@ pub enum ProofSenderError {
     InternalError(String),
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
+    #[error("GenServer Error")]
+    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
