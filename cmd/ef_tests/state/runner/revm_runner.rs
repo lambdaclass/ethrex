@@ -231,12 +231,7 @@ pub fn prepare_revm_for_tx<'state>(
         .with_external_context(
             RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
         );
-    match initial_state {
-        EvmState::Store(db) => Ok(evm_builder.with_db(db).build()),
-        _ => Err(EFTestRunnerError::VMInitializationFailed(
-            "Expected LEVM state to be a Store".to_owned(),
-        )),
-    }
+    Ok(evm_builder.with_db(&mut initial_state.inner).build())
 }
 
 pub fn compare_levm_revm_execution_results(
