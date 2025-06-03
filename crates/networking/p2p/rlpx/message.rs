@@ -18,7 +18,7 @@ use super::snap::{
 use ethrex_rlp::encode::RLPEncode;
 
 const ETH_CAPABILITY_OFFSET: u8 = 0x10;
-const SNAP_CAPABILITY_OFFSET: u8 = 0x22;
+const SNAP_CAPABILITY_OFFSET: u8 = 0x21;
 
 pub trait RLPxMessage: Sized {
     const CODE: u8;
