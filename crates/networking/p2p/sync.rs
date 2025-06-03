@@ -274,26 +274,29 @@ impl Syncer {
             // Discard the first header as we already have it
             block_hashes.remove(0);
             block_headers.remove(0);
-            // Store headers and save hashes for full block retrieval
-            all_block_hashes.extend_from_slice(&block_hashes[..]);
-            // This step is necessary for full sync because some opcodes depend on previous blocks during execution.
-            store
-                .add_block_headers(block_hashes.clone(), block_headers.clone())
-                .await?;
 
-            if sync_mode == SyncMode::Full {
-                let last_block_hash = self
-                    .download_and_run_blocks(
-                        &block_hashes,
-                        &block_headers,
-                        sync_head,
-                        sync_head_found,
-                        store.clone(),
-                    )
-                    .await?;
-                if let Some(last_block_hash) = last_block_hash {
-                    current_head = last_block_hash;
-                    search_head = current_head;
+            match sync_mode {
+                SyncMode::Snap => {
+                    // Store headers and save hashes for full block retrieval
+                    all_block_hashes.extend_from_slice(&block_hashes[..]);
+                    store
+                        .add_block_headers(block_hashes.clone(), block_headers.clone())
+                        .await?;
+                }
+                SyncMode::Full => {
+                    let last_block_hash = self
+                        .download_and_run_blocks(
+                            &block_hashes,
+                            &block_headers,
+                            sync_head,
+                            sync_head_found,
+                            store.clone(),
+                        )
+                        .await?;
+                    if let Some(last_block_hash) = last_block_hash {
+                        current_head = last_block_hash;
+                        search_head = current_head;
+                    }
                 }
             }
 
