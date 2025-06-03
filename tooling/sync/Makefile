@@ -17,6 +17,9 @@ create_data_dir:
 	mkdir -p ~/.local/share/$(NETWORK)_data
 
 gen_jwt: create_data_dir
+ifndef NETWORK
+	$(error "Sync network not provided")
+endif
 	openssl rand -hex 32 | tr -d "\n" | tee ~/.local/share/$(NETWORK)_data/jwt.hex
 
 start_geth: create_data_dir
