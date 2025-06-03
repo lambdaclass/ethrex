@@ -549,6 +549,18 @@ impl StoreEngine for RedBStore {
             .map(|b| b.value()))
     }
 
+    fn get_block_number_sync(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        Ok(self
+            .read_sync(
+                BLOCK_NUMBERS_TABLE,
+                <H256 as Into<BlockHashRLP>>::into(block_hash),
+            )?
+            .map(|b| b.value()))
+    }
+
     async fn add_transaction_location(
         &self,
         transaction_hash: ethrex_common::H256,
@@ -674,6 +686,14 @@ impl StoreEngine for RedBStore {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read(CANONICAL_BLOCK_HASHES_TABLE, block_number)
             .await
+            .map(|o| o.map(|hash_rlp| hash_rlp.value().to()))
+    }
+
+    fn get_canonical_block_hash_sync(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        self.read_sync(CANONICAL_BLOCK_HASHES_TABLE, block_number)
             .map(|o| o.map(|hash_rlp| hash_rlp.value().to()))
     }
 

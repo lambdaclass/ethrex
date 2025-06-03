@@ -292,6 +292,13 @@ impl StoreEngine for Store {
         self.read::<BlockNumbers>(block_hash.into()).await
     }
 
+    fn get_block_number_sync(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        self.read_sync::<BlockNumbers>(block_hash.into())
+    }
+
     async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         self.write::<AccountCodes>(code_hash.into(), code.into())
             .await
@@ -525,6 +532,14 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read::<CanonicalBlockHashes>(number)
             .await
+            .map(|o| o.map(|hash_rlp| hash_rlp.to()))
+    }
+
+    fn get_canonical_block_hash_sync(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        self.read_sync::<CanonicalBlockHashes>(number)
             .map(|o| o.map(|hash_rlp| hash_rlp.to()))
     }
 
@@ -1373,7 +1388,7 @@ mod tests {
     use bytes::Bytes;
     use ethrex_common::{
         types::{BlockHash, Index, Log, TxType},
-        Address, Bloom, H256,
+        Address, H256,
     };
 
     #[test]
@@ -1715,7 +1730,6 @@ mod tests {
             tx_type: TxType::EIP7702,
             succeeded: true,
             cumulative_gas_used: u64::MAX,
-            bloom: Bloom::default(),
             logs,
         }
     }
