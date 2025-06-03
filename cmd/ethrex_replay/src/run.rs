@@ -63,7 +63,7 @@ pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<Acc
         let mut vm = Evm::new(EvmEngine::LEVM, prover_db.clone());
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
-        prover_db.apply_account_updates(&account_updates);
+        prover_db.apply_account_updates_from_trie(&account_updates);
         if format!("0x{:x}", tx.compute_hash()) == tx_id {
             return Ok((receipt, account_updates));
         }

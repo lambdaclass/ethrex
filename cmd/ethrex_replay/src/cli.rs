@@ -3,7 +3,7 @@ use ethrex_common::types::{AccountUpdate, Receipt};
 
 use crate::bench::run_and_measure;
 use crate::constants::get_chain_config;
-use crate::fetcher::{get_blockdata, get_rangedata, or_latest};
+use crate::fetcher::{get_blockdata, or_latest};
 use crate::rpc::get_tx_block;
 use crate::run::{exec, prove, run_tx};
 

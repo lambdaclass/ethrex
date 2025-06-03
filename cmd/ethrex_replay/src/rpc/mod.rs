@@ -104,32 +104,3 @@ pub async fn get_tx_block(tx: &str, rpc_url: &str) -> eyre::Result<usize> {
     let block_number = usize::from_str_radix(block_number.trim_start_matches("0x"), 16)?;
     Ok(block_number)
 }
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    const RPC_URL: &str = "<to-complete>";
-    const VITALIK_ADDR: &str = "d8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
-
-    #[ignore = "needs to manually set rpc url in constant"]
-    #[tokio::test]
-    async fn get_block_works() {
-        let block_number = get_latest_block_number(RPC_URL).await.unwrap();
-        get_block(RPC_URL, block_number).await.unwrap();
-    }
-
-    #[ignore = "needs to manually set rpc url in constant"]
-    #[tokio::test]
-    async fn get_account_works() {
-        let block_number = get_latest_block_number(RPC_URL).await.unwrap();
-        get_account(
-            RPC_URL,
-            block_number,
-            &Address::from_slice(&hex::decode(VITALIK_ADDR).unwrap()),
-            &[],
-        )
-        .await
-        .unwrap();
-    }
-}

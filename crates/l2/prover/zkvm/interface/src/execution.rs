@@ -3,10 +3,7 @@ use crate::deposits::{get_block_deposits, get_deposit_hash};
 #[cfg(feature = "l2")]
 use crate::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
 
-use crate::{
-    io::{ProgramInput, ProgramOutput},
-    trie::{update_tries, verify_db},
-};
+use crate::io::{ProgramInput, ProgramOutput};
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_common::types::{AccountUpdate, Block, BlockHeader};
@@ -151,19 +148,17 @@ fn execute_stateless(
     db: &mut ProverDB,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    // Tries used for validating initial state root
-    let (mut state_trie, mut storage_tries) = db
-        .get_tries()
-        .map_err(StatelessExecutionError::ProverDBError)?;
-
     // Validate the initial state
-    let initial_state_hash = state_trie.hash_no_commit();
+    let initial_state_hash = {
+        let state_trie_lock = db
+            .state_trie
+            .lock()
+            .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
+        state_trie_lock.hash_no_commit()
+    };
     if initial_state_hash != parent_block_header.state_root {
         return Err(StatelessExecutionError::InvalidInitialStateTrie);
     }
-    if !verify_db(db, &state_trie, &storage_tries).map_err(StatelessExecutionError::TrieError)? {
-        return Err(StatelessExecutionError::InvalidDatabase);
-    };
 
     let mut parent_header = parent_block_header;
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
@@ -190,7 +185,7 @@ fn execute_stateless(
             .map_err(StatelessExecutionError::EvmError)?;
 
         // Update db for the next block
-        db.apply_account_updates(&account_updates);
+        db.apply_account_updates_from_trie(&account_updates);
 
         // Update acc_account_updates
         for account in account_updates {
@@ -208,17 +203,18 @@ fn execute_stateless(
         acc_receipts.push(receipts);
     }
 
-    // Update state trie
-    let update_list: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
-    update_tries(&mut state_trie, &mut storage_tries, &update_list)
-        .map_err(StatelessExecutionError::TrieError)?;
-
     // Calculate final state root hash and check
     let last_block = blocks
         .last()
         .ok_or(StatelessExecutionError::EmptyBatchError)?;
     let last_block_state_root = last_block.header.state_root;
-    let final_state_hash = state_trie.hash_no_commit();
+    let final_state_hash = {
+        let state_trie_lock = db
+            .state_trie
+            .lock()
+            .map_err(|_| StatelessExecutionError::InvalidFinalStateTrie)?;
+        state_trie_lock.hash_no_commit()
+    };
     if final_state_hash != last_block_state_root {
         return Err(StatelessExecutionError::InvalidFinalStateTrie);
     }
