@@ -79,7 +79,11 @@ async fn main() -> Result<(), DeployerError> {
     .await?;
 
     if opts.deposit_rich {
-        make_deposits(bridge_address, &eth_client, &opts).await?;
+        make_deposits(bridge_address, &eth_client, &opts)
+            .await
+            .inspect_err(|err| {
+                warn!("Failed to make deposits: {err}");
+            });
     }
 
     write_contract_addresses_to_env(
