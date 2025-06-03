@@ -18,7 +18,7 @@ pub async fn start_metrics_gatherer(
 ) -> Result<(), SequencerError> {
     let mut metrics_gatherer =
         MetricsGatherer::new_from_config(rollup_store, &cfg.l1_committer, &cfg.eth, l2_url).await?;
-    metrics_gatherer.run().await;
+    run(&mut metrics_gatherer).await;
     Ok(())
 }
 
@@ -47,78 +47,78 @@ impl MetricsGatherer {
             check_interval: Duration::from_millis(1000),
         })
     }
+}
 
-    pub async fn run(&mut self) {
-        loop {
-            if let Err(err) = self.main_logic().await {
-                error!("Metrics Gatherer Error: {}", err);
-            }
-
-            sleep(self.check_interval).await;
+pub async fn run(state: &mut MetricsGatherer) {
+    loop {
+        if let Err(err) = main_logic(state).await {
+            error!("Metrics Gatherer Error: {}", err);
         }
+
+        sleep(state.check_interval).await;
     }
+}
 
-    async fn main_logic(&mut self) -> Result<(), MetricsGathererError> {
-        loop {
-            let last_committed_batch = self
-                .l1_eth_client
-                .get_last_committed_batch(self.on_chain_proposer_address)
-                .await?;
+async fn main_logic(state: &mut MetricsGatherer) -> Result<(), MetricsGathererError> {
+    loop {
+        let last_committed_batch = state
+            .l1_eth_client
+            .get_last_committed_batch(state.on_chain_proposer_address)
+            .await?;
 
-            let last_verified_batch = self
-                .l1_eth_client
-                .get_last_verified_batch(self.on_chain_proposer_address)
-                .await?;
+        let last_verified_batch = state
+            .l1_eth_client
+            .get_last_verified_batch(state.on_chain_proposer_address)
+            .await?;
 
-            let l1_gas_price = self.l1_eth_client.get_gas_price().await?;
-            let l2_gas_price = self.l2_eth_client.get_gas_price().await?;
+        let l1_gas_price = state.l1_eth_client.get_gas_price().await?;
+        let l2_gas_price = state.l2_eth_client.get_gas_price().await?;
 
-            if let Ok(Some(last_verified_batch_blocks)) = self
-                .rollup_store
-                .get_block_numbers_by_batch(last_verified_batch)
-                .await
-            {
-                if let Some(last_block) = last_verified_batch_blocks.last() {
-                    METRICS_L2.set_block_type_and_block_number(
-                        MetricsL2BlockType::LastVerifiedBlock,
-                        *last_block,
-                    )?;
-                }
+        if let Ok(Some(last_verified_batch_blocks)) = state
+            .rollup_store
+            .get_block_numbers_by_batch(last_verified_batch)
+            .await
+        {
+            if let Some(last_block) = last_verified_batch_blocks.last() {
+                METRICS_L2.set_block_type_and_block_number(
+                    MetricsL2BlockType::LastVerifiedBlock,
+                    *last_block,
+                )?;
             }
-
-            if let Ok(operations_metrics) = self.rollup_store.get_operations_count().await {
-                let (transactions, deposits, withdrawals) = (
-                    operations_metrics[0],
-                    operations_metrics[1],
-                    operations_metrics[2],
-                );
-                METRICS_L2.set_operation_by_type(MetricsL2OperationType::Deposits, deposits)?;
-                METRICS_L2
-                    .set_operation_by_type(MetricsL2OperationType::Withdrawals, withdrawals)?;
-                METRICS_TX.set_tx_count(transactions)?;
-            }
-
-            METRICS_L2.set_block_type_and_block_number(
-                MetricsL2BlockType::LastCommittedBatch,
-                last_committed_batch,
-            )?;
-            METRICS_L2.set_block_type_and_block_number(
-                MetricsL2BlockType::LastVerifiedBatch,
-                last_verified_batch,
-            )?;
-            METRICS_L2.set_l1_gas_price(
-                l1_gas_price
-                    .try_into()
-                    .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,
-            );
-            METRICS_L2.set_l2_gas_price(
-                l2_gas_price
-                    .try_into()
-                    .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,
-            );
-
-            debug!("L2 Metrics Gathered");
-            sleep(self.check_interval).await;
         }
+
+        if let Ok(operations_metrics) = state.rollup_store.get_operations_count().await {
+            let (transactions, deposits, withdrawals) = (
+                operations_metrics[0],
+                operations_metrics[1],
+                operations_metrics[2],
+            );
+            METRICS_L2.set_operation_by_type(MetricsL2OperationType::Deposits, deposits)?;
+            METRICS_L2
+                .set_operation_by_type(MetricsL2OperationType::Withdrawals, withdrawals)?;
+            METRICS_TX.set_tx_count(transactions)?;
+        }
+
+        METRICS_L2.set_block_type_and_block_number(
+            MetricsL2BlockType::LastCommittedBatch,
+            last_committed_batch,
+        )?;
+        METRICS_L2.set_block_type_and_block_number(
+            MetricsL2BlockType::LastVerifiedBatch,
+            last_verified_batch,
+        )?;
+        METRICS_L2.set_l1_gas_price(
+            l1_gas_price
+                .try_into()
+                .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,
+        );
+        METRICS_L2.set_l2_gas_price(
+            l2_gas_price
+                .try_into()
+                .map_err(|e: &str| MetricsGathererError::TryInto(e.to_string()))?,
+        );
+
+        debug!("L2 Metrics Gathered");
+        sleep(state.check_interval).await;
     }
 }
