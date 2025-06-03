@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748977189879,
+  "lastUpdate": 1748977516370,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10705,6 +10705,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183118391099,
             "range": "± 1554349356",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f9a9c557d54c23bd389a69672f507ea81cd8ca54",
+          "message": "feat(l1): improve ancestor retrieval for canonical blocks (#3005)\n\n**Motivation**\nDuring Evm execution, we might need to look for a block hash in the\nstate. Previously we encountered bugs as we were looking up the\ncanonical block hash for the given block number when we should be\nsearching for the block hash in the current block's (the one the\nEvmState was built on) ancestors. While this was already fixed by #2965,\nit made block hash lookup much slower.\nIn our most common use cases (fork choice updates, new payloads, full\nsync). The current block will be a canonical one, so we know all of its\nancestors will also be canonical, and there is no reason to go through\nall of its ancestors. So this PR now checks if the current block is\ncanonical, if it is, it searches for the block hash in the canonical\nblock hashes, and if it is not, it searches through its ancestors\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* `StoreVmDatabase::get_block_hash` now searches for the target hash in\ncanonical hashes if its current block (the one set at creation) is\ncanonical\n* Add sync versions of `StoreEngine` methods `get_block_number` &\n`get_canonical_block_hash`\n* Add `Store` method `is_canonical_sync` to check weather a block hash\nis canonical synchronously\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2990",
+          "timestamp": "2025-06-03T18:17:44Z",
+          "tree_id": "47201b3de24e17066923fcd036c4897c08907500",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f9a9c557d54c23bd389a69672f507ea81cd8ca54"
+        },
+        "date": 1748977511875,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182860815406,
+            "range": "± 283706712",
             "unit": "ns/iter"
           }
         ]
