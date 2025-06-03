@@ -459,7 +459,7 @@ contract OnChainProposer is
         );
         bytes32 lastBlockHash = bytes32(publicData[128:160]);
         require(
-            batchCommitments[lastVerifiedBatch].lastBlockHash == lastBlockHash,
+            batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
             "OnChainProposer: last block hash public inputs don't match with last block hash"
         );
     }
