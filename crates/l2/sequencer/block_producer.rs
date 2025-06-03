@@ -41,8 +41,8 @@ pub async fn start_block_producer(
     cfg: SequencerConfig,
 ) -> Result<(), SequencerError> {
     let proposer = BlockProducer::new_from_config(&cfg.block_producer);
-    proposer
-        .run(store.clone(), blockchain, execution_cache)
+    
+        run(&proposer, store.clone(), blockchain, execution_cache)
         .await;
     Ok(())
 }
@@ -60,105 +60,104 @@ impl BlockProducer {
             elasticity_multiplier: *elasticity_multiplier,
         }
     }
+}
 
-    pub async fn run(
-        &self,
-        store: Store,
-        blockchain: Arc<Blockchain>,
-        execution_cache: Arc<ExecutionCache>,
-    ) {
-        loop {
-            let _ = self
-                .main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
-                .await
-                .inspect_err(|e| error!("Block Producer Error: {e}"));
+pub async fn run(
+    state: &BlockProducer,
+    store: Store,
+    blockchain: Arc<Blockchain>,
+    execution_cache: Arc<ExecutionCache>,
+) {
+    loop {
+        let _ = main_logic(state, store.clone(), blockchain.clone(), execution_cache.clone())
+            .await
+            .inspect_err(|e| error!("Block Producer Error: {e}"));
 
-            sleep(Duration::from_millis(self.block_time_ms)).await;
-        }
+        sleep(Duration::from_millis(state.block_time_ms)).await;
     }
+}
 
-    pub async fn main_logic(
-        &self,
-        store: Store,
-        blockchain: Arc<Blockchain>,
-        execution_cache: Arc<ExecutionCache>,
-    ) -> Result<(), BlockProducerError> {
-        let version = 3;
-        let head_header = {
-            let current_block_number = store.get_latest_block_number().await?;
-            store
-                .get_block_header(current_block_number)?
-                .ok_or(BlockProducerError::StorageDataIsNone)?
-        };
-        let head_hash = head_header.hash();
-        let head_beacon_block_root = H256::zero();
+pub async fn main_logic(
+    state: &BlockProducer,
+    store: Store,
+    blockchain: Arc<Blockchain>,
+    execution_cache: Arc<ExecutionCache>,
+) -> Result<(), BlockProducerError> {
+    let version = 3;
+    let head_header = {
+        let current_block_number = store.get_latest_block_number().await?;
+        store
+            .get_block_header(current_block_number)?
+            .ok_or(BlockProducerError::StorageDataIsNone)?
+    };
+    let head_hash = head_header.hash();
+    let head_beacon_block_root = H256::zero();
 
-        // The proposer leverages the execution payload framework used for the engine API,
-        // but avoids calling the API methods and unnecesary re-execution.
+    // The proposer leverages the execution payload framework used for the engine API,
+    // but avoids calling the API methods and unnecesary re-execution.
 
-        info!("Producing block");
-        debug!("Head block hash: {head_hash:#x}");
+    info!("Producing block");
+    debug!("Head block hash: {head_hash:#x}");
 
-        // Proposer creates a new payload
-        let args = BuildPayloadArgs {
-            parent: head_hash,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            fee_recipient: self.coinbase_address,
-            random: H256::zero(),
-            withdrawals: Default::default(),
-            beacon_root: Some(head_beacon_block_root),
-            version,
-            elasticity_multiplier: self.elasticity_multiplier,
-        };
-        let payload = create_payload(&args, &store)?;
+    // Proposer creates a new payload
+    let args = BuildPayloadArgs {
+        parent: head_hash,
+        timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+        fee_recipient: state.coinbase_address,
+        random: H256::zero(),
+        withdrawals: Default::default(),
+        beacon_root: Some(head_beacon_block_root),
+        version,
+        elasticity_multiplier: state.elasticity_multiplier,
+    };
+    let payload = create_payload(&args, &store)?;
 
-        // Blockchain builds the payload from mempool txs and executes them
-        let payload_build_result = build_payload(blockchain.clone(), payload, &store).await?;
-        info!(
-            "Built payload for new block {}",
-            payload_build_result.payload.header.number
-        );
+    // Blockchain builds the payload from mempool txs and executes them
+    let payload_build_result = build_payload(blockchain.clone(), payload, &store).await?;
+    info!(
+        "Built payload for new block {}",
+        payload_build_result.payload.header.number
+    );
 
-        // Blockchain stores block
-        let block = payload_build_result.payload;
-        let chain_config = store.get_chain_config()?;
-        validate_block(
-            &block,
-            &head_header,
-            &chain_config,
-            self.elasticity_multiplier,
-        )?;
+    // Blockchain stores block
+    let block = payload_build_result.payload;
+    let chain_config = store.get_chain_config()?;
+    validate_block(
+        &block,
+        &head_header,
+        &chain_config,
+        state.elasticity_multiplier,
+    )?;
 
-        let account_updates = payload_build_result.account_updates;
+    let account_updates = payload_build_result.account_updates;
 
-        let execution_result = BlockExecutionResult {
-            receipts: payload_build_result.receipts,
-            requests: Vec::new(),
-        };
+    let execution_result = BlockExecutionResult {
+        receipts: payload_build_result.receipts,
+        requests: Vec::new(),
+    };
 
-        blockchain
-            .store_block(&block, execution_result.clone(), &account_updates)
-            .await?;
-        info!("Stored new block {:x}", block.hash());
-        // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
+    blockchain
+        .store_block(&block, execution_result.clone(), &account_updates)
+        .await?;
+    info!("Stored new block {:x}", block.hash());
+    // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
-        // Cache execution result
-        execution_cache.push(block.hash(), account_updates)?;
+    // Cache execution result
+    execution_cache.push(block.hash(), account_updates)?;
 
-        // Make the new head be part of the canonical chain
-        apply_fork_choice(&store, block.hash(), block.hash(), block.hash()).await?;
+    // Make the new head be part of the canonical chain
+    apply_fork_choice(&store, block.hash(), block.hash(), block.hash()).await?;
 
-        metrics!(
-            let _ = METRICS_BLOCKS
-            .set_block_number(block.header.number)
-            .inspect_err(|e| {
-                tracing::error!("Failed to set metric: block_number {}", e.to_string())
-            });
-            #[allow(clippy::as_conversions)]
-            let tps = block.body.transactions.len() as f64 / (self.block_time_ms as f64 / 1000_f64);
-            METRICS_TX.set_transactions_per_second(tps);
-        );
+    metrics!(
+        let _ = METRICS_BLOCKS
+        .set_block_number(block.header.number)
+        .inspect_err(|e| {
+            tracing::error!("Failed to set metric: block_number {}", e.to_string())
+        });
+        #[allow(clippy::as_conversions)]
+        let tps = block.body.transactions.len() as f64 / (state.block_time_ms as f64 / 1000_f64);
+        METRICS_TX.set_transactions_per_second(tps);
+    );
 
-        Ok(())
-    }
+    Ok(())
 }
