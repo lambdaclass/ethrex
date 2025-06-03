@@ -1,4 +1,3 @@
-#[cfg(any(feature = "libmdbx", feature = "redb"))]
 // In order to use NodeHash as key in a dupsort table we must encode it into a fixed size type
 pub fn node_hash_to_fixed_size(node_hash: ethrex_trie::NodeHash) -> [u8; 33] {
     let node_hash_ref = node_hash.as_ref();

@@ -1114,17 +1114,17 @@ impl StoreRwTx<'_> {
     }
 }
 
-pub struct AncestorIterator {
-    store: Store,
+pub struct AncestorIterator<'st> {
+    tx: StoreRoTx<'st>,
     next_hash: BlockHash,
 }
 
-impl Iterator for AncestorIterator {
+impl<'st> Iterator for AncestorIterator<'st> {
     type Item = Result<(BlockHash, BlockHeader), StoreError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let next_hash = self.next_hash;
-        match self.store.get_block_header_by_hash(next_hash) {
+        match self.tx.get_block_header_by_hash(next_hash) {
             Ok(Some(header)) => {
                 let ret_hash = self.next_hash;
                 self.next_hash = header.parent_hash;
@@ -1173,13 +1173,11 @@ mod tests {
         test_store_suite(EngineType::InMemory).await;
     }
 
-    #[cfg(feature = "libmdbx")]
     #[tokio::test]
     async fn test_libmdbx_store() {
         test_store_suite(EngineType::Libmdbx).await;
     }
 
-    #[cfg(feature = "redb")]
     #[tokio::test]
     async fn test_redb_store() {
         test_store_suite(EngineType::RedB).await;
@@ -1217,7 +1215,7 @@ mod tests {
         run_test(test_genesis_block, engine_type).await;
     }
 
-    async fn test_genesis_block(store: Store) {
+    async fn test_genesis_block(store: Store<'_>) {
         const GENESIS_KURTOSIS: &str = include_str!("../../test_data/genesis-kurtosis.json");
         const GENESIS_HIVE: &str = include_str!("../../test_data/genesis-hive.json");
         assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
@@ -1247,7 +1245,7 @@ mod tests {
         }
     }
 
-    async fn test_store_block(store: Store) {
+    async fn test_store_block(store: Store<'_>) {
         let (block_header, block_body) = create_block_for_testing();
         let block_number = 6;
         let hash = block_header.hash();
@@ -1326,37 +1324,44 @@ mod tests {
         (block_header, block_body)
     }
 
-    async fn test_store_block_number(store: Store) {
+    async fn test_store_block_number(store: Store<'_>) {
         let block_hash = H256::random();
         let block_number = 6;
 
-        store
-            .add_block_number(block_hash, block_number)
-            .await
-            .unwrap();
+        let tx = store.begin_rw_tx().unwrap();
+        tx.add_block_number(block_hash, block_number).await.unwrap();
+        tx.commit().await.unwrap();
 
-        let stored_number = store.get_block_number(block_hash).await.unwrap().unwrap();
+        let stored_number = store
+            .begin_ro_tx()
+            .unwrap()
+            .get_block_number(block_hash)
+            .await
+            .unwrap()
+            .unwrap();
 
         assert_eq!(stored_number, block_number);
     }
 
-    async fn test_store_transaction_location(store: Store) {
+    async fn test_store_transaction_location(store: Store<'_>) {
         let transaction_hash = H256::random();
         let block_hash = H256::random();
         let block_number = 6;
         let index = 3;
 
-        store
-            .add_transaction_location(transaction_hash, block_number, block_hash, index)
+        let tx = store.begin_rw_tx().unwrap();
+        tx.add_transaction_location(transaction_hash, block_number, block_hash, index)
             .await
             .unwrap();
 
-        store
-            .set_canonical_block(block_number, block_hash)
+        tx.set_canonical_block(block_number, block_hash)
             .await
             .unwrap();
+        tx.commit().await.unwrap();
 
         let stored_location = store
+            .begin_ro_tx()
+            .unwrap()
             .get_transaction_location(transaction_hash)
             .await
             .unwrap()
@@ -1402,17 +1407,19 @@ mod tests {
         let index = 4;
         let block_hash = H256::random();
 
-        store
-            .add_receipt(block_hash, index, receipt.clone())
+        let tx = store.begin_rw_tx().unwrap();
+        tx.add_receipt(block_hash, index, receipt.clone())
             .await
             .unwrap();
 
-        store
-            .set_canonical_block(block_number, block_hash)
+        tx.set_canonical_block(block_number, block_hash)
             .await
             .unwrap();
+        tx.commit().await.unwrap();
 
         let stored_receipt = store
+            .begin_ro_tx()
+            .unwrap()
             .get_receipt(block_number, index)
             .await
             .unwrap()
@@ -1421,21 +1428,25 @@ mod tests {
         assert_eq!(stored_receipt, receipt);
     }
 
-    async fn test_store_account_code(store: Store) {
+    async fn test_store_account_code(store: Store<'_>) {
         let code_hash = H256::random();
         let code = Bytes::from("kiwi");
 
-        store
-            .add_account_code(code_hash, code.clone())
-            .await
-            .unwrap();
+        let tx = store.begin_rw_tx().unwrap();
+        tx.add_account_code(code_hash, code.clone()).await.unwrap();
+        tx.commit().await.unwrap();
 
-        let stored_code = store.get_account_code(code_hash).unwrap().unwrap();
+        let stored_code = store
+            .begin_ro_tx()
+            .unwrap()
+            .get_account_code(code_hash)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(stored_code, code);
     }
 
-    async fn test_store_block_tags(store: Store) {
+    async fn test_store_block_tags(store: Store<'_>) {
         let earliest_block_number = 0;
         let finalized_block_number = 7;
         let safe_block_number = 6;

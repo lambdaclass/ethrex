@@ -10,11 +10,8 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::Nibbles;
-#[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
-#[cfg(feature = "redb")]
 use redb::TypeName;
-#[cfg(feature = "redb")]
 use std::any::type_name;
 
 // Account types
@@ -70,14 +67,12 @@ impl<T> Rlp<T> {
     }
 }
 
-#[cfg(feature = "libmdbx")]
 impl<T: Send + Sync> Decodable for Rlp<T> {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
         Ok(Rlp(b.to_vec(), Default::default()))
     }
 }
 
-#[cfg(feature = "libmdbx")]
 impl<T: Send + Sync> Encodable for Rlp<T> {
     type Encoded = Vec<u8>;
 
@@ -86,7 +81,6 @@ impl<T: Send + Sync> Encodable for Rlp<T> {
     }
 }
 
-#[cfg(feature = "redb")]
 impl<T: Send + Sync + Debug> redb::Value for Rlp<T> {
     type SelfType<'a>
         = Rlp<T>
@@ -122,7 +116,6 @@ impl<T: Send + Sync + Debug> redb::Value for Rlp<T> {
     }
 }
 
-#[cfg(feature = "redb")]
 impl<T: Send + Sync + Debug> redb::Key for Rlp<T> {
     fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
         data1.cmp(data2)

@@ -1,6 +1,5 @@
 mod api;
 
-#[cfg(any(feature = "libmdbx", feature = "redb"))]
 mod rlp;
 mod store;
 mod store_db;

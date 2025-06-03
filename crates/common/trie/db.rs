@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+// TODO: split into txs, based on the ones from store
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError>;
     fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError>;

@@ -13,6 +13,10 @@ use ethrex_trie::{Nibbles, Trie};
 
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
+// TODO: this doesn't need to be async_trait.
+// Also, if we assume only the commit needs to be async, and given we provide a blocking
+// version, the non-blocking version can be restricted, or at least defaulted, to the
+// storage layer and leave the implementations be sync.
 #[async_trait::async_trait]
 pub trait StoreEngine<'st>: Debug + Send + Sync + RefUnwindSafe {
     fn begin_ro_tx(&'st self) -> Result<Arc<dyn StoreRoTx<'st>>, StoreError>;
@@ -20,7 +24,7 @@ pub trait StoreEngine<'st>: Debug + Send + Sync + RefUnwindSafe {
 }
 
 #[async_trait::async_trait]
-pub trait StoreRoTx<'st>: Debug + Send + Sync {
+pub trait StoreRoTx<'st>: Send + Sync {
     // Read-only transactions don't write to the DB, so no need for commit.
     // You can and should close them to avoid interfering with RW transactions.
 
