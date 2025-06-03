@@ -321,8 +321,8 @@ impl Trie {
 
             fn record_witness(&mut self) {}
 
-            fn witness(&self) -> HashSet<Vec<u8>> {
-                HashSet::new()
+            fn witness(&self) -> Result<HashSet<Vec<u8>>, TrieError> {
+                Ok(HashSet::new())
             }
         }
 

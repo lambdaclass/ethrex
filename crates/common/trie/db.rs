@@ -11,7 +11,7 @@ pub trait TrieDB: Send + Sync {
     fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError>;
     // fn put_batch(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError>;
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError>;
-    fn witness(&self) -> HashSet<Vec<u8>>;
+    fn witness(&self) -> Result<HashSet<Vec<u8>>, TrieError>;
     fn record_witness(&mut self);
 }
 
@@ -81,8 +81,8 @@ impl TrieDB for InMemoryTrieDB {
         self.record_witness = true;
     }
 
-    fn witness(&self) -> HashSet<Vec<u8>> {
-        let lock = self.witness.lock().unwrap();
-        lock.clone()
+    fn witness(&self) -> Result<HashSet<Vec<u8>>, TrieError> {
+        let lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
+        Ok(lock.clone())
     }
 }

@@ -236,7 +236,9 @@ impl Blockchain {
                 )
                 .await?;
             for (address, trie) in storage_tries_after_update {
-                let witness = trie.db().witness();
+                let witness = trie.db().witness().map_err(|_| {
+                    ChainError::Custom("Failed to get witness for storage trie".to_string())
+                })?;
                 let witness = witness.into_iter().collect::<Vec<_>>();
                 match encoded_storage_tries.entry(address) {
                     std::collections::hash_map::Entry::Occupied(mut entry) => {
@@ -251,7 +253,10 @@ impl Blockchain {
         }
 
         // Get the witness for the state trie
-        let witnessed_trie = trie.db().witness();
+        let witnessed_trie = trie
+            .db()
+            .witness()
+            .map_err(|_| ChainError::Custom("Failed to get witness for state trie".to_string()))?;
         let used_trie_nodes = Vec::from_iter(witnessed_trie.into_iter());
 
         Ok((used_trie_nodes, codes, encoded_storage_tries, block_hashes))

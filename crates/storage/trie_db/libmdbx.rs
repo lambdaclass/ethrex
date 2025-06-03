@@ -38,9 +38,9 @@ where
         self.record_witness = true;
     }
 
-    fn witness(&self) -> HashSet<Vec<u8>> {
-        let lock = self.witness.lock().unwrap();
-        lock.clone()
+    fn witness(&self) -> Result<HashSet<Vec<u8>>, TrieError> {
+        let lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
+        Ok(lock.clone())
     }
 
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
