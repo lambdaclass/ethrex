@@ -172,6 +172,7 @@ pub async fn init_network(
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
     based: bool,
+    #[cfg(feature = "l2")] store_rollup: StoreRollup,
 ) {
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -192,6 +193,8 @@ pub async fn init_network(
         blockchain,
         get_client_version(),
         based,
+        #[cfg(feature = "l2")]
+        store_rollup,
     );
 
     context.set_fork_id().await.expect("Set fork id");

@@ -53,6 +53,8 @@ pub(crate) enum RLPxError {
     IoError(#[from] std::io::Error),
     #[error("Failed to decode message due to invalid frame: {0}")]
     InvalidMessageFrame(String),
+    #[error("Failed due to an internal error: {0}")]
+    InternalError(String),
 }
 
 // tokio::sync::mpsc::error::SendError<Message> is too large to be part of the RLPxError enum directly

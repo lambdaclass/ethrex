@@ -1,7 +1,7 @@
 use crate::{
     kademlia::PeerChannels,
     rlpx::{
-        based::NewBlockMessage,
+        based::{BatchSealedMessage, NewBlockMessage},
         error::RLPxError,
         eth::{
             backend,
@@ -30,6 +30,8 @@ use ethrex_common::{
     H256, H512,
 };
 use ethrex_storage::Store;
+#[cfg(feature = "l2")]
+use ethrex_storage_rollup::StoreRollup;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
@@ -45,7 +47,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::debug;
+use tracing::{debug, info};
 
 use super::{
     eth::transactions::NewPooledTransactionHashes, p2p::DisconnectReason, utils::log_peer_warn,
@@ -90,6 +92,7 @@ pub(crate) struct RLPxConnection<S> {
     next_block_broadcast: Instant,
     broadcasted_txs: HashSet<H256>,
     latest_broadcasted_block: u64,
+    batches_broadcasted: u64,
     client_version: String,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
@@ -100,6 +103,8 @@ pub(crate) struct RLPxConnection<S> {
     /// The receive end is instantiated after the handshake is completed
     /// under `handle_peer`.
     connection_broadcast_send: RLPxConnBroadcastSender,
+    #[cfg(feature = "l2")]
+    store_rollup: StoreRollup,
     based: bool,
 }
 
@@ -114,6 +119,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         blockchain: Arc<Blockchain>,
         client_version: String,
         connection_broadcast: RLPxConnBroadcastSender,
+        #[cfg(feature = "l2")] store_rollup: StoreRollup,
         based: bool,
     ) -> Self {
         Self {
@@ -130,8 +136,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
             broadcasted_txs: HashSet::new(),
             latest_broadcasted_block: 0,
+            batches_broadcasted: 0,
             client_version,
             connection_broadcast_send: connection_broadcast,
+            #[cfg(feature = "l2")]
+            store_rollup,
             based,
         }
     }
@@ -421,6 +430,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             self.send_new_block().await?;
             self.next_block_broadcast = Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL;
         }
+        if Instant::now() >= self.next_periodic_ping - PERIODIC_PING_INTERVAL {
+            self.send_sealed_batch().await?;
+        }
         Ok(())
     }
 
@@ -478,6 +490,45 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             self.latest_broadcasted_block = latest_block_number;
         }
         Ok(())
+    }
+
+    async fn send_sealed_batch(&mut self) -> Result<(), RLPxError> {
+        #[cfg(feature = "l2")]
+        {
+            let next_batch_to_send = self.batches_broadcasted + 1;
+            if self
+                .store_rollup
+                .contains_batch(&next_batch_to_send)
+                .await?
+            {
+                let block_numbers = self
+                    .store_rollup
+                    .get_block_numbers_by_batch(self.batches_broadcasted + 1)
+                    .await?
+                    .ok_or(RLPxError::InternalError(
+                        "No batch found after containing check".to_string(),
+                    ))?;
+                let withdrawal_hashes = self
+                    .store_rollup
+                    .get_withdrawal_hashes_by_batch(next_batch_to_send)
+                    .await?
+                    .ok_or(RLPxError::InternalError(
+                        "No withdrawal hashes found for the batch".to_string(),
+                    ))?;
+                let msg = Message::BatchSealed(BatchSealedMessage {
+                    batch_number: next_batch_to_send,
+                    block_numbers,
+                    withdrawal_hashes,
+                });
+                self.send(msg).await?;
+                self.batches_broadcasted += 1;
+            }
+            Ok(())
+        }
+        #[cfg(not(feature = "l2"))]
+        {
+            Ok(())
+        }
     }
 
     async fn handle_message(
@@ -598,6 +649,33 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     .await
                     .map_err(|e| RLPxError::BadRequest(format!("Error adding new block: {e}")))?;
                 self.broadcast_message(Message::NewBlock(req))?;
+            }
+            Message::BatchSealed(req) => {
+                #[cfg(feature = "l2")]
+                {
+                    if !self.store_rollup.contains_batch(&req.batch_number).await? {
+                        let first_block_number =
+                            req.block_numbers.first().ok_or(RLPxError::InternalError(
+                                "No block numbers found in BatchSealed message".to_string(),
+                            ))?;
+                        let last_block_number =
+                            req.block_numbers.last().ok_or(RLPxError::InternalError(
+                                "No block numbers found in BatchSealed message".to_string(),
+                            ))?;
+                        self.store_rollup
+                            .seal_batch(
+                                req.batch_number,
+                                *first_block_number,
+                                *last_block_number,
+                                req.withdrawal_hashes,
+                            )
+                            .await?;
+                        info!(
+                            "Sealed batch {} with blocks from {} to {}",
+                            req.batch_number, first_block_number, last_block_number
+                        );
+                    }
+                }
             }
 
             // Send response messages to the backend
