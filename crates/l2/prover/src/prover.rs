@@ -50,7 +50,7 @@ impl Prover {
             // If we get the input
             // Generate the Proof
             let Ok(batch_proof) = prove(prover_data.input, self.aligned_mode)
-                .and_then(to_calldata)
+                .and_then(|output| to_batch_proof(output, self.aligned_mode))
                 .inspect_err(|e| error!(e))
             else {
                 continue;
