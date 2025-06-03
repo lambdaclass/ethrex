@@ -37,7 +37,7 @@ jobs:
         run: |
           . "$HOME/.cargo/env"
           curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 4.1.7
+          ~/.sp1/bin/sp1up --version 5.0.0
 
       - name: Build
         run: |
