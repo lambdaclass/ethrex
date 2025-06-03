@@ -60,7 +60,17 @@ impl LevmCallTracer {
             // Only create callframe if it's the first one to be created.
             return;
         }
-        let callframe = TracingCallframe::new(call_type, from, to, value, gas, input.clone());
+
+        let callframe = TracingCallframe {
+            call_type,
+            from,
+            to,
+            value,
+            gas,
+            input: input.clone(),
+            ..Default::default()
+        };
+
         self.callframes.push(callframe);
     }
 
@@ -73,18 +83,18 @@ impl LevmCallTracer {
         error: Option<String>,
         revert_reason: Option<String>,
     ) -> Result<(), InternalError> {
-        let mut executed_callframe = self
+        let mut callframe = self
             .callframes
             .pop()
             .ok_or(InternalError::CouldNotPopCallframe)?;
 
-        executed_callframe.process_output(gas_used, output, error, revert_reason);
+        process_output(&mut callframe, gas_used, output, error, revert_reason);
 
         // Append executed callframe to parent callframe if appropriate.
         if let Some(parent_callframe) = self.callframes.last_mut() {
-            parent_callframe.calls.push(executed_callframe);
+            parent_callframe.calls.push(callframe);
         } else {
-            self.callframes.push(executed_callframe);
+            self.callframes.push(callframe);
         };
         Ok(())
     }
@@ -104,7 +114,7 @@ impl LevmCallTracer {
         }
         if is_top_call {
             // After finishing transaction execution clear all logs of callframes that reverted.
-            self.current_callframe_mut()?.clear_reverted_logs();
+            clear_reverted_logs(self.current_callframe_mut()?);
         }
         let (gas_used, output) = (report.gas_used, report.output.clone());
 
@@ -164,7 +174,31 @@ impl LevmCallTracer {
     }
 }
 
+fn process_output(
+    callframe: &mut TracingCallframe,
+    gas_used: u64,
+    output: Bytes,
+    error: Option<String>,
+    revert_reason: Option<String>,
+) {
+    callframe.gas_used = gas_used;
+    callframe.output = output;
+    callframe.error = error;
+    callframe.revert_reason = revert_reason;
+}
+
+/// Clear logs of callframe if it reverted and repeat the same with its subcalls.
+fn clear_reverted_logs(callframe: &mut TracingCallframe) {
+    if callframe.error.is_some() {
+        callframe.logs.clear();
+    }
+    for subcall in &mut callframe.calls {
+        subcall.clear_reverted_logs();
+    }
+}
+
 impl<'a> VM<'a> {
+    /// This method is intended to be accessed after transaction execution
     pub fn get_trace_result(&mut self) -> Result<TracingCallframe, VMError> {
         self.tracer
             .callframes
