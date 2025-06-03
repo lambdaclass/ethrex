@@ -17,12 +17,12 @@ pub async fn start_metrics_gatherer(
     l2_url: String,
 ) -> Result<(), SequencerError> {
     let mut metrics_gatherer =
-        MetricsGatherer::new_from_config(rollup_store, &cfg.l1_committer, &cfg.eth, l2_url).await?;
+        MetricsGathererState::new(rollup_store, &cfg.l1_committer, &cfg.eth, l2_url).await?;
     run(&mut metrics_gatherer).await;
     Ok(())
 }
 
-pub struct MetricsGatherer {
+pub struct MetricsGathererState {
     l1_eth_client: EthClient,
     l2_eth_client: EthClient,
     on_chain_proposer_address: Address,
@@ -30,8 +30,8 @@ pub struct MetricsGatherer {
     rollup_store: StoreRollup,
 }
 
-impl MetricsGatherer {
-    pub async fn new_from_config(
+impl MetricsGathererState {
+    pub async fn new(
         rollup_store: StoreRollup,
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
@@ -49,9 +49,9 @@ impl MetricsGatherer {
     }
 }
 
-pub async fn run(state: &mut MetricsGatherer) {
+pub async fn run(state: &mut MetricsGathererState) {
     loop {
-        if let Err(err) = main_logic(state).await {
+        if let Err(err) = gather_metrics(state).await {
             error!("Metrics Gatherer Error: {}", err);
         }
 
@@ -59,7 +59,7 @@ pub async fn run(state: &mut MetricsGatherer) {
     }
 }
 
-async fn main_logic(state: &mut MetricsGatherer) -> Result<(), MetricsGathererError> {
+async fn gather_metrics(state: &mut MetricsGathererState) -> Result<(), MetricsGathererError> {
     loop {
         let last_committed_batch = state
             .l1_eth_client
