@@ -516,9 +516,7 @@ async fn create_prover_input(
     let blocks = fetch_blocks(state, block_numbers).await?;
 
     // Create prover_db
-    let db = to_prover_db(&state.store.clone(), &blocks)
-        .await
-        .map_err(EvmError::ProverDB)?;
+    let db = to_prover_db(&state.store.clone(), &blocks).await?;
 
     // Get the block_header of the parent of the first block
     let parent_hash = blocks
