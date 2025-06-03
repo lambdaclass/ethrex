@@ -87,7 +87,7 @@ holesky-lighthouse:
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--datadir "holesky_data/lighthouse_${NODE_NAME}_$(EVM)" \
+		--datadir "~/.local/share/holesky_data/lighthouse_${NODE_NAME}_$(EVM)" \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
 hoodi-lighthouse:
@@ -99,7 +99,7 @@ hoodi-lighthouse:
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--datadir "hoodi_data/lighthouse_${NODE_NAME}_$(EVM)" \
+		--datadir "~/.local/share/hoodi_data/lighthouse_${NODE_NAME}_$(EVM)" \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
 
