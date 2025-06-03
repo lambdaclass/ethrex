@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748963065790,
+  "lastUpdate": 1748963135406,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10495,6 +10495,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178707987790,
             "range": "± 315461588",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "002d1a5e669526b6318592663b52dfef7f6e5e21",
+          "message": "fix(core): fix tokio dep on loadtest crate (#3027)\n\n**Motivation**\nAfter #2981 tokio's \"full\" feature was removed from the workspace\ndependency, crates relying on it had the feature added on their\nrespective Cargo.toml's but we missed the `load_test` crate causing the\nflamegraph workflow to fail\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add \"full\" feature to tokio dep on `load_test` crate\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n**Proof of Working Fix**\nManually triggered workflow:\nhttps://github.com/lambdaclass/ethrex/actions/runs/15418491746\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-06-03T14:18:50Z",
+          "tree_id": "367a08b72a7a6ad26cf9871d4925c698deec0f7f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/002d1a5e669526b6318592663b52dfef7f6e5e21"
+        },
+        "date": 1748963131194,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179968658476,
+            "range": "± 508049007",
             "unit": "ns/iter"
           }
         ]
