@@ -68,6 +68,26 @@ pub async fn get_witness(
     result
 }
 
+pub async fn get_witness_range(
+    rpc_url: &str,
+    from: usize,
+    to: usize,
+) -> eyre::Result<ExecutionWitnessResult> {
+    let from = format!("0x{from:x}");
+    let to = format!("0x{to:x}");
+    let request = &json!({
+        "id": 1,
+        "jsonrpc": "2.0",
+        "method": "debug_executionWitness",
+        "params": [from, to]
+    });
+
+    let response = CLIENT.post(rpc_url).json(request).send().await?;
+    let res = response.json::<serde_json::Value>().await?;
+    let result: Result<ExecutionWitnessResult, eyre::Error> = get_result(res);
+    result
+}
+
 fn get_result<T: DeserializeOwned>(response: serde_json::Value) -> eyre::Result<T> {
     match response.get("result") {
         Some(result) => Ok(serde_json::from_value(result.clone())?),

@@ -3,7 +3,7 @@ use ethrex_common::types::{AccountUpdate, Receipt};
 
 use crate::bench::run_and_measure;
 use crate::constants::get_chain_config;
-use crate::fetcher::{get_blockdata, or_latest};
+use crate::fetcher::{get_blockdata, get_rangedata, or_latest};
 use crate::rpc::get_tx_block;
 use crate::run::{exec, prove, run_tx};
 
@@ -94,23 +94,23 @@ impl SubcommandExecute {
             SubcommandExecute::BlockRange {
                 start,
                 end,
+                rpc_url,
                 network,
-                ..
+                bench,
             } => {
                 if start >= end {
                     return Err(eyre::Error::msg(
                         "starting point can't be greater than ending point",
                     ));
                 }
-                todo!()
-                // let chain_config = get_chain_config(&network)?;
-                // let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
-                // let body = async {
-                //     let gas_used = cache.blocks.iter().map(|b| b.header.gas_used as f64).sum();
-                //     exec(cache).await?;
-                //     Ok((gas_used, ()))
-                // };
-                // run_and_measure(bench, body).await?;
+                let chain_config = get_chain_config(&network)?;
+                let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
+                let body = async {
+                    let gas_used = cache.blocks.iter().map(|b| b.header.gas_used as f64).sum();
+                    exec(cache).await?;
+                    Ok((gas_used, ()))
+                };
+                run_and_measure(bench, body).await?;
             }
             SubcommandExecute::Transaction {
                 tx,
@@ -194,24 +194,24 @@ impl SubcommandProve {
             SubcommandProve::BlockRange {
                 start,
                 end,
+                rpc_url,
                 network,
-                ..
+                bench,
             } => {
                 if start >= end {
                     return Err(eyre::Error::msg(
                         "starting point can't be greater than ending point",
                     ));
                 }
-                todo!()
-                // let chain_config = get_chain_config(&network)?;
-                // let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
-                // let body = async {
-                //     let gas_used = cache.blocks.iter().map(|b| b.header.gas_used as f64).sum();
-                //     let res = prove(cache).await?;
-                //     Ok((gas_used, res))
-                // };
-                // let res = run_and_measure(bench, body).await?;
-                // println!("{res}");
+                let chain_config = get_chain_config(&network)?;
+                let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
+                let body = async {
+                    let gas_used = cache.blocks.iter().map(|b| b.header.gas_used as f64).sum();
+                    let res = prove(cache).await?;
+                    Ok((gas_used, res))
+                };
+                let res = run_and_measure(bench, body).await?;
+                println!("{res}");
             }
         }
         Ok(())

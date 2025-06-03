@@ -13,7 +13,7 @@ use eyre::Context;
 
 use crate::{
     cache::{load_cache, write_cache, Cache},
-    rpc::{get_block, get_latest_block_number, get_witness},
+    rpc::{get_block, get_latest_block_number, get_witness, get_witness_range},
 };
 
 pub async fn or_latest(maybe_number: Option<usize>, rpc_url: &str) -> eyre::Result<usize> {
@@ -56,6 +56,45 @@ pub async fn get_blockdata(
         db,
     };
     write_cache(&cache).expect("failed to write cache");
+    Ok(cache)
+}
+
+pub async fn get_rangedata(
+    rpc_url: &str,
+    chain_config: ChainConfig,
+    from: usize,
+    to: usize,
+) -> eyre::Result<Cache> {
+    let mut blocks = Vec::with_capacity(to - from);
+    for block_number in from..=to {
+        let block = get_block(rpc_url, block_number)
+            .await
+            .wrap_err("failed to fetch block")?;
+        blocks.push(block);
+    }
+
+    let parent_block_header = get_block(rpc_url, from - 1)
+        .await
+        .wrap_err("failed to fetch block")?
+        .header;
+
+    let witness = get_witness_range(rpc_url, from, to)
+        .await
+        .wrap_err("Failed to get execution witness for range")?;
+
+    let db = to_exec_db_from_witness(chain_config, &witness)
+        .wrap_err("Failed to build prover db from execution witness")?;
+
+    let cache = Cache {
+        blocks,
+        parent_block_header,
+        witness,
+        chain_config,
+        db,
+    };
+    // TODO fix this
+    // write_cache(&cache).expect("failed to write cache");
+
     Ok(cache)
 }
 
