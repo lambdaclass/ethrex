@@ -76,15 +76,15 @@ impl<'st> Store<'st> {
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
         let store = Self::new(store_path, engine_type)?;
-        store.begin_rw_tx()?.add_initial_state(genesis).await?;
+        store.add_initial_state(genesis).await?;
         Ok(store)
     }
 
-    pub fn begin_ro_tx(&'st self) -> Result<&'st dyn EngineRoTx, StoreError> {
+    pub fn begin_ro_tx(&'st self) -> Result<Arc<dyn EngineRoTx<'st>>, StoreError> {
         self.engine.begin_ro_tx()
     }
 
-    pub fn begin_rw_tx(&'st self) -> Result<&'st dyn EngineRwTx, StoreError> {
+    pub fn begin_rw_tx(&'st self) -> Result<Arc<dyn EngineRwTx<'st>>, StoreError> {
         self.engine.begin_rw_tx()
     }
 
