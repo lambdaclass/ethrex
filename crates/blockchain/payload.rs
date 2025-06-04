@@ -547,6 +547,7 @@ impl Blockchain {
         context.payload.header.requests_hash = context.requests_hash;
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
         context.account_updates = account_updates;
+
         Ok(())
     }
 }
