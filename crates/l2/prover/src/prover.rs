@@ -2,6 +2,7 @@ use crate::{config::ProverConfig, prove, to_calldata};
 use ethrex_l2::{
     sequencer::proof_coordinator::ProofData, utils::prover::proving_systems::ProofCalldata,
 };
+use ethrex_vm::to_exec_db_from_witness;
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -85,13 +86,16 @@ impl Prover {
                 );
         };
 
+        let db =
+            to_exec_db_from_witness(input.chain_config, &input.db).map_err(|e| e.to_string())?;
+
         info!("Received Response for batch_number: {batch_number}");
         Ok(ProverData {
             batch_number,
             input: ProgramInput {
                 blocks: input.blocks,
                 parent_block_header: input.parent_block_header,
-                db: input.db,
+                db,
                 elasticity_multiplier: input.elasticity_multiplier,
             },
         })
