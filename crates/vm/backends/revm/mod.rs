@@ -1,5 +1,6 @@
 pub mod db;
 pub mod helpers;
+mod tracing;
 
 use super::BlockExecutionResult;
 use crate::backends::revm::db::EvmState;
@@ -18,7 +19,6 @@ use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;
 
 use revm::{
-    inspectors::TracerEip3155,
     primitives::{BlobExcessGasAndPrice, BlockEnv, TxEnv, B256},
     Evm,
 };
@@ -379,10 +379,7 @@ fn run_evm(
             .with_block_env(block_env)
             .with_tx_env(tx_env)
             .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-            .with_spec_id(spec_id)
-            .with_external_context(
-                TracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
-            );
+            .with_spec_id(spec_id);
 
         let mut evm = evm_builder.with_db(state).build();
         evm.transact_commit().map_err(EvmError::from)?
