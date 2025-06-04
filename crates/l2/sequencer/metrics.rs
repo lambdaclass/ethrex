@@ -1,17 +1,14 @@
-use crate::{
-    sequencer::errors::{MetricsGathererError, SequencerError},
-    CommitterConfig, EthConfig, SequencerConfig,
-};
+use crate::{sequencer::errors::MetricsGathererError, CommitterConfig, EthConfig, SequencerConfig};
 use ::ethrex_storage_rollup::StoreRollup;
 use ethereum_types::Address;
 use ethrex_metrics::metrics_l2::{MetricsL2BlockType, MetricsL2OperationType, METRICS_L2};
 use ethrex_metrics::metrics_transactions::METRICS_TX;
 use ethrex_rpc::clients::eth::EthClient;
+use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
+use spawned_rt::mpsc::Sender;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error};
-use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
-use spawned_rt::mpsc::Sender;
 
 #[derive(Clone)]
 pub struct MetricsGathererState {
@@ -54,11 +51,12 @@ pub struct MetricsGatherer;
 
 impl MetricsGatherer {
     pub async fn spawn(
-    cfg: SequencerConfig,
-    rollup_store: StoreRollup,
-    l2_url: String,
+        cfg: SequencerConfig,
+        rollup_store: StoreRollup,
+        l2_url: String,
     ) -> Result<(), MetricsGathererError> {
-        let state= MetricsGathererState::new(rollup_store, &cfg.l1_committer, &cfg.eth, l2_url).await?;
+        let state =
+            MetricsGathererState::new(rollup_store, &cfg.l1_committer, &cfg.eth, l2_url).await?;
         let mut metrics = MetricsGatherer::start(state);
         metrics
             .cast(InMessage::Gather)
@@ -147,8 +145,7 @@ async fn gather_metrics(state: &mut MetricsGathererState) -> Result<(), MetricsG
                 operations_metrics[2],
             );
             METRICS_L2.set_operation_by_type(MetricsL2OperationType::Deposits, deposits)?;
-            METRICS_L2
-                .set_operation_by_type(MetricsL2OperationType::Withdrawals, withdrawals)?;
+            METRICS_L2.set_operation_by_type(MetricsL2OperationType::Withdrawals, withdrawals)?;
             METRICS_TX.set_tx_count(transactions)?;
         }
 

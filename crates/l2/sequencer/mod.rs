@@ -9,9 +9,9 @@ use execution_cache::ExecutionCache;
 use l1_committer::L1Committer;
 use l1_proof_sender::L1ProofSender;
 use l1_watcher::L1Watcher;
-use proof_coordinator::ProofCoordinator;
 #[cfg(feature = "metrics")]
 use metrics::MetricsGatherer;
+use proof_coordinator::ProofCoordinator;
 use tracing::{error, info};
 
 pub mod block_producer;
@@ -76,10 +76,9 @@ pub async fn start_l2(
     });
 
     #[cfg(feature = "metrics")]
-    let _ = MetricsGatherer::spawn(
-        cfg, rollup_store, l2_url
-    )
-    .await.inspect_err(|err| {
-        error!("Error starting Block Producer: {err}");
-    });
+    let _ = MetricsGatherer::spawn(cfg, rollup_store, l2_url)
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Block Producer: {err}");
+        });
 }
