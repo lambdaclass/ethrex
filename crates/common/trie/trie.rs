@@ -400,6 +400,10 @@ impl Trie {
         self.db.record_witness();
     }
 
+    pub fn root_node(&self) -> Result<Option<Node>, TrieError> {
+        self.root.get_node(self.db.as_ref())
+    }
+
     /// Creates a new Trie based on a temporary InMemory DB
     fn new_temp() -> Self {
         use std::collections::HashMap;

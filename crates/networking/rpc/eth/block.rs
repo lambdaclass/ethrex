@@ -13,8 +13,7 @@ use crate::{
     utils::RpcErr,
 };
 use ethrex_common::types::{
-    block_execution_witness::ExecutionWitnessResult, calculate_base_fee_per_blob_gas, Block,
-    BlockBody, BlockHash, BlockHeader, BlockNumber, Receipt,
+    calculate_base_fee_per_blob_gas, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Receipt,
 };
 use ethrex_storage::Store;
 
@@ -412,26 +411,13 @@ impl RpcHandler for ExecutionWitness {
             blocks.push(block);
         }
 
-        let (state_rlp, codes, storage_tries, blocks_used) = context
+        let execution_witness = context
             .blockchain
             .generate_witness_for_blocks(&blocks)
             .await
             .map_err(|e| RpcErr::Internal(format!("Failed to build execution witness {e}")))?;
 
-        for (_block_number, block_hash) in blocks_used {
-            if let Ok(Some(block_header)) = context.storage.get_block_header_by_hash(block_hash) {
-                block_headers.push(block_header);
-            }
-        }
-
-        let execution_witness_result = ExecutionWitnessResult {
-            state: state_rlp,
-            codes,
-            storage_tries,
-            block_headers,
-        };
-        serde_json::to_value(execution_witness_result)
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+        serde_json::to_value(execution_witness).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 

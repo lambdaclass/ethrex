@@ -29,6 +29,7 @@ pub struct ExecutionWitnessResult {
     )]
     pub storage_tries: HashMap<H160, Vec<Vec<u8>>>,
     pub block_headers: Vec<BlockHeader>,
+    pub parent_block_header: BlockHeader,
 }
 
 pub fn serialize_code<S>(value: &Vec<Bytes>, serializer: S) -> Result<S::Ok, S::Error>
