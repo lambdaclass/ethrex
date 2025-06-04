@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748989146945,
+  "lastUpdate": 1749052459768,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10855,6 +10855,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 175634136605,
             "range": "± 761116793",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7ba68ac1bd39a2413661e0d1541c6705554551c6",
+          "message": "feat(core): add `export` subcommand (#2995)\n\n**Motivation**\nAdd a way to export rlp-encoded blocks into a file (this file should\nthen be usable by an import subcommand).\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add `export` subcommand, which takes a file path, and an optional\n`first` and `last` block number, and exports all blocks in the range (or\nall blocks in the current chain if not provided) to a file in rlp\nformat.\n* Only blocks in the current canonical chain will be included\n* (Misc) Add get_block_by_number to Store\n\nSample Output:\n<img width=\"1217\" alt=\"Captura de pantalla 2025-05-30 a la(s) 17 59 14\"\nsrc=\"https://github.com/user-attachments/assets/380239fa-a104-49ba-92e2-49ef311014ea\"\n/>\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2920\n\n---------\n\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-06-04T15:07:49Z",
+          "tree_id": "1cd6e402a1eb81dcb8d13e009f82bb0eedf0eeb8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7ba68ac1bd39a2413661e0d1541c6705554551c6"
+        },
+        "date": 1749052454814,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177882065314,
+            "range": "± 371506781",
             "unit": "ns/iter"
           }
         ]
