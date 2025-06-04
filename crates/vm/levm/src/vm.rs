@@ -78,7 +78,7 @@ impl<'a> VM<'a> {
             self.env.gas_limit,
             0,
             true,
-            false,
+            self.tx_is_create(),
             U256::zero(),
             0,
         );
@@ -107,7 +107,7 @@ impl<'a> VM<'a> {
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame_mut()?.call_frame_backup.clear();
 
-        if self.is_create() {
+        if self.tx_is_create() {
             // Create contract, reverting the Tx if address is already occupied.
             if let Some(mut report) = self.handle_create_transaction()? {
                 self.finalize_execution(&mut report)?;
@@ -186,7 +186,7 @@ impl<'a> VM<'a> {
     }
 
     /// True if external transaction is a contract creation
-    pub fn is_create(&self) -> bool {
+    pub fn tx_is_create(&self) -> bool {
         matches!(self.tx.to(), TxKind::Create)
     }
 

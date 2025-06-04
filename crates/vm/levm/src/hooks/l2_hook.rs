@@ -72,7 +72,7 @@ impl Hook for L2Hook {
         default_hook::validate_sufficient_max_fee_per_gas(vm)?;
 
         // (5) INITCODE_SIZE_EXCEEDED
-        if vm.is_create() {
+        if vm.tx_is_create() {
             default_hook::validate_init_code_size(vm)?;
         }
 
@@ -146,7 +146,7 @@ impl Hook for L2Hook {
 }
 
 pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
-    if !vm.is_create() {
+    if !vm.tx_is_create() {
         vm.decrease_account_balance(
             vm.current_call_frame()?.to,
             vm.current_call_frame()?.msg_value,

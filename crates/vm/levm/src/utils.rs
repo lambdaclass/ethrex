@@ -515,7 +515,7 @@ impl<'a> VM<'a> {
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
         // Create Cost
-        if self.is_create() {
+        if self.tx_is_create() {
             // https://eips.ethereum.org/EIPS/eip-2#specification
             intrinsic_gas = intrinsic_gas
                 .checked_add(CREATE_BASE_COST)
@@ -581,7 +581,7 @@ impl<'a> VM<'a> {
     /// Calculates the minimum gas to be consumed in the transaction.
     pub fn get_min_gas_used(&self) -> Result<u64, VMError> {
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
-        let calldata = if self.is_create() {
+        let calldata = if self.tx_is_create() {
             &self.current_call_frame()?.bytecode
         } else {
             &self.current_call_frame()?.calldata

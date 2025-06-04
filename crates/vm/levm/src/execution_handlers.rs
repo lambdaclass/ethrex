@@ -146,9 +146,7 @@ impl<'a> VM<'a> {
 
     pub fn handle_opcode_result(&mut self) -> Result<ExecutionReport, VMError> {
         // On successful create check output validity
-        if (self.is_create() && self.current_call_frame()?.depth == 0)
-            || self.current_call_frame()?.create_op_called
-        {
+        if self.current_call_frame()?.is_create {
             let contract_code = std::mem::take(&mut self.current_call_frame_mut()?.output);
             let code_length = contract_code.len();
 

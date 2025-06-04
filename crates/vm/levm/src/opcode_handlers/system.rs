@@ -831,7 +831,7 @@ impl<'a> VM<'a> {
         let executed_call_frame = self.pop_call_frame()?;
 
         // Here happens the interaction between child (executed) and parent (caller) callframe.
-        if executed_call_frame.create_op_called {
+        if executed_call_frame.is_create {
             self.handle_return_create(&executed_call_frame, tx_report)?;
         } else {
             self.handle_return_call(&executed_call_frame, tx_report)?;

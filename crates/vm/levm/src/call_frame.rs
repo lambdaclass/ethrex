@@ -91,8 +91,8 @@ pub struct CallFrame {
     pub depth: usize,
     /// Set of valid jump destinations (where a JUMP or JUMPI can jump to)
     pub valid_jump_destinations: HashSet<usize>,
-    /// This is set to true if the function that created this callframe is CREATE or CREATE2
-    pub create_op_called: bool,
+    /// This is set to true if it's a CREATE operation (either external or internal)
+    pub is_create: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
     pub call_frame_backup: CallFrameBackup,
     /// Return data offset
@@ -146,7 +146,7 @@ impl CallFrame {
             depth,
             valid_jump_destinations,
             should_transfer_value,
-            create_op_called,
+            is_create: create_op_called,
             ret_offset,
             ret_size,
             ..Default::default()
