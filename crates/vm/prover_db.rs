@@ -141,7 +141,10 @@ impl VmDatabase for ProverDB {
             return Ok(None);
         };
         let hashed_key = hash_key(&key);
-        if let Ok(Some(encoded_key)) = storage_trie.get(&hashed_key) {
+        if let Some(encoded_key) = storage_trie
+            .get(&hashed_key)
+            .map_err(|e| EvmError::DB(e.to_string()))?
+        {
             U256::decode(&encoded_key)
                 .map_err(|_| EvmError::DB("failed to read storage from trie".to_string()))
                 .map(Some)
