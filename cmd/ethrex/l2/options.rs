@@ -425,7 +425,7 @@ pub struct BlockFetcherOptions {
         default_value = "5000",
         value_name = "UINT64",
         env = "ETHREX_BLOCK_FETCHER_FETCH_INTERVAL_MS",
-        help_heading = "Block Fetcher options"
+        help_heading = "Based options"
     )]
     pub fetch_interval_ms: u64,
     #[arg(
@@ -433,7 +433,7 @@ pub struct BlockFetcherOptions {
         default_value = "5000",
         value_name = "UINT64",
         env = "ETHREX_BLOCK_FETCHER_FETCH_BLOCK_STEP",
-        help_heading = "Block Fetcher options"
+        help_heading = "Based options"
     )]
     pub fetch_block_step: u64,
 }
