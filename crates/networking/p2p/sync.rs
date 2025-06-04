@@ -395,7 +395,11 @@ impl Syncer {
                 )
                 .await;
 
-            let new_blocks = block_request_result.ok_or(SyncError::BodiesNotFound)?;
+            let new_blocks = match block_request_result {
+                Some(blocks) => blocks,
+                None => break,
+            };
+
             let new_blocks_len = new_blocks.len();
 
             headers_consumed += new_blocks_len;
@@ -460,12 +464,8 @@ impl Syncer {
                     .set_latest_valid_ancestor(failed_block_hash, last_valid_hash)
                     .await?;
 
-                // TODO(#2127): Just marking the failing ancestor and the sync head is enough
-                // to fix the Missing Ancestors hive test, we want to look at a more robust
-                // solution in the future if needed.
-                store
-                    .set_latest_valid_ancestor(sync_head, last_valid_hash)
-                    .await?;
+                // TODO(#2127): Just marking the failing ancestor is enough for the the Missing Ancestors hive test,
+                // we want to look at a more robust solution in the future if needed.
             }
 
             return Err(error.into());
