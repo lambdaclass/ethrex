@@ -132,10 +132,12 @@ pub async fn apply_fork_choice(
             .update_safe_block_number(safe.number)
             .await?;
     }
+
     blockchain
         .storage
         .update_latest_block_number(head.number)
         .await?;
+    *blockchain.state_trie.write().await = blockchain.storage.open_state_trie(head.state_root);
 
     Ok(head)
 }
