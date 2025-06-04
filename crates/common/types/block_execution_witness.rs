@@ -1,8 +1,8 @@
 use core::fmt;
 use std::{collections::HashMap, str::FromStr};
 
+use crate::{types::BlockHeader, H160};
 use bytes::Bytes;
-use ethrex_common::{types::BlockHeader, H160};
 use hex::FromHexError;
 use serde::{
     de::{self, SeqAccess, Visitor},
@@ -10,11 +10,11 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionWitnessResult {
     #[serde(
-        serialize_with = "crate::types::account_proof::serialize_proofs",
+        serialize_with = "serialize_proofs",
         deserialize_with = "deserialize_state"
     )]
     pub state: Vec<Vec<u8>>,
@@ -195,6 +195,17 @@ where
     }
 
     deserializer.deserialize_seq(KeysVisitor)
+}
+
+pub fn serialize_proofs<S>(value: &Vec<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut seq_serializer = serializer.serialize_seq(Some(value.len()))?;
+    for encoded_node in value {
+        seq_serializer.serialize_element(&format!("0x{}", hex::encode(encoded_node)))?;
+    }
+    seq_serializer.end()
 }
 
 fn decode_hex(hex: String) -> Result<Vec<u8>, FromHexError> {

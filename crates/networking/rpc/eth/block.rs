@@ -7,14 +7,14 @@ use crate::{
     rpc::{RpcApiContext, RpcHandler},
     types::{
         block::RpcBlock,
-        block_execution_witness::ExecutionWitnessResult,
         block_identifier::{BlockIdentifier, BlockIdentifierOrHash},
         receipt::{RpcReceipt, RpcReceiptBlockInfo, RpcReceiptTxInfo},
     },
     utils::RpcErr,
 };
 use ethrex_common::types::{
-    calculate_base_fee_per_blob_gas, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Receipt,
+    block_execution_witness::ExecutionWitnessResult, calculate_base_fee_per_blob_gas, Block,
+    BlockBody, BlockHash, BlockHeader, BlockNumber, Receipt,
 };
 use ethrex_storage::Store;
 

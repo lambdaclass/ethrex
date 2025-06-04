@@ -3,6 +3,7 @@ mod account_update;
 pub mod batch;
 pub mod blobs_bundle;
 mod block;
+pub mod block_execution_witness;
 mod constants;
 mod fork_id;
 mod genesis;
