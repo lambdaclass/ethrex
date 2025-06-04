@@ -1218,6 +1218,7 @@ dependencies = [
  "k256",
  "sha3",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 
