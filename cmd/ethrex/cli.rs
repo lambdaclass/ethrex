@@ -238,6 +238,12 @@ pub enum Subcommand {
         path: String,
         #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
+        #[arg(
+            short,
+            long = "limit",
+            help = "Limit how many blocks to import if specified"
+        )]
+        limit: Option<usize>,
     },
     #[command(
         name = "compute-state-root",
@@ -263,7 +269,11 @@ impl Subcommand {
             Subcommand::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
             }
-            Subcommand::Import { path, removedb } => {
+            Subcommand::Import {
+                path,
+                removedb,
+                limit,
+            } => {
                 if removedb {
                     Box::pin(async {
                         Self::RemoveDB {
@@ -277,7 +287,7 @@ impl Subcommand {
                 }
 
                 let network = &opts.network;
-                import_blocks(&path, &opts.datadir, network.get_genesis(), opts.evm).await?;
+                import_blocks(&path, &opts.datadir, network.get_genesis(), opts.evm, limit).await?;
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let state_root = Network::from(genesis_path)
@@ -324,6 +334,7 @@ pub async fn import_blocks(
     data_dir: &str,
     genesis: Genesis,
     evm: EvmEngine,
+    limit: Option<usize>,
 ) -> Result<(), ChainError> {
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
@@ -345,28 +356,41 @@ pub async fn import_blocks(
         info!("Importing blocks from chain file: {path}");
         utils::read_chain_file(path)
     };
+
     let size = blocks.len();
-    for block in &blocks {
+
+    let mut last_block = None;
+
+    for (i, block) in blocks.into_iter().enumerate() {
+        if let Some(limit) = limit {
+            info!("Reached block limit {limit}.",);
+            if i >= limit {
+                break;
+            }
+        }
+
         let hash = block.hash();
 
         info!(
-            "Adding block {} with hash {:#x}.",
-            block.header.number, hash
+            "Adding block {} with hash {:#x} ({} / {}).",
+            block.header.number, hash, i, size
         );
         // Check if the block is already in the blockchain, if it is do nothing, if not add it
         match store.get_block_number(hash).await {
             Ok(Some(_)) => {
                 info!("Block {} is already in the blockchain", block.hash());
+                last_block = Some(block);
                 continue;
             }
             Ok(None) => {
-                if let Err(error) = blockchain.add_block(block).await {
+                if let Err(error) = blockchain.add_block(&block).await {
                     warn!(
                         "Failed to add block {} with hash {:#x}",
                         block.header.number, hash
                     );
                     return Err(error);
                 }
+                last_block = Some(block);
             }
             Err(_) => {
                 return Err(ChainError::Custom(String::from(
@@ -375,7 +399,8 @@ pub async fn import_blocks(
             }
         }
     }
-    if let Some(last_block) = blocks.last() {
+
+    if let Some(last_block) = last_block {
         let hash = last_block.hash();
         if let Err(error) = apply_fork_choice(&store, hash, hash, hash).await {
             warn!("Failed to apply fork choice: {}", error);
