@@ -62,9 +62,20 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
+/// Opens a New or Pre-exsisting Store and loads the initial state provided by the network
 pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
+    let store = open_store(data_dir);
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("Failed to create genesis block");
+    store
+}
+
+/// Opens a Pre-exsisting Store or creates a new one
+pub fn open_store(data_dir: &str) -> Store {
     let path = PathBuf::from(data_dir);
-    let store = if path.ends_with("memory") {
+    if path.ends_with("memory") {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
@@ -78,12 +89,7 @@ pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
             }
         }
         Store::new(data_dir, engine_type).expect("Failed to create Store")
-    };
-    store
-        .add_initial_state(genesis.clone())
-        .await
-        .expect("Failed to create genesis block");
-    store
+    }
 }
 
 #[cfg(feature = "l2")]
