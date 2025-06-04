@@ -61,9 +61,6 @@ run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 run-evm-ef-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
 	time cargo test -p ef_tests-state --test all --release -- --summary
 
-generate-evm-ef-tests-report:$(VECTORS_DIR) ## 📊 Generate EF Tests Report
-	cargo test -p ef_tests-state --test all --release -- --summary
-
 test-levm: $(VECTORS_DIR)
 	$(MAKE) run-evm-ef-tests flags="--summary"
 
