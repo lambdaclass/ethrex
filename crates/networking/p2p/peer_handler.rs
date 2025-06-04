@@ -281,8 +281,8 @@ impl PeerHandler {
                 loop {
                     match receiver.recv().await {
                         Some(RLPxMessage::Receipts(receipts)) => {
-                            if receipts.get_id() == request_id {
-                                return Some(receipts.get_receipts());
+                            if receipts.id == request_id {
+                                return Some(receipts.receipts);
                             }
                             return None;
                         }

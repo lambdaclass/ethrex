@@ -15,8 +15,8 @@ use super::snap::{
     StorageRanges, TrieNodes,
 };
 use ethrex_rlp::encode::RLPEncode;
-use tracing::warn;
 
+#[allow(clippy::upper_case_acronyms)]
 enum MessageProtocol {
     P2P,
     ETH,
@@ -213,7 +213,12 @@ impl Message {
                         PooledTransactions::decode(data)?,
                     )),
                     GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
-                    Receipts::CODE => Ok(Message::Receipts(Receipts::decode(data)?)),
+                    Receipts::CODE => match eth_capability.version {
+                        68 => Ok(Message::Receipts(Receipts::decode68(data)?)),
+                        69 => Ok(Message::Receipts(Receipts::decode(data)?)),
+                        _ => Err(RLPDecodeError::MalformedData),
+                    },
+
                     BlockRangeUpdate::CODE => {
                         Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
                     }
@@ -250,7 +255,8 @@ impl Message {
                 }
             }
         }
-        return Err(RLPDecodeError::MalformedData);
+
+        Err(RLPDecodeError::MalformedData)
     }
 
     pub fn encode(
@@ -276,7 +282,17 @@ impl Message {
             Message::GetPooledTransactions(msg) => msg.encode(buf),
             Message::PooledTransactions(msg) => msg.encode(buf),
             Message::GetReceipts(msg) => msg.encode(buf),
-            Message::Receipts(msg) => msg.encode(buf),
+            Message::Receipts(msg) => {
+                if let Some(eth_capability) = eth_capability {
+                    match eth_capability.version {
+                        68 => msg.encode68(buf),
+                        69 => msg.encode(buf),
+                        _ => Err(RLPEncodeError::Custom("TODO".into())),
+                    }
+                } else {
+                    Err(RLPEncodeError::Custom("TODO".into()))
+                }
+            }
             Message::BlockRangeUpdate(msg) => msg.encode(buf),
             Message::GetAccountRange(msg) => msg.encode(buf),
             Message::AccountRange(msg) => msg.encode(buf),
