@@ -12,7 +12,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{EvmError, VmDatabase};
+use crate::{EvmError, ProverDBError, VmDatabase};
 
 /// In-memory EVM database for single batch execution data.
 ///
@@ -90,9 +90,7 @@ impl ProverDB {
                                 .expect("failed to insert in trie");
                         }
                     }
-                    account_state.storage_root = storage_trie
-                        .hash()
-                        .expect("failed to calculate storage trie root");
+                    account_state.storage_root = storage_trie.hash_no_commit();
                 }
                 state_trie_lock
                     .insert(hashed_address, account_state.encode_to_vec())
