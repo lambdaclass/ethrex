@@ -87,6 +87,48 @@ impl<'st> Store<'st> {
     pub fn begin_rw_tx(&'st self) -> Result<&'st dyn EngineRwTx, StoreError> {
         self.engine.begin_rw_tx()
     }
+
+    pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
+        info!("Storing initial state from genesis");
+
+        // Obtain genesis block
+        let genesis_block = genesis.get_block();
+        let genesis_block_number = genesis_block.header.number;
+
+        let genesis_hash = genesis_block.hash();
+
+        let tx = self.begin_rw_tx()?;
+        if let Some(header) = tx.get_block_header(genesis_block_number)? {
+            if header.hash() == genesis_hash {
+                info!("Received genesis file matching a previously stored one, nothing to do");
+                return Ok(());
+            } else {
+                panic!("Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2");
+            }
+        }
+        // Store genesis accounts
+        // TODO: Should we use this root instead of computing it before the block hash check?
+        let genesis_state_root = tx.setup_genesis_state_trie(genesis.alloc).await?;
+        debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
+
+        // Store genesis block
+        info!(
+            "Storing genesis block with number {} and hash {}",
+            genesis_block_number, genesis_hash
+        );
+
+        tx.add_blocks(vec![genesis_block]).await?;
+        tx.update_earliest_block_number(genesis_block_number)
+            .await?;
+        tx.update_latest_block_number(genesis_block_number).await?;
+        tx.set_canonical_block(genesis_block_number, genesis_hash)
+            .await?;
+
+        // Set chain config
+        tx.set_chain_config(&genesis.config).await;
+
+        tx.commit().await
+    }
 }
 
 impl StoreRoTx<'_> {
@@ -889,46 +931,6 @@ impl StoreRwTx<'_> {
 
     pub async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
         self.tx.mark_chain_as_canonical(blocks).await
-    }
-
-    pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
-        info!("Storing initial state from genesis");
-
-        // Obtain genesis block
-        let genesis_block = genesis.get_block();
-        let genesis_block_number = genesis_block.header.number;
-
-        let genesis_hash = genesis_block.hash();
-
-        if let Some(header) = self.get_block_header(genesis_block_number)? {
-            if header.hash() == genesis_hash {
-                info!("Received genesis file matching a previously stored one, nothing to do");
-                return Ok(());
-            } else {
-                panic!("Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2");
-            }
-        }
-        // Store genesis accounts
-        // TODO: Should we use this root instead of computing it before the block hash check?
-        let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
-        debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
-
-        // Store genesis block
-        info!(
-            "Storing genesis block with number {} and hash {}",
-            genesis_block_number, genesis_hash
-        );
-
-        self.add_block(genesis_block).await?;
-        self.update_earliest_block_number(genesis_block_number)
-            .await?;
-        self.update_latest_block_number(genesis_block_number)
-            .await?;
-        self.set_canonical_block(genesis_block_number, genesis_hash)
-            .await?;
-
-        // Set chain config
-        self.set_chain_config(&genesis.config).await
     }
 
     pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {

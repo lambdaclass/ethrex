@@ -117,8 +117,8 @@ impl TxKind for redb::ReadTransaction {
 pub struct RedBTx<Kind: TxKind> {
     tx: Kind,
 }
-type RedBRwTx = RedBTrie<redb::WriteTransaction>;
-type RedBRoTx = RedBTrie<redb::ReadTransaction>;
+type RedBRwTx = RedBTx<redb::WriteTransaction>;
+type RedBRoTx = RedBTx<redb::ReadTransaction>;
 
 impl RefUnwindSafe for RedBStore {}
 impl RedBStore {

@@ -534,9 +534,9 @@ impl<'st, K: libmdbx::orm::TransactionKind> StoreRoTx<'st> for MdbxTx<'st, K> {
 #[async_trait::async_trait]
 impl<'st> StoreRwTx<'st> for MdbxTx<'st, libmdbx::orm::RW> {
     async fn commit(self) -> Result<(), StoreError> {
-        tokio::task::spawn_blocking(move || self.blocking_commit())
-            .await
-            .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+        // FIXME: there's a lifetime issue when passing to a blocking task.
+        // For now I'll leave it blocking and breaking.
+        self.blocking_commit()
         // let db = self.db.clone();
         // let stats = self.db.stat().unwrap();
         // eprintln!(
@@ -882,7 +882,7 @@ impl<'st> StoreRwTx<'st> for MdbxTx<'st, libmdbx::orm::RW> {
     }
 
     async fn clear_snap_state(&self) -> Result<(), StoreError> {
-        let txn = self.tx;
+        let txn = &self.tx;
         txn.clear_table::<SnapState>()
             .map_err(StoreError::LibmdbxError)?;
         txn.clear_table::<StorageHealPaths>()
