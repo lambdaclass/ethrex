@@ -795,18 +795,16 @@ impl StoreEngine for Store {
         let cursor = txn
             .cursor::<StorageHealPaths>()
             .map_err(StoreError::LibmdbxError)?;
-        let res = cursor
-            .walk(None)
-            .map_while(|res| {
-                res.ok().map(|(hash, paths)| {
-                    (
-                        hash.to().expect("RLP decode failed"),
-                        paths.to().expect("RLP decode failed"),
-                    )
-                })
-            })
-            .take(limit)
-            .collect::<Vec<_>>();
+
+        let mut res = Vec::new();
+        for i_res in cursor.walk(None) {
+            match i_res {
+                Ok((hash, paths)) => res.push((hash.to()?, paths.to()?)),
+                Err(_) => break,
+            }
+        }
+        res = res.into_iter().take(limit).collect::<Vec<_>>();
+
         // Delete fetched entries from the table
         let txn = self
             .db
@@ -978,18 +976,18 @@ impl StoreEngine for Store {
         let cursor = txn
             .cursor::<StateSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
-        let iter = cursor
-            .walk(Some(start.into()))
-            .map_while(|res| {
-                res.ok().map(|(hash, acc)| {
-                    (
-                        hash.to().expect("RLP decode failed"),
-                        acc.to().expect("RLP decode failed"),
-                    )
-                })
-            })
-            .take(MAX_SNAPSHOT_READS);
-        Ok(iter.collect::<Vec<_>>())
+
+        let mut account_snapshots = Vec::new();
+        for res in cursor.walk(Some(start.into())) {
+            match res {
+                Ok((hash, acc)) => account_snapshots.push((hash.to()?, acc.to()?)),
+                Err(_) => break,
+            }
+        }
+        Ok(account_snapshots
+            .into_iter()
+            .take(MAX_SNAPSHOT_READS)
+            .collect::<Vec<_>>())
     }
 
     async fn read_storage_snapshot(
