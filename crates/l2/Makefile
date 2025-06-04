@@ -167,7 +167,7 @@ init-prover: ../../target/release/ethrex_prover ## 🚀 Initializes the Prover
 	../../target/release/ethrex_prover \
 	--http.addr 127.0.0.1 \
   	--http.port 3900 \
-	--log.level info
+	--log.level debug
 
 build-prover:
 	rm -f ../../target/release/ethrex_prover
