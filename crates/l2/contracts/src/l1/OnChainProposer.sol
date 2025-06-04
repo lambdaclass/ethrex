@@ -66,7 +66,6 @@ contract OnChainProposer is
     address public R0VERIFIER;
     address public SP1VERIFIER;
     address public TDXVERIFIER;
-    address public ALIGNEDPROOFAGGREGATOR;
 
     bytes32 public SP1_VERIFICATION_KEY;
 
@@ -79,6 +78,10 @@ contract OnChainProposer is
     /// @notice Indicates whether the contract operates in validium mode.
     /// @dev This value is immutable and can only be set during contract deployment.
     bool public VALIDIUM;
+
+    /// @notice The address of the AlignedProofAggregatorService contract.
+    /// @dev This address is set during contract initialization and is used to verify aligned proofs.
+    address public ALIGNEDPROOFAGGREGATOR;
 
     modifier onlySequencer() {
         require(
