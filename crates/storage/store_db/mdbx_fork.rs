@@ -1,11 +1,9 @@
 use ethrex_trie::NodeHash;
 use reth_db::table::DupSort;
 use std::cell::OnceCell;
-use std::fs;
 use std::marker::PhantomData;
 use std::ops::Div;
 use std::path::Path;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 

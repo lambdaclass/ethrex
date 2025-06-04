@@ -48,7 +48,7 @@ pub type NodeRLP = Vec<u8>;
 
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
-    db: Box<dyn TrieDB>,
+    db: Arc<dyn TrieDB>,
     root: NodeRef,
 }
 
