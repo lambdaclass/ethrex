@@ -115,7 +115,7 @@ impl GetBlockHeaders {
         };
 
         #[cfg(feature = "sync-test")]
-        let limit = if let Ok(env_var_block_limit) = env::var("BLOCK-HEADER-LIMIT") {
+        let limit = if let Ok(env_var_block_limit) = env::var("BLOCK_HEADER_LIMIT") {
             env_var_block_limit
                 .parse()
                 .expect("Block header limit environmental variable is not a number")
