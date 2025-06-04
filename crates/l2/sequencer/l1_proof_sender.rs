@@ -103,11 +103,9 @@ pub enum InMessage {
     Send,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, PartialEq)]
 pub enum OutMessage {
     Done,
-    Error,
 }
 
 pub struct L1ProofSender;
