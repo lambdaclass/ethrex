@@ -8,13 +8,14 @@ use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_common::types::BlobsBundleError;
 use ethrex_common::types::{
     blob_from_bytes, kzg_commitment_to_versioned_hash, AccountUpdate, Block, BlockHeader,
-    Commitment, Proof, Receipt,
+    Commitment, PrivilegedL2Transaction, Proof, Receipt, Transaction,
 };
 use ethrex_common::{Address, H256};
+use ethrex_l2_common::withdrawals::{get_block_withdrawals, get_withdrawal_hash};
 #[cfg(feature = "l2")]
-use ethrex_l2_common::state_diff::{StateDiff, StateDiffError};
 use ethrex_l2_common::{
     deposits::{compute_deposit_logs_hash, get_block_deposits, DepositError},
+    state_diff::{prepare_state_diff, StateDiff, StateDiffError},
     withdrawals::{compute_withdrawals_merkle_root, get_block_withdrawal_hashes, WithdrawalError},
 };
 use ethrex_trie::Trie;
@@ -63,8 +64,8 @@ pub enum StatelessExecutionError {
     InvalidInitialStateTrie,
     #[error("Invalid final state trie")]
     InvalidFinalStateTrie,
-    #[error("Missing deposit hash")]
-    MissingDepositHash,
+    #[error("Failed to calculate deposit hash")]
+    InvalidDeposit,
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -149,18 +150,26 @@ pub fn stateless_validation_l2(
         account_updates,
     } = execute_stateless(blocks, parent_block_header, db, elasticity_multiplier)?;
 
+    let (withdrawals, deposits) = get_batch_withdrawals_and_deposits(&blocks, &receipts)?;
     let (withdrawals_merkle_root, deposit_logs_hash) =
-        compute_withdrawals_and_deposits_digests(&blocks, &receipts)?;
+        compute_withdrawals_and_deposits_digests(&withdrawals, &deposits)?;
 
     // TODO: this could be replaced with something like a ProverConfig in the future.
     let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
 
     // Check state diffs are valid
-    if !validium {
-        verify_state_diff(&state_diff, &account_updates);
-    }
-
-    let blob_versioned_hash = verify_blob(state_diff, blob_commitment, blob_proof)?;
+    let blob_versioned_hash = if !validium {
+        let state_diff = prepare_state_diff(
+            parent_block_header.clone(),
+            db,
+            &withdrawals,
+            &deposits,
+            account_updates.values().cloned().collect(),
+        )?;
+        verify_blob(state_diff, blob_commitment, blob_proof)?
+    } else {
+        H256::zero()
+    };
 
     Ok(ProgramOutput {
         initial_state_hash,
@@ -267,36 +276,43 @@ fn execute_stateless(
     })
 }
 
-fn compute_withdrawals_and_deposits_digests(
+fn get_batch_withdrawals_and_deposits(
     blocks: &[Block],
     receipts: &[Vec<Receipt>],
-) -> Result<(H256, H256), StatelessExecutionError> {
-    let mut withdrawal_hashes = vec![];
-    let mut deposits_hashes = vec![];
+) -> Result<(Vec<Transaction>, Vec<PrivilegedL2Transaction>), StatelessExecutionError> {
+    let mut withdrawals = vec![];
+    let mut deposits = vec![];
 
-    // Get withdrawals and deposits for this block
     for (block, receipts) in blocks.iter().zip(receipts) {
         let txs = &block.body.transactions;
-        let block_deposits = get_block_deposits(txs);
-
-        let block_withdrawal_hashes = get_block_withdrawal_hashes(txs, receipts)?;
-
-        let mut block_deposit_hashes = Vec::with_capacity(block_deposits.len());
-        for deposit in &block_deposits {
-            let hash = deposit
-                .get_deposit_hash()
-                .ok_or(StatelessExecutionError::Internal(
-                    "Privileged transaction is not a deposit".to_string(),
-                ))?;
-            block_deposit_hashes.push(hash);
-        }
-        withdrawal_hashes.extend(block_withdrawal_hashes);
-        deposits_hashes.extend(block_deposit_hashes);
+        deposits.extend(get_block_deposits(txs));
+        withdrawals.extend(
+            get_block_withdrawals(txs, receipts)
+                .into_iter()
+                .map(|(_, tx)| tx),
+        );
     }
 
+    Ok((withdrawals, deposits))
+}
+
+fn compute_withdrawals_and_deposits_digests(
+    withdrawals: &[Transaction],
+    deposits: &[PrivilegedL2Transaction],
+) -> Result<(H256, H256), StatelessExecutionError> {
+    let withdrawal_hashes: Vec<_> = withdrawals
+        .iter()
+        .map(get_withdrawal_hash)
+        .collect::<Result<_, _>>()?;
+    let deposit_hashes: Vec<_> = deposits
+        .iter()
+        .map(PrivilegedL2Transaction::get_deposit_hash)
+        .map(|hash| hash.ok_or(StatelessExecutionError::InvalidDeposit))
+        .collect::<Result<_, _>>()?;
+
     let withdrawals_merkle_root = compute_withdrawals_merkle_root(&withdrawal_hashes)?;
-    let deposit_logs_hash = compute_deposit_logs_hash(deposits_hashes)
-        .map_err(StatelessExecutionError::DepositError)?;
+    let deposit_logs_hash =
+        compute_deposit_logs_hash(deposit_hashes).map_err(StatelessExecutionError::DepositError)?;
 
     Ok((withdrawals_merkle_root, deposit_logs_hash))
 }

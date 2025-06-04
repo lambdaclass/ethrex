@@ -60,7 +60,7 @@ pub enum StateDiffError {
     #[error("Unexpected Error: {0}")]
     InternalError(String),
     #[error("Evm Error: {0}")]
-    EVMError(#[from] EvmError)
+    EVMError(#[from] EvmError),
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -649,7 +649,7 @@ pub fn get_nonce_diff(
 pub fn prepare_state_diff(
     last_header: BlockHeader,
     db: &impl VmDatabase,
-    withdrawals: &[(H256, Transaction)],
+    withdrawals: &[Transaction],
     deposits: &[PrivilegedL2Transaction],
     account_updates: Vec<AccountUpdate>,
 ) -> Result<StateDiff, StateDiffError> {
@@ -675,13 +675,13 @@ pub fn prepare_state_diff(
         last_header,
         withdrawal_logs: withdrawals
             .iter()
-            .map(|(hash, tx)| WithdrawalLog {
+            .map(|tx| WithdrawalLog {
                 address: match tx.to() {
                     TxKind::Call(address) => address,
                     TxKind::Create => Address::zero(),
                 },
                 amount: tx.value(),
-                tx_hash: *hash,
+                tx_hash: tx.compute_hash(),
             })
             .collect(),
         deposit_logs: deposits

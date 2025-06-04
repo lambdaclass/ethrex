@@ -51,9 +51,7 @@ pub fn get_block_withdrawal_hashes(
     txs.iter()
         .zip(receipts.iter())
         .filter(|(tx, receipt)| is_withdrawal_l2(tx, receipt))
-        .map(|(withdrawal, _)| {
-            get_withdrawal_hash(withdrawal).ok_or(WithdrawalError::WithdrawalHash)
-        })
+        .map(|(withdrawal, _)| get_withdrawal_hash(withdrawal))
         .collect::<Result<Vec<_>, _>>()
 }
 
@@ -64,9 +62,7 @@ pub fn get_block_withdrawals(
     txs.iter()
         .zip(receipts.iter())
         .filter(|(tx, receipt)| is_withdrawal_l2(tx, receipt))
-        .map(|(tx, _)| {
-            (tx.compute_hash(), tx.clone())
-        })
+        .map(|(tx, _)| (tx.compute_hash(), tx.clone()))
         .collect()
 }
 
@@ -85,16 +81,16 @@ fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> bool {
     }
 }
 
-pub fn get_withdrawal_hash(tx: &Transaction) -> Option<H256> {
-    let to_bytes: [u8; 20] = match tx.data().get(16..36)?.try_into() {
-        Ok(value) => value,
-        Err(_) => return None,
+pub fn get_withdrawal_hash(tx: &Transaction) -> Result<H256, WithdrawalError> {
+    let to_bytes: [u8; 20] = match tx.data().get(16..36).map(TryInto::try_into) {
+        Some(Ok(value)) => value,
+        _ => return Err(WithdrawalError::WithdrawalHash),
     };
     let to = Address::from(to_bytes);
 
     let value = tx.value().to_big_endian();
 
-    Some(keccak_hash::keccak(
+    Ok(keccak_hash::keccak(
         [to.as_bytes(), &value, tx.compute_hash().as_bytes()].concat(),
     ))
 }
