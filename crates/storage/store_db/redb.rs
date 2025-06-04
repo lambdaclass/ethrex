@@ -757,8 +757,10 @@ impl StoreEngine for RedBStore {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        self.read_sync(CANONICAL_BLOCK_HASHES_TABLE, block_number)
-            .map(|o| o.map(|hash_rlp| hash_rlp.value().to()))
+        Ok(self
+            .read_sync(CANONICAL_BLOCK_HASHES_TABLE, block_number)
+            .map(|o| o.map(|hash_rlp| hash_rlp.value().to()))?
+            .transpose()?)
     }
 
     async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {

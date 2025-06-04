@@ -559,7 +559,9 @@ impl StoreEngine for Store {
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read_sync::<CanonicalBlockHashes>(number)
-            .map(|o| o.map(|hash_rlp| hash_rlp.to()))
+            .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
