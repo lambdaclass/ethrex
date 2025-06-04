@@ -148,13 +148,10 @@ fn execute_stateless(
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
     // Validate the initial state
-    let initial_state_hash = {
-        let state_trie_lock = db
-            .state_trie
-            .lock()
-            .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
-        state_trie_lock.hash_no_commit()
-    };
+    let initial_state_hash = db
+        .state_trie_root()
+        .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
+
     if initial_state_hash != parent_block_header.state_root {
         return Err(StatelessExecutionError::InvalidInitialStateTrie);
     }
