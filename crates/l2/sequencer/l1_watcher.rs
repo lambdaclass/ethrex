@@ -83,8 +83,7 @@ impl L1Watcher {
         l1_watcher
             .cast(InMessage::Watch)
             .await
-            .map_err(L1WatcherError::GenServerError)?;
-        Ok(())
+            .map_err(L1WatcherError::GenServerError)
     }
 }
 
