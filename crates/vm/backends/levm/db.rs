@@ -44,11 +44,13 @@ impl LevmDatabase for DatabaseLogger {
             .get_account(address)?;
         // We have to treat the code as accessed because Account has access to the code
         // And some parts of LEVM use the bytecode from the account instead of using get_account_code
-        let mut code_accessed = self
-            .code_accessed
-            .lock()
-            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?;
-        code_accessed.push(account.info.code_hash);
+        if account.has_code() {
+            let mut code_accessed = self
+                .code_accessed
+                .lock()
+                .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?;
+            code_accessed.push(account.info.code_hash);
+        }
         Ok(account)
     }
 
