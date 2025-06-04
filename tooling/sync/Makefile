@@ -12,20 +12,29 @@ HOODI_CHECKPOINT_SYNC_URL ?= https://hoodi.beaconstate.ethstaker.cc
 HOODI_BOOTNODES ?= enode://60203fcb3524e07c5df60a14ae1c9c5b24023ea5d47463dfae051d2c9f3219f309657537576090ca0ae641f73d419f53d8e8000d7a464319d4784acd7d2abc41@209.38.124.160:30303
 CURRENT_DATETIME = $(shell date +'%y.%m.%d-%H.%M.%S')
 BATCH_SIZE ?= 1024
+OS = $(shell uname)
+ifeq ($(OS), Darwin)
+	DATA_PATH = ~/Library/Application Support/
+else 
+	DATA_PATH = ~/.local/share/
+endif
 
-create_data_dir:
-	mkdir -p ~/.local/share/$(NETWORK)_data
+help: ## Display help for the makefile.
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-gen_jwt: create_data_dir
-	openssl rand -hex 32 | tr -d "\n" | sudo tee ~/.local/share/$(NETWORK)_data/jwt.hex
+create_data_dir: ## Create the data folder for the network. NETWORK environment variable required.
+ifndef NETWORK
+	$(error "Sync network not provided")
+endif
+	mkdir -p $(DATA_PATH)/$(NETWORK)_data
 
-start_geth: create_data_dir
-	mkdir -p $(NETWORK)_data
-	./start_geth.sh $(NETWORK)
+gen_jwt: create_data_dir ## Create the jwt for a given network. NETWORK environment variable required.
+ifndef NETWORK
+	$(error "Sync network not provided")
+endif
+	openssl rand -hex 32 | tr -d "\n" | tee $(DATA_PATH)/$(NETWORK)_data/jwt.hex
 
-
-
-sync: create_data_dir
+sync: create_data_dir ## Run the sync for a given network. NETWORK and SYNC_BLOCK_NUM environment variables required (for the network and block to start from respectively). EVM can also be set to select the evm to use.
 ifndef SYNC_BLOCK_NUM
 	$(error "Sync block number not set")
 endif	
@@ -36,7 +45,7 @@ endif
 	make start_ethrex_$(NETWORK) >> ./logs/ethrex-sync-$(NETWORK)-$(EVM).log
 
 
-flamegraph-main:
+flamegraph-main: ## Run flamegraph on main branch. NETWORK and SYNC_BLOCK_NUM environment variables required (for the network and block to start from respectively). EVM can also be set to select the evm to use. Execution logs are output to log file.
 ifndef SYNC_BLOCK_NUM
 	$(error "Sync block number not set)
 endif
@@ -46,7 +55,7 @@ endif
 	cd $(ETHREX_DIR) && git checkout main
 	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(BLOCK_NUM)-$(LOGNAME).log
 
-flamegraph-branch:
+flamegraph-branch: ## Run flamegraph on custom branch. NETWORK and SYNC_BLOCK_NUM environment variables required (for the network and block to start from respectively). EVM can also be set to select the evm to use. xecution logs are output to log file.
 ifndef SYNC_BLOCK_NUM
 	$(error "Sync block number not set")
 endif
@@ -59,7 +68,7 @@ endif
 	cd $(ETHREX_DIR) && git checkout $(BRANCH)
 	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-$(BRANCH)-block-$(BLOCK_NUM)-$(LOGNAME).log
 
-flamegraph-holesky:
+flamegraph-holesky: ## Run flamegraph on holesky.
 	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
 		--http.port 8545 \
 		--authrpc.port 8551 \
@@ -67,11 +76,11 @@ flamegraph-holesky:
 		--discovery.port 30303 \
 		--network holesky \
 		--datadir holesky_data/ethrex/$(EVM) \
-		--authrpc.jwtsecret ~/.local/share/holesky_data/jwt.hex \
+		--authrpc.jwtsecret $(DATA_PATH)/holesky_data/jwt.hex \
 		--bootnodes $(HOLESKY_BOOTNODES) \
 		--evm $(EVM) \
 
-flamegraph-hoodi:
+flamegraph-hoodi: ## Run flamegraph on hoodi.
 	-cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
 		--http.port 8545 \
 		--authrpc.port 8551 \
@@ -79,49 +88,52 @@ flamegraph-hoodi:
 		--discovery.port 30303 \
 		--network hoodi \
 		--datadir hoodi_data/ethrex/$(EVM) \
-		--authrpc.jwtsecret ~/.local/share/hoodi_data/jwt.hex \
+		--authrpc.jwtsecret $(DATA_PATH)/hoodi_data/jwt.hex \
 		--bootnodes $(HOODI_BOOTNODES) \
 		--evm $(EVM)
 
-start-lighthouse:
+start-lighthouse: ## Start lighthouse for a given network. NETWORK environment variable required.
 ifndef NETWORK
 	$(error "Sync network not provided")
 endif
 	make $(NETWORK)-lighthouse
 
-holesky-lighthouse:
+holesky-lighthouse: ## Start lighthouse for holesky.
 	lighthouse bn \
 		--network holesky \
 		--execution-endpoint http://localhost:${ENGINE_PORT} \
-		--execution-jwt ~/.local/share/holesky_data/jwt.hex \
+		--execution-jwt $(DATA_PATH)/holesky_data/jwt.hex \
 		--checkpoint-sync-url $(HOLESKY_CHECKPOINT_SYNC_URL) \
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--datadir ~/.local/share/holesky_data/lighthouse_${NODE_NAME}_$(EVM) \
+		--datadir $(DATA_PATH)/holesky_data/lighthouse_${NODE_NAME}_$(EVM) \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
-hoodi-lighthouse:
+hoodi-lighthouse: ## Start lighthouse for hoodi.
 	lighthouse bn \
 		--network hoodi \
 		--execution-endpoint http://localhost:${ENGINE_PORT} \
-		--execution-jwt ~/.local/share/hoodi_data/jwt.hex \
+		--execution-jwt $(DATA_PATH)/hoodi_data/jwt.hex \
 		--checkpoint-sync-url $(HOODI_CHECKPOINT_SYNC_URL) \
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--datadir ~/.local/share/hoodi_data/lighthouse_${NODE_NAME}_$(EVM) \
+		--datadir $(DATA_PATH)/hoodi_data/lighthouse_${NODE_NAME}_$(EVM) \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
 
 
-backup-db:
-	mkdir -p ~/.local/share/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
-	rsync -ah --info=progress2 ~/.local/share/$(NETWORK)_data/ethrex/$(EVM)/mdbx.* ~/.local/share/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
-	cp ./logs/ethrex-sync-$(NETWORK)-$(EVM).log ~/.local/share/ethrex_db_backups/$(NETWORK)/$(EVM)/$(CURRENT_DATETIME)/ethrex_sync_$(NETWORK)_$(EVM).log
+backup-db: ## Back-up the store db. EVM and NETWORK environment variables need to be provided to select which DB to back up.
+ifndef NETWORK
+	$(error "Sync network not provided")
+endif
+	mkdir -p $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
+	rsync -ah --info=progress2 $(DATA_PATH)/$(NETWORK)_data/ethrex/$(EVM)/mdbx.* $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
+	cp ./logs/ethrex-sync-$(NETWORK)-$(EVM).log $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/$(CURRENT_DATETIME)/ethrex_sync_$(NETWORK)_$(EVM).log
 
 
-start_ethrex_hoodi:
+start_ethrex_hoodi: ## Start ethrex for hoodi
 	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
     		--http.port 8545 \
     		--authrpc.port 8551 \
@@ -129,11 +141,11 @@ start_ethrex_hoodi:
     		--discovery.port 30303 \
     		--network hoodi \
     		--datadir "hoodi_data/ethrex/$(EVM)" \
-    		--authrpc.jwtsecret ~/.local/share/hoodi_data/jwt.hex \
+    		--authrpc.jwtsecret $(DATA_PATH)/hoodi_data/jwt.hex \
     		--bootnodes $(HOODI_BOOTNODES) \
     		--evm $(EVM)
 
-start_ethrex_holesky:
+start_ethrex_holesky: ## Start ethrex for holesky
 	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE)  RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
     		--http.port 8545 \
     		--authrpc.port 8551 \
@@ -141,17 +153,22 @@ start_ethrex_holesky:
     		--discovery.port 30303 \
     		--network holesky \
     		--datadir "holesky_data/ethrex/$(EVM)" \
-    		--authrpc.jwtsecret ~/.local/share/holesky_data/jwt.hex \
+    		--authrpc.jwtsecret $(DATA_PATH)/holesky_data/jwt.hex \
     		--bootnodes $(HOLESKY_BOOTNODES) \
     		--evm $(EVM)
 
 
-tail-syncing-logs:
+tail-syncing-logs: ## Tail the syncing logs for a given log file. Environment variable LOGNAME with the name of the file needs to be provided.
+ifndef LOGNAME
+	$(error "Log file not provided")
+endif
 	tail -f logs/$(LOGNAME) -n 200 | grep -e "SYNCING"
 
-tail-metrics-logs:
+tail-metrics-logs: ## Tail the metrics logs for a given log file. Environment variable LOGNAME with the name of the file needs to be provided.
+ifndef LOGNAME
+	$(error "Log file not provided")
+endif
 	tail -f logs/$(LOGNAME) -n 2000 | grep -A4 -e "METRICS"
 
-copy-flamegraph:	
-	rsync -ah --info=progress2  $(ETHREX_DIR)/flamegraph.svg flamegraphs/flamegraph-$(LOGNAME).svg	
-
+copy-flamegraph: ## Copy flamegraph from ethrex folder to flamegraphs folder. A name for the file can be provided with GRAPHNAME variable.
+	rsync -ah --info=progress2  $(ETHREX_DIR)/flamegraph.svg flamegraphs/flamegraph-$(GRAPHNAME).svg	
