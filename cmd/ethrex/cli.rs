@@ -377,7 +377,7 @@ pub async fn import_blocks(
     }
     if let Some(last_block) = blocks.last() {
         let hash = last_block.hash();
-        if let Err(error) = apply_fork_choice(&blockchain, hash, hash, hash).await {
+        if let Err(error) = apply_fork_choice(&store, hash, hash, hash).await {
             warn!("Failed to apply fork choice: {}", error);
         }
     }

@@ -73,9 +73,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
                     test_key,
                     block_fixture.expect_exception.clone().unwrap()
                 );
-                apply_fork_choice(&blockchain, hash, hash, hash)
-                    .await
-                    .unwrap();
+                apply_fork_choice(&store, hash, hash, hash).await.unwrap();
             }
         }
     }
