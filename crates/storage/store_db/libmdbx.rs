@@ -251,24 +251,26 @@ impl StoreEngine for Store {
             }
 
             // store receipts
-            for receipt in query_plan.receipts {}
-            let mut key_values = vec![];
-            let block_hash = query_plan.receipts.0;
-            for (index, receipt) in query_plan.receipts.1.clone().into_iter().enumerate() {
-                let key = (block_hash, index as u64).into();
-                let receipt_rlp = receipt.encode_to_vec();
-                let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
-                    continue;
-                };
-
-                key_values.append(&mut entries);
-            }
-
             let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-            for (key, value) in key_values {
-                cursor
-                    .upsert(key, value)
-                    .map_err(StoreError::LibmdbxError)?;
+            for receipt in query_plan.receipts {
+                let mut key_values = vec![];
+                let block_hash = receipt.0;
+                for (index, receipt) in receipt.1.clone().into_iter().enumerate() {
+                    let key = (block_hash, index as u64).into();
+                    let receipt_rlp = receipt.encode_to_vec();
+                    let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp)
+                    else {
+                        continue;
+                    };
+
+                    key_values.append(&mut entries);
+                }
+
+                for (key, value) in key_values {
+                    cursor
+                        .upsert(key, value)
+                        .map_err(StoreError::LibmdbxError)?;
+                }
             }
 
             tx.commit().map_err(StoreError::LibmdbxError)

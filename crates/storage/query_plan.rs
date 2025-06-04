@@ -32,7 +32,7 @@ pub struct QueryPlanVec {
 
 impl QueryPlanVec {
     pub async fn apply_to_store(self, store: Store) -> Result<(), StoreError> {
-        store.store_changes(self).await?;
+        store.store_changes_batch(self).await?;
         Ok(())
     }
 }

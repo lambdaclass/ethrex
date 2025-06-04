@@ -21,10 +21,10 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
 use ethrex_common::{Address, H256};
+use ethrex_storage::query_plan::QueryPlanVec;
 use ethrex_storage::{error::StoreError, query_plan::QueryPlan, Store};
 use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use mempool::Mempool;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
 use vm::StoreVmDatabase;
@@ -246,7 +246,7 @@ impl Blockchain {
         let mut vm = Evm::new(self.evm_engine, vm_db);
 
         let blocks_len = blocks.len();
-        let mut all_receipts: HashMap<BlockHash, Vec<Receipt>> = HashMap::new();
+        let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
 
@@ -283,7 +283,7 @@ impl Blockchain {
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
-            all_receipts.insert(block.hash(), receipts);
+            all_receipts.push((block.hash(), receipts));
         }
 
         let account_updates = vm
@@ -305,12 +305,14 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
+        let query_plan = QueryPlanVec {
+            account_updates: (state_query_plan, accounts_query_plan),
+            block: blocks,
+            receipts: all_receipts,
+        };
+
         self.storage
-            .add_blocks(blocks)
-            .await
-            .map_err(|e| (e.into(), None))?;
-        self.storage
-            .add_receipts_for_blocks(all_receipts)
+            .store_changes_batch(query_plan)
             .await
             .map_err(|e| (e.into(), None))?;
 
