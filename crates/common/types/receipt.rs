@@ -17,7 +17,6 @@ pub struct Receipt {
     pub tx_type: TxType,
     pub succeeded: bool,
     pub cumulative_gas_used: u64,
-    pub bloom: Bloom,
     pub logs: Vec<Log>,
 }
 
@@ -27,10 +26,107 @@ impl Receipt {
             tx_type,
             succeeded,
             cumulative_gas_used,
+            logs,
+        }
+    }
+
+    pub fn encode_inner(&self) -> Vec<u8> {
+        let mut encoded_data = vec![];
+        let tx_type: u8 = self.tx_type as u8;
+        Encoder::new(&mut encoded_data)
+            .encode_field(&tx_type)
+            .encode_field(&self.succeeded)
+            .encode_field(&self.cumulative_gas_used)
+            .encode_field(&self.logs)
+            .finish();
+        encoded_data
+    }
+
+    pub fn encode_inner_with_bloom(&self) -> Vec<u8> {
+        let mut encode_buff = match self.tx_type {
+            TxType::Legacy => {
+                vec![]
+            }
+            _ => {
+                vec![self.tx_type as u8]
+            }
+        };
+        let bloom = bloom_from_logs(&self.logs);
+        Encoder::new(&mut encode_buff)
+            .encode_field(&self.succeeded)
+            .encode_field(&self.cumulative_gas_used)
+            .encode_field(&bloom)
+            .encode_field(&self.logs)
+            .finish();
+        encode_buff
+    }
+}
+
+pub fn bloom_from_logs(logs: &[Log]) -> Bloom {
+    let mut bloom = Bloom::zero();
+    for log in logs {
+        bloom.accrue(BloomInput::Raw(log.address.as_ref()));
+        for topic in log.topics.iter() {
+            bloom.accrue(BloomInput::Raw(topic.as_ref()));
+        }
+    }
+    bloom
+}
+
+impl RLPEncode for Receipt {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        let encoded_inner = self.encode_inner();
+        buf.put_slice(&encoded_inner);
+    }
+}
+
+impl RLPDecode for Receipt {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (tx_type, decoder): (u8, _) = decoder.decode_field("tx-type")?;
+        let (succeeded, decoder) = decoder.decode_field("succeeded")?;
+        let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
+        let (logs, decoder) = decoder.decode_field("logs")?;
+
+        let Some(tx_type) = TxType::from_u8(tx_type) else {
+            return Err(RLPDecodeError::Custom(
+                "Invalid transaction type".to_string(),
+            ));
+        };
+
+        Ok((
+            Receipt {
+                tx_type,
+                succeeded,
+                cumulative_gas_used,
+                logs,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
+/// Result of a transaction
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ReceiptWithBloom {
+    pub tx_type: TxType,
+    pub succeeded: bool,
+    pub cumulative_gas_used: u64,
+    pub bloom: Bloom,
+    pub logs: Vec<Log>,
+}
+
+impl ReceiptWithBloom {
+    pub fn new(tx_type: TxType, succeeded: bool, cumulative_gas_used: u64, logs: Vec<Log>) -> Self {
+        Self {
+            tx_type,
+            succeeded,
+            cumulative_gas_used,
             bloom: bloom_from_logs(&logs),
             logs,
         }
     }
+
     // By reading the typed transactions EIP, and some geth code:
     // - https://eips.ethereum.org/EIPS/eip-2718
     // - https://github.com/ethereum/go-ethereum/blob/330190e476e2a2de4aac712551629a4134f802d5/core/types/receipt.go#L143
@@ -69,7 +165,7 @@ impl Receipt {
     /// Decodes Receipts in the following formats:
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: tx_type | rlp(receipt).
-    pub fn decode_inner(rlp: &[u8]) -> Result<Receipt, RLPDecodeError> {
+    pub fn decode_inner(rlp: &[u8]) -> Result<Self, RLPDecodeError> {
         // Obtain TxType
         let (tx_type, rlp) = match rlp.first() {
             Some(tx_type) if *tx_type < 0x7f => {
@@ -97,7 +193,7 @@ impl Receipt {
         let (logs, decoder) = decoder.decode_field("logs")?;
         decoder.finish()?;
 
-        Ok(Receipt {
+        Ok(Self {
             tx_type,
             succeeded,
             cumulative_gas_used,
@@ -107,18 +203,7 @@ impl Receipt {
     }
 }
 
-fn bloom_from_logs(logs: &[Log]) -> Bloom {
-    let mut bloom = Bloom::zero();
-    for log in logs {
-        bloom.accrue(BloomInput::Raw(log.address.as_ref()));
-        for topic in log.topics.iter() {
-            bloom.accrue(BloomInput::Raw(topic.as_ref()));
-        }
-    }
-    bloom
-}
-
-impl RLPEncode for Receipt {
+impl RLPEncode for ReceiptWithBloom {
     /// Receipts can be encoded in the following formats:
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: rlp(Bytes(tx_type | rlp(receipt))).
@@ -137,7 +222,7 @@ impl RLPEncode for Receipt {
     }
 }
 
-impl RLPDecode for Receipt {
+impl RLPDecode for ReceiptWithBloom {
     /// Receipts can be encoded in the following formats:
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: rlp(Bytes(tx_type | rlp(receipt))).
@@ -169,7 +254,7 @@ impl RLPDecode for Receipt {
         let (logs, decoder) = decoder.decode_field("logs")?;
 
         Ok((
-            Receipt {
+            ReceiptWithBloom {
                 tx_type,
                 succeeded,
                 cumulative_gas_used,
@@ -178,6 +263,29 @@ impl RLPDecode for Receipt {
             },
             decoder.finish()?,
         ))
+    }
+}
+
+impl From<&Receipt> for ReceiptWithBloom {
+    fn from(receipt: &Receipt) -> Self {
+        Self {
+            tx_type: receipt.tx_type,
+            succeeded: receipt.succeeded,
+            cumulative_gas_used: receipt.cumulative_gas_used,
+            bloom: bloom_from_logs(&receipt.logs),
+            logs: receipt.logs.clone(),
+        }
+    }
+}
+
+impl From<&ReceiptWithBloom> for Receipt {
+    fn from(receipt: &ReceiptWithBloom) -> Self {
+        Self {
+            tx_type: receipt.tx_type,
+            succeeded: receipt.succeeded,
+            cumulative_gas_used: receipt.cumulative_gas_used,
+            logs: receipt.logs.clone(),
+        }
     }
 }
 
@@ -224,7 +332,6 @@ mod test {
             tx_type: TxType::Legacy,
             succeeded: true,
             cumulative_gas_used: 1200,
-            bloom: Bloom::random(),
             logs: vec![Log {
                 address: Address::random(),
                 topics: vec![],
@@ -241,7 +348,6 @@ mod test {
             tx_type: TxType::EIP4844,
             succeeded: true,
             cumulative_gas_used: 1500,
-            bloom: Bloom::random(),
             logs: vec![Log {
                 address: Address::random(),
                 topics: vec![],
@@ -251,10 +357,9 @@ mod test {
         let encoded_receipt = receipt.encode_to_vec();
         assert_eq!(receipt, Receipt::decode(&encoded_receipt).unwrap())
     }
-
     #[test]
     fn test_encode_decode_inner_receipt_legacy() {
-        let receipt = Receipt {
+        let receipt = ReceiptWithBloom {
             tx_type: TxType::Legacy,
             succeeded: true,
             cumulative_gas_used: 1200,
@@ -266,12 +371,15 @@ mod test {
             }],
         };
         let encoded_receipt = receipt.encode_inner();
-        assert_eq!(receipt, Receipt::decode_inner(&encoded_receipt).unwrap())
+        assert_eq!(
+            receipt,
+            ReceiptWithBloom::decode_inner(&encoded_receipt).unwrap()
+        )
     }
 
     #[test]
     fn test_encode_decode_receipt_inner_non_legacy() {
-        let receipt = Receipt {
+        let receipt = ReceiptWithBloom {
             tx_type: TxType::EIP4844,
             succeeded: true,
             cumulative_gas_used: 1500,
@@ -283,6 +391,9 @@ mod test {
             }],
         };
         let encoded_receipt = receipt.encode_inner();
-        assert_eq!(receipt, Receipt::decode_inner(&encoded_receipt).unwrap())
+        assert_eq!(
+            receipt,
+            ReceiptWithBloom::decode_inner(&encoded_receipt).unwrap()
+        )
     }
 }
