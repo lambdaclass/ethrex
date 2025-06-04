@@ -15,6 +15,13 @@ use super::snap::{
     StorageRanges, TrieNodes,
 };
 use ethrex_rlp::encode::RLPEncode;
+use tracing::warn;
+
+enum MessageProtocol {
+    P2P,
+    ETH,
+    SNAP,
+}
 
 pub trait RLPxMessage: Sized {
     const CODE: u8;
@@ -56,9 +63,39 @@ pub(crate) enum Message {
 }
 
 impl Message {
+    fn protocol(&self) -> MessageProtocol {
+        match self {
+            Message::Hello(_) => MessageProtocol::P2P,
+            Message::Disconnect(_) => MessageProtocol::P2P,
+            Message::Ping(_) => MessageProtocol::P2P,
+            Message::Pong(_) => MessageProtocol::P2P,
+
+            // eth capability
+            Message::Status(_) => MessageProtocol::ETH,
+            Message::Transactions(_) => MessageProtocol::ETH,
+            Message::GetBlockHeaders(_) => MessageProtocol::ETH,
+            Message::BlockHeaders(_) => MessageProtocol::ETH,
+            Message::GetBlockBodies(_) => MessageProtocol::ETH,
+            Message::BlockBodies(_) => MessageProtocol::ETH,
+            Message::NewPooledTransactionHashes(_) => MessageProtocol::ETH,
+            Message::GetPooledTransactions(_) => MessageProtocol::ETH,
+            Message::PooledTransactions(_) => MessageProtocol::ETH,
+            Message::GetReceipts(_) => MessageProtocol::ETH,
+            Message::Receipts(_) => MessageProtocol::ETH,
+            Message::BlockRangeUpdate(_) => MessageProtocol::ETH,
+            // snap capability
+            Message::GetAccountRange(_) => MessageProtocol::SNAP,
+            Message::AccountRange(_) => MessageProtocol::SNAP,
+            Message::GetStorageRanges(_) => MessageProtocol::SNAP,
+            Message::StorageRanges(_) => MessageProtocol::SNAP,
+            Message::GetByteCodes(_) => MessageProtocol::SNAP,
+            Message::ByteCodes(_) => MessageProtocol::SNAP,
+            Message::GetTrieNodes(_) => MessageProtocol::SNAP,
+            Message::TrieNodes(_) => MessageProtocol::SNAP,
+        }
+    }
+
     pub fn code(&self) -> u8 {
-        let eth_offset = Capability::p2p(5).length();
-        let snap_offset = eth_offset + Capability::eth(68).length();
         match self {
             Message::Hello(_) => HelloMessage::CODE,
             Message::Disconnect(_) => DisconnectMessage::CODE,
@@ -66,28 +103,64 @@ impl Message {
             Message::Pong(_) => PongMessage::CODE,
 
             // eth capability
-            Message::Status(_) => eth_offset + StatusMessage::CODE,
-            Message::Transactions(_) => eth_offset + Transactions::CODE,
-            Message::GetBlockHeaders(_) => eth_offset + GetBlockHeaders::CODE,
-            Message::BlockHeaders(_) => eth_offset + BlockHeaders::CODE,
-            Message::GetBlockBodies(_) => eth_offset + GetBlockBodies::CODE,
-            Message::BlockBodies(_) => eth_offset + BlockBodies::CODE,
-            Message::NewPooledTransactionHashes(_) => eth_offset + NewPooledTransactionHashes::CODE,
-            Message::GetPooledTransactions(_) => eth_offset + GetPooledTransactions::CODE,
-            Message::PooledTransactions(_) => eth_offset + PooledTransactions::CODE,
-            Message::GetReceipts(_) => eth_offset + GetReceipts::CODE,
-            Message::Receipts(_) => eth_offset + Receipts::CODE,
-            Message::BlockRangeUpdate(_) => eth_offset + BlockRangeUpdate::CODE,
+            Message::Status(_) => StatusMessage::CODE,
+            Message::Transactions(_) => Transactions::CODE,
+            Message::GetBlockHeaders(_) => GetBlockHeaders::CODE,
+            Message::BlockHeaders(_) => BlockHeaders::CODE,
+            Message::GetBlockBodies(_) => GetBlockBodies::CODE,
+            Message::BlockBodies(_) => BlockBodies::CODE,
+            Message::NewPooledTransactionHashes(_) => NewPooledTransactionHashes::CODE,
+            Message::GetPooledTransactions(_) => GetPooledTransactions::CODE,
+            Message::PooledTransactions(_) => PooledTransactions::CODE,
+            Message::GetReceipts(_) => GetReceipts::CODE,
+            Message::Receipts(_) => Receipts::CODE,
+            Message::BlockRangeUpdate(_) => BlockRangeUpdate::CODE,
             // snap capability
-            Message::GetAccountRange(_) => snap_offset + GetAccountRange::CODE,
-            Message::AccountRange(_) => snap_offset + AccountRange::CODE,
-            Message::GetStorageRanges(_) => snap_offset + GetStorageRanges::CODE,
-            Message::StorageRanges(_) => snap_offset + StorageRanges::CODE,
-            Message::GetByteCodes(_) => snap_offset + GetByteCodes::CODE,
-            Message::ByteCodes(_) => snap_offset + ByteCodes::CODE,
-            Message::GetTrieNodes(_) => snap_offset + GetTrieNodes::CODE,
-            Message::TrieNodes(_) => snap_offset + TrieNodes::CODE,
+            Message::GetAccountRange(_) => GetAccountRange::CODE,
+            Message::AccountRange(_) => AccountRange::CODE,
+            Message::GetStorageRanges(_) => GetStorageRanges::CODE,
+            Message::StorageRanges(_) => StorageRanges::CODE,
+            Message::GetByteCodes(_) => GetByteCodes::CODE,
+            Message::ByteCodes(_) => ByteCodes::CODE,
+            Message::GetTrieNodes(_) => GetTrieNodes::CODE,
+            Message::TrieNodes(_) => TrieNodes::CODE,
         }
+    }
+
+    pub fn offset(
+        &self,
+        p2p_capability: &Option<Capability>,
+        eth_capability: &Option<Capability>,
+        snap_capability: &Option<Capability>,
+    ) -> Result<u8, RLPEncodeError> {
+        match self.protocol() {
+            MessageProtocol::P2P => {
+                if let Some(p2p_capability) = p2p_capability {
+                    if self.code() < p2p_capability.length() {
+                        return Ok(0);
+                    }
+                }
+            }
+            MessageProtocol::ETH => {
+                if let (Some(p2p_capability), Some(eth_capability)) =
+                    (p2p_capability, eth_capability)
+                {
+                    if self.code() < eth_capability.length() {
+                        return Ok(p2p_capability.length());
+                    }
+                }
+            }
+            MessageProtocol::SNAP => {
+                if let (Some(p2p_capability), Some(eth_capability), Some(snap_capability)) =
+                    (p2p_capability, eth_capability, snap_capability)
+                {
+                    if self.code() < snap_capability.length() {
+                        return Ok(p2p_capability.length() + eth_capability.length());
+                    }
+                }
+            }
+        }
+        Err(RLPEncodeError::Custom("TODO".into()))
     }
 
     pub fn decode(
@@ -180,8 +253,14 @@ impl Message {
         return Err(RLPDecodeError::MalformedData);
     }
 
-    pub fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
-        self.code().encode(buf);
+    pub fn encode(
+        &self,
+        buf: &mut dyn BufMut,
+        p2p_capability: &Option<Capability>,
+        eth_capability: &Option<Capability>,
+        snap_capability: &Option<Capability>,
+    ) -> Result<(), RLPEncodeError> {
+        (self.code() + self.offset(p2p_capability, eth_capability, snap_capability)?).encode(buf);
         match self {
             Message::Hello(msg) => msg.encode(buf),
             Message::Disconnect(msg) => msg.encode(buf),

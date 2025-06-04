@@ -247,7 +247,12 @@ impl Encoder<rlpx::Message> for RLPxCodec {
 
     fn encode(&mut self, message: rlpx::Message, buffer: &mut BytesMut) -> Result<(), Self::Error> {
         let mut frame_data = vec![];
-        message.encode(&mut frame_data)?;
+        message.encode(
+            &mut frame_data,
+            &self.p2p_protocol,
+            &self.eth_protocol,
+            &self.snap_protocol,
+        )?;
 
         let mac_aes_cipher = Aes256Enc::new_from_slice(&self.mac_key.0)?;
 
