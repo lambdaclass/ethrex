@@ -16,7 +16,6 @@ pub struct QueryPlan {
 
 impl QueryPlan {
     pub async fn apply_to_store(self, store: Store) -> Result<(), StoreError> {
-        dbg!("Commiting query plan");
         store.store_changes(self).await?;
         Ok(())
     }
