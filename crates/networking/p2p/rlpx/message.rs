@@ -9,16 +9,12 @@ use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
 };
 use super::eth::update::BlockRangeUpdate;
-use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
+use super::p2p::{Capability, DisconnectMessage, HelloMessage, PingMessage, PongMessage};
 use super::snap::{
     AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
     StorageRanges, TrieNodes,
 };
-
 use ethrex_rlp::encode::RLPEncode;
-
-const ETH_CAPABILITY_OFFSET: u8 = 0x10;
-const SNAP_CAPABILITY_OFFSET: u8 = 0x21;
 
 pub trait RLPxMessage: Sized {
     const CODE: u8;
@@ -60,7 +56,9 @@ pub(crate) enum Message {
 }
 
 impl Message {
-    pub const fn code(&self) -> u8 {
+    pub fn code(&self) -> u8 {
+        let eth_offset = Capability::p2p(5).length();
+        let snap_offset = eth_offset + Capability::eth(68).length();
         match self {
             Message::Hello(_) => HelloMessage::CODE,
             Message::Disconnect(_) => DisconnectMessage::CODE,
@@ -68,36 +66,44 @@ impl Message {
             Message::Pong(_) => PongMessage::CODE,
 
             // eth capability
-            Message::Status(_) => ETH_CAPABILITY_OFFSET + StatusMessage::CODE,
-            Message::Transactions(_) => ETH_CAPABILITY_OFFSET + Transactions::CODE,
-            Message::GetBlockHeaders(_) => ETH_CAPABILITY_OFFSET + GetBlockHeaders::CODE,
-            Message::BlockHeaders(_) => ETH_CAPABILITY_OFFSET + BlockHeaders::CODE,
-            Message::GetBlockBodies(_) => ETH_CAPABILITY_OFFSET + GetBlockBodies::CODE,
-            Message::BlockBodies(_) => ETH_CAPABILITY_OFFSET + BlockBodies::CODE,
-            Message::NewPooledTransactionHashes(_) => {
-                ETH_CAPABILITY_OFFSET + NewPooledTransactionHashes::CODE
-            }
-            Message::GetPooledTransactions(_) => {
-                ETH_CAPABILITY_OFFSET + GetPooledTransactions::CODE
-            }
-            Message::PooledTransactions(_) => ETH_CAPABILITY_OFFSET + PooledTransactions::CODE,
-            Message::GetReceipts(_) => ETH_CAPABILITY_OFFSET + GetReceipts::CODE,
-            Message::Receipts(_) => ETH_CAPABILITY_OFFSET + Receipts::CODE,
-            Message::BlockRangeUpdate(_) => ETH_CAPABILITY_OFFSET + BlockRangeUpdate::CODE,
+            Message::Status(_) => eth_offset + StatusMessage::CODE,
+            Message::Transactions(_) => eth_offset + Transactions::CODE,
+            Message::GetBlockHeaders(_) => eth_offset + GetBlockHeaders::CODE,
+            Message::BlockHeaders(_) => eth_offset + BlockHeaders::CODE,
+            Message::GetBlockBodies(_) => eth_offset + GetBlockBodies::CODE,
+            Message::BlockBodies(_) => eth_offset + BlockBodies::CODE,
+            Message::NewPooledTransactionHashes(_) => eth_offset + NewPooledTransactionHashes::CODE,
+            Message::GetPooledTransactions(_) => eth_offset + GetPooledTransactions::CODE,
+            Message::PooledTransactions(_) => eth_offset + PooledTransactions::CODE,
+            Message::GetReceipts(_) => eth_offset + GetReceipts::CODE,
+            Message::Receipts(_) => eth_offset + Receipts::CODE,
+            Message::BlockRangeUpdate(_) => eth_offset + BlockRangeUpdate::CODE,
             // snap capability
-            Message::GetAccountRange(_) => SNAP_CAPABILITY_OFFSET + GetAccountRange::CODE,
-            Message::AccountRange(_) => SNAP_CAPABILITY_OFFSET + AccountRange::CODE,
-            Message::GetStorageRanges(_) => SNAP_CAPABILITY_OFFSET + GetStorageRanges::CODE,
-            Message::StorageRanges(_) => SNAP_CAPABILITY_OFFSET + StorageRanges::CODE,
-            Message::GetByteCodes(_) => SNAP_CAPABILITY_OFFSET + GetByteCodes::CODE,
-            Message::ByteCodes(_) => SNAP_CAPABILITY_OFFSET + ByteCodes::CODE,
-            Message::GetTrieNodes(_) => SNAP_CAPABILITY_OFFSET + GetTrieNodes::CODE,
-            Message::TrieNodes(_) => SNAP_CAPABILITY_OFFSET + TrieNodes::CODE,
+            Message::GetAccountRange(_) => snap_offset + GetAccountRange::CODE,
+            Message::AccountRange(_) => snap_offset + AccountRange::CODE,
+            Message::GetStorageRanges(_) => snap_offset + GetStorageRanges::CODE,
+            Message::StorageRanges(_) => snap_offset + StorageRanges::CODE,
+            Message::GetByteCodes(_) => snap_offset + GetByteCodes::CODE,
+            Message::ByteCodes(_) => snap_offset + ByteCodes::CODE,
+            Message::GetTrieNodes(_) => snap_offset + GetTrieNodes::CODE,
+            Message::TrieNodes(_) => snap_offset + TrieNodes::CODE,
         }
     }
-    pub fn decode(msg_id: u8, data: &[u8]) -> Result<Message, RLPDecodeError> {
-        if msg_id < ETH_CAPABILITY_OFFSET {
-            match msg_id {
+
+    pub fn decode(
+        msg_id: u8,
+        data: &[u8],
+        p2p_capability: &Option<Capability>,
+        eth_capability: &Option<Capability>,
+        snap_capability: &Option<Capability>,
+    ) -> Result<Message, RLPDecodeError> {
+        let Some(p2p_capability) = p2p_capability else {
+            return Err(RLPDecodeError::MalformedData);
+        };
+
+        // P2P protocol
+        if msg_id < p2p_capability.length() {
+            return match msg_id {
                 HelloMessage::CODE => Ok(Message::Hello(HelloMessage::decode(data)?)),
                 DisconnectMessage::CODE => {
                     Ok(Message::Disconnect(DisconnectMessage::decode(data)?))
@@ -105,52 +111,73 @@ impl Message {
                 PingMessage::CODE => Ok(Message::Ping(PingMessage::decode(data)?)),
                 PongMessage::CODE => Ok(Message::Pong(PongMessage::decode(data)?)),
                 _ => Err(RLPDecodeError::MalformedData),
-            }
-        } else if msg_id < SNAP_CAPABILITY_OFFSET {
-            // eth capability
-            match msg_id - ETH_CAPABILITY_OFFSET {
-                StatusMessage::CODE => Ok(Message::Status(StatusMessage::decode(data)?)),
-                Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
-                GetBlockHeaders::CODE => {
-                    Ok(Message::GetBlockHeaders(GetBlockHeaders::decode(data)?))
+            };
+        }
+
+        let eth_msg_id = msg_id - p2p_capability.length();
+
+        // eth (wire) protocol
+        if let Some(eth_capability) = eth_capability {
+            if eth_msg_id < eth_capability.length() {
+                return match eth_msg_id {
+                    StatusMessage::CODE => Ok(Message::Status(StatusMessage::decode(data)?)),
+                    Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
+                    GetBlockHeaders::CODE => {
+                        Ok(Message::GetBlockHeaders(GetBlockHeaders::decode(data)?))
+                    }
+                    BlockHeaders::CODE => Ok(Message::BlockHeaders(BlockHeaders::decode(data)?)),
+                    GetBlockBodies::CODE => {
+                        Ok(Message::GetBlockBodies(GetBlockBodies::decode(data)?))
+                    }
+                    BlockBodies::CODE => Ok(Message::BlockBodies(BlockBodies::decode(data)?)),
+                    NewPooledTransactionHashes::CODE => Ok(Message::NewPooledTransactionHashes(
+                        NewPooledTransactionHashes::decode(data)?,
+                    )),
+                    GetPooledTransactions::CODE => Ok(Message::GetPooledTransactions(
+                        GetPooledTransactions::decode(data)?,
+                    )),
+                    PooledTransactions::CODE => Ok(Message::PooledTransactions(
+                        PooledTransactions::decode(data)?,
+                    )),
+                    GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
+                    Receipts::CODE => Ok(Message::Receipts(Receipts::decode(data)?)),
+                    BlockRangeUpdate::CODE => {
+                        Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
+                    }
+                    _ => Err(RLPDecodeError::MalformedData),
+                };
+            } else {
+                let snap_msg_id = eth_msg_id - eth_capability.length();
+                if let Some(snap_capability) = snap_capability {
+                    if snap_msg_id < snap_capability.length() {
+                        return match snap_msg_id {
+                            GetAccountRange::CODE => {
+                                Ok(Message::GetAccountRange(GetAccountRange::decode(data)?))
+                            }
+                            AccountRange::CODE => {
+                                Ok(Message::AccountRange(AccountRange::decode(data)?))
+                            }
+                            GetStorageRanges::CODE => {
+                                Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?))
+                            }
+                            StorageRanges::CODE => {
+                                Ok(Message::StorageRanges(StorageRanges::decode(data)?))
+                            }
+                            GetByteCodes::CODE => {
+                                Ok(Message::GetByteCodes(GetByteCodes::decode(data)?))
+                            }
+                            ByteCodes::CODE => Ok(Message::ByteCodes(ByteCodes::decode(data)?)),
+                            GetTrieNodes::CODE => {
+                                Ok(Message::GetTrieNodes(GetTrieNodes::decode(data)?))
+                            }
+                            TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
+                            _ => Err(RLPDecodeError::MalformedData),
+                        };
+                    }
                 }
-                BlockHeaders::CODE => Ok(Message::BlockHeaders(BlockHeaders::decode(data)?)),
-                GetBlockBodies::CODE => Ok(Message::GetBlockBodies(GetBlockBodies::decode(data)?)),
-                BlockBodies::CODE => Ok(Message::BlockBodies(BlockBodies::decode(data)?)),
-                NewPooledTransactionHashes::CODE => Ok(Message::NewPooledTransactionHashes(
-                    NewPooledTransactionHashes::decode(data)?,
-                )),
-                GetPooledTransactions::CODE => Ok(Message::GetPooledTransactions(
-                    GetPooledTransactions::decode(data)?,
-                )),
-                PooledTransactions::CODE => Ok(Message::PooledTransactions(
-                    PooledTransactions::decode(data)?,
-                )),
-                GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
-                Receipts::CODE => Ok(Message::Receipts(Receipts::decode(data)?)),
-                BlockRangeUpdate::CODE => {
-                    Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
-                }
-                _ => Err(RLPDecodeError::MalformedData),
-            }
-        } else {
-            // snap capability
-            match msg_id - SNAP_CAPABILITY_OFFSET {
-                GetAccountRange::CODE => {
-                    return Ok(Message::GetAccountRange(GetAccountRange::decode(data)?));
-                }
-                AccountRange::CODE => Ok(Message::AccountRange(AccountRange::decode(data)?)),
-                GetStorageRanges::CODE => {
-                    return Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?));
-                }
-                StorageRanges::CODE => Ok(Message::StorageRanges(StorageRanges::decode(data)?)),
-                GetByteCodes::CODE => Ok(Message::GetByteCodes(GetByteCodes::decode(data)?)),
-                ByteCodes::CODE => Ok(Message::ByteCodes(ByteCodes::decode(data)?)),
-                GetTrieNodes::CODE => Ok(Message::GetTrieNodes(GetTrieNodes::decode(data)?)),
-                TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
-                _ => Err(RLPDecodeError::MalformedData),
             }
         }
+        return Err(RLPDecodeError::MalformedData);
     }
 
     pub fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {

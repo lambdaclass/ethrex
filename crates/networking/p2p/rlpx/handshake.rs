@@ -6,6 +6,7 @@ use crate::{
         connection::{LocalState, RLPxConnection, RemoteState},
         error::RLPxError,
         frame::RLPxCodec,
+        p2p::Capability,
         utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
             sha256_hmac,
@@ -53,7 +54,8 @@ where
         peer_addr.port(),
         remote_state.public_key,
     );
-    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
+    let mut codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
+    codec.set_p2p_protocol(&Capability::p2p(5));
     log_peer_debug(&node, "Completed handshake as receiver!");
     Ok(RLPxConnection::new(
         context.signer,
@@ -81,7 +83,8 @@ where
     // keccak256(nonce || initiator-nonce)
     let hashed_nonces: [u8; 32] =
         Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
-    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
+    let mut codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
+    codec.set_p2p_protocol(&Capability::p2p(5));
     log_peer_debug(&node, "Completed handshake as initiator!");
     Ok(RLPxConnection::new(
         context.signer,
