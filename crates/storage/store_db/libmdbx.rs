@@ -116,16 +116,10 @@ impl Store {
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        match self
-            .read_sync::<CanonicalBlockHashes>(number)?
+        self.read_sync::<CanonicalBlockHashes>(number)?
             .map(|block_hash| block_hash.to())
-        {
-            Some(block_hash_decoded) => match block_hash_decoded {
-                Ok(block_hash_decoded) => Ok(Some(block_hash_decoded)),
-                Err(_) => Err(StoreError::Custom("RLP decode failed".to_string())),
-            },
-            None => Ok(None),
-        }
+            .transpose()
+            .map_err(StoreError::from)
     }
 }
 
@@ -157,17 +151,14 @@ impl StoreEngine for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            match self.read_sync::<Headers>(hash.into())?.map(|b| b.to()) {
-                Some(decoded_header) => match decoded_header {
-                    Ok(decoded_header) => Ok(Some(decoded_header)),
-                    Err(_) => Err(StoreError::Custom("RLP decode failed".to_string())),
-                },
-                None => Ok(None),
-            }
-        } else {
-            Ok(None)
-        }
+        let Some(block_hash) = self.get_block_hash_by_block_number(block_number)? else {
+            return Ok(None);
+        };
+
+        self.read_sync::<Headers>(block_hash.into())?
+            .map(|b| b.to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_block_body(
@@ -270,33 +261,21 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        match self
-            .read::<Bodies>(block_hash.into())
+        self.read::<Bodies>(block_hash.into())
             .await?
             .map(|b| b.to())
-        {
-            Some(decoded_block) => match decoded_block {
-                Ok(decoded_block) => Ok(Some(decoded_block)),
-                Err(_) => Err(StoreError::Custom("RLP decode failed".to_string())),
-            },
-            None => Ok(None),
-        }
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     fn get_block_header_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        match self
-            .read_sync::<Headers>(block_hash.into())?
+        self.read_sync::<Headers>(block_hash.into())?
             .map(|b| b.to())
-        {
-            Some(block_header_decoded) => match block_header_decoded {
-                Ok(block_header_decoded) => Ok(Some(block_header_decoded)),
-                Err(_) => Err(StoreError::Custom("RLP decode failed".to_string())),
-            },
-            None => Ok(None),
-        }
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_block_number(
@@ -321,16 +300,10 @@ impl StoreEngine for Store {
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
-        match self
-            .read_sync::<AccountCodes>(code_hash.into())?
+        self.read_sync::<AccountCodes>(code_hash.into())?
             .map(|b| b.to())
-        {
-            Some(account_code_decoded) => match account_code_decoded {
-                Ok(account_code_decoded) => Ok(Some(account_code_decoded)),
-                Err(_) => Err(StoreError::Custom("RLP decode failed".to_string())),
-            },
-            None => Ok(None),
-        }
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_receipt(
@@ -383,9 +356,19 @@ impl StoreEngine for Store {
         let cursor = txn
             .cursor::<TransactionLocations>()
             .map_err(StoreError::LibmdbxError)?;
-        Ok(cursor
-            .walk_key(transaction_hash.into(), None)
-            .map_while(|res| res.ok().map(|t| t.to().expect("RLP decode failed")))
+
+        let mut transaction_hashes = Vec::new();
+        for res in cursor.walk_key(transaction_hash.into(), None) {
+            match res {
+                Ok(res) => {
+                    transaction_hashes.push(res.to().map_err(StoreError::from)?);
+                }
+                Err(_) => break,
+            }
+        }
+
+        Ok(transaction_hashes
+            .into_iter()
             .find(|(number, hash, _index)| {
                 self.get_block_hash_by_block_number(*number)
                     .is_ok_and(|o| o == Some(*hash))

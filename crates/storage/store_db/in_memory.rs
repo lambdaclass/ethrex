@@ -297,10 +297,10 @@ impl StoreEngine for Store {
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        match self.inner()?.chain_data.chain_config {
-            Some(chain_config) => Ok(chain_config),
-            None => Err(StoreError::Custom("No Chain Congif".to_string())),
-        }
+        self.inner()?
+            .chain_data
+            .chain_config
+            .ok_or(StoreError::Custom("No Chain Congif".to_string()))
     }
 
     async fn update_earliest_block_number(
