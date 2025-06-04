@@ -283,7 +283,7 @@ impl RpcHandler for GetRawReceipts {
         let receipts: Vec<String> = get_all_block_receipts(block_number, header, body, storage)
             .await?
             .iter()
-            .map(|receipt| format!("0x{}", hex::encode(receipt.encode_inner())))
+            .map(|receipt| format!("0x{}", hex::encode(receipt.encode_inner_with_bloom())))
             .collect();
         serde_json::to_value(receipts).map_err(|error| RpcErr::Internal(error.to_string()))
     }
