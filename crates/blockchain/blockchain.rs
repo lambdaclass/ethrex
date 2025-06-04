@@ -402,6 +402,7 @@ impl Blockchain {
         sender: Address,
     ) -> Result<(), MempoolError> {
         // TODO: Add validations here
+        let nonce = tx.nonce();
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
             return Ok(());
@@ -454,7 +455,7 @@ impl Blockchain {
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if tx.nonce() < sender_acc_info.nonce || tx.nonce() == u64::MAX {
+            if nonce < sender_acc_info.nonce || nonce == u64::MAX {
                 return Err(MempoolError::InvalidNonce);
             }
 
@@ -471,18 +472,17 @@ impl Blockchain {
         }
 
         // Check the nonce of pendings TXs in the mempool from the same sender
-        let filter_sender = |tx: &Transaction| -> bool { tx.sender() == sender };
-        let pending_txs: Vec<MempoolTransaction> = self
+        let filter_sender =
+            |t: &Transaction| -> bool { t.sender() == sender && t.nonce() == nonce };
+        let txs_with_same_nonce: Vec<MempoolTransaction> = self
             .mempool
             .filter_transactions_with_filter_fn(&filter_sender)?
             .into_values()
             .flatten()
             .collect();
 
-        for pending_tx in pending_txs {
-            if tx.nonce() == pending_tx.nonce() {
-                return Err(MempoolError::InvalidNonce);
-            }
+        if !txs_with_same_nonce.is_empty() {
+            return Err(MempoolError::InvalidNonce);
         }
 
         if let Some(chain_id) = tx.chain_id() {
