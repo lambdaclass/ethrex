@@ -156,6 +156,12 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    pub fn transfer(&mut self, from: Address, to: Address, value: U256) -> Result<(), VMError> {
+        self.decrease_account_balance(from, value)?;
+        self.increase_account_balance(to, value)?;
+        Ok(())
+    }
+
     /// Updates bytecode of given account.
     pub fn update_account_bytecode(
         &mut self,

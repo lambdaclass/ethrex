@@ -73,20 +73,6 @@ sequenceDiagram
 
 After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.
 
-### Test
-
-To test the `zkvm` execution quickly, the following test can be run:
-
-```sh
-cd crates/l2/prover
-```
-
-Then run any of the targets:
-
-- `make perf-pico`
-- `make perf-risc0`
-- `make perf-sp1`
-
 ### L1 block proving
 
 ethrex-prover is able to generate execution proofs of Ethereum Mainnet/Testnet blocks. An example binary was created for this purpose in `crates/l2/prover/bench`. Refer to its README for usage.
@@ -135,20 +121,6 @@ sudo apt-get install libssl-dev pkg-config libclang-dev clang
 echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc
 echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
 ```
-
-#### Proving Process Test
-
-To test the `zkvm` proving process using a `gpu` quickly, the following test can be run:
-
-```sh
-cd crates/l2/prover
-```
-
-Then run any of the targets:
-
-- `make perf-pico-gpu`
-- `make perf-risc0-gpu`
-- `make perf-sp1-gpu`
 
 #### Run the whole system with a GPU Prover
 

@@ -1,7 +1,6 @@
 use crate::{
     call_frame::CallFrame,
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
-    db::cache,
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
@@ -9,10 +8,7 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{
-    types::{Account, Fork},
-    Address, U256,
-};
+use ethrex_common::{types::Fork, Address, U256};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -577,8 +573,7 @@ impl<'a> VM<'a> {
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
         if self.env.config.fork >= Fork::Cancun {
-            self.increase_account_balance(target_address, balance_to_transfer)?;
-            self.decrease_account_balance(to, balance_to_transfer)?;
+            self.transfer(to, target_address, balance_to_transfer)?;
 
             // Selfdestruct is executed in the same transaction as the contract was created
             if self.substate.created_accounts.contains(&to) {
@@ -690,24 +685,8 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        // FOURTH: Changes to the state
-        // 1. Creating contract.
-
-        // If the address has balance but there is no account associated with it, we need to add the value to it
-        let new_balance = value_in_wei_to_send
-            .checked_add(new_account.info.balance)
-            .ok_or(VMError::BalanceOverflow)?;
-
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-161.md
-        let new_account = Account::new(new_balance, Bytes::new(), 1, Default::default());
-
-        self.insert_account(new_address, new_account)?;
-
-        // 2. Increment sender's nonce.
+        // Increment sender nonce (if Tx reverts it stays the same)
         self.increment_account_nonce(deployer_address)?;
-
-        // 3. Decrease sender's balance.
-        self.decrease_account_balance(deployer_address, value_in_wei_to_send)?;
 
         let new_call_frame = CallFrame::new(
             deployer_address,
@@ -726,9 +705,13 @@ impl<'a> VM<'a> {
         );
         self.call_frames.push(new_call_frame);
 
-        self.substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
+        // Changes that revert in case the Create fails.
+        self.increment_account_nonce(new_address)?; // 0 -> 1
+        self.transfer(deployer_address, new_address, value_in_wei_to_send)?;
 
         self.backup_substate();
+
+        self.substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
@@ -797,12 +780,6 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        // Transfer value from caller to callee.
-        if should_transfer_value {
-            self.decrease_account_balance(msg_sender, value)?;
-            self.increase_account_balance(to, value)?;
-        }
-
         let new_call_frame = CallFrame::new(
             msg_sender,
             to,
@@ -820,19 +797,37 @@ impl<'a> VM<'a> {
         );
         self.call_frames.push(new_call_frame);
 
+        // Transfer value from caller to callee.
+        if should_transfer_value {
+            self.transfer(msg_sender, to, value)?;
+        }
+
+        self.backup_substate();
+
         if self.is_precompile(&code_address) && !is_delegation_7702 {
             let report = self.execute_precompile()?;
             self.handle_return(&report)?;
-        } else {
-            // Backup Substate before executing opcodes of new callframe.
-            self.backup_substate();
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
+    /// Pop backup from stack and restore substate and cache if transaction reverted.
+    pub fn handle_state_backup(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
+        let backup = self
+            .substate_backups
+            .pop()
+            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+        if !tx_report.is_success() {
+            self.substate = backup;
+            self.restore_cache_state()?;
+        }
+        Ok(())
+    }
+
     /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
     pub fn handle_return(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
+        self.handle_state_backup(tx_report)?;
         let executed_call_frame = self.pop_call_frame()?;
 
         // Here happens the interaction between child (executed) and parent (caller) callframe.
@@ -884,19 +879,6 @@ impl<'a> VM<'a> {
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(_) => {
-                // Revert value transfer
-                if executed_call_frame.should_transfer_value {
-                    self.decrease_account_balance(
-                        executed_call_frame.to,
-                        executed_call_frame.msg_value,
-                    )?;
-
-                    self.increase_account_balance(
-                        executed_call_frame.msg_sender,
-                        executed_call_frame.msg_value,
-                    )?;
-                }
-                // Push 0 to stack
                 self.current_call_frame_mut()?.stack.push(REVERT_FOR_CALL)?;
             }
         }
@@ -932,18 +914,6 @@ impl<'a> VM<'a> {
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(err) => {
-                // Return value to sender
-                self.increase_account_balance(
-                    executed_call_frame.msg_sender,
-                    executed_call_frame.msg_value,
-                )?;
-
-                // Deployment failed so account shouldn't exist
-                cache::remove_account(&mut self.db.cache, &executed_call_frame.to);
-                self.substate
-                    .created_accounts
-                    .remove(&executed_call_frame.to);
-
                 let current_call_frame = self.current_call_frame_mut()?;
                 // If revert we have to copy the return_data
                 if err == VMError::RevertOpcode {

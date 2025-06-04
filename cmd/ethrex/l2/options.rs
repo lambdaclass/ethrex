@@ -203,7 +203,7 @@ pub struct WatcherOptions {
     pub l2_proposer_private_key: SecretKey,
     #[arg(
         long = "watcher.block-delay",
-        default_value_t = 128, // 2 L1 epochs.
+        default_value_t = 10, // Reasonably safe value to account for reorgs
         value_name = "UINT64",
         env = "ETHREX_WATCHER_BLOCK_DELAY",
         help = "Number of blocks the L1 watcher waits before trusting an L1 block.",
@@ -425,7 +425,7 @@ pub struct BlockFetcherOptions {
         default_value = "5000",
         value_name = "UINT64",
         env = "ETHREX_BLOCK_FETCHER_FETCH_INTERVAL_MS",
-        help_heading = "Block Fetcher options"
+        help_heading = "Based options"
     )]
     pub fetch_interval_ms: u64,
     #[arg(
@@ -433,7 +433,7 @@ pub struct BlockFetcherOptions {
         default_value = "5000",
         value_name = "UINT64",
         env = "ETHREX_BLOCK_FETCHER_FETCH_BLOCK_STEP",
-        help_heading = "Block Fetcher options"
+        help_heading = "Based options"
     )]
     pub fetch_block_step: u64,
 }

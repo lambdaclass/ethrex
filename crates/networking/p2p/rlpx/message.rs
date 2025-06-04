@@ -9,6 +9,7 @@ use super::eth::status::StatusMessage;
 use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
 };
+use super::eth::update::BlockRangeUpdate;
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
 use super::snap::{
     AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
@@ -47,6 +48,7 @@ pub(crate) enum Message {
     PooledTransactions(PooledTransactions),
     GetReceipts(GetReceipts),
     Receipts(Receipts),
+    BlockRangeUpdate(BlockRangeUpdate),
     // snap capability
     // https://github.com/ethereum/devp2p/blob/master/caps/snap.md
     GetAccountRange(GetAccountRange),
@@ -86,7 +88,7 @@ impl Message {
             Message::PooledTransactions(_) => ETH_CAPABILITY_OFFSET + PooledTransactions::CODE,
             Message::GetReceipts(_) => ETH_CAPABILITY_OFFSET + GetReceipts::CODE,
             Message::Receipts(_) => ETH_CAPABILITY_OFFSET + Receipts::CODE,
-
+            Message::BlockRangeUpdate(_) => ETH_CAPABILITY_OFFSET + BlockRangeUpdate::CODE,
             // snap capability
             Message::GetAccountRange(_) => SNAP_CAPABILITY_OFFSET + GetAccountRange::CODE,
             Message::AccountRange(_) => SNAP_CAPABILITY_OFFSET + AccountRange::CODE,
@@ -135,6 +137,9 @@ impl Message {
                 )),
                 GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
                 Receipts::CODE => Ok(Message::Receipts(Receipts::decode(data)?)),
+                BlockRangeUpdate::CODE => {
+                    Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
+                }
                 _ => Err(RLPDecodeError::MalformedData),
             }
         } else if msg_id < BASED_CAPABILITY_OFFSET {
@@ -186,6 +191,7 @@ impl Message {
             Message::PooledTransactions(msg) => msg.encode(buf),
             Message::GetReceipts(msg) => msg.encode(buf),
             Message::Receipts(msg) => msg.encode(buf),
+            Message::BlockRangeUpdate(msg) => msg.encode(buf),
             Message::GetAccountRange(msg) => msg.encode(buf),
             Message::AccountRange(msg) => msg.encode(buf),
             Message::GetStorageRanges(msg) => msg.encode(buf),
@@ -218,6 +224,7 @@ impl Display for Message {
             Message::GetBlockBodies(_) => "eth:GetBlockBodies".fmt(f),
             Message::GetReceipts(_) => "eth:GetReceipts".fmt(f),
             Message::Receipts(_) => "eth:Receipts".fmt(f),
+            Message::BlockRangeUpdate(_) => "eth:BlockRangeUpdate".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
             Message::AccountRange(_) => "snap:AccountRange".fmt(f),
             Message::GetStorageRanges(_) => "snap:GetStorageRanges".fmt(f),
