@@ -147,7 +147,7 @@ impl<'a> VM<'a> {
     pub fn handle_opcode_result(&mut self) -> Result<ExecutionReport, VMError> {
         // On successful create check output validity
         if self.current_call_frame()?.is_create {
-            let contract_code = std::mem::take(&mut self.current_call_frame_mut()?.output);
+            let contract_code = self.current_call_frame_mut()?.output.clone();
             let code_length = contract_code.len();
 
             let code_length_u64: u64 = code_length
@@ -202,7 +202,7 @@ impl<'a> VM<'a> {
                         result: TxResult::Revert(error),
                         gas_used: self.current_call_frame()?.gas_used,
                         gas_refunded,
-                        output: std::mem::take(&mut self.current_call_frame_mut()?.output),
+                        output: Bytes::new(),
                         logs: vec![],
                     });
                 }
