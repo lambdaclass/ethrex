@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749056814225,
+  "lastUpdate": 1749061660973,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10945,6 +10945,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177391917949,
             "range": "± 655595905",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "pdeymon@fi.uba.ar",
+            "name": "Pablo Deymonnaz",
+            "username": "pablodeymo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "855a97f0501ad2a4a130a010412b9fee7dd44d46",
+          "message": "chore(core): improve import_blocks readability (#3016)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-04T17:40:27Z",
+          "tree_id": "9dde4f719219768d481cdc51e5da749527e74450",
+          "url": "https://github.com/lambdaclass/ethrex/commit/855a97f0501ad2a4a130a010412b9fee7dd44d46"
+        },
+        "date": 1749061655961,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178225898929,
+            "range": "± 603399896",
             "unit": "ns/iter"
           }
         ]
