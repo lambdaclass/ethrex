@@ -14,9 +14,9 @@ CURRENT_DATETIME = $(shell date +'%y.%m.%d-%H.%M.%S')
 BATCH_SIZE ?= 1024
 OS = $(shell uname)
 ifeq ($(OS), Darwin)
-	DATA_PATH = ~/Library/Application\ Support/
+	DATA_PATH = ~/Library/Application\ Support
 else 
-	DATA_PATH = ~/.local/share/
+	DATA_PATH = ~/.local/share
 endif
 
 help: ## Display help for the makefile.
@@ -129,8 +129,13 @@ ifndef NETWORK
 	$(error "Sync network not provided")
 endif
 	mkdir -p $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
+ifeq ($(OS), Darwin)
+	rsync -ah --progress $(DATA_PATH)/$(NETWORK)_data/ethrex/$(EVM)/mdbx.* $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
+	rsync -ah --progress ./logs/ethrex-sync-$(NETWORK)-$(EVM).log $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)/ethrex-sync-$(NETWORK)-$(EVM).log
+else
 	rsync -ah --info=progress2 $(DATA_PATH)/$(NETWORK)_data/ethrex/$(EVM)/mdbx.* $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
-	cp ./logs/ethrex-sync-$(NETWORK)-$(EVM).log $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/$(CURRENT_DATETIME)/ethrex_sync_$(NETWORK)_$(EVM).log
+	rsync -ah --info=progress2 ./logs/ethrex-sync-$(NETWORK)-$(EVM).log $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)/ethrex-sync-$(NETWORK)-$(EVM).log
+endif
 
 
 start_ethrex_hoodi: ## Start ethrex for hoodi
@@ -162,13 +167,17 @@ tail-syncing-logs: ## Tail the syncing logs for a given log file. Environment va
 ifndef LOGNAME
 	$(error "Log file not provided")
 endif
-	tail -f logs/$(LOGNAME) -n 200 | grep -e "SYNCING"
+	tail -n 100 -f ./logs/$(LOGNAME) | grep -e "SYNCING"
 
 tail-metrics-logs: ## Tail the metrics logs for a given log file. Environment variable LOGNAME with the name of the file needs to be provided.
 ifndef LOGNAME
 	$(error "Log file not provided")
 endif
-	tail -f logs/$(LOGNAME) -n 2000 | grep -A4 -e "METRICS"
+	tail -n 2000  -f ./logs/$(LOGNAME) | grep -A4 -e "METRICS"
 
 copy-flamegraph: ## Copy flamegraph from ethrex folder to flamegraphs folder. A name for the file can be provided with GRAPHNAME variable.
-	rsync -ah --info=progress2  $(ETHREX_DIR)/flamegraph.svg flamegraphs/flamegraph-$(GRAPHNAME).svg	
+ifeq ($(OS), Darwin)
+	rsync -ah --progress $(ETHREX_DIR)/flamegraph.svg flamegraphs/flamegraph-$(GRAPHNAME).svg
+else
+	rsync -ah --info=progress2 $(ETHREX_DIR)/flamegraph.svg flamegraphs/flamegraph-$(GRAPHNAME).svg
+endif
