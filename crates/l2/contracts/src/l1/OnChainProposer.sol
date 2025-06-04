@@ -384,7 +384,7 @@ contract OnChainProposer is
 
         if (ALIGNEDPROOFAGGREGATOR != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, alignedPublicInputs[16:]);
+            _verifyPublicData(batchNumber, alignedPublicInputs[8:]);
 
             bytes memory callData = abi.encodeWithSignature(
                 "verifyProofInclusion(bytes32[],bytes32,bytes)",
