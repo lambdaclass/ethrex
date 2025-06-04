@@ -445,11 +445,11 @@ impl Default for AlignedOptions {
             aligned_network: "devnet".to_string(),
             fee_estimate: "instant".to_string(),
             aligned_sp1_vk_path: format!(
-                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
+                "{}/../../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
                 env!("CARGO_MANIFEST_DIR")
             ),
             aligned_sp1_elf_path: format!(
-                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
+                "{}/../../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
                 env!("CARGO_MANIFEST_DIR")
             ),
         }

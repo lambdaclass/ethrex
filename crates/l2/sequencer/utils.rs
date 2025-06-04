@@ -129,7 +129,7 @@ pub async fn get_latest_sent_batch(
     }
 }
 
-pub fn resolve_network(network: &str) -> Result<Network, SequencerError> {
+pub fn resolve_aligned_network(network: &str) -> Result<Network, SequencerError> {
     match network {
         "devnet" => Ok(Network::Devnet),
         "holesky" => Ok(Network::Holesky),

@@ -1,7 +1,7 @@
 use super::{
     configs::AlignedConfig,
     errors::SequencerError,
-    utils::{get_latest_sent_batch, resolve_network, send_verify_tx, sleep_random},
+    utils::{get_latest_sent_batch, resolve_aligned_network, send_verify_tx, sleep_random},
 };
 use crate::{
     sequencer::errors::ProofSenderError,
@@ -73,7 +73,7 @@ impl L1ProofSender {
         let l1_chain_id = eth_client.get_chain_id().await?.try_into().map_err(|_| {
             ProofSenderError::InternalError("Failed to convert chain ID to U256".to_owned())
         })?;
-        let network = resolve_network(&aligned_cfg.network)?;
+        let network = resolve_aligned_network(&aligned_cfg.network)?;
         let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
         let aligned_sp1_elf_path = aligned_cfg.aligned_sp1_elf_path.clone();
 

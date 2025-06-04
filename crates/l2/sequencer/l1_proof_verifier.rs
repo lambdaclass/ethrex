@@ -20,7 +20,7 @@ use crate::{
 use super::{
     configs::AlignedConfig,
     errors::SequencerError,
-    utils::{resolve_network, send_verify_tx, sleep_random},
+    utils::{resolve_aligned_network, send_verify_tx, sleep_random},
 };
 
 const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
@@ -57,7 +57,7 @@ impl L1ProofVerifier {
     ) -> Result<Self, SequencerError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
 
-        let network = resolve_network(&aligned_cfg.network)?;
+        let network = resolve_aligned_network(&aligned_cfg.network)?;
 
         Ok(Self {
             eth_client,

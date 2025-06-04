@@ -343,7 +343,7 @@ async fn prepare_batch_from_block(
             // Prepare current state diff.
             let state_diff = prepare_state_diff(
                 first_block_of_batch,
-                block_to_commit_header.clone(),
+                block_to_commit_header,
                 state.store.clone(),
                 &acc_withdrawals,
                 &acc_deposits,
