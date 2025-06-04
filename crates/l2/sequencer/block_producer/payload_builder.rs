@@ -11,7 +11,10 @@ use ethrex_common::{
     types::{Block, Receipt, Transaction, SAFE_BYTES_PER_BLOB},
     Address, U256,
 };
-use ethrex_l2_common::state_diff::{AccountStateDiff, StateDiffError, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN, SIMPLE_TX_STATE_DIFF_SIZE, WITHDRAWAL_LOG_LEN};
+use ethrex_l2_common::state_diff::{
+    AccountStateDiff, StateDiffError, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN,
+    SIMPLE_TX_STATE_DIFF_SIZE, WITHDRAWAL_LOG_LEN,
+};
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{

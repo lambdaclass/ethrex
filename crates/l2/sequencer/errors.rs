@@ -192,7 +192,7 @@ pub enum CommitterError {
     #[error("Deposit error: {0}")]
     DepositError(#[from] DepositError),
     #[error("Withdrawal error: {0}")]
-    WithdrawalError(#[from] WithdrawalError)
+    WithdrawalError(#[from] WithdrawalError),
 }
 
 #[derive(Debug, thiserror::Error)]

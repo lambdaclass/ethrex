@@ -1,9 +1,5 @@
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::{
-    types::{
-        PrivilegedL2Transaction, Transaction,
-    },
-};
+use ethrex_common::types::{PrivilegedL2Transaction, Transaction};
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 
