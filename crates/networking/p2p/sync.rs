@@ -457,12 +457,12 @@ impl Syncer {
                     .set_latest_valid_ancestor(failed_block_hash, last_valid_hash)
                     .await?;
 
-                // TODO(#2127): Just marking the failing ancestor and the sync head is enough
-                // to fix the Missing Ancestors hive test, we want to look at a more robust
-                // solution in the future if needed.
-                store
-                    .set_latest_valid_ancestor(sync_head, last_valid_hash)
-                    .await?;
+                // // TODO(#2127): Just marking the failing ancestor and the sync head is enough
+                // // to fix the Missing Ancestors hive test, we want to look at a more robust
+                // // solution in the future if needed.
+                // store
+                //     .set_latest_valid_ancestor(sync_head, last_valid_hash)
+                //     .await?;
             }
 
             return Err(error.into());
