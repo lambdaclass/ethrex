@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749053187912,
+  "lastUpdate": 1749056814225,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10915,6 +10915,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177129080038,
             "range": "± 646915005",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7e13253f6d166004ea579378a9fffc6969df36d6",
+          "message": "refactor(l2): implement L1 Proof Sender using spawned library (#3014)\n\nMotivation\n\n[spawned](https://github.com/lambdaclass/spawned) goal is to simplify\nconcurrency implementations and decouple any runtime implementation from\nthe code.\nOn this PR we aim to replace the proof sender with a spawned\nimplementation to learn if this approach is beneficial.\n\nDescription\n\nReplaces L1ProofSender task spawn with a series of spawned gen_server\nimplementation.\n\n---------\n\nCo-authored-by: Esteban Dimitroff Hodi <esteban.dimitroff@lambdaclass.com>",
+          "timestamp": "2025-06-04T16:21:17Z",
+          "tree_id": "6fffe11edc5303ca97e4611072b6dcba8775bc1e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7e13253f6d166004ea579378a9fffc6969df36d6"
+        },
+        "date": 1749056809943,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177391917949,
+            "range": "± 655595905",
             "unit": "ns/iter"
           }
         ]
