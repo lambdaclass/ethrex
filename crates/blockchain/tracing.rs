@@ -41,9 +41,18 @@ impl Blockchain {
             .unwrap_or(&block)
             .header
             .parent_hash;
+        // Cache block hashes for all parent blocks so we can access them during execution
+        let block_hash_cache = blocks_to_re_execute
+            .iter()
+            .map(|b| (b.header.number, b.hash()))
+            .collect();
         let mut vm = Evm::new(
             self.evm_engine,
-            StoreVmDatabase::new(self.storage.clone(), parent_hash),
+            StoreVmDatabase::new_with_block_hash_cache(
+                self.storage.clone(),
+                parent_hash,
+                block_hash_cache,
+            ),
         );
         // Run parents to rebuild pre-state
         for block in blocks_to_re_execute.iter().rev() {
