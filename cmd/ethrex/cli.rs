@@ -262,7 +262,7 @@ pub enum Subcommand {
         #[arg(
             long = "last",
             value_name = "NUMBER",
-            help = "Last block numer to export"
+            help = "Last block number to export"
         )]
         last: Option<u64>,
     },
