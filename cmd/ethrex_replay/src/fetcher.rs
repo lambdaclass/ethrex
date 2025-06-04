@@ -19,7 +19,8 @@ pub async fn get_blockdata(
     chain_config: ChainConfig,
     block_number: usize,
 ) -> eyre::Result<Cache> {
-    if let Ok(cache) = load_cache(block_number) {
+    let file_name = format!("cache_{}.json", block_number);
+    if let Ok(cache) = load_cache(&file_name) {
         return Ok(cache);
     }
     let block = get_block(rpc_url, block_number)
@@ -46,7 +47,9 @@ pub async fn get_blockdata(
         chain_config,
         db,
     };
-    write_cache(&cache).expect("failed to write cache");
+
+    write_cache(&cache, &file_name).expect("failed to write cache");
+
     Ok(cache)
 }
 
@@ -56,6 +59,10 @@ pub async fn get_rangedata(
     from: usize,
     to: usize,
 ) -> eyre::Result<Cache> {
+    let file_name = format!("cache_{}-{}.json", from, to);
+    if let Ok(cache) = load_cache(&file_name) {
+        return Ok(cache);
+    }
     let mut blocks = Vec::with_capacity(to - from);
     for block_number in from..=to {
         let block = get_block(rpc_url, block_number)
@@ -83,8 +90,8 @@ pub async fn get_rangedata(
         chain_config,
         db,
     };
-    // TODO fix this
-    // write_cache(&cache).expect("failed to write cache");
+
+    write_cache(&cache, &file_name).expect("failed to write cache");
 
     Ok(cache)
 }
