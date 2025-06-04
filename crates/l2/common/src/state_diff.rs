@@ -12,6 +12,7 @@ use ethrex_common::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{error::StoreError, hash_address, Store};
 use ethrex_trie::{Trie, TrieError};
+use ethrex_vm::{EvmError, VmDatabase};
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +59,8 @@ pub enum StateDiffError {
     FailedToCalculateNonce,
     #[error("Unexpected Error: {0}")]
     InternalError(String),
+    #[error("Evm Error: {0}")]
+    EVMError(#[from] EvmError)
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -366,7 +369,7 @@ impl StateDiff {
                     if update_code != diff_code {
                         return false;
                     }
-                },
+                }
                 (None, None) => {}
                 _ => return false,
             }
@@ -612,29 +615,12 @@ impl Decoder {
 }
 
 /// Calculates nonce_diff between current and previous block.
-/// Uses cache if provided to optimize account_info lookups.
-pub async fn get_nonce_diff(
+pub fn get_nonce_diff(
     account_update: &AccountUpdate,
-    store: &Store,
-    accounts_info_cache: Option<&mut HashMap<Address, Option<AccountInfo>>>,
-    current_block_number: BlockNumber,
+    db: &impl VmDatabase,
 ) -> Result<u16, StateDiffError> {
     // Get previous account_info either from store or cache
-    let account_info = match accounts_info_cache {
-        None => store
-            .get_account_info(current_block_number - 1, account_update.address)
-            .await
-            .map_err(StoreError::from)?,
-        Some(cache) => {
-            account_info_from_cache(
-                cache,
-                store,
-                account_update.address,
-                current_block_number - 1,
-            )
-            .await?
-        }
-    };
+    let account_info = db.get_account_info(account_update.address)?;
 
     // Get previous nonce
     let prev_nonce = match account_info {
@@ -659,43 +645,17 @@ pub async fn get_nonce_diff(
     Ok(nonce_diff)
 }
 
-/// Retrieves account info from cache or falls back to store.
-/// Updates cache with fresh data if cache miss occurs.
-async fn account_info_from_cache(
-    cache: &mut HashMap<Address, Option<AccountInfo>>,
-    store: &Store,
-    address: Address,
-    block_number: BlockNumber,
-) -> Result<Option<AccountInfo>, StateDiffError> {
-    let account_info = match cache.get(&address) {
-        Some(account_info) => account_info.clone(),
-        None => {
-            let account_info = store
-                .get_account_info(block_number, address)
-                .await
-                .map_err(StoreError::from)?;
-            cache.insert(address, account_info.clone());
-            account_info
-        }
-    };
-    Ok(account_info)
-}
-
 /// Prepare the state diff for the block.
-pub async fn prepare_state_diff(
-    first_block_number: BlockNumber,
+pub fn prepare_state_diff(
     last_header: BlockHeader,
-    store: Store,
+    db: &impl VmDatabase,
     withdrawals: &[(H256, Transaction)],
     deposits: &[PrivilegedL2Transaction],
     account_updates: Vec<AccountUpdate>,
 ) -> Result<StateDiff, StateDiffError> {
     let mut modified_accounts = BTreeMap::new();
     for account_update in account_updates {
-        // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
-        // and we may have to keep track of the latestCommittedBlock (last block of the batch),
-        // the batch_size and the latestCommittedBatch in the contract.
-        let nonce_diff = get_nonce_diff(&account_update, &store, None, first_block_number).await?;
+        let nonce_diff = get_nonce_diff(&account_update, db)?;
 
         modified_accounts.insert(
             account_update.address,

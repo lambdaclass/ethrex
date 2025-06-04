@@ -13,7 +13,8 @@ use ethrex_common::{
     types::{blobs_bundle, bytes_from_blob, Block, BlockHeader},
     Address,
 };
-use ethrex_l2_common::StateDiff;
+#[cfg(feature = "l2")]
+use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;

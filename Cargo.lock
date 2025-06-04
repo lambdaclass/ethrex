@@ -3180,6 +3180,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-trie",
+ "ethrex-vm",
  "keccak-hash",
  "lazy_static",
  "serde",

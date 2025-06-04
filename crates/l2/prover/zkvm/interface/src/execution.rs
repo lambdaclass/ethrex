@@ -294,7 +294,7 @@ fn compute_withdrawals_and_deposits_digests(
         deposits_hashes.extend(block_deposit_hashes);
     }
 
-    let withdrawals_merkle_root = compute_withdrawals_merkle_root(withdrawal_hashes)?;
+    let withdrawals_merkle_root = compute_withdrawals_merkle_root(&withdrawal_hashes)?;
     let deposit_logs_hash = compute_deposit_logs_hash(deposits_hashes)
         .map_err(StatelessExecutionError::DepositError)?;
 

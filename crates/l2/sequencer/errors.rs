@@ -4,7 +4,9 @@ use crate::utils::prover::proving_systems::ProverType;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
-use ethrex_l2_common::StateDiffError;
+use ethrex_l2_common::deposits::DepositError;
+use ethrex_l2_common::state_diff::StateDiffError;
+use ethrex_l2_common::withdrawals::WithdrawalError;
 use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
@@ -187,6 +189,10 @@ pub enum CommitterError {
     FailedToGetWithdrawals(#[from] UtilsError),
     #[error("Committer failed to push to BlobsBundleCache: {0}")]
     BlobsBundleCacheError(#[from] super::blobs_bundle_cache::BlobsBundleCacheError),
+    #[error("Deposit error: {0}")]
+    DepositError(#[from] DepositError),
+    #[error("Withdrawal error: {0}")]
+    WithdrawalError(#[from] WithdrawalError)
 }
 
 #[derive(Debug, thiserror::Error)]

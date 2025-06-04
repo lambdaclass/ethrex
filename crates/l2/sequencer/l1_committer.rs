@@ -6,15 +6,15 @@ use crate::{
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     types::{
-        batch::Batch, blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle,
-        BlobsBundleError, Block, BlockHeader, BlockNumber, PrivilegedL2Transaction, Receipt,
-        Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
+        batch::Batch, blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, Block,
+        BlockNumber, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
 };
 use ethrex_l2_common::{
-    compute_deposit_logs_hash, compute_withdrawals_merkle_root, get_block_deposits,
-    get_block_withdrawals, prepare_state_diff, StateDiff,
+    deposits::{compute_deposit_logs_hash, get_block_deposits},
+    state_diff::{prepare_state_diff, StateDiff},
+    withdrawals::{compute_withdrawals_merkle_root, get_block_withdrawal_hashes, get_block_withdrawals},
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_metrics::metrics;
@@ -288,8 +288,8 @@ async fn prepare_batch_from_block(
             ))?;
 
         // Get block transactions and receipts
-        let mut txs_and_receipts = vec![];
         let mut txs = vec![];
+        let mut receipts = vec![];
         for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
             let receipt = state
                 .store
@@ -298,8 +298,8 @@ async fn prepare_batch_from_block(
                 .ok_or(CommitterError::InternalError(
                     "Transactions in a block should have a receipt".to_owned(),
                 ))?;
-            txs_and_receipts.push((tx.clone(), receipt));
             txs.push(tx.clone());
+            receipts.push(receipt);
         }
 
         metrics!(
@@ -310,7 +310,7 @@ async fn prepare_batch_from_block(
                 .unwrap_or(0)
         );
         // Get block withdrawals and deposits
-        let withdrawals = get_block_withdrawals(&txs_and_receipts)?;
+        let withdrawals = get_block_withdrawals(&txs, &receipts);
         let deposits = get_block_deposits(&txs);
 
         // Get block account updates.
@@ -343,17 +343,24 @@ async fn prepare_batch_from_block(
             }
         }
 
+        let parent_block_hash = state
+            .store
+            .get_block_header(last_added_block_number)?
+            .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                "Failed to get_block_header() of the last added block".to_owned(),
+            ))?
+            .hash();
+        let parent_db = StoreVmDatabase::new(state.store.clone(), parent_block_hash);
+
         let result = if !state.validium {
             // Prepare current state diff.
             let state_diff = prepare_state_diff(
-                first_block_of_batch,
                 block_to_commit_header,
-                state.store.clone(),
+                &parent_db,
                 &acc_withdrawals,
                 &acc_deposits,
                 acc_account_updates.clone().into_values().collect(),
-            )
-            .await?;
+            )?;
             generate_blobs_bundle(&state_diff)
         } else {
             Ok((BlobsBundle::default(), 0_usize))
@@ -443,10 +450,11 @@ async fn send_commitment(
     state: &mut CommitterState,
     batch: &Batch,
 ) -> Result<H256, CommitterError> {
+    let withdrawals_merkle_root = compute_withdrawals_merkle_root(&batch.withdrawal_hashes)?;
     let calldata_values = vec![
-        Value::Uint(U256::from(batch_number)),
-        Value::FixedBytes(new_state_root.0.to_vec().into()),
-        Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
+        Value::Uint(U256::from(batch.number)),
+        Value::FixedBytes(batch.state_root.0.to_vec().into()),
+        Value::FixedBytes(withdrawals_merkle_root.0.to_vec().into()),
         Value::FixedBytes(batch.deposit_logs_hash.0.to_vec().into()),
     ];
 

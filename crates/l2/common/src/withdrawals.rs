@@ -57,6 +57,19 @@ pub fn get_block_withdrawal_hashes(
         .collect::<Result<Vec<_>, _>>()
 }
 
+pub fn get_block_withdrawals(
+    txs: &[Transaction],
+    receipts: &[Receipt],
+) -> Vec<(H256, Transaction)> {
+    txs.iter()
+        .zip(receipts.iter())
+        .filter(|(tx, receipt)| is_withdrawal_l2(tx, receipt))
+        .map(|(tx, _)| {
+            (tx.compute_hash(), tx.clone())
+        })
+        .collect()
+}
+
 fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> bool {
     // WithdrawalInitiated(address,address,uint256)
     let withdrawal_event_selector: H256 =
@@ -87,7 +100,7 @@ pub fn get_withdrawal_hash(tx: &Transaction) -> Option<H256> {
 }
 
 pub fn compute_withdrawals_merkle_root(
-    withdrawals_hashes: Vec<H256>,
+    withdrawals_hashes: &[H256],
 ) -> Result<H256, WithdrawalError> {
     if !withdrawals_hashes.is_empty() {
         merkelize(withdrawals_hashes)
@@ -96,8 +109,8 @@ pub fn compute_withdrawals_merkle_root(
     }
 }
 
-pub fn merkelize(data: Vec<H256>) -> Result<H256, WithdrawalError> {
-    let mut data = data;
+pub fn merkelize(data: &[H256]) -> Result<H256, WithdrawalError> {
+    let mut data = data.to_vec();
     let mut first = true;
     while data.len() > 1 || first {
         first = false;
