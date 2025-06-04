@@ -40,7 +40,7 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := e73f52c34fd785700e9555aa41a78b0d5ca50173
+ETHEREUM_PACKAGE_REVISION := 7d7864cf1cc34138b427c3c7d0e36623efc19300
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
@@ -62,6 +62,9 @@ localnet-assertoor-blob: stop-localnet-silent build-image checkout-ethereum-pack
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_blob.yaml
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
+localnet-assertoor-ethrex_only: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_ethrex_only.yaml
+	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
 
 localnet-assertoor-tx: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_tx.yaml
