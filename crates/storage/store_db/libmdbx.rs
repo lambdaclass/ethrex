@@ -89,13 +89,20 @@ impl Store {
     }
 
     // Helper method to read from a libmdbx table
-    async fn read_bulk<T: Table>(&self, keys: Vec<T::Key>) -> Result<Vec<T::Value>, StoreError> {
+    async fn read_bulk<T: Table>(&self, keys: Vec<T::Key>) -> Result<Vec<T::Value>, StoreError>
+    where
+        T::Key: Decodable,
+    {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let mut res = Vec::new();
             let txn = db.begin_read().map_err(StoreError::LibmdbxError)?;
+            let mut cursor = txn.cursor::<T>().map_err(StoreError::LibmdbxError)?;
             for key in keys {
-                let val = txn.get::<T>(key).map_err(StoreError::LibmdbxError)?;
+                let val = cursor
+                    .seek_exact(key)
+                    .map_err(StoreError::LibmdbxError)?
+                    .map(|x| x.1);
                 match val {
                     Some(val) => res.push(val),
                     None => Err(StoreError::ReadError)?,
@@ -172,31 +179,44 @@ impl StoreEngine for Store {
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
+            let mut locations_cursor = tx
+                .cursor::<TransactionLocations>()
+                .map_err(StoreError::LibmdbxError)?;
+            let mut bodies_cursor = tx.cursor::<Bodies>().map_err(StoreError::LibmdbxError)?;
+            let mut headers_cursor = tx.cursor::<Headers>().map_err(StoreError::LibmdbxError)?;
+            let mut block_numbers_cursor = tx
+                .cursor::<BlockNumbers>()
+                .map_err(StoreError::LibmdbxError)?;
+
             for block in blocks {
                 let number = block.header.number;
                 let hash = block.hash();
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    tx.upsert::<TransactionLocations>(
-                        transaction.compute_hash().into(),
-                        (number, hash, index as u64).into(),
-                    )
-                    .map_err(StoreError::LibmdbxError)?;
+                    locations_cursor
+                        .upsert(
+                            transaction.compute_hash().into(),
+                            (number, hash, index as u64).into(),
+                        )
+                        .map_err(StoreError::LibmdbxError)?;
                 }
 
-                tx.upsert::<Bodies>(
-                    hash.into(),
-                    BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
-                )
-                .map_err(StoreError::LibmdbxError)?;
+                bodies_cursor
+                    .upsert(
+                        hash.into(),
+                        BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
+                    )
+                    .map_err(StoreError::LibmdbxError)?;
 
-                tx.upsert::<Headers>(
-                    hash.into(),
-                    BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
-                )
-                .map_err(StoreError::LibmdbxError)?;
+                headers_cursor
+                    .upsert(
+                        hash.into(),
+                        BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
+                    )
+                    .map_err(StoreError::LibmdbxError)?;
 
-                tx.upsert::<BlockNumbers>(hash.into(), number)
+                block_numbers_cursor
+                    .upsert(hash.into(), number)
                     .map_err(StoreError::LibmdbxError)?;
             }
 
