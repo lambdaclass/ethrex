@@ -472,16 +472,7 @@ impl Blockchain {
         }
 
         // Check the nonce of pendings TXs in the mempool from the same sender
-        let filter_sender =
-            |t: &Transaction| -> bool { t.sender() == sender && t.nonce() == nonce };
-        let txs_with_same_nonce: Vec<MempoolTransaction> = self
-            .mempool
-            .filter_transactions_with_filter_fn(&filter_sender)?
-            .into_values()
-            .flatten()
-            .collect();
-
-        if !txs_with_same_nonce.is_empty() {
+        if self.mempool.contains_sender_nonce(sender, nonce)? {
             return Err(MempoolError::InvalidNonce);
         }
 
