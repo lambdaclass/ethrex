@@ -119,7 +119,7 @@ impl Blockchain {
         Ok(execution_result)
     }
 
-    pub async fn store_block_with_query_plan(
+    async fn store_block_with_query_plan(
         &self,
         block: &Block,
         execution_result: BlockExecutionResult,
