@@ -5,14 +5,13 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
-use crate::AccountUpdate;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{
-    code_hash, payload::PayloadBundle, AccountInfo, AccountState, Block, BlockBody, BlockHash,
-    BlockHeader, BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, Receipt, Transaction,
-    EMPTY_TRIE_HASH,
+    code_hash, payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody,
+    BlockHash, BlockHeader, BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index,
+    Receipt, Transaction, EMPTY_TRIE_HASH,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -180,10 +179,7 @@ impl Store {
     }
 
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        info!(
-            "Adding block to pending: {}",
-            block.header.compute_block_hash()
-        );
+        info!("Adding block to pending: {}", block.hash());
         self.engine.add_pending_block(block).await
     }
 
@@ -211,6 +207,24 @@ impl Store {
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
         self.engine.get_block_number(block_hash).await
+    }
+
+    pub async fn get_fork_id(&self) -> Result<ForkId, StoreError> {
+        let chain_config = self.get_chain_config()?;
+        let genesis_header = self
+            .get_block_header(0)?
+            .ok_or(StoreError::MissingEarliestBlockNumber)?;
+        let block_number = self.get_latest_block_number().await?;
+        let block_header = self
+            .get_block_header(block_number)?
+            .ok_or(StoreError::MissingLatestBlockNumber)?;
+
+        Ok(ForkId::new(
+            chain_config,
+            genesis_header,
+            block_header.timestamp,
+            block_number,
+        ))
     }
 
     pub async fn add_transaction_location(
@@ -452,7 +466,7 @@ impl Store {
         let genesis_hash = genesis_block.hash();
 
         if let Some(header) = self.get_block_header(genesis_block_number)? {
-            if header.compute_block_hash() == genesis_hash {
+            if header.hash() == genesis_hash {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
             } else {
@@ -501,6 +515,13 @@ impl Store {
 
     pub async fn get_block_by_hash(&self, block_hash: H256) -> Result<Option<Block>, StoreError> {
         self.engine.get_block_by_hash(block_hash).await
+    }
+
+    pub async fn get_block_by_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Block>, StoreError> {
+        self.engine.get_block_by_number(block_number).await
     }
 
     pub async fn get_storage_at(
@@ -894,8 +915,8 @@ impl Store {
         // Root is irrelevant, we only care about the internal state
         Ok(self
             .open_state_trie(*EMPTY_TRIE_HASH)
-            .state()
-            .get_node(node_hash.into())?
+            .db()
+            .get(node_hash.into())?
             .is_some())
     }
 
@@ -908,8 +929,8 @@ impl Store {
         // Root is irrelevant, we only care about the internal state
         Ok(self
             .open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)
-            .state()
-            .get_node(node_hash.into())?
+            .db()
+            .get(node_hash.into())?
             .is_some())
     }
 
@@ -1083,6 +1104,56 @@ impl Store {
             .set_latest_valid_ancestor(bad_block, latest_valid)
             .await
     }
+
+    /// Takes a block hash and returns an iterator to its ancestors. Block headers are returned
+    /// in reverse order, starting from the given block and going up to the genesis block.
+    pub fn ancestors(&self, block_hash: BlockHash) -> AncestorIterator {
+        AncestorIterator {
+            store: self.clone(),
+            next_hash: block_hash,
+        }
+    }
+
+    /// Get the canonical block hash for a given block number.
+    pub fn get_canonical_block_hash_sync(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        self.engine.get_canonical_block_hash_sync(block_number)
+    }
+
+    /// Checks if a given block belongs to the current canonical chain. Returns false if the block is not known
+    pub fn is_canonical_sync(&self, block_hash: BlockHash) -> Result<bool, StoreError> {
+        let Some(block_number) = self.engine.get_block_number_sync(block_hash)? else {
+            return Ok(false);
+        };
+        Ok(self
+            .engine
+            .get_canonical_block_hash_sync(block_number)?
+            .is_some_and(|h| h == block_hash))
+    }
+}
+
+pub struct AncestorIterator {
+    store: Store,
+    next_hash: BlockHash,
+}
+
+impl Iterator for AncestorIterator {
+    type Item = Result<(BlockHash, BlockHeader), StoreError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next_hash = self.next_hash;
+        match self.store.get_block_header_by_hash(next_hash) {
+            Ok(Some(header)) => {
+                let ret_hash = self.next_hash;
+                self.next_hash = header.parent_hash;
+                Some(Ok((ret_hash, header)))
+            }
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        }
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {
@@ -1199,7 +1270,7 @@ mod tests {
     async fn test_store_block(store: Store) {
         let (block_header, block_body) = create_block_for_testing();
         let block_number = 6;
-        let hash = block_header.compute_block_hash();
+        let hash = block_header.hash();
 
         store
             .add_block_header(hash, block_header.clone())
@@ -1214,6 +1285,9 @@ mod tests {
         let stored_header = store.get_block_header(block_number).unwrap().unwrap();
         let stored_body = store.get_block_body(block_number).await.unwrap().unwrap();
 
+        // Ensure both headers have their hashes computed for comparison
+        let _ = stored_header.hash();
+        let _ = block_header.hash();
         assert_eq!(stored_header, block_header);
         assert_eq!(stored_body, block_body);
     }
@@ -1261,6 +1335,7 @@ mod tests {
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
+            ..Default::default()
         };
         let block_body = BlockBody {
             transactions: vec![Transaction::decode(&hex::decode("b86f02f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap(),
@@ -1340,7 +1415,6 @@ mod tests {
             tx_type: TxType::EIP2930,
             succeeded: true,
             cumulative_gas_used: 1747,
-            bloom: Bloom::random(),
             logs: vec![],
         };
         let block_number = 6;

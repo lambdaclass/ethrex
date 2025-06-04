@@ -57,27 +57,31 @@ interface IOnChainProposer {
     /// @param risc0ImageId Digest of the zkVM imageid.
     /// @param risc0Journal public_inputs aka journal
     /// ----------------------------------------------------------------------
-    /// @param sp1ProgramVKey Public verifying key
     /// @param sp1PublicValues Values used to perform the execution
     /// @param sp1ProofBytes Groth16 proof
     /// ----------------------------------------------------------------------
     /// @param picoRiscvVkey Public verifying key
     /// @param picoPublicValues Values used to perform the execution
     /// @param picoProof Groth16 proof
+    /// ----------------------------------------------------------------------
+    /// @param tdxPublicValues Values used to perform the execution
+    /// @param tdxSignature TDX signature
     function verifyBatch(
         uint256 batchNumber,
         //risc0
-        bytes calldata risc0BlockProof,
+        bytes memory risc0BlockProof,
         bytes32 risc0ImageId,
         bytes calldata risc0Journal,
         //sp1
-        bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,
-        bytes calldata sp1ProofBytes,
+        bytes memory sp1ProofBytes,
         //pico
         bytes32 picoRiscvVkey,
         bytes calldata picoPublicValues,
-        uint256[8] calldata picoProof
+        uint256[8] memory picoProof,
+        //tdx
+        bytes calldata tdxPublicValues,
+        bytes memory tdxSignature
     ) external;
     // TODO: imageid, programvkey and riscvvkey should be constants
     // TODO: organize each zkvm proof arguments in their own structs

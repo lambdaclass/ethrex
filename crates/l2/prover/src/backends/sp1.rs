@@ -10,7 +10,7 @@ use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
 static PROGRAM_ELF: &[u8] =
-    include_bytes!("../../zkvm/interface/sp1/elf/riscv32im-succinct-zkvm-elf");
+    include_bytes!("../../zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf");
 
 struct ProverSetup {
     client: EnvProver,
@@ -73,19 +73,17 @@ pub fn prove(input: ProgramInput) -> Result<ProveOutput, Box<dyn std::error::Err
     Ok(ProveOutput::new(proof, setup.vk.clone()))
 }
 
-pub fn verify(output: &ProveOutput) -> Result<bool, Box<dyn std::error::Error>> {
+pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
     let setup = &*PROVER_SETUP;
     setup.client.verify(&output.proof, &output.vk)?;
 
-    Ok(true)
+    Ok(())
 }
 
 pub fn to_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::error::Error>> {
-    // bytes32 programVKey,
     // bytes calldata publicValues,
     // bytes calldata proofBytes
     let calldata = vec![
-        Value::FixedBytes(bytes::Bytes::from_owner(proof.vk.bytes32_raw())),
         Value::Bytes(proof.proof.public_values.to_vec().into()),
         Value::Bytes(proof.proof.bytes().into()),
     ];

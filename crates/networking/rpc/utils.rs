@@ -29,8 +29,6 @@ pub enum RpcErr {
     InvalidForkChoiceState(String),
     InvalidPayloadAttributes(String),
     UnknownPayload(String),
-    #[cfg(feature = "based")]
-    InvalidBasedMessage(String),
     #[cfg(feature = "l2")]
     InvalidEthrexL2Message(String),
 }
@@ -132,12 +130,6 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: format!("Unknown payload: {context}"),
             },
-            #[cfg(feature = "based")]
-            RpcErr::InvalidBasedMessage(context) => RpcErrorMetadata {
-                code: -38003,
-                data: None,
-                message: format!("Invalid based message: {context}"),
-            },
             #[cfg(feature = "l2")]
             RpcErr::InvalidEthrexL2Message(reason) => RpcErrorMetadata {
                 code: -39000,
@@ -172,10 +164,9 @@ pub enum RpcNamespace {
     Debug,
     Web3,
     Net,
+    Mempool,
     #[cfg(feature = "l2")]
     EthrexL2,
-    #[cfg(feature = "based")]
-    Based,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -204,10 +195,10 @@ impl RpcRequest {
                 "debug" => Ok(RpcNamespace::Debug),
                 "web3" => Ok(RpcNamespace::Web3),
                 "net" => Ok(RpcNamespace::Net),
+                // TODO: The namespace is set to match geth's namespace for compatibility, consider changing it in the future
+                "txpool" => Ok(RpcNamespace::Mempool),
                 #[cfg(feature = "l2")]
                 "ethrex" => Ok(RpcNamespace::EthrexL2),
-                #[cfg(feature = "based")]
-                "based" => Ok(RpcNamespace::Based),
                 _ => Err(RpcErr::MethodNotFound(self.method.clone())),
             }
         } else {
@@ -342,17 +333,18 @@ pub mod test_utils {
     use ethrex_blockchain::Blockchain;
     use ethrex_common::H512;
     use ethrex_p2p::{
+        peer_handler::PeerHandler,
         sync_manager::SyncManager,
         types::{Node, NodeRecord},
     };
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
+    use tokio::sync::Mutex as TokioMutex;
 
-    use crate::rpc::{start_api, NodeData, RpcApiContext};
-    #[cfg(feature = "based")]
-    use crate::{EngineClient, EthClient};
-    #[cfg(feature = "based")]
-    use bytes::Bytes;
+    use crate::{
+        eth::gas_tip_estimator::GasTipEstimator,
+        rpc::{start_api, NodeData, RpcApiContext},
+    };
     #[cfg(feature = "l2")]
     use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
     #[cfg(feature = "l2")]
@@ -395,10 +387,6 @@ pub mod test_utils {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
-        #[cfg(feature = "based")]
-        let gateway_eth_client = EthClient::new("");
-        #[cfg(feature = "based")]
-        let gateway_auth_client = EngineClient::new("", Bytes::default());
         #[cfg(feature = "l2")]
         let valid_delegation_addresses = Vec::new();
         #[cfg(feature = "l2")]
@@ -415,13 +403,8 @@ pub mod test_utils {
             local_p2p_node,
             example_local_node_record(),
             SyncManager::dummy(),
+            PeerHandler::dummy(),
             "ethrex/test".to_string(),
-            #[cfg(feature = "based")]
-            gateway_eth_client,
-            #[cfg(feature = "based")]
-            gateway_auth_client,
-            #[cfg(feature = "based")]
-            Default::default(),
             #[cfg(feature = "l2")]
             valid_delegation_addresses,
             #[cfg(feature = "l2")]
@@ -439,18 +422,14 @@ pub mod test_utils {
             blockchain,
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
+            peer_handler: PeerHandler::dummy(),
             node_data: NodeData {
                 jwt_secret: Default::default(),
                 local_p2p_node: example_p2p_node(),
                 local_node_record: example_local_node_record(),
                 client_version: "ethrex/test".to_string(),
             },
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
+            gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]

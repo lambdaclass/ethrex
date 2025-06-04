@@ -489,7 +489,7 @@ impl StoreEngine for RedBStore {
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         self.write(
             PENDING_BLOCKS_TABLE,
-            <H256 as Into<BlockHashRLP>>::into(block.header.compute_block_hash()),
+            <H256 as Into<BlockHashRLP>>::into(block.hash()),
             <Block as Into<BlockRLP>>::into(block),
         )
         .await
@@ -528,6 +528,18 @@ impl StoreEngine for RedBStore {
                 <H256 as Into<BlockHashRLP>>::into(block_hash),
             )
             .await?
+            .map(|b| b.value()))
+    }
+
+    fn get_block_number_sync(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        Ok(self
+            .read_sync(
+                BLOCK_NUMBERS_TABLE,
+                <H256 as Into<BlockHashRLP>>::into(block_hash),
+            )?
             .map(|b| b.value()))
     }
 
@@ -656,6 +668,14 @@ impl StoreEngine for RedBStore {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read(CANONICAL_BLOCK_HASHES_TABLE, block_number)
             .await
+            .map(|o| o.map(|hash_rlp| hash_rlp.value().to()))
+    }
+
+    fn get_canonical_block_hash_sync(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        self.read_sync(CANONICAL_BLOCK_HASHES_TABLE, block_number)
             .map(|o| o.map(|hash_rlp| hash_rlp.value().to()))
     }
 

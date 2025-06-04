@@ -281,6 +281,13 @@ impl StoreEngine for Store {
         self.read::<BlockNumbers>(block_hash.into()).await
     }
 
+    fn get_block_number_sync(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        self.read_sync::<BlockNumbers>(block_hash.into())
+    }
+
     async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         self.write::<AccountCodes>(code_hash.into(), code.into())
             .await
@@ -517,6 +524,14 @@ impl StoreEngine for Store {
             .map(|o| o.map(|hash_rlp| hash_rlp.to()))
     }
 
+    fn get_canonical_block_hash_sync(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        self.read_sync::<CanonicalBlockHashes>(number)
+            .map(|o| o.map(|hash_rlp| hash_rlp.to()))
+    }
+
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
         self.write::<Payloads>(payload_id, PayloadBundle::from_block(block).into())
             .await
@@ -588,7 +603,7 @@ impl StoreEngine for Store {
     }
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        self.write::<PendingBlocks>(block.header.compute_block_hash().into(), block.into())
+        self.write::<PendingBlocks>(block.hash().into(), block.into())
             .await
     }
 
@@ -1253,6 +1268,8 @@ impl Encodable for SnapStateIndex {
 const DB_PAGE_SIZE: usize = 4096;
 /// For a default page size of 4096, the max value size is roughly 1/2 page size.
 const DB_MAX_VALUE_SIZE: usize = 2022;
+// Maximum DB size, set to 2 TB
+const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 2; // 2 TB
 
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
@@ -1282,8 +1299,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
     let options = DatabaseOptions {
         page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
         mode: Mode::ReadWrite(ReadWriteOptions {
-            // Set max DB size to 1TB
-            max_size: Some(1024_isize.pow(4)),
+            max_size: Some(MAX_MAP_SIZE),
             ..Default::default()
         }),
         ..Default::default()
@@ -1298,7 +1314,7 @@ mod tests {
     use bytes::Bytes;
     use ethrex_common::{
         types::{BlockHash, Index, Log, TxType},
-        Address, Bloom, H256,
+        Address, H256,
     };
 
     #[test]
@@ -1499,7 +1515,7 @@ mod tests {
         let options = DatabaseOptions {
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
-                max_size: Some(1024_isize.pow(4)),
+                max_size: Some(MAX_MAP_SIZE),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1561,7 +1577,7 @@ mod tests {
         let options = DatabaseOptions {
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
-                max_size: Some(1024_isize.pow(4)),
+                max_size: Some(MAX_MAP_SIZE),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1594,7 +1610,7 @@ mod tests {
         let options = DatabaseOptions {
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
-                max_size: Some(1024_isize.pow(4)),
+                max_size: Some(MAX_MAP_SIZE),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1640,7 +1656,6 @@ mod tests {
             tx_type: TxType::EIP7702,
             succeeded: true,
             cumulative_gas_used: u64::MAX,
-            bloom: Bloom::default(),
             logs,
         }
     }

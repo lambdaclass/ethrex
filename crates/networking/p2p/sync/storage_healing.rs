@@ -15,7 +15,7 @@ use std::{
 
 use ethrex_common::H256;
 use ethrex_storage::Store;
-use ethrex_trie::{Nibbles, EMPTY_TRIE_HASH};
+use ethrex_trie::{Nibbles, NodeHash, EMPTY_TRIE_HASH};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
@@ -27,6 +27,7 @@ use crate::{peer_handler::PeerHandler, sync::node_missing_children};
 const MINUMUM_STORAGES_IN_QUEUE: usize = 400;
 
 use super::{SyncError, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION};
+use ethrex_rlp::encode::RLPEncode;
 
 /// Waits for incoming hashed addresses from the receiver channel endpoint and queues the associated root nodes for state retrieval
 /// Also retrieves their children nodes until we have the full storage trie stored
@@ -118,7 +119,7 @@ async fn heal_storage_batch(
         debug!("Received {} storage nodes", nodes.len());
         // Process the nodes for each account path
         for (acc_path, paths) in batch.iter_mut() {
-            let mut trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH);
+            let trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH);
             // Get the corresponding nodes
             let trie_nodes: Vec<ethrex_trie::Node> =
                 nodes.drain(..paths.len().min(nodes.len())).collect();
@@ -126,11 +127,19 @@ async fn heal_storage_batch(
             let children = trie_nodes
                 .iter()
                 .zip(paths.drain(..trie_nodes.len()))
-                .map(|(node, path)| node_missing_children(node, &path, trie.state()))
+                .map(|(node, path)| node_missing_children(node, &path, trie.db()))
                 .collect::<Result<Vec<_>, _>>()?;
             paths.extend(children.into_iter().flatten());
             // Write nodes to trie
-            trie.state_mut().write_node_batch(&nodes)?;
+            trie.db().put_batch(
+                nodes
+                    .iter()
+                    .filter_map(|node| match node.compute_hash() {
+                        hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+                        NodeHash::Inline(_) => None,
+                    })
+                    .collect(),
+            )?;
             if nodes.is_empty() {
                 break;
             }

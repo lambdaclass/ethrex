@@ -1,7 +1,9 @@
 pub mod db;
 pub mod helpers;
+mod tracing;
 
 use super::BlockExecutionResult;
+use crate::backends::revm::db::EvmState;
 use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
@@ -9,21 +11,18 @@ use crate::constants::{
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::spec_id;
-use db::EvmState;
-use ethrex_common::types::AccountInfo;
+use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
-use ethrex_storage::{error::StoreError, AccountUpdate};
 
 use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;
-use revm::Database;
+
 use revm::{
-    db::AccountState as RevmAccountState,
-    inspectors::TracerEip3155,
     primitives::{BlobExcessGasAndPrice, BlockEnv, TxEnv, B256},
-    DatabaseCommit, Evm,
+    Evm,
 };
+use revm::{Database, DatabaseCommit};
 use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
 use ethrex_common::{
@@ -55,7 +54,10 @@ impl REVM {
         state: &mut EvmState,
     ) -> Result<BlockExecutionResult, EvmError> {
         let block_header = &block.header;
-        let spec_id: SpecId = spec_id(&state.chain_config()?, block_header.timestamp);
+        let spec_id: SpecId = spec_id(
+            &state.inner.database.get_chain_config()?,
+            block_header.timestamp,
+        );
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
                 if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
@@ -115,7 +117,7 @@ impl REVM {
     pub fn process_withdrawals(
         initial_state: &mut EvmState,
         withdrawals: &[Withdrawal],
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), EvmError> {
         //balance_increments is a vector of tuples (Address, increment as u128)
         let balance_increments = withdrawals
             .iter()
@@ -127,27 +129,7 @@ impl REVM {
                 )
             })
             .collect::<Vec<_>>();
-        match initial_state {
-            EvmState::Store(db) => {
-                db.increment_balances(balance_increments)?;
-            }
-            EvmState::Execution(db) => {
-                for (address, balance) in balance_increments {
-                    if balance == 0 {
-                        continue;
-                    }
-
-                    let account = db
-                        .load_account(address)
-                        .map_err(|err| StoreError::Custom(format!("revm CacheDB error: {err}")))?;
-
-                    account.info.balance += RevmU256::from(balance);
-                    if account.account_state == RevmAccountState::None {
-                        account.account_state = RevmAccountState::Touched;
-                    }
-                }
-            }
-        }
+        initial_state.inner.increment_balances(balance_increments)?;
         Ok(())
     }
 
@@ -192,13 +174,9 @@ impl REVM {
         state: &mut EvmState,
     ) -> Result<revm_primitives::AccountInfo, EvmError> {
         let revm_addr = RevmAddress::from_slice(addr.as_bytes());
-        let account_info = match state {
-            EvmState::Store(db) => db.basic(revm_addr)?,
-            EvmState::Execution(cache_db) => cache_db.basic(revm_addr)?,
-        }
-        .ok_or(EvmError::DB(StoreError::Custom(
+        let account_info = state.inner.basic(revm_addr)?.ok_or(EvmError::DB(
             "System contract address was not found after deployment".to_string(),
-        )))?;
+        ))?;
         Ok(account_info)
     }
     pub(crate) fn read_withdrawal_requests(
@@ -219,7 +197,9 @@ impl REVM {
         let account_info =
             Self::system_contract_account_info(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, state)?;
         if account_info.is_empty_code_hash() {
-            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
+            return Err(EvmError::SystemContractEmpty(
+                "WITHDRAWAL_REQUEST_PREDEPLOY".to_string(),
+            ));
         }
 
         match tx_result {
@@ -232,11 +212,11 @@ impl REVM {
             // EIP-7002 specifies that a failed system call invalidates the entire block.
             ExecutionResult::Halt { reason, gas_used } => {
                 let err_str = format!("Transaction HALT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
-                Err(EvmError::Custom(err_str))
+                Err(EvmError::SystemContractCallFailed(err_str))
             }
             ExecutionResult::Revert { gas_used, output } => {
                 let err_str = format!("Transaction REVERT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
-                Err(EvmError::Custom(err_str))
+                Err(EvmError::SystemContractCallFailed(err_str))
             }
         }
     }
@@ -258,7 +238,9 @@ impl REVM {
         let account_info =
             Self::system_contract_account_info(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, state)?;
         if account_info.is_empty_code_hash() {
-            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
+            return Err(EvmError::SystemContractEmpty(
+                "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS".to_string(),
+            ));
         }
 
         match tx_result {
@@ -271,11 +253,11 @@ impl REVM {
             // EIP-7251 specifies that a failed system call invalidates the entire block.
             ExecutionResult::Halt { reason, gas_used } => {
                 let err_str = format!("Transaction HALT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
-                Err(EvmError::Custom(err_str))
+                Err(EvmError::SystemContractCallFailed(err_str))
             }
             ExecutionResult::Revert { gas_used, output } => {
                 let err_str = format!("Transaction REVERT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
-                Err(EvmError::Custom(err_str))
+                Err(EvmError::SystemContractCallFailed(err_str))
             }
         }
     }
@@ -283,132 +265,72 @@ impl REVM {
     /// Gets the state_transitions == [AccountUpdate] from the [EvmState].
     pub fn get_state_transitions(
         initial_state: &mut EvmState,
-    ) -> Vec<ethrex_storage::AccountUpdate> {
-        match initial_state {
-            EvmState::Store(db) => {
-                db.merge_transitions(BundleRetention::PlainState);
-                let bundle = db.take_bundle();
+    ) -> Vec<ethrex_common::types::AccountUpdate> {
+        let initial_state = &mut initial_state.inner;
+        initial_state.merge_transitions(BundleRetention::PlainState);
+        let bundle = initial_state.take_bundle();
 
-                // Update accounts
-                let mut account_updates = Vec::new();
-                for (address, account) in bundle.state() {
-                    if account.status.is_not_modified() {
-                        continue;
-                    }
-                    let address = Address::from_slice(address.0.as_slice());
-                    // Remove account from DB if destroyed (Process DestroyedChanged as changed account)
-                    if matches!(
-                        account.status,
-                        AccountStatus::Destroyed | AccountStatus::DestroyedAgain
-                    ) {
-                        account_updates.push(AccountUpdate::removed(address));
-                        continue;
-                    }
-
-                    // If account is empty, do not add to the database
-                    if account
-                        .account_info()
-                        .is_some_and(|acc_info| acc_info.is_empty())
-                    {
-                        continue;
-                    }
-
-                    // Apply account changes to DB
-                    let mut account_update = AccountUpdate::new(address);
-                    // If the account was changed then both original and current info will be present in the bundle account
-                    if account.is_info_changed() {
-                        // Update account info in DB
-                        if let Some(new_acc_info) = account.account_info() {
-                            let code_hash = H256::from_slice(new_acc_info.code_hash.as_slice());
-                            let account_info = AccountInfo {
-                                code_hash,
-                                balance: U256::from_little_endian(
-                                    new_acc_info.balance.as_le_slice(),
-                                ),
-                                nonce: new_acc_info.nonce,
-                            };
-                            account_update.info = Some(account_info);
-                            if account.is_contract_changed() {
-                                // Update code in db
-                                if let Some(code) = new_acc_info.code {
-                                    account_update.code = Some(code.original_bytes().0);
-                                }
-                            }
-                        }
-                    }
-                    // Update account storage in DB
-                    for (key, slot) in account.storage.iter() {
-                        if slot.is_changed() {
-                            // TODO check if we need to remove the value from our db when value is zero
-                            // if slot.present_value().is_zero() {
-                            //     account_update.removed_keys.push(H256::from_uint(&U256::from_little_endian(key.as_le_slice())))
-                            // }
-                            account_update.added_storage.insert(
-                                H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
-                                U256::from_little_endian(slot.present_value().as_le_slice()),
-                            );
-                        }
-                    }
-                    account_updates.push(account_update)
-                }
-                account_updates
+        // Update accounts
+        let mut account_updates = Vec::new();
+        for (address, account) in bundle.state() {
+            if account.status.is_not_modified() {
+                continue;
             }
-            EvmState::Execution(db) => {
-                // Update accounts
-                let mut account_updates = Vec::new();
-                for (revm_address, account) in &db.accounts {
-                    if account.account_state == RevmAccountState::None {
-                        // EVM didn't interact with this account
-                        continue;
-                    }
-
-                    let address = Address::from_slice(revm_address.0.as_slice());
-                    // Remove account from DB if destroyed
-                    if account.account_state == RevmAccountState::NotExisting {
-                        account_updates.push(AccountUpdate::removed(address));
-                        continue;
-                    }
-
-                    // If account is empty, do not add to the database
-                    if account.info().is_some_and(|acc_info| acc_info.is_empty()) {
-                        continue;
-                    }
-
-                    // Apply account changes to DB
-                    let mut account_update = AccountUpdate::new(address);
-                    // Update account info in DB
-                    if let Some(new_acc_info) = account.info() {
-                        // If code changed, update
-                        if matches!(db.db.accounts.get(&address), Some(account) if B256::from(account.code_hash.0) != new_acc_info.code_hash)
-                        {
-                            account_update.code = new_acc_info
-                                .code
-                                .map(|code| bytes::Bytes::copy_from_slice(code.bytes_slice()));
-                        }
-
-                        let account_info = AccountInfo {
-                            code_hash: H256::from_slice(new_acc_info.code_hash.as_slice()),
-                            balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
-                            nonce: new_acc_info.nonce,
-                        };
-                        account_update.info = Some(account_info);
-                    }
-                    // Update account storage in DB
-                    for (key, slot) in account.storage.iter() {
-                        // TODO check if we need to remove the value from our db when value is zero
-                        // if slot.present_value().is_zero() {
-                        //     account_update.removed_keys.push(H256::from_uint(&U256::from_little_endian(key.as_le_slice())))
-                        // }
-                        account_update.added_storage.insert(
-                            H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
-                            U256::from_little_endian(slot.as_le_slice()),
-                        );
-                    }
-                    account_updates.push(account_update)
-                }
-                account_updates
+            let address = Address::from_slice(address.0.as_slice());
+            // Remove account from DB if destroyed (Process DestroyedChanged as changed account)
+            if matches!(
+                account.status,
+                AccountStatus::Destroyed | AccountStatus::DestroyedAgain
+            ) {
+                account_updates.push(AccountUpdate::removed(address));
+                continue;
             }
+
+            // If account is empty, do not add to the database
+            if account
+                .account_info()
+                .is_some_and(|acc_info| acc_info.is_empty())
+            {
+                continue;
+            }
+
+            // Apply account changes to DB
+            let mut account_update = AccountUpdate::new(address);
+            // If the account was changed then both original and current info will be present in the bundle account
+            if account.is_info_changed() {
+                // Update account info in DB
+                if let Some(new_acc_info) = account.account_info() {
+                    let code_hash = H256::from_slice(new_acc_info.code_hash.as_slice());
+                    let account_info = AccountInfo {
+                        code_hash,
+                        balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
+                        nonce: new_acc_info.nonce,
+                    };
+                    account_update.info = Some(account_info);
+                    if account.is_contract_changed() {
+                        // Update code in db
+                        if let Some(code) = new_acc_info.code {
+                            account_update.code = Some(code.original_bytes().0);
+                        }
+                    }
+                }
+            }
+            // Update account storage in DB
+            for (key, slot) in account.storage.iter() {
+                if slot.is_changed() {
+                    // TODO check if we need to remove the value from our db when value is zero
+                    // if slot.present_value().is_zero() {
+                    //     account_update.removed_keys.push(H256::from_uint(&U256::from_little_endian(key.as_le_slice())))
+                    // }
+                    account_update.added_storage.insert(
+                        H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
+                        U256::from_little_endian(slot.present_value().as_le_slice()),
+                    );
+                }
+            }
+            account_updates.push(account_update)
         }
+        account_updates
     }
 }
 
@@ -424,7 +346,7 @@ pub fn run_without_commit(
         tx_env.gas_price,
         tx_env.max_fee_per_blob_gas,
     );
-    let chain_config = state.chain_config()?;
+    let chain_config = state.inner.database.get_chain_config()?;
     #[allow(unused_mut)]
     let mut evm_builder = Evm::builder()
         .with_block_env(block_env)
@@ -435,15 +357,9 @@ pub fn run_without_commit(
             env.disable_block_gas_limit = true;
             env.chain_id = chain_config.chain_id;
         });
-    let tx_result = match state {
-        EvmState::Store(db) => {
-            let mut evm = evm_builder.with_db(db).build();
-            evm.transact().map_err(EvmError::from)?
-        }
-        EvmState::Execution(db) => {
-            let mut evm = evm_builder.with_db(db).build();
-            evm.transact().map_err(EvmError::from)?
-        }
+    let tx_result = {
+        let mut evm = evm_builder.with_db(&mut state.inner).build();
+        evm.transact().map_err(EvmError::from)?
     };
     Ok(tx_result.result.into())
 }
@@ -455,28 +371,18 @@ fn run_evm(
     state: &mut EvmState,
     spec_id: SpecId,
 ) -> Result<ExecutionResult, EvmError> {
+    let state = &mut state.inner;
     let tx_result = {
-        let chain_spec = state.chain_config()?;
+        let chain_spec = state.database.get_chain_config()?;
         #[allow(unused_mut)]
         let mut evm_builder = Evm::builder()
             .with_block_env(block_env)
             .with_tx_env(tx_env)
             .modify_cfg_env(|cfg| cfg.chain_id = chain_spec.chain_id)
-            .with_spec_id(spec_id)
-            .with_external_context(
-                TracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
-            );
+            .with_spec_id(spec_id);
 
-        match state {
-            EvmState::Store(db) => {
-                let mut evm = evm_builder.with_db(db).build();
-                evm.transact_commit().map_err(EvmError::from)?
-            }
-            EvmState::Execution(db) => {
-                let mut evm = evm_builder.with_db(db).build();
-                evm.transact_commit().map_err(EvmError::from)?
-            }
-        }
+        let mut evm = evm_builder.with_db(state).build();
+        evm.transact_commit().map_err(EvmError::from)?
     };
     Ok(tx_result.into())
 }
@@ -678,7 +584,8 @@ pub(crate) fn generic_system_contract_revm(
     contract_address: Address,
     system_address: Address,
 ) -> Result<ExecutionResult, EvmError> {
-    let spec_id = spec_id(&state.chain_config()?, block_header.timestamp);
+    let state = &mut state.inner;
+    let spec_id = spec_id(&state.database.get_chain_config()?, block_header.timestamp);
     let tx_env = TxEnv {
         caller: RevmAddress::from_slice(system_address.as_bytes()),
         transact_to: RevmTxKind::Call(RevmAddress::from_slice(contract_address.as_bytes())),
@@ -692,42 +599,21 @@ pub(crate) fn generic_system_contract_revm(
     block_env.basefee = RevmU256::ZERO;
     block_env.gas_limit = RevmU256::from(u64::MAX); // System calls, have no constraint on the block's gas limit.
 
-    match state {
-        EvmState::Store(db) => {
-            let mut evm = Evm::builder()
-                .with_db(db)
-                .with_block_env(block_env)
-                .with_tx_env(tx_env)
-                .with_spec_id(spec_id)
-                .build();
+    let mut evm = Evm::builder()
+        .with_db(state)
+        .with_block_env(block_env)
+        .with_tx_env(tx_env)
+        .with_spec_id(spec_id)
+        .build();
 
-            let transaction_result = evm.transact()?;
-            let mut result_state = transaction_result.state;
-            result_state.remove(SYSTEM_ADDRESS.as_ref());
-            result_state.remove(&evm.block().coinbase);
+    let transaction_result = evm.transact()?;
+    let mut result_state = transaction_result.state;
+    result_state.remove(SYSTEM_ADDRESS.as_ref());
+    result_state.remove(&evm.block().coinbase);
 
-            evm.context.evm.db.commit(result_state);
+    evm.context.evm.db.commit(result_state);
 
-            Ok(transaction_result.result.into())
-        }
-        EvmState::Execution(db) => {
-            let mut evm = Evm::builder()
-                .with_db(db)
-                .with_block_env(block_env)
-                .with_tx_env(tx_env)
-                .with_spec_id(spec_id)
-                .build();
-
-            let transaction_result = evm.transact()?;
-            let mut result_state = transaction_result.state;
-            result_state.remove(SYSTEM_ADDRESS.as_ref());
-            result_state.remove(&evm.block().coinbase);
-
-            evm.context.evm.db.commit(result_state);
-
-            Ok(transaction_result.result.into())
-        }
-    }
+    Ok(transaction_result.result.into())
 }
 
 #[allow(unreachable_code)]
@@ -737,7 +623,7 @@ pub fn extract_all_requests(
     state: &mut EvmState,
     header: &BlockHeader,
 ) -> Result<Vec<Requests>, EvmError> {
-    let config = state.chain_config()?;
+    let config = state.inner.database.get_chain_config()?;
     let spec_id = spec_id(&config, header.timestamp);
 
     if spec_id < SpecId::PRAGUE {
@@ -750,7 +636,8 @@ pub fn extract_all_requests(
         }
     }
 
-    let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts);
+    let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts)
+        .ok_or(EvmError::InvalidDepositRequest)?;
     let withdrawals_data = REVM::read_withdrawal_requests(header, state)?;
     let consolidation_data = REVM::dequeue_consolidation_requests(header, state)?;
 

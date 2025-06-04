@@ -28,9 +28,6 @@ pub struct Options {
     pub sponsorable_addresses_file_path: Option<String>,
     #[arg(long, default_value = "0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192", value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
     pub sponsor_private_key: SecretKey,
-    #[cfg(feature = "based")]
-    #[command(flatten)]
-    pub based_opts: BasedOptions,
 }
 
 impl Default for Options {
@@ -120,9 +117,11 @@ pub struct EthOptions {
         long = "eth.rpc-url",
         value_name = "RPC_URL",
         env = "ETHREX_ETH_RPC_URL",
-        help_heading = "Eth options"
+        help = "List of rpc urls to use.",
+        help_heading = "Eth options",
+        num_args = 1..10
     )]
-    pub rpc_url: Url,
+    pub rpc_url: Vec<String>,
     #[arg(
         long = "eth.maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",
@@ -215,7 +214,7 @@ pub struct WatcherOptions {
     pub max_block_step: u64,
     #[arg(
         long = "watcher.block-delay",
-        default_value_t = 128, // 2 L1 epochs.
+        default_value_t = 10, // Reasonably safe value to account for reorgs
         value_name = "UINT64",
         env = "ETHREX_WATCHER_BLOCK_DELAY",
         help = "Number of blocks the L1 watcher waits before trusting an L1 block.",
@@ -365,7 +364,7 @@ pub struct ProofCoordinatorOptions {
         help_heading = "Proof coordinator options"
     )]
     pub proof_send_interval_ms: u64,
-    #[clap(
+    #[arg(
         long = "proof-coordinator.dev-mode",
         default_value = "true",
         value_name = "BOOLEAN",
@@ -388,48 +387,4 @@ impl Default for ProofCoordinatorOptions {
             dev_mode: true,
         }
     }
-}
-
-#[cfg(feature = "based")]
-#[derive(Parser, Default)]
-pub struct BasedOptions {
-    #[arg(
-        long = "gateway.addr",
-        default_value = "0.0.0.0",
-        value_name = "GATEWAY_ADDRESS",
-        env = "GATEWAY_ADDRESS",
-        help_heading = "Based options"
-    )]
-    pub gateway_addr: String,
-    #[arg(
-        long = "gateway.eth_port",
-        default_value = "8546",
-        value_name = "GATEWAY_ETH_PORT",
-        env = "GATEWAY_ETH_PORT",
-        help_heading = "Based options"
-    )]
-    pub gateway_eth_port: String,
-    #[arg(
-        long = "gateway.auth_port",
-        default_value = "8553",
-        value_name = "GATEWAY_AUTH_PORT",
-        env = "GATEWAY_AUTH_PORT",
-        help_heading = "Based options"
-    )]
-    pub gateway_auth_port: String,
-    #[arg(
-        long = "gateway.jwtsecret",
-        default_value = "jwt.hex",
-        value_name = "GATEWAY_JWTSECRET_PATH",
-        env = "GATEWAY_JWTSECRET_PATH",
-        help_heading = "Based options"
-    )]
-    pub gateway_jwtsecret: String,
-    #[arg(
-        long = "gateway.pubkey",
-        value_name = "GATEWAY_PUBKEY",
-        env = "GATEWAY_PUBKEY",
-        help_heading = "Based options"
-    )]
-    pub gateway_pubkey: String,
 }

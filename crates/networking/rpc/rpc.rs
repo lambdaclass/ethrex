@@ -9,7 +9,6 @@ use crate::engine::{
     },
     ExchangeCapabilitiesRequest,
 };
-use crate::eth;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -24,6 +23,7 @@ use crate::eth::{
     fee_market::FeeHistoryRequest,
     filter::{self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewFilterRequest},
     gas_price::GasPrice,
+    gas_tip_estimator::GasTipEstimator,
     logs::LogsFilter,
     transaction::{
         CallRequest, CreateAccessListRequest, EstimateGasRequest, GetRawTransaction,
@@ -31,14 +31,14 @@ use crate::eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
+use crate::tracing::TraceTransactionRequest;
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
     RpcSuccessResponse,
 };
 use crate::{admin, net};
-#[cfg(feature = "based")]
-use crate::{EngineClient, EthClient};
+use crate::{eth, mempool};
 use axum::extract::State;
 use axum::{routing::post, Json, Router};
 use axum_extra::{
@@ -47,8 +47,7 @@ use axum_extra::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
-#[cfg(feature = "based")]
-use ethrex_common::Public;
+use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
@@ -62,7 +61,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
@@ -74,9 +73,6 @@ cfg_if::cfg_if! {
         use ethrex_storage_rollup::StoreRollup;
     }
 }
-
-#[cfg(feature = "based")]
-use crate::based::versioned_message::SignedMessage;
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -91,13 +87,9 @@ pub struct RpcApiContext {
     pub blockchain: Arc<Blockchain>,
     pub active_filters: ActiveFilters,
     pub syncer: Arc<SyncManager>,
+    pub peer_handler: PeerHandler,
     pub node_data: NodeData,
-    #[cfg(feature = "based")]
-    pub gateway_eth_client: EthClient,
-    #[cfg(feature = "based")]
-    pub gateway_auth_client: EngineClient,
-    #[cfg(feature = "based")]
-    pub gateway_pubkey: Public,
+    pub gas_tip_estimator: Arc<TokioMutex<GasTipEstimator>>,
     #[cfg(feature = "l2")]
     pub valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")]
@@ -122,18 +114,6 @@ pub trait RpcHandler: Sized {
         request.handle(context).await
     }
 
-    /// Relay the request to the gateway client, if the request fails, fallback to the local node
-    /// The default implementation of this method is to call `RpcHandler::call` method because
-    /// not all requests need to be relayed to the gateway client, and the only ones that have to
-    /// must override this method.
-    #[cfg(feature = "based")]
-    async fn relay_to_gateway_or_fallback(
-        req: &RpcRequest,
-        context: RpcApiContext,
-    ) -> Result<Value, RpcErr> {
-        Self::call(req, context).await
-    }
-
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
 }
 
@@ -155,10 +135,8 @@ pub async fn start_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     syncer: SyncManager,
+    peer_handler: PeerHandler,
     client_version: String,
-    #[cfg(feature = "based")] gateway_eth_client: EthClient,
-    #[cfg(feature = "based")] gateway_auth_client: EngineClient,
-    #[cfg(feature = "based")] gateway_pubkey: Public,
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")] sponsor_pk: SecretKey,
     #[cfg(feature = "l2")] rollup_store: StoreRollup,
@@ -171,18 +149,14 @@ pub async fn start_api(
         blockchain,
         active_filters: active_filters.clone(),
         syncer: Arc::new(syncer),
+        peer_handler,
         node_data: NodeData {
             jwt_secret,
             local_p2p_node,
             local_node_record,
             client_version,
         },
-        #[cfg(feature = "based")]
-        gateway_eth_client,
-        #[cfg(feature = "based")]
-        gateway_auth_client,
-        #[cfg(feature = "based")]
-        gateway_pubkey,
+        gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         #[cfg(feature = "l2")]
         valid_delegation_addresses,
         #[cfg(feature = "l2")]
@@ -219,7 +193,7 @@ pub async fn start_api(
         .into_future();
     info!("Starting HTTP server at {http_addr}");
 
-    if cfg!(any(feature = "l2", feature = "based")) {
+    if cfg!(feature = "l2") {
         info!("Not starting Auth-RPC server. The address passed as argument is {authrpc_addr}");
 
         let _ = tokio::try_join!(http_server)
@@ -304,11 +278,10 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
+        Ok(RpcNamespace::Mempool) => map_mempool_requests(req, context).await,
         Ok(RpcNamespace::Engine) => Err(RpcErr::Internal(
             "Engine namespace not allowed in map_http_requests".to_owned(),
         )),
-        #[cfg(feature = "based")]
-        Ok(RpcNamespace::Based) => map_based_requests(req, context),
         Err(rpc_err) => Err(rpc_err),
         #[cfg(feature = "l2")]
         Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context).await,
@@ -368,15 +341,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getFilterChanges" => {
             FilterChangesRequest::stateful_call(req, context.storage, context.active_filters).await
         }
-        "eth_sendRawTransaction" => {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
-                    SendRawTransactionRequest::relay_to_gateway_or_fallback(req, context).await
-                } else {
-                    SendRawTransactionRequest::call(req, context).await
-                }
-            }
-        }
+        "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context).await,
         "eth_getProof" => GetProofRequest::call(req, context).await,
         "eth_gasPrice" => GasPrice::call(req, context).await,
         "eth_maxPriorityFeePerGas" => {
@@ -392,6 +357,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_getRawBlock" => GetRawBlockRequest::call(req, context).await,
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
+        "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
@@ -404,24 +370,8 @@ pub async fn map_engine_requests(
         "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context).await,
         "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
-        "engine_forkchoiceUpdatedV3" => {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
-                    ForkChoiceUpdatedV3::relay_to_gateway_or_fallback(req, context).await
-                } else {
-                    ForkChoiceUpdatedV3::call(req, context).await
-                }
-            }
-        }
-        "engine_newPayloadV4" => {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
-                    NewPayloadV4Request::relay_to_gateway_or_fallback(req, context).await
-                } else {
-                    NewPayloadV4Request::call(req, context).await
-                }
-            }
-        }
+        "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
+        "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
         "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
         "engine_newPayloadV1" => NewPayloadV1Request::call(req, context).await,
@@ -429,15 +379,7 @@ pub async fn map_engine_requests(
             ExchangeTransitionConfigV1Req::call(req, context).await
         }
         "engine_getPayloadV4" => GetPayloadV4Request::call(req, context).await,
-        "engine_getPayloadV3" => {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
-                    GetPayloadV3Request::relay_to_gateway_or_fallback(req, context).await
-                } else {
-                    GetPayloadV3Request::call(req, context).await
-                }
-            }
-        }
+        "engine_getPayloadV3" => GetPayloadV3Request::call(req, context).await,
         "engine_getPayloadV2" => GetPayloadV2Request::call(req, context).await,
         "engine_getPayloadV1" => GetPayloadV1Request::call(req, context).await,
         "engine_getPayloadBodiesByHashV1" => {
@@ -453,6 +395,7 @@ pub async fn map_engine_requests(
 pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
+        "admin_peers" => admin::peers(&context),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
@@ -472,13 +415,14 @@ pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value
     }
 }
 
-#[cfg(feature = "based")]
-pub fn map_based_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_mempool_requests(
+    req: &RpcRequest,
+    contex: RpcApiContext,
+) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "based_env" => SignedMessage::call_env(req, context),
-        "based_newFrag" => SignedMessage::call_new_frag(req, context),
-        "based_sealFrag" => SignedMessage::call_seal_frag(req, context),
-        unknown_based_method => Err(RpcErr::MethodNotFound(unknown_based_method.to_owned())),
+        // TODO: The endpoint name matches geth's endpoint for compatibility, consider changing it in the future
+        "txpool_content" => mempool::content(contex).await,
+        unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
     }
 }
 

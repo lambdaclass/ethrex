@@ -1,9 +1,0 @@
-#!/bin/bash
-if [[ "$1" != "build" ]]; then
-    exit
-fi
-cd /work/src/proj
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source /.cargo/env
-rustup toolchain install
-cargo fetch

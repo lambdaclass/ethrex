@@ -1,15 +1,15 @@
 use bytes::Bytes;
 use ethereum_types::H160;
 use ethrex_common::{
-    types::{AccountInfo, ChainConfig},
+    types::{AccountInfo, AccountUpdate, ChainConfig, EMPTY_KECCACK_HASH},
     Address, H256, U256,
 };
-use ethrex_storage::AccountUpdate;
 use ethrex_trie::{NodeRLP, Trie, TrieError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::errors::ProverDBError;
+use crate::{EvmError, VmDatabase};
 
 /// In-memory EVM database for single batch execution data.
 ///
@@ -102,5 +102,43 @@ impl ProverDB {
                 }
             }
         }
+    }
+}
+
+impl VmDatabase for ProverDB {
+    fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
+        Ok(self.accounts.get(&address).cloned())
+    }
+
+    fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
+        Ok(self
+            .storage
+            .get(&address)
+            .and_then(|storage| storage.get(&key).cloned()))
+    }
+
+    fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
+        self.block_hashes
+            .get(&block_number)
+            .cloned()
+            .ok_or_else(|| {
+                EvmError::DB(format!(
+                    "Block hash not found for block number {block_number}"
+                ))
+            })
+    }
+
+    fn get_chain_config(&self) -> Result<ChainConfig, EvmError> {
+        Ok(self.get_chain_config())
+    }
+
+    fn get_account_code(&self, code_hash: H256) -> Result<Bytes, EvmError> {
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(Bytes::new());
+        }
+        self.code
+            .get(&code_hash)
+            .cloned()
+            .ok_or_else(|| EvmError::DB(format!("Code not found for hash: {:?}", code_hash)))
     }
 }

@@ -48,6 +48,8 @@ pub enum EthClientError {
     TimeoutError,
     #[error("Internal Error. This is most likely a bug: {0}")]
     InternalError(String),
+    #[error("Parse Url Error. {0}")]
+    ParseUrlError(String),
 }
 
 #[derive(Debug, thiserror::Error)]

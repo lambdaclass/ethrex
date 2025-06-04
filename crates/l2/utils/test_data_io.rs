@@ -5,7 +5,6 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{Block, Genesis, ELASTICITY_MULTIPLIER};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::Evm;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
@@ -15,7 +14,7 @@ use std::{
     path::PathBuf,
 };
 
-use super::error::ProverInputError;
+use super::{error::ProverInputError, prover::db::to_prover_db};
 
 // From cmd/ethrex
 pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
@@ -86,7 +85,7 @@ pub async fn generate_program_input(
         .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
     let elasticity_multiplier = ELASTICITY_MULTIPLIER;
     let blocks = vec![block];
-    let db = Evm::to_prover_db(&store, &blocks).await?;
+    let db = to_prover_db(&store, &blocks).await?;
 
     Ok(ProgramInput {
         db,

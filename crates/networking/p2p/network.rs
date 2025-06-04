@@ -1,12 +1,12 @@
 use crate::kademlia::{self, KademliaTable};
-use crate::rlpx::p2p::CAP_SNAP_1;
+use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
 use crate::rlpx::{
     connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
 };
 use crate::types::{Node, NodeRecord};
 use crate::{
     discv4::server::{DiscoveryError, Discv4Server},
-    rlpx::utils::log_peer_error,
+    rlpx::utils::log_peer_debug,
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{H256, H512};
@@ -80,6 +80,16 @@ impl P2PContext {
             client_version,
         }
     }
+
+    pub async fn set_fork_id(&self) -> Result<(), String> {
+        if let Ok(fork_id) = self.storage.get_fork_id().await {
+            self.local_node_record
+                .lock()
+                .await
+                .set_fork_id(&fork_id, &self.signer)?
+        }
+        Ok(())
+    }
 }
 
 pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
@@ -138,7 +148,7 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
     let table = context.table.clone();
     match handshake::as_receiver(context, peer_addr, stream).await {
-        Ok(mut conn) => conn.start(table).await,
+        Ok(mut conn) => conn.start(table, true).await,
         Err(e) => {
             debug!("Error creating tcp connection with peer at {peer_addr}: {e}")
         }
@@ -150,16 +160,16 @@ pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
     let stream = match tcp_stream(addr).await {
         Ok(result) => result,
         Err(e) => {
-            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
+            log_peer_debug(&node, &format!("Error creating tcp connection {e}"));
             context.table.lock().await.replace_peer(node.node_id());
             return;
         }
     };
     let table = context.table.clone();
     match handshake::as_initiator(context, node.clone(), stream).await {
-        Ok(mut conn) => conn.start(table).await,
+        Ok(mut conn) => conn.start(table, false).await,
         Err(e) => {
-            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
+            log_peer_debug(&node, &format!("Error creating tcp connection {e}"));
             table.lock().await.replace_peer(node.node_id());
         }
     };
@@ -192,7 +202,9 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
             .iter()
             .filter(|peer| -> bool {
                 peer.channels.as_ref().is_some()
-                    && peer.supported_capabilities.contains(&CAP_SNAP_1)
+                    && SUPPORTED_SNAP_CAPABILITIES
+                        .iter()
+                        .any(|cap| peer.supported_capabilities.contains(cap))
             })
             .count();
         info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");

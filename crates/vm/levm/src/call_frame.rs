@@ -1,10 +1,9 @@
 use crate::{
     constants::STACK_LIMIT,
-    db::cache,
     errors::{InternalError, OutOfGasError, VMError},
     memory::Memory,
     opcodes::Opcode,
-    utils::get_valid_jump_destinations,
+    utils::{get_valid_jump_destinations, restore_cache_state},
     vm::VM,
 };
 use bytes::Bytes;
@@ -187,6 +186,12 @@ impl CallFrame {
 
         Ok(())
     }
+
+    pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
+        self.valid_jump_destinations = get_valid_jump_destinations(&code)?;
+        self.bytecode = code;
+        Ok(())
+    }
 }
 
 impl<'a> VM<'a> {
@@ -215,27 +220,7 @@ impl<'a> VM<'a> {
     /// Restores the cache state to the state before changes made during a callframe.
     pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
         let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
-        for (address, account) in callframe_backup.original_accounts_info {
-            if let Some(current_account) = cache::get_account_mut(&mut self.db.cache, &address) {
-                current_account.info = account.info;
-                current_account.code = account.code;
-            }
-        }
-
-        for (address, storage) in callframe_backup.original_account_storage_slots {
-            // This call to `get_account_mut` should never return None, because we are looking up accounts
-            // that had their storage modified, which means they should be in the cache. That's why
-            // we return an internal error in case we haven't found it.
-            let account = cache::get_account_mut(&mut self.db.cache, &address).ok_or(
-                VMError::Internal(crate::errors::InternalError::AccountNotFound),
-            )?;
-
-            for (key, value) in storage {
-                account.storage.insert(key, value);
-            }
-        }
-
-        Ok(())
+        restore_cache_state(self.db, callframe_backup)
     }
 
     // The CallFrameBackup of the current callframe has to be merged with the backup of its parent, in the following way:

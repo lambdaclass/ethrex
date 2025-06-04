@@ -24,14 +24,11 @@ ETH_TEST_URL := https://github.com/ethereum/tests.git
 ETH_TEST_TAG := v17.0
 COMMIT_LEGACY_TESTS_FOR_TAG := b3f67fe
 
-STATETEST_VERSION := pectra-devnet-6%40v1.0.0
-STATETEST_NET := pectra-devnet-6
-STATETEST_ARTIFACT := fixtures_$(STATETEST_NET).tar.gz
-STATETEST_URL := https://github.com/ethereum/execution-spec-tests/releases/download/$(STATETEST_VERSION)/fixtures_$(STATETEST_NET).tar.gz
+STATETEST_ARTIFACT := tests.tar.gz
+STATETEST_URL := https://github.com/ethereum/execution-spec-tests/releases/download/v4.5.0/fixtures_develop.tar.gz
 
 setup-test-dirs:
 	mkdir -p $(VECTORS_DIR)
-	mkdir -p $(VECTORS_DIR)/LegacyTests/Constantinople/GeneralStateTests
 	mkdir -p $(VECTORS_DIR)/LegacyTests/Cancun/GeneralStateTests
 	mkdir -p $(VECTORS_DIR)/GeneralStateTests
 	mkdir -p $(VECTORS_DIR)/state_tests
@@ -41,7 +38,6 @@ clone-ef-tests: ## 📥 Download Ethereum Tests repository with submodules
 	git clone --recurse-submodules --depth 1 --branch $(ETH_TEST_TAG) $(ETH_TEST_URL) $(TESTS_REPO)
 	cd $(TESTS_REPO)/LegacyTests && git checkout $(COMMIT_LEGACY_TESTS_FOR_TAG)
 	cp -r $(TESTS_REPO)/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
-	cp -r $(TESTS_REPO)/LegacyTests/Constantinople/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Constantinople/GeneralStateTests/
 	cp -r $(TESTS_REPO)/LegacyTests/Cancun/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Cancun/GeneralStateTests/;
 
 download-state-tests: ## 📥 Download and setup state tests fixtures
@@ -163,10 +159,10 @@ SIM_PARALLELISM := 48
 run-hive-levm: build-image-levm ## 🐝 Run Hive with LEVM and Build report
 	$(MAKE) -C ../../../ setup-hive
 	$(MAKE) -C ../../../ clean-hive-logs
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/rpc-compat --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim devp2p --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/engine --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/sync --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/rpc-compat --client-file ../test_data/hive_clients.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim devp2p --client-file ../test_data/hive_clients.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/engine --client-file ../test_data/hive_clients.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
+	cd ../../../hive && ./hive --ethrex.flags "--evm levm" --sim ethereum/sync --client-file ../test_data/hive_clients.yml --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
 	cd ../../../ && cargo run --release -p hive_report
 
 SUBDIRS := $(shell find $(VECTORS_DIR)/GeneralStateTests -maxdepth 1 -type d ! -path "$(VECTORS_DIR)/GeneralStateTests" -exec basename {} \;)

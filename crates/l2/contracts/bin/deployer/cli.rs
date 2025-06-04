@@ -193,6 +193,26 @@ pub struct DeployerOptions {
     )]
     pub sp1_deploy_verifier: bool,
     #[arg(
+        long = "tdx.verifier-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER",
+        required_if_eq("tdx_deploy_verifier", "false"),
+        help_heading = "Deployer options",
+        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+    )]
+    pub tdx_verifier_address: Option<Address>,
+    #[arg(
+        long = "tdx.deploy-verifier",
+        default_value = "false",
+        value_name = "BOOLEAN",
+        action = ArgAction::SetTrue,
+        env = "ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER",
+        required_unless_present = "tdx_verifier_address",
+        help_heading = "Deployer options",
+        help = "If set to true, it will deploy the contract and override the address above with the deployed one.",
+    )]
+    pub tdx_deploy_verifier: bool,
+    #[arg(
         long,
         default_value = "false",
         value_name = "BOOLEAN",
@@ -227,6 +247,24 @@ pub struct DeployerOptions {
         help = "Address of the owner of the CommonBridge contract, who can upgrade the contract."
     )]
     pub bridge_owner: Address,
+    #[arg(
+        long,
+        value_name = "PRIVATE_KEY",
+        env = "ETHREX_ON_CHAIN_PROPOSER_OWNER_PK",
+        help_heading = "Deployer options",
+        help = "Private key of the owner of the OnChainProposer contract. If set, the deployer will send a transaction to accept the ownership.",
+        requires = "on_chain_proposer_owner"
+    )]
+    pub on_chain_proposer_owner_pk: Option<SecretKey>,
+    #[arg(
+        long,
+        default_value_t = format!("{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
+        value_name = "PATH",
+        env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
+        help_heading = "Deployer options",
+        help = "Path to the SP1 verification key. This is used for proof verification."
+    )]
+    pub sp1_vk_path: String,
 }
 
 impl Default for DeployerOptions {
@@ -279,6 +317,11 @@ impl Default for DeployerOptions {
                 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
             ])),
             sp1_deploy_verifier: false,
+            tdx_verifier_address: Some(H160([
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
+            ])),
+            tdx_deploy_verifier: false,
             randomize_contract_deployment: false,
             validium: false,
             // 0x03d0a0aee676cc45bf7032649e0871927c947c8e
@@ -291,6 +334,11 @@ impl Default for DeployerOptions {
                 0x03, 0xd0, 0xa0, 0xae, 0xe6, 0x76, 0xcc, 0x45, 0xbf, 0x70, 0x32, 0x64, 0x9e, 0x08,
                 0x71, 0x92, 0x7c, 0x94, 0x7c, 0x8e,
             ]),
+            on_chain_proposer_owner_pk: None,
+            sp1_vk_path: format!(
+                "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
+                env!("CARGO_MANIFEST_DIR")
+            ),
         }
     }
 }

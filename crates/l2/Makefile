@@ -1,4 +1,4 @@
-.PHONY: help init down clean restart cli update-cli-contracts init-local-l1 init-l1 down-local-l1 \
+.PHONY: help init down clean restart cli init-local-l1 init-l1 down-local-l1 \
 		restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 \
 		init-l2-no-metrics down-l2 restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test \
 		init-testnet deploy-l1-testnet restart-testnet
@@ -20,27 +20,13 @@ init-testnet: update-system-contracts deploy-l1-testnet init-l2
 down: down-local-l1 down-l2 down-metrics## 🛑 Shuts down the localnet
 
 clean: clean-contract-deps ## 🧹 Cleans the localnet
+	rm -rf out/
 
 restart: restart-local-l1 deploy-l1 purge_prover_state restart-l2 ## 🔄 Restarts the localnet
 
 ## Same as restart but for testnet deployment. The local database is cleaned and the contracts are deployed again.
 restart-testnet:
 	down-l2 down-metrics rm-db-l2 update-system-contracts deploy-l1-testnet init-l2
-
-# CLI
-cli: ## 🛠️ Installs the L2 Lambda ethrex CLI
-	cd ${ethrex_PATH}/cmd/ethrex_l2 && \
-	cargo install --path . --force
-
-update-cli-contracts: ## 📜 Update the CLI's config contracts
-	@if [ -z "$$C" ]; then \
-		echo "Error: CONFIG_NAME (C) is missing.\nPlease provide it as an argument:\nmake update-cli-contracts C=<config_name>."; \
-		exit 1; \
-	fi && \
-	CB=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' .env | cut -d= -f2) && \
-	ethrex_l2 config edit --common-bridge $$CB $$C && \
-	OP=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' .env | cut -d= -f2) && \
-	ethrex_l2 config edit --on-chain-proposer $$OP $$C
 
 # Variables
 
@@ -49,7 +35,6 @@ ethrex_BIN_PATH=$(ethrex_PATH)/target/release/ethrex
 ethrex_DEV_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/dev/docker-compose-dev.yaml
 ethrex_L2_DOCKER_COMPOSE_PATH=./docker-compose-l2.yaml
 ethrex_METRICS_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics.yaml
-ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics-l1-dev.overrides.yaml
 ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics-l2.overrides.yaml
 CI_ETHREX_WORKDIR := /usr/local/bin
 
@@ -64,14 +49,14 @@ L2_PORT=1729
 L1_AUTH_PORT=8551
 L1_RPC_ADDRESS=0.0.0.0
 L2_RPC_ADDRESS=0.0.0.0
-PROOF_COORINATOR_ADDRESS=127.0.0.1
+PROOF_COORDINATOR_ADDRESS?=127.0.0.1
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
 
 # Local L1
 init-local-l1: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
-	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH} up -d
+	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH}  up -d
 
 init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "dev" -- \
@@ -96,7 +81,7 @@ init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
     --datadir ${ethrex_L1_DEV_LIBMDBX}
 
 down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
-	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH} down
+	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} down -t 0
 	docker compose -f docker-compose-l2.yaml down
 
 restart-local-l1: down-local-l1 rm-db-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
@@ -108,6 +93,7 @@ rm-db-l1: ## 🛑 Removes the DB used by the L1
 clean-contract-deps: ## 🧹 Cleans the dependencies for the L1 contracts.
 	rm -rf contracts/solc_out
 	rm -rf contracts/lib
+	cd tee/contracts; make clean
 
 restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for the L1 contracts.
 
@@ -119,6 +105,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--pico.verifier-address 0x00000000000000000000000000000000000000aa \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
 	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
+	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
 	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--deposit-rich \
@@ -143,14 +130,8 @@ BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
 ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
-	if [ -z "$$BASED" ]; then \
-		FEATURES="l2,rollup_storage_libmdbx,metrics"; \
-		echo "Running ethrex L2 vanilla"; \
-	else \
-		FEATURES="metrics,based"; \
-		echo "Running ethrex L2 with based"; \
-	fi; \
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features $$FEATURES -- \
+	export $(shell cat .env | xargs); \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- \
 	l2 init \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
@@ -248,9 +229,12 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 # State reconstruction tests
 state-diff-test:
 	touch .env
-	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config create ci --default
-	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
-	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
+	cargo run --release --manifest-path ../../cmd/ethrex/Cargo.toml --features l2 --bin ethrex -- \
+	l2 reconstruct \
+	-g ../../test_data/genesis-l2.json \
+	-b ../../test_data/blobs/ \
+	-s $$PWD/store \
+	-c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	cargo b --manifest-path ../../Cargo.toml --release
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
