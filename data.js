@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749077545192,
+  "lastUpdate": 1749078128656,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11005,6 +11005,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 176722207465,
             "range": "± 880957677",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7cfe9a668bd51c207dbf965bb49c9022480dd183",
+          "message": "feat(l1): sync tools (#2957)\n\n**Motivation**\n\nMove the tooling for measuring syncing performance into the repo.\n\n**Description**\n\nThis PR adds a sync folder in the tools folder, with a Makefile with\ncommonly used commands when measuring syncing performance, as well as a\nreadme explaining how to use said Makefile.",
+          "timestamp": "2025-06-04T22:16:36Z",
+          "tree_id": "c633f5273f291cbcdb10d36db10b5cc416df7ebb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7cfe9a668bd51c207dbf965bb49c9022480dd183"
+        },
+        "date": 1749078123914,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 176281644184,
+            "range": "± 507973789",
             "unit": "ns/iter"
           }
         ]
