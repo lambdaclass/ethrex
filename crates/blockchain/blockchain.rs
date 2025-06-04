@@ -454,7 +454,7 @@ impl Blockchain {
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if tx.nonce() <= sender_acc_info.nonce + 1 || tx.nonce() == u64::MAX {
+            if tx.nonce() < sender_acc_info.nonce || tx.nonce() == u64::MAX {
                 return Err(MempoolError::InvalidNonce);
             }
 
@@ -468,6 +468,21 @@ impl Blockchain {
         } else {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
+        }
+
+        // Check the nonce of pendings TXs in the mempool from the same sender
+        let filter_sender = |tx: &Transaction| -> bool { tx.sender() == sender };
+        let pending_txs: Vec<MempoolTransaction> = self
+            .mempool
+            .filter_transactions_with_filter_fn(&filter_sender)?
+            .into_values()
+            .flatten()
+            .collect();
+
+        for pending_tx in pending_txs {
+            if tx.nonce() == pending_tx.nonce() {
+                return Err(MempoolError::InvalidNonce);
+            }
         }
 
         if let Some(chain_id) = tx.chain_id() {
