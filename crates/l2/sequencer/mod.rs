@@ -16,7 +16,7 @@ use tokio::{sync::Mutex, task::JoinSet};
 use tracing::{error, info};
 
 pub mod block_producer;
-mod l1_committer;
+pub mod l1_committer;
 pub mod l1_proof_sender;
 mod l1_watcher;
 #[cfg(feature = "metrics")]

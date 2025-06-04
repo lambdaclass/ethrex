@@ -519,7 +519,7 @@ pub fn get_deposit_hash(deposit_hashes: Vec<H256>) -> Result<H256, CommitterErro
 }
 
 /// Prepare the state diff for the block.
-async fn prepare_state_diff(
+pub async fn prepare_state_diff(
     first_block_number: BlockNumber,
     last_header: BlockHeader,
     store: Store,
@@ -580,7 +580,9 @@ async fn prepare_state_diff(
 }
 
 /// Generate the blob bundle necessary for the EIP-4844 transaction.
-fn generate_blobs_bundle(state_diff: &StateDiff) -> Result<(BlobsBundle, usize), CommitterError> {
+pub fn generate_blobs_bundle(
+    state_diff: &StateDiff,
+) -> Result<(BlobsBundle, usize), CommitterError> {
     let blob_data = state_diff.encode().map_err(CommitterError::from)?;
 
     let blob_size = blob_data.len();

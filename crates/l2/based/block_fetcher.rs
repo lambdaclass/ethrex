@@ -1,21 +1,27 @@
-use std::{cmp::min, ops::Deref, sync::Arc, time::Duration};
+use std::{cmp::min, collections::HashMap, ops::Deref, sync::Arc, time::Duration};
 
-use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
+use ethrex_blockchain::{fork_choice::apply_fork_choice, vm::StoreVmDatabase, Blockchain};
 use ethrex_common::{
-    types::{batch::Batch, BlobsBundle, Block, BlockNumber, Transaction},
-    Address, H256, U256,
+    types::{
+        batch::Batch, AccountUpdate, Block, BlockNumber, PrivilegedL2Transaction, Transaction,
+    },
+    Address, H160, H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::{types::receipt::RpcLog, utils::get_withdrawal_hash, EthClient};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
+use ethrex_vm::{Evm, EvmEngine};
 use keccak_hash::keccak;
 use tokio::{sync::Mutex, time::sleep};
 use tracing::{debug, error, info};
 
 use crate::{
     based::{error::BlockFetcherError, sequencer_state::SequencerState},
-    sequencer::errors::SequencerError,
+    sequencer::{
+        errors::SequencerError,
+        l1_committer::{generate_blobs_bundle, prepare_state_diff},
+    },
     utils::helpers::is_withdrawal_l2,
     SequencerConfig,
 };
@@ -398,19 +404,28 @@ impl BlockFetcher {
         batch: &[Block],
         batch_number: U256,
     ) -> Result<Batch, BlockFetcherError> {
-        let deposit_hashes: Vec<H256> = batch
+        let deposits: Vec<PrivilegedL2Transaction> = batch
             .iter()
             .flat_map(|block| {
                 block.body.transactions.iter().filter_map(|tx| {
                     if let Transaction::PrivilegedL2Transaction(tx) = tx {
-                        tx.get_deposit_hash()
+                        Some(tx.clone())
+                        // tx.get_deposit_hash()
                     } else {
                         None
                     }
                 })
             })
             .collect();
-
+        let deposit_hashes = deposits
+            .iter()
+            .filter_map(|tx| tx.get_deposit_hash())
+            .collect();
+        let mut withdrawals = Vec::new();
+        for block in batch {
+            let block_withdrawals = self.get_block_withdrawals(block.header.number).await?;
+            withdrawals.extend(block_withdrawals);
+        }
         let deposit_logs_hash = get_deposit_logs_hash(deposit_hashes)?;
 
         let first_block = batch.first().ok_or(BlockFetcherError::InternalError(
@@ -429,7 +444,39 @@ impl BlockFetcher {
             ))?
             .hash_no_commit();
 
-        let blobs_bundle = BlobsBundle::default();
+        // This is copied from the L1Committer, this should be reviewed.
+        let mut acc_account_updates: HashMap<H160, AccountUpdate> = HashMap::new();
+        for block in batch {
+            let vm_db = StoreVmDatabase::new(self.store.clone(), block.header.parent_hash);
+            let mut vm = Evm::new(EvmEngine::default(), vm_db);
+            vm.execute_block(block)
+                .map_err(BlockFetcherError::EvmError)?;
+            let account_updates = vm
+                .get_state_transitions()
+                .map_err(BlockFetcherError::EvmError)?;
+
+            for account in account_updates {
+                let address = account.address;
+                if let Some(existing) = acc_account_updates.get_mut(&address) {
+                    existing.merge(account);
+                } else {
+                    acc_account_updates.insert(address, account);
+                }
+            }
+        }
+
+        let state_diff = prepare_state_diff(
+            first_block.header.number,
+            last_block.header.clone(),
+            self.store.clone(),
+            &withdrawals,
+            &deposits,
+            acc_account_updates.into_values().collect(),
+        )
+        .await
+        .map_err(|_| BlockFetcherError::BlobBundleError)?;
+        let (blobs_bundle, _) =
+            generate_blobs_bundle(&state_diff).map_err(|_| BlockFetcherError::BlobBundleError)?;
 
         Ok(Batch {
             number: batch_number.as_u64(),

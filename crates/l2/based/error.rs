@@ -2,6 +2,7 @@ use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rpc::clients::{eth::errors::CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
+use ethrex_vm::EvmError;
 
 use crate::{sequencer::errors::ExecutionCacheError, utils::error::UtilsError};
 
@@ -41,4 +42,8 @@ pub enum BlockFetcherError {
     UtilsError(#[from] UtilsError),
     #[error("Missing bytes from calldata: {0}")]
     WrongBatchCalldata(String),
+    #[error("Failed due to an EVM error: {0}")]
+    EvmError(#[from] EvmError),
+    #[error("Failed to produce the blob bundle")]
+    BlobBundleError,
 }
