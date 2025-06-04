@@ -108,13 +108,13 @@ mod test {
         trie.insert([0; 32].to_vec(), [2; 32].to_vec()).unwrap();
         trie.insert([1; 32].to_vec(), [3; 32].to_vec()).unwrap();
 
-        assert_eq!(trie.get([0; 32]).unwrap(), Some([2; 32].to_vec()));
-        assert_eq!(trie.get([1; 32]).unwrap(), Some([3; 32].to_vec()));
+        assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([2; 32].to_vec()));
+        assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([3; 32].to_vec()));
 
         let trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root);
 
-        assert_eq!(trie.get([0; 32]).unwrap(), Some([0; 32].to_vec()));
-        assert_eq!(trie.get([1; 32]).unwrap(), Some([1; 32].to_vec()));
+        assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([0; 32].to_vec()));
+        assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
     }
 
     #[test]
@@ -133,15 +133,15 @@ mod test {
         trie.insert([2; 32].to_vec(), vec![0x05]).unwrap();
         trie.remove([0; 32].to_vec()).unwrap();
 
-        assert_eq!(trie.get([0; 32]).unwrap(), None);
-        assert_eq!(trie.get([1; 32]).unwrap(), None);
-        assert_eq!(trie.get([2; 32]).unwrap(), Some(vec![0x05]));
+        assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), None);
+        assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), None);
+        assert_eq!(trie.get(&[2; 32].to_vec()).unwrap(), Some(vec![0x05]));
 
         let trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db.clone())), root);
 
-        assert_eq!(trie.get([0; 32]).unwrap(), Some([0; 32].to_vec()));
-        assert_eq!(trie.get([1; 32]).unwrap(), Some([1; 32].to_vec()));
-        assert_eq!(trie.get([2; 32]).unwrap(), Some([2; 32].to_vec()));
+        assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([0; 32].to_vec()));
+        assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
+        assert_eq!(trie.get(&[2; 32].to_vec()).unwrap(), Some([2; 32].to_vec()));
     }
 
     #[test]
@@ -161,9 +161,9 @@ mod test {
 
         trie.insert([2; 32].to_vec(), [4; 32].to_vec()).unwrap();
 
-        assert_eq!(trie.get([0; 32]).unwrap(), Some([0; 32].to_vec()));
-        assert_eq!(trie.get([1; 32]).unwrap(), Some([1; 32].to_vec()));
-        assert_eq!(trie.get([2; 32]).unwrap(), Some([4; 32].to_vec()));
+        assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([0; 32].to_vec()));
+        assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
+        assert_eq!(trie.get(&[2; 32].to_vec()).unwrap(), Some([4; 32].to_vec()));
     }
 
     #[test]
@@ -186,9 +186,9 @@ mod test {
 
         trie.remove([2; 32].to_vec()).unwrap();
 
-        assert_eq!(trie.get([0; 32]).unwrap(), Some([0; 32].to_vec()));
-        assert_eq!(trie.get([1; 32]).unwrap(), Some([1; 32].to_vec()));
-        assert_eq!(trie.get(vec![0x02]).unwrap(), None);
+        assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([0; 32].to_vec()));
+        assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
+        assert_eq!(trie.get(&vec![0x02]).unwrap(), None);
     }
 
     #[test]
@@ -218,8 +218,8 @@ mod test {
         // Create a new trie based on the previous trie's DB
         let trie = Trie::open(Box::new(LibmdbxTrieDB::<TestNodes>::new(db2)), root);
 
-        assert_eq!(trie.get([0; 32]).unwrap(), Some([1; 32].to_vec()));
-        assert_eq!(trie.get([1; 32]).unwrap(), Some([2; 32].to_vec()));
-        assert_eq!(trie.get([2; 32]).unwrap(), Some([4; 32].to_vec()));
+        assert_eq!(trie.get(&[0; 32].to_vec()).unwrap(), Some([1; 32].to_vec()));
+        assert_eq!(trie.get(&[1; 32].to_vec()).unwrap(), Some([2; 32].to_vec()));
+        assert_eq!(trie.get(&[2; 32].to_vec()).unwrap(), Some([4; 32].to_vec()));
     }
 }

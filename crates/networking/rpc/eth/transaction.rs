@@ -172,7 +172,7 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
         let tx = RpcTransaction::build(
             tx.clone(),
             Some(block_number),
-            block_header.compute_block_hash(),
+            block_header.hash(),
             Some(self.transaction_index),
         );
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -351,7 +351,7 @@ impl RpcHandler for CreateAccessListRequest {
             _ => return Ok(Value::Null),
         };
 
-        let vm_db = StoreVmDatabase::new(context.storage.clone(), header.compute_block_hash());
+        let vm_db = StoreVmDatabase::new(context.storage.clone(), header.hash());
         let mut vm = Evm::new(context.blockchain.evm_engine, vm_db);
         let chain_config = context.storage.get_chain_config()?;
         let fork = chain_config.get_fork(header.timestamp);
@@ -578,7 +578,7 @@ fn simulate_tx(
     blockchain: Arc<Blockchain>,
     fork: Fork,
 ) -> Result<ExecutionResult, RpcErr> {
-    let db = StoreVmDatabase::new(storage.clone(), block_header.compute_block_hash());
+    let db = StoreVmDatabase::new(storage.clone(), block_header.hash());
     let mut vm = Evm::new(blockchain.evm_engine, db);
 
     match vm.simulate_tx_from_generic(transaction, block_header, fork)? {

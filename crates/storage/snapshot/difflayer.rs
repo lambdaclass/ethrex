@@ -233,19 +233,26 @@ impl DiffLayer {
             let mut values = Vec::new();
             for (storage_hash, value) in storage.iter() {
                 // TODO: Important, if acc is None it means it had a value of zero should we remove it from db too?
-                if let Some(value) = &value {
-                    values.push(*value);
-                    keys.push(*storage_hash);
-                    prev_disk
-                        .cache
-                        .storages
-                        .insert((*account_hash, *storage_hash), Some(*value));
-                } else {
-                    prev_disk
-                        .cache
-                        .storages
-                        .remove(&(*account_hash, *storage_hash));
+                match *value {
+                    Some(v) => {
+                        prev_disk
+                            .cache
+                            .storages
+                            .insert((*account_hash, *storage_hash), Some(v));
+                    }
+                    // FIXME(fkrause98): Right now, None changes will be
+                    // written as a U256::zero(), which is not **wrong**, but we
+                    // can do better: A None value should be removed from the
+                    // snapshot disk storage.
+                    None => {
+                        prev_disk
+                            .cache
+                            .storages
+                            .remove(&(*account_hash, *storage_hash));
+                    }
                 }
+                values.push(value.unwrap_or_else(U256::zero));
+                keys.push(*storage_hash);
             }
             storage_values.push(values);
             storage_keys.push(keys);

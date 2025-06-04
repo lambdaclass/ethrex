@@ -4,7 +4,6 @@ mod nibbles;
 mod node;
 mod node_hash;
 mod rlp;
-mod state;
 #[cfg(test)]
 mod test_utils;
 mod trie_iter;
@@ -12,16 +11,20 @@ mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::nibbles::Nibbles;
 pub use self::verify_range::verify_range;
-pub use self::{node::Node, node_hash::NodeHash, state::TrieState};
+pub use self::{
+    node::{Node, NodeRef},
+    node_hash::NodeHash,
+};
 
 pub use self::error::TrieError;
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
+use ethrex_rlp::decode::RLPDecode;
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -43,80 +46,87 @@ pub type NodeRLP = Vec<u8>;
 
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
-    /// Hash of the current node
-    root: Option<NodeHash>,
-    /// Contains the trie's nodes
-    pub(crate) state: TrieState,
+    db: Box<dyn TrieDB>,
+    root: NodeRef,
 }
 
 impl Trie {
     /// Creates a new Trie from a clean DB
     pub fn new(db: Box<dyn TrieDB>) -> Self {
         Self {
-            state: TrieState::new(db),
-            root: None,
+            db,
+            root: NodeRef::default(),
         }
     }
 
     /// Creates a trie from an already-initialized DB and sets root as the root node of the trie
     pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
-        let root = (root != *EMPTY_TRIE_HASH).then_some(root.into());
         Self {
-            state: TrieState::new(db),
-            root,
+            db,
+            root: (root != *EMPTY_TRIE_HASH)
+                .then_some(NodeHash::from(root).into())
+                .unwrap_or_default(),
         }
     }
 
+    /// Return a reference to the internal database.
+    ///
+    /// Warning: All changes made to the db will bypass the trie and may cause the trie to suddenly
+    ///   become inconsistent.
+    pub fn db(&self) -> &dyn TrieDB {
+        self.db.as_ref()
+    }
+
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
-    pub fn get(&self, path: impl AsRef<[u8]>) -> Result<Option<ValueRLP>, TrieError> {
-        if let Some(root) = &self.root {
-            let root_node = self
-                .state
-                .get_node(*root)?
-                .ok_or(TrieError::InconsistentTree)?;
-            root_node.get(&self.state, Nibbles::from_bytes(path.as_ref()))
-        } else {
-            Ok(None)
-        }
+    pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+        Ok(match self.root {
+            NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
+            NodeRef::Hash(hash) if hash.is_valid() => {
+                Node::decode(&self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?)
+                    .map_err(TrieError::RLPDecode)?
+                    .get(self.db.as_ref(), Nibbles::from_bytes(path))?
+            }
+            _ => None,
+        })
     }
 
     /// Insert an RLP-encoded value into the trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
-        let root = self.root.take();
-        if let Some(root_node) = root
-            .map(|root| self.state.get_node(root))
-            .transpose()?
-            .flatten()
-        {
-            // If the trie is not empty, call the root node's insertion logic
-            let root_node = root_node.insert(&mut self.state, Nibbles::from_bytes(&path), value)?;
-            self.root = Some(root_node.insert_self(&mut self.state)?)
+        let path = Nibbles::from_bytes(&path);
+
+        self.root = if self.root.is_valid() {
+            // If the trie is not empty, call the root node's insertion logic.
+            self.root
+                .get_node(self.db.as_ref())?
+                .ok_or(TrieError::InconsistentTree)?
+                .insert(self.db.as_ref(), path, value)?
+                .into()
         } else {
             // If the trie is empty, just add a leaf.
-            let new_leaf = Node::from(LeafNode::new(Nibbles::from_bytes(&path), value));
-            self.root = Some(new_leaf.insert_self(&mut self.state)?)
-        }
+            Node::from(LeafNode::new(path, value)).into()
+        };
+
         Ok(())
     }
 
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: PathRLP) -> Result<Option<ValueRLP>, TrieError> {
-        let root = self.root.take();
-        if let Some(root) = root {
-            let root_node = self
-                .state
-                .get_node(root)?
-                .ok_or(TrieError::InconsistentTree)?;
-            let (root_node, old_value) =
-                root_node.remove(&mut self.state, Nibbles::from_bytes(&path))?;
-            self.root = root_node
-                .map(|root| root.insert_self(&mut self.state))
-                .transpose()?;
-            Ok(old_value)
+        let value;
+        (self.root, value) = if self.root.is_valid() {
+            // If the trie is not empty, call the root node's removal logic.
+            let (node, value) = self
+                .root
+                .get_node(self.db.as_ref())?
+                .ok_or(TrieError::InconsistentTree)?
+                .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
+
+            (node.map(Into::into).unwrap_or_default(), value)
         } else {
-            Ok(None)
-        }
+            (NodeRef::default(), None)
+        };
+
+        Ok(value)
     }
 
     /// Return the hash of the trie's root node.
@@ -124,46 +134,59 @@ impl Trie {
     /// Also commits changes to the DB
     pub fn hash(&mut self) -> Result<H256, TrieError> {
         self.commit()?;
-        Ok(self
-            .root
-            .as_ref()
-            .map(|root| root.finalize())
-            .unwrap_or(*EMPTY_TRIE_HASH))
+        Ok(self.hash_no_commit())
     }
 
     /// Return the hash of the trie's root node.
     /// Returns keccak(RLP_NULL) if the trie is empty
     pub fn hash_no_commit(&self) -> H256 {
-        self.root
-            .as_ref()
-            .map(|root| root.finalize())
-            .unwrap_or(*EMPTY_TRIE_HASH)
+        if self.root.is_valid() {
+            self.root.compute_hash().finalize()
+        } else {
+            *EMPTY_TRIE_HASH
+        }
     }
 
+    /// Compute the hash of the root node and flush any changes into the database.
+    ///
+    /// This method will also compute the hash of all internal nodes indirectly. It will not clear
+    /// the cached nodes.
     pub fn commit(&mut self) -> Result<(), TrieError> {
-        if let Some(ref root) = self.root {
-            self.state.commit(root)?;
+        if self.root.is_valid() {
+            let mut acc = Vec::new();
+            self.root.commit(&mut acc);
+            self.db.put_batch(acc)?;
         }
+
         Ok(())
     }
 
     /// Obtain a merkle proof for the given path.
     /// The proof will contain all the encoded nodes traversed until reaching the node where the path is stored (including this last node).
     /// The proof will still be constructed even if the path is not stored in the trie, proving its absence.
+    ///
+    /// Note: This method has a different behavior in regard to non-existent trie root nodes. Normal
+    ///   behavior is to return `Err(InconsistentTrie)`, but this method will return
+    ///   `Ok(Vec::new())` instead.
     pub fn get_proof(&self, path: &PathRLP) -> Result<Vec<NodeRLP>, TrieError> {
-        // Will store all the encoded nodes traversed until reaching the node containing the path
-        let mut node_path = Vec::new();
-        let Some(root) = &self.root else {
-            return Ok(node_path);
-        };
-        // If the root is inlined, add it to the node_path
-        if let NodeHash::Inline(_) = root {
-            node_path.push(root.as_ref().to_vec());
+        if self.root.is_valid() {
+            let hash = self.root.compute_hash();
+
+            let mut node_path = Vec::new();
+            if let NodeHash::Inline((data, len)) = hash {
+                node_path.push(data[..len as usize].to_vec());
+            }
+
+            let root = match self.root.get_node(self.db.as_ref())? {
+                Some(x) => x,
+                None => return Ok(Vec::new()),
+            };
+            root.get_path(self.db.as_ref(), Nibbles::from_bytes(path), &mut node_path)?;
+
+            Ok(node_path)
+        } else {
+            Ok(Vec::new())
         }
-        if let Some(root_node) = self.state.get_node(*root)? {
-            root_node.get_path(&self.state, Nibbles::from_bytes(path), &mut node_path)?;
-        }
-        Ok(node_path)
     }
 
     /// Obtains all encoded nodes traversed until reaching the node where every path is stored.
@@ -173,47 +196,87 @@ impl Trie {
         &self,
         paths: &[PathRLP],
     ) -> Result<(Option<NodeRLP>, Vec<NodeRLP>), TrieError> {
-        let Some(root_node) = self
-            .root
-            .as_ref()
-            .map(|root| self.state.get_node(*root))
-            .transpose()?
-            .flatten()
-        else {
-            return Ok((None, Vec::new()));
-        };
+        if self.root.is_valid() {
+            let encoded_root = self
+                .root
+                .get_node(self.db.as_ref())?
+                .ok_or(TrieError::InconsistentTree)?
+                .encode_raw();
 
-        let mut node_path = Vec::new();
-        for path in paths {
-            let mut nodes = self.get_proof(path)?;
-            nodes.swap_remove(0);
-            node_path.extend(nodes); // skip root node
+            let mut node_path = HashSet::new();
+            for path in paths {
+                let mut nodes = self.get_proof(path)?;
+                nodes.swap_remove(0);
+                node_path.extend(nodes);
+            }
+
+            Ok((Some(encoded_root), node_path.into_iter().collect()))
+        } else {
+            Ok((None, Vec::new()))
         }
-
-        // dedup
-        // TODO: really inefficient, by making the traversing smarter we can avoid having
-        // duplicates
-        let node_path: HashSet<_> = node_path.into_iter().collect();
-        let node_path = Vec::from_iter(node_path);
-        Ok((Some(root_node.encode_raw()), node_path))
     }
 
-    /// Creates a cached Trie (with [NullTrieDB]) from a list of encoded nodes.
-    /// Generally used in conjuction with [Trie::get_proofs].
-    pub fn from_nodes(
-        root_node: Option<&NodeRLP>,
-        other_nodes: &[NodeRLP],
-    ) -> Result<Self, TrieError> {
+    /// Builds a trie from a set of nodes.
+    ///
+    /// Note: This method will not ensure that all node references are valid. Invalid references
+    ///   will cause other methods (including, but not limited to `Trie::get`, `Trie::insert` and
+    ///   `Trie::remove`) to return `Err(InconsistentTrie)`.
+    /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
+    ///   root node are considered dangling.
+    pub fn from_nodes(root: Option<&NodeRLP>, nodes: &[NodeRLP]) -> Result<Self, TrieError> {
+        let Some(root) = root else {
+            return Ok(Trie::stateless());
+        };
+
+        let mut storage = nodes
+            .iter()
+            .map(|node| {
+                (
+                    NodeHash::from_slice(&Keccak256::new_with_prefix(node).finalize()),
+                    node,
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        fn inner(
+            storage: &mut HashMap<NodeHash, &Vec<u8>>,
+            node: &NodeRLP,
+        ) -> Result<Node, TrieError> {
+            Ok(match Node::decode_raw(node)? {
+                Node::Branch(mut node) => {
+                    for choice in &mut node.choices {
+                        let NodeRef::Hash(hash) = *choice else {
+                            unreachable!()
+                        };
+
+                        if hash.is_valid() {
+                            *choice = match storage.remove(&hash) {
+                                Some(rlp) => inner(storage, rlp)?.into(),
+                                None => hash.into(),
+                            };
+                        }
+                    }
+
+                    node.into()
+                }
+                Node::Extension(mut node) => {
+                    let NodeRef::Hash(hash) = node.child else {
+                        unreachable!()
+                    };
+
+                    node.child = match storage.remove(&hash) {
+                        Some(rlp) => inner(storage, rlp)?.into(),
+                        None => hash.into(),
+                    };
+
+                    node.into()
+                }
+                Node::Leaf(node) => node.into(),
+            })
+        }
+
         let mut trie = Trie::stateless();
-
-        if let Some(root_node) = root_node {
-            let root_node = Node::decode_raw(root_node)?;
-            trie.root = Some(root_node.insert_self(&mut trie.state)?);
-        }
-
-        for node in other_nodes.iter().map(|node| Node::decode_raw(node)) {
-            node?.insert_self(&mut trie.state)?;
-        }
+        trie.root = inner(&mut storage, root)?.into();
 
         Ok(trie)
     }
@@ -227,10 +290,8 @@ impl Trie {
             // Unwraping here won't panic as our in_memory trie DB won't fail
             trie.insert(path, value).unwrap();
         }
-        trie.root
-            .as_ref()
-            .map(|root| root.finalize())
-            .unwrap_or(*EMPTY_TRIE_HASH)
+
+        trie.hash_no_commit()
     }
 
     /// Creates a new stateless trie. This trie won't be able to store any nodes so all data will be lost after calculating the hash
@@ -269,67 +330,58 @@ impl Trie {
             _ => return Ok(vec![]),
         };
 
-        // Fetch node
-        let Some(root_node) = self
-            .root
-            .as_ref()
-            .map(|root| self.state.get_node(*root))
-            .transpose()?
-            .flatten()
-        else {
-            return Ok(vec![]);
-        };
-        self.get_node_inner(root_node, partial_path)
-    }
-
-    fn get_node_inner(&self, node: Node, mut partial_path: Nibbles) -> Result<Vec<u8>, TrieError> {
-        // If we reached the end of the partial path, return the current node
-        if partial_path.is_empty() {
-            return Ok(node.encode_raw());
-        }
-        match node {
-            Node::Branch(branch_node) => match partial_path.next_choice() {
-                Some(idx) => {
-                    let child_hash = &branch_node.choices[idx];
-                    if child_hash.is_valid() {
-                        let child_node = self
-                            .state
-                            .get_node(*child_hash)?
+        fn get_node_inner(
+            db: &dyn TrieDB,
+            node: Node,
+            mut partial_path: Nibbles,
+        ) -> Result<Vec<u8>, TrieError> {
+            // If we reached the end of the partial path, return the current node
+            if partial_path.is_empty() {
+                return Ok(node.encode_raw());
+            }
+            match node {
+                Node::Branch(branch_node) => match partial_path.next_choice() {
+                    Some(idx) => {
+                        let child_ref = &branch_node.choices[idx];
+                        if child_ref.is_valid() {
+                            let child_node =
+                                child_ref.get_node(db)?.ok_or(TrieError::InconsistentTree)?;
+                            get_node_inner(db, child_node, partial_path)
+                        } else {
+                            Ok(vec![])
+                        }
+                    }
+                    _ => Ok(vec![]),
+                },
+                Node::Extension(extension_node) => {
+                    if partial_path.skip_prefix(&extension_node.prefix)
+                        && extension_node.child.is_valid()
+                    {
+                        let child_node = extension_node
+                            .child
+                            .get_node(db)?
                             .ok_or(TrieError::InconsistentTree)?;
-                        self.get_node_inner(child_node, partial_path)
+                        get_node_inner(db, child_node, partial_path)
                     } else {
                         Ok(vec![])
                     }
                 }
-                _ => Ok(vec![]),
-            },
-            Node::Extension(extension_node) => {
-                if partial_path.skip_prefix(&extension_node.prefix)
-                    && extension_node.child.is_valid()
-                {
-                    let child_node = self
-                        .state
-                        .get_node(extension_node.child)?
-                        .ok_or(TrieError::InconsistentTree)?;
-                    self.get_node_inner(child_node, partial_path)
-                } else {
-                    Ok(vec![])
-                }
+                Node::Leaf(_) => Ok(vec![]),
             }
-            Node::Leaf(_) => Ok(vec![]),
         }
-    }
 
-    /// Returns a mutable reference to the trie's internal node state
-    /// [WARNING] This will allow directly manipulating the trie's state and
-    /// may lead to inconsistent trie structures if not used resposibly
-    pub fn state_mut(&mut self) -> &mut TrieState {
-        &mut self.state
-    }
-
-    /// Returns a reference to the trie's internal node state
-    pub fn state(&mut self) -> &TrieState {
-        &self.state
+        // Fetch node
+        if self.root.is_valid() {
+            get_node_inner(
+                self.db.as_ref(),
+                self.root
+                    .get_node(self.db.as_ref())?
+                    .ok_or(TrieError::InconsistentTree)?,
+                partial_path,
+            )
+        } else {
+            Ok(Vec::new())
+        }
     }
 
     #[cfg(test)]
@@ -353,6 +405,40 @@ impl IntoIterator for Trie {
 
     fn into_iter(self) -> Self::IntoIter {
         TrieIterator::new(self)
+    }
+}
+
+pub struct ProofTrie(Trie);
+
+impl ProofTrie {
+    pub fn insert(
+        &mut self,
+        partial_path: Nibbles,
+        external_ref: NodeHash,
+    ) -> Result<(), TrieError> {
+        self.0.root = if self.0.root.is_valid() {
+            // If the trie is not empty, call the root node's insertion logic.
+            self.0
+                .root
+                .get_node(self.0.db.as_ref())?
+                .ok_or(TrieError::InconsistentTree)?
+                .insert(self.0.db.as_ref(), partial_path, external_ref)?
+                .into()
+        } else {
+            external_ref.into()
+        };
+
+        Ok(())
+    }
+
+    pub fn hash(&self) -> H256 {
+        self.0.hash_no_commit()
+    }
+}
+
+impl From<Trie> for ProofTrie {
+    fn from(value: Trie) -> Self {
+        Self(value)
     }
 }
 
@@ -421,7 +507,7 @@ mod test {
     fn get_insert_zero() {
         let mut trie = Trie::new_temp();
         trie.insert(vec![0x0], b"value".to_vec()).unwrap();
-        let first = trie.get(&[0x0][..]).unwrap();
+        let first = trie.get(&[0x0][..].to_vec()).unwrap();
         assert_eq!(first, Some(b"value".to_vec()));
     }
 
@@ -431,10 +517,10 @@ mod test {
         trie.insert(vec![16], vec![0]).unwrap();
         trie.insert(vec![16, 0], vec![0]).unwrap();
 
-        let item = trie.get(vec![16]).unwrap();
+        let item = trie.get(&vec![16]).unwrap();
         assert_eq!(item, Some(vec![0]));
 
-        let item = trie.get(vec![16, 0]).unwrap();
+        let item = trie.get(&vec![16, 0]).unwrap();
         assert_eq!(item, Some(vec![0]));
     }
 
@@ -444,10 +530,10 @@ mod test {
         trie.insert(vec![0, 0], vec![0, 0]).unwrap();
         trie.insert(vec![1, 0], vec![1, 0]).unwrap();
 
-        let item = trie.get(vec![1, 0]).unwrap();
+        let item = trie.get(&vec![1, 0]).unwrap();
         assert_eq!(item, Some(vec![1, 0]));
 
-        let item = trie.get(vec![0, 0]).unwrap();
+        let item = trie.get(&vec![0, 0]).unwrap();
         assert_eq!(item, Some(vec![0, 0]));
     }
 
@@ -500,9 +586,9 @@ mod test {
         trie.insert(vec![0xC8], vec![0xC8]).unwrap();
         trie.insert(vec![0xC8, 0x00], vec![0xC8, 0x00]).unwrap();
 
-        assert_eq!(trie.get(vec![0x00]).unwrap(), Some(vec![0x00]));
-        assert_eq!(trie.get(vec![0xC8]).unwrap(), Some(vec![0xC8]));
-        assert_eq!(trie.get(vec![0xC8, 0x00]).unwrap(), Some(vec![0xC8, 0x00]));
+        assert_eq!(trie.get(&vec![0x00]).unwrap(), Some(vec![0x00]));
+        assert_eq!(trie.get(&vec![0xC8]).unwrap(), Some(vec![0xC8]));
+        assert_eq!(trie.get(&vec![0xC8, 0x00]).unwrap(), Some(vec![0xC8, 0x00]));
     }
 
     #[test]
@@ -515,12 +601,12 @@ mod test {
         trie.insert(vec![0x19, 0x00], vec![0x19, 0x00]).unwrap();
         trie.insert(vec![0x1A], vec![0x1A]).unwrap();
 
-        assert_eq!(trie.get(vec![0x00]).unwrap(), Some(vec![0x00]));
-        assert_eq!(trie.get(vec![0x01]).unwrap(), Some(vec![0x01]));
-        assert_eq!(trie.get(vec![0x10]).unwrap(), Some(vec![0x10]));
-        assert_eq!(trie.get(vec![0x19]).unwrap(), Some(vec![0x19]));
-        assert_eq!(trie.get(vec![0x19, 0x00]).unwrap(), Some(vec![0x19, 0x00]));
-        assert_eq!(trie.get(vec![0x1A]).unwrap(), Some(vec![0x1A]));
+        assert_eq!(trie.get(&vec![0x00]).unwrap(), Some(vec![0x00]));
+        assert_eq!(trie.get(&vec![0x01]).unwrap(), Some(vec![0x01]));
+        assert_eq!(trie.get(&vec![0x10]).unwrap(), Some(vec![0x10]));
+        assert_eq!(trie.get(&vec![0x19]).unwrap(), Some(vec![0x19]));
+        assert_eq!(trie.get(&vec![0x19, 0x00]).unwrap(), Some(vec![0x19, 0x00]));
+        assert_eq!(trie.get(&vec![0x1A]).unwrap(), Some(vec![0x1A]));
     }
 
     #[test]
@@ -531,8 +617,8 @@ mod test {
             .unwrap();
         trie.insert(b"doge".to_vec(), b"coin".to_vec()).unwrap();
         trie.remove(b"horse".to_vec()).unwrap();
-        assert_eq!(trie.get(b"do").unwrap(), Some(b"verb".to_vec()));
-        assert_eq!(trie.get(b"doge").unwrap(), Some(b"coin".to_vec()));
+        assert_eq!(trie.get(&b"do".to_vec()).unwrap(), Some(b"verb".to_vec()));
+        assert_eq!(trie.get(&b"doge".to_vec()).unwrap(), Some(b"coin".to_vec()));
     }
 
     #[test]
@@ -542,9 +628,9 @@ mod test {
         trie.insert(vec![185, 0], vec![185, 0]).unwrap();
         trie.insert(vec![185, 1], vec![185, 1]).unwrap();
         trie.remove(vec![185, 1]).unwrap();
-        assert_eq!(trie.get(vec![185, 0]).unwrap(), Some(vec![185, 0]));
-        assert_eq!(trie.get(vec![185]).unwrap(), Some(vec![185]));
-        assert!(trie.get(vec![185, 1]).unwrap().is_none());
+        assert_eq!(trie.get(&vec![185, 0]).unwrap(), Some(vec![185, 0]));
+        assert_eq!(trie.get(&vec![185]).unwrap(), Some(vec![185]));
+        assert!(trie.get(&vec![185, 1]).unwrap().is_none());
     }
 
     #[test]
@@ -744,7 +830,6 @@ mod test {
             }
         }
 
-
         #[test]
         fn proptest_compare_hash(data in btree_set(vec(any::<u8>(), 1..100), 1..100)) {
             let mut trie = Trie::new_temp();
@@ -872,7 +957,6 @@ mod test {
                 prop_assert_eq!(proof, cita_proof);
             }
         }
-
 
         #[test]
         // The previous test needs to sort the input values in order to get rid of duplicate entries, leading to ordered insertions

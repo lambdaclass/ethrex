@@ -339,8 +339,12 @@ pub mod test_utils {
     };
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
+    use tokio::sync::Mutex as TokioMutex;
 
-    use crate::rpc::{start_api, NodeData, RpcApiContext};
+    use crate::{
+        eth::gas_tip_estimator::GasTipEstimator,
+        rpc::{start_api, NodeData, RpcApiContext},
+    };
     #[cfg(feature = "l2")]
     use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
     #[cfg(feature = "l2")]
@@ -425,6 +429,7 @@ pub mod test_utils {
                 local_node_record: example_local_node_record(),
                 client_version: "ethrex/test".to_string(),
             },
+            gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]

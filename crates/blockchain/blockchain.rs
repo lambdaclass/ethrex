@@ -13,10 +13,9 @@ use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
 use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::{
-    compute_receipts_root, validate_block_body, validate_block_header,
-    validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, EIP4844Transaction, Receipt, Transaction,
+    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
+    validate_prague_header_fields, validate_pre_cancun_header_fields, AccountUpdate, Block,
+    BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
 use ethrex_common::{Address, H256};
@@ -75,19 +74,10 @@ impl Blockchain {
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
-        // Feda (#2831): We search for the entire block because during full/batch sync
-        // we can have the header without the body indicating it's still syncing.
-        let parent = self
-            .storage
-            .get_block_by_hash(block.header.parent_hash)
-            .await?;
-        let parent_header = match parent {
-            Some(parent_block) => parent_block.header,
-            None => {
-                // If the parent is not present, we store it as pending.
-                self.storage.add_pending_block(block.clone()).await?;
-                return Err(ChainError::ParentNotFound);
-            }
+        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            // If the parent is not present, we store it as pending.
+            self.storage.add_pending_block(block.clone()).await?;
+            return Err(ChainError::ParentNotFound);
         };
 
         let chain_config = self.storage.get_chain_config()?;
@@ -228,7 +218,14 @@ impl Blockchain {
             .get_chain_config()
             .map_err(|e| (e.into(), None))?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), first_block_header.parent_hash);
+        // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
+        let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
+
+        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
+            self.storage.clone(),
+            first_block_header.parent_hash,
+            block_hash_cache,
+        );
         let mut vm = Evm::new(self.evm_engine, vm_db);
 
         let blocks_len = blocks.len();
@@ -560,7 +557,7 @@ pub fn validate_receipts_root(
 pub async fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> {
     let latest_block_number = storage.get_latest_block_number().await?;
     if let Some(latest_valid_header) = storage.get_block_header(latest_block_number)? {
-        let latest_valid_hash = latest_valid_header.compute_block_hash();
+        let latest_valid_hash = latest_valid_header.hash();
         return Ok(latest_valid_hash);
     }
     Err(ChainError::StoreError(StoreError::Custom(
@@ -592,7 +589,6 @@ pub fn validate_block(
     // Verify initial header validity against parent
     validate_block_header(&block.header, parent_header, elasticity_multiplier)
         .map_err(InvalidBlockError::from)?;
-    validate_block_body(block).map_err(InvalidBlockError::from)?;
 
     if chain_config.is_prague_activated(block.header.timestamp) {
         validate_prague_header_fields(&block.header, parent_header, chain_config)

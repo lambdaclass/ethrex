@@ -1,5 +1,6 @@
-use std::{collections::HashMap, str::FromStr};
+use std::collections::HashMap;
 
+use bytes::Bytes;
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::{
@@ -8,6 +9,7 @@ use ethrex_rpc::{
 };
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
+use std::str::FromStr;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -21,17 +23,19 @@ use crate::{
 
 use super::{errors::SequencerError, utils::sleep_random};
 
+const VERIFY_FUNCTION_SIGNATURE: &str =
+    "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
+
 const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0xAA,
 ]);
-const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
 
 pub async fn start_l1_proof_sender(cfg: SequencerConfig) -> Result<(), SequencerError> {
-    let proof_sender =
-        L1ProofSender::new(&cfg.proof_coordinator, &cfg.l1_committer, &cfg.eth).await?;
-    proof_sender.run().await;
+    L1ProofSender::new(&cfg.proof_coordinator, &cfg.l1_committer, &cfg.eth)
+        .await?
+        .run()
+        .await;
     Ok(())
 }
 
@@ -52,36 +56,40 @@ impl L1ProofSender {
     ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
 
+        if cfg.dev_mode {
+            return Ok(Self {
+                eth_client,
+                l1_address: cfg.l1_address,
+                l1_private_key: cfg.l1_private_key,
+                on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
+                needed_proof_types: vec![ProverType::Exec],
+                proof_send_interval_ms: cfg.proof_send_interval_ms,
+            });
+        }
+
         let mut needed_proof_types = vec![];
-        if !cfg.dev_mode {
-            for prover_type in ProverType::all() {
-                let Some(getter) = prover_type.verifier_getter() else {
-                    continue;
-                };
-                let calldata = keccak(getter)[..4].to_vec();
+        for prover_type in ProverType::all() {
+            let Some(getter) = prover_type.verifier_getter() else {
+                continue;
+            };
+            let calldata = Bytes::copy_from_slice(keccak(getter)[..4].as_ref());
+            let response = eth_client
+                .call(
+                    committer_cfg.on_chain_proposer_address,
+                    calldata,
+                    Overrides::default(),
+                )
+                .await?;
+            // trim to 20 bytes, also removes 0x prefix
+            let trimmed_response = &response[26..];
 
-                let response = eth_client
-                    .call(
-                        committer_cfg.on_chain_proposer_address,
-                        calldata.into(),
-                        Overrides::default(),
-                    )
-                    .await?;
-                // trim to 20 bytes, also removes 0x prefix
-                let trimmed_response = &response[26..];
+            let address = Address::from_str(&format!("0x{trimmed_response}"))
+                .map_err(|_| ProofSenderError::FailedToParseOnChainProposerResponse(response))?;
 
-                let address =
-                    Address::from_str(&format!("0x{trimmed_response}")).map_err(|_| {
-                        ProofSenderError::FailedToParseOnChainProposerResponse(response)
-                    })?;
-
-                if address != DEV_MODE_ADDRESS {
-                    info!("{prover_type} proof needed");
-                    needed_proof_types.push(prover_type);
-                }
+            if address != DEV_MODE_ADDRESS {
+                info!("{prover_type} proof needed");
+                needed_proof_types.push(prover_type);
             }
-        } else {
-            needed_proof_types.push(ProverType::Exec);
         }
 
         Ok(Self {
@@ -98,9 +106,10 @@ impl L1ProofSender {
         loop {
             info!("Running L1 Proof Sender");
             info!("Needed proof systems: {:?}", self.needed_proof_types);
-            if let Err(err) = self.main_logic().await {
-                error!("L1 Proof Sender Error: {}", err);
-            }
+            let _ = self
+                .main_logic()
+                .await
+                .inspect_err(|err| error!("L1 Proof Sender Error: {err}"));
 
             sleep_random(self.proof_send_interval_ms).await;
         }
@@ -112,12 +121,21 @@ impl L1ProofSender {
             .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
 
+        let last_committed_batch = self
+            .eth_client
+            .get_last_committed_batch(self.on_chain_proposer_address)
+            .await?;
+
+        if last_committed_batch < batch_to_verify {
+            info!("Next batch to verify ({batch_to_verify}) is not yet committed");
+            return Ok(());
+        }
+
         if batch_number_has_all_needed_proofs(batch_to_verify, &self.needed_proof_types)
-            .is_ok_and(|has_all_proofs| has_all_proofs)
+            .inspect_err(|_| info!("Missing proofs for batch {batch_to_verify}, skipping sending"))
+            .unwrap_or_default()
         {
             self.send_proof(batch_to_verify).await?;
-        } else {
-            info!("Missing proofs for batch {batch_to_verify}, skipping sending");
         }
 
         Ok(())

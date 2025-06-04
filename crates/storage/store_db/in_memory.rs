@@ -138,9 +138,7 @@ impl StoreEngine for Store {
     }
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        self.inner()
-            .pending_blocks
-            .insert(block.header.compute_block_hash(), block);
+        self.inner().pending_blocks.insert(block.hash(), block);
         Ok(())
     }
 
@@ -181,7 +179,7 @@ impl StoreEngine for Store {
         for block in blocks {
             let header = block.header;
             let number = header.number;
-            let hash = header.compute_block_hash();
+            let hash = header.hash();
             let locations = block
                 .body
                 .transactions
@@ -217,11 +215,18 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn get_block_number(
+    fn get_block_number_sync(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
         Ok(self.inner().block_numbers.get(&block_hash).copied())
+    }
+
+    async fn get_block_number(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        self.get_block_number_sync(block_hash)
     }
 
     async fn add_transaction_location(
@@ -409,11 +414,18 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn get_canonical_block_hash(
+    fn get_canonical_block_hash_sync(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         Ok(self.inner().canonical_hashes.get(&block_number).cloned())
+    }
+
+    async fn get_canonical_block_hash(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        self.get_canonical_block_hash_sync(block_number)
     }
 
     async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {

@@ -847,7 +847,7 @@ pub(super) mod tests {
                 gas_used: 0,
                 ..Default::default()
             };
-            let block_hash = header.compute_block_hash();
+            let block_hash = header.hash();
             store.add_block_header(block_hash, header).await?;
             store.set_canonical_block(i, block_hash).await?;
         }

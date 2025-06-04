@@ -44,21 +44,7 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
     ) -> Result<BlockExecutionResult, EvmError> {
-        cfg_if::cfg_if! {
-            if #[cfg(not(feature = "l2"))] {
-                let chain_config = db.store.get_chain_config()?;
-                let block_header = &block.header;
-                let fork = chain_config.fork(block_header.timestamp);
-                if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    Self::beacon_root_contract_call(block_header, db)?;
-                }
-
-                if fork >= Fork::Prague {
-                    //eip 2935: stores parent block hash in system contract
-                    Self::process_block_hash_history(block_header, db)?;
-                }
-            }
-        }
+        Self::prepare_block(block, db)?;
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
@@ -260,7 +246,7 @@ impl LEVM {
             // If account is now empty and it didn't exist in the trie before, no need to make changes.
             // This check is necessary just in case we keep empty accounts in the trie. If we're sure we don't, this code can be removed.
             // `initial_state_account.is_empty()` check can be removed but I added it because it's short-circuiting, this way we don't hit the db very often.
-            if removed && initial_state_account.is_empty() && !db.store.account_exists(*address) {
+            if removed && initial_state_account.is_empty() && !db.store.account_exists(*address)? {
                 continue;
             }
 
@@ -426,6 +412,24 @@ impl LEVM {
         let report = vm.stateless_execute()?;
 
         Ok((report.into(), access_list))
+    }
+
+    pub fn prepare_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
+        let chain_config = db.store.get_chain_config()?;
+        let block_header = &block.header;
+        let fork = chain_config.fork(block_header.timestamp);
+
+        if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
+            #[cfg(not(feature = "l2"))]
+            Self::beacon_root_contract_call(block_header, db)?;
+        }
+
+        if fork >= Fork::Prague {
+            //eip 2935: stores parent block hash in system contract
+            #[cfg(not(feature = "l2"))]
+            Self::process_block_hash_history(block_header, db)?;
+        }
+        Ok(())
     }
 }
 

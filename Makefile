@@ -9,7 +9,7 @@ build: ## 🔨 Build the client
 	cargo build --workspace
 
 lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover-bench --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
+	cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
@@ -113,39 +113,26 @@ EVM_BACKEND := levm
 SIM_PARALLELISM := 16
 SYNCMODE := full
 
-L1_CLIENT       ?= ethrex
-
-display-hive-alternatives:
-	@echo ""
-	@echo "Running L1 with ${L1_CLIENT} as client. Other clients are available in order to compare tests results."
-	@echo "In order to use a different client, use the environment variable 'L1_CLIENT' with one of the follwoing values:"
-	@echo "   - ethrex: https://github.com/lambdaclass/ethrex"
-	@echo "   - go-ethereum: https://github.com/ethereum/go-ethereum"
-	@echo ""
-
 # Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080
 # The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
-run-hive: display-hive-alternatives build-image setup-hive ## 🧪 Run Hive testing suite
-	- cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
+run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
+	- cd hive && ./hive --client-file ../test_data/hive_clients.yml --client ethrex --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
 	$(MAKE) view-hive
 
-run-hive-all: display-hive-alternatives build-image setup-hive ## 🧪 Run all Hive testing suites
-	- cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
+run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
+	- cd hive && ./hive --client-file ../test_data/hive_clients.yml --client ethrex --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
 	$(MAKE) view-hive
 
-run-hive-debug: display-hive-alternatives build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive && ./hive --sim $(SIMULATION) --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
+run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
+	cd hive && ./hive --sim $(SIMULATION) --client-file ../test_data/hive_clients.yml --client ethrex --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
 
 view-hive: ## 🛠️ Builds hiveview with the logs from the hive execution
 	cd hive && go build ./cmd/hiveview && ./hiveview --serve --logdir ./workspace/logs
-
-install-cli: ## 🛠️ Installs the ethrex-l2 cli
-	cargo install --path cmd/ethrex_l2/ --force --locked
 
 start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
 	@if [ -z "$$L" ]; then \
@@ -167,16 +154,16 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--datadir test_ethrex
 
 load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
-	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t eth-transfers
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t eth-transfers
 
 load-test-erc20:
-	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t erc20
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t erc20
 
 load-test-fibonacci:
-	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t fibonacci
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t fibonacci
 
 load-test-io:
-	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t io-heavy
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t io-heavy
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
@@ -185,4 +172,4 @@ test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 	solc ./test_data/ERC20.sol -o $@
 
 sort-genesis-files:
-	cd ./tools && cargo run
+	cd ./tooling/genesis && cargo run

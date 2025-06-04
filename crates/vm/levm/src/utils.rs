@@ -26,7 +26,10 @@ use ethrex_common::{
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
-use libsecp256k1::{Message, RecoveryId, Signature};
+use secp256k1::{
+    ecdsa::{RecoverableSignature, RecoveryId},
+    Message,
+};
 use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -309,7 +312,7 @@ pub fn eip7702_recover_address(
     hasher.update(rlp_buf);
     let bytes = &mut hasher.finalize();
 
-    let Ok(message) = Message::parse_slice(bytes) else {
+    let Ok(message) = Message::from_digest_slice(bytes) else {
         return Ok(None);
     };
 
@@ -319,25 +322,25 @@ pub fn eip7702_recover_address(
     ]
     .concat();
 
-    let Ok(signature) = Signature::parse_standard_slice(&bytes) else {
-        return Ok(None);
-    };
-
-    let Ok(recovery_id) = RecoveryId::parse(
+    let Ok(recovery_id) = RecoveryId::from_i32(
         auth_tuple
             .y_parity
-            .as_u32()
             .try_into()
             .map_err(|_| VMError::Internal(InternalError::ConversionError))?,
     ) else {
         return Ok(None);
     };
 
-    let Ok(authority) = libsecp256k1::recover(&message, &signature, &recovery_id) else {
+    let Ok(signature) = RecoverableSignature::from_compact(&bytes, recovery_id) else {
         return Ok(None);
     };
 
-    let public_key = authority.serialize();
+    //recover
+    let Ok(authority) = signature.recover(&message) else {
+        return Ok(None);
+    };
+
+    let public_key = authority.serialize_uncompressed();
     let mut hasher = Keccak256::new();
     hasher.update(
         public_key
@@ -661,7 +664,7 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    pub fn get_hooks(tx: &Transaction) -> Vec<Arc<dyn Hook + 'static>> {
+    pub fn get_hooks(_tx: &Transaction) -> Vec<Arc<dyn Hook + 'static>> {
         #[cfg(not(feature = "l2"))]
         let hooks: Vec<Arc<dyn Hook>> = vec![Arc::new(DefaultHook)];
         #[cfg(feature = "l2")]
@@ -669,7 +672,7 @@ impl<'a> VM<'a> {
             let recipient = if let Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
                 recipient,
                 ..
-            }) = tx
+            }) = _tx
             {
                 Some(*recipient)
             } else {

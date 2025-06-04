@@ -2,10 +2,16 @@
 
 ## Perf
 
-### 2025-05-27
+### 2025-05-29
 
 - Add block snapshots with diff layers. [2664](https://github.com/lambdaclass/ethrex/pull/2664)
 - Make disk layer in snapshots use the database. [2848](https://github.com/lambdaclass/ethrex/pull/2848)
+
+### 2025-05-27
+
+- Improved the performance of shift instructions. [2933](https://github.com/lambdaclass/ethrex/pull/2933)
+
+- Refactor Patricia Merkle Trie to avoid rehashing the entire path on every insert [2687](https://github.com/lambdaclass/ethrex/pull/2687)
 
 ### 2025-05-22
 

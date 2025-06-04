@@ -78,7 +78,7 @@ impl RpcHandler for GetBlockByNumberRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        let hash = header.compute_block_hash();
+        let hash = header.hash();
         let block = RpcBlock::build(header, body, hash, self.hydrated);
 
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -112,7 +112,7 @@ impl RpcHandler for GetBlockByHashRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        let hash = header.compute_block_hash();
+        let hash = header.hash();
         let block = RpcBlock::build(header, body, hash, self.hydrated);
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -278,7 +278,7 @@ impl RpcHandler for GetRawReceipts {
         let receipts: Vec<String> = get_all_block_receipts(block_number, header, body, storage)
             .await?
             .iter()
-            .map(|receipt| format!("0x{}", hex::encode(receipt.encode_inner())))
+            .map(|receipt| format!("0x{}", hex::encode(receipt.encode_inner_with_bloom())))
             .collect();
         serde_json::to_value(receipts).map_err(|error| RpcErr::Internal(error.to_string()))
     }

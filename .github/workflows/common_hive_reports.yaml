@@ -28,27 +28,19 @@ jobs:
               file_name: rpc-compat,
               simulation: ethereum/rpc-compat,
             }
-          - { 
-              name: "Devp2p eth tests", 
-              file_name: devp2p, 
-              simulation: devp2p,
-            }
+          - { name: "Devp2p eth tests", file_name: devp2p, simulation: devp2p }
           - {
               name: "Cancun Engine tests",
               file_name: engine,
               simulation: ethereum/engine,
             }
-          - { 
-              name: "Sync tests", 
-              file_name: sync, 
-              simulation: ethereum/sync,
-            }
+          - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
           - {
               name: "Consume Engine tests",
               file_name: consume-engine,
               simulation: ethereum/eest/consume-engine,
             }
-          - { 
+          - {
               name: "Consume RLP tests",
               file_name: consume-rlp,
               simulation: ethereum/eest/consume-rlp,
@@ -89,7 +81,7 @@ jobs:
           fi
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --ethrex.flags "--evm ${{ inputs.evm }}" --sim.parallelism 16 ${{ env.HIVE_FLAGS }}
+        run: cd hive && ./hive --client-file ../test_data/hive_clients.yml --client ethrex --sim ${{ matrix.test.simulation }} --ethrex.flags "--evm ${{ inputs.evm }}" --sim.parallelism 16 ${{ env.HIVE_FLAGS }}
         continue-on-error: true
 
       - name: Upload results
@@ -110,7 +102,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.82.0
 
       - name: Download all results
         uses: actions/download-artifact@v4

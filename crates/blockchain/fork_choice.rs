@@ -40,23 +40,19 @@ pub async fn apply_fork_choice(
         None
     };
 
-    // Feda (#2831): We search for the entire block because during full/batch sync
-    // we can have the header without the body indicating it's still syncing.
-    let head_block_res = store.get_block_by_hash(head_hash).await?;
-
-    let Some(head_block) = head_block_res else {
-        return Err(InvalidForkChoice::Syncing);
-    };
+    let head_res = store.get_block_header_by_hash(head_hash)?;
 
     if !safe_hash.is_zero() {
-        check_order(safe_res.as_ref(), Some(&head_block.header))?;
+        check_order(&safe_res, &head_res)?;
     }
 
     if !finalized_hash.is_zero() && !safe_hash.is_zero() {
-        check_order(finalized_res.as_ref(), safe_res.as_ref())?;
+        check_order(&finalized_res, &safe_res)?;
     }
 
-    let head = head_block.header;
+    let Some(head) = head_res else {
+        return Err(InvalidForkChoice::Syncing);
+    };
 
     let latest = store.get_latest_block_number().await?;
 
@@ -67,10 +63,7 @@ pub async fn apply_fork_choice(
 
     // Find blocks that will be part of the new canonical chain.
     let Some(new_canonical_blocks) = find_link_with_canonical_chain(store, &head).await? else {
-        return Err(InvalidForkChoice::Disconnected(
-            error::ForkChoiceElement::Head,
-            error::ForkChoiceElement::Safe,
-        ));
+        return Err(InvalidForkChoice::UnlinkedHead);
     };
 
     let link_block_number = match new_canonical_blocks.last() {
@@ -134,8 +127,8 @@ pub async fn apply_fork_choice(
 
 // Checks that block 1 is prior to block 2 and that if the second is present, the first one is too.
 fn check_order(
-    block_1: Option<&BlockHeader>,
-    block_2: Option<&BlockHeader>,
+    block_1: &Option<BlockHeader>,
+    block_2: &Option<BlockHeader>,
 ) -> Result<(), InvalidForkChoice> {
     // We don't need to perform the check if the hashes are null
     match (block_1, block_2) {
@@ -165,11 +158,10 @@ fn check_order(
 //   descendant.
 async fn find_link_with_canonical_chain(
     store: &Store,
-    block: &BlockHeader,
+    block_header: &BlockHeader,
 ) -> Result<Option<Vec<(BlockNumber, BlockHash)>>, StoreError> {
-    let mut block_number = block.number;
-    let block_hash = block.compute_block_hash();
-    let mut header = block.clone();
+    let mut block_number = block_header.number;
+    let block_hash = block_header.hash();
     let mut branch = Vec::new();
 
     if is_canonical(store, block_number, block_hash).await? {
@@ -177,6 +169,7 @@ async fn find_link_with_canonical_chain(
     }
 
     let genesis_number = store.get_earliest_block_number().await?;
+    let mut header = block_header.clone();
 
     while block_number > genesis_number {
         block_number -= 1;
