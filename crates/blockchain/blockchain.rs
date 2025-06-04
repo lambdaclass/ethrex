@@ -6,11 +6,11 @@ pub mod payload;
 mod smoke_test;
 pub mod vm;
 
-use bytes::Bytes;
 use constants::MAX_INITCODE_SIZE;
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
 use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::{
@@ -25,7 +25,7 @@ use ethrex_storage::{hash_address, hash_key, Store};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
 use mempool::Mempool;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{ops::Div, time::Instant};
@@ -134,29 +134,36 @@ impl Blockchain {
     pub async fn generate_witness_for_blocks(
         &self,
         blocks: &[Block],
-    ) -> Result<
-        (
-            Vec<Vec<u8>>,
-            Vec<Bytes>,
-            HashMap<Address, Vec<Vec<u8>>>,
-            HashMap<u64, H256>,
-        ),
-        ChainError,
-    > {
+    ) -> Result<ExecutionWitnessResult, ChainError> {
+        let first_block_header = blocks
+            .first()
+            .ok_or(ChainError::Custom("Empty block batch".to_string()))?
+            .header
+            .clone();
+
+        let parent_block_header = self
+            .storage
+            .get_block_header_by_hash(first_block_header.parent_hash)?
+            .ok_or(ChainError::ParentNotFound)?;
+
         // Get state at previous block
-        let mut trie = {
-            let first_block = blocks
-                .first()
-                .ok_or(ChainError::Custom("Empty block batch".to_string()))?;
-            self.storage.state_trie(first_block.header.parent_hash)
-        }
-        .map_err(|_| ChainError::ParentNotFound)?
-        .ok_or(ChainError::ParentStateNotFound)?;
+        let mut trie = self
+            .storage
+            .state_trie(first_block_header.parent_hash)
+            .map_err(|_| ChainError::ParentNotFound)?
+            .ok_or(ChainError::ParentStateNotFound)?;
+
         // Record all accessed nodes
         trie.record_witness();
+
+        // Store the root node in case the block is empty and the witness does not record any nodes
+        let root_node = trie
+            .root_node()
+            .map_err(|_| ChainError::Custom("Failed to get root state node".to_string()))?;
+
         let mut encoded_storage_tries: HashMap<ethrex_common::H160, Vec<Vec<u8>>> = HashMap::new();
         let mut block_hashes = HashMap::new();
-        let mut codes = Vec::new();
+        let mut codes = HashSet::new();
 
         for block in blocks {
             let parent_hash = block.header.parent_hash;
@@ -223,7 +230,7 @@ impl Blockchain {
                 let code = lock
                     .get_account_code(*code_hash)
                     .map_err(|_e| ChainError::Custom("Failed to get account code".to_string()))?;
-                codes.push(code);
+                codes.insert(code);
             }
 
             // Apply account updates to the trie recording all the necessary nodes to do so
@@ -257,9 +264,28 @@ impl Blockchain {
             .db()
             .witness()
             .map_err(|_| ChainError::Custom("Failed to get witness for state trie".to_string()))?;
-        let used_trie_nodes = Vec::from_iter(witnessed_trie.into_iter());
+        let mut used_trie_nodes = Vec::from_iter(witnessed_trie.into_iter());
+        // If the witness is empty at least try to store the root
+        if used_trie_nodes.is_empty() {
+            if let Some(root) = root_node {
+                used_trie_nodes.push(root.encode_raw());
+            }
+        }
+        // Collect required block headers for BLOCKHASH opcode
+        let mut block_headers = Vec::new();
+        for (_block_number, block_hash) in block_hashes {
+            if let Ok(Some(block_header)) = self.storage.get_block_header_by_hash(block_hash) {
+                block_headers.push(block_header);
+            }
+        }
 
-        Ok((used_trie_nodes, codes, encoded_storage_tries, block_hashes))
+        Ok(ExecutionWitnessResult {
+            state: used_trie_nodes,
+            codes: codes.into_iter().collect::<Vec<_>>(),
+            storage_tries: encoded_storage_tries,
+            block_headers,
+            parent_block_header,
+        })
     }
 
     pub async fn store_block(
