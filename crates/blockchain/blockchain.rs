@@ -25,8 +25,8 @@ use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
 use std::{ops::Div, time::Instant};
+use tracing::warn;
 
 use tracing::info;
 
@@ -40,7 +40,6 @@ pub struct Blockchain {
     pub evm_engine: EvmEngine,
     storage: Store,
     pub mempool: Mempool,
-    senders_nonce: Arc<RwLock<HashMap<Address, u64>>>,
     /// Whether the node's chain is in or out of sync with the current chain
     /// This will be set to true once the initial sync has taken place and wont be set to false after
     /// This does not reflect whether there is an ongoing sync process
@@ -58,7 +57,6 @@ impl Blockchain {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
-            senders_nonce: Arc::new(RwLock::new(HashMap::new())),
             is_synced: AtomicBool::new(false),
         }
     }
@@ -68,7 +66,6 @@ impl Blockchain {
             evm_engine: EvmEngine::default(),
             storage: store,
             mempool: Mempool::new(),
-            senders_nonce: Arc::new(RwLock::new(HashMap::new())),
             is_synced: AtomicBool::new(false),
         }
     }
@@ -459,11 +456,7 @@ impl Blockchain {
 
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
-        if let Some(nonce) = self.senders_nonce.read().unwrap().get(&sender) {
-            if tx.nonce() < *nonce || tx.nonce() == u64::MAX {
-                return Err(MempoolError::InvalidNonce);
-            }
-        } else if let Some(sender_acc_info) = maybe_sender_acc_info {
+        if let Some(sender_acc_info) = maybe_sender_acc_info {
             if tx.nonce() < sender_acc_info.nonce || tx.nonce() == u64::MAX {
                 return Err(MempoolError::InvalidNonce);
             }
@@ -480,24 +473,22 @@ impl Blockchain {
             return Err(MempoolError::NotEnoughBalance);
         }
 
+        let filter_sender = |tx: &Transaction| -> bool { tx.sender() == sender };
+
+        let pending_txs = self
+            .mempool
+            .filter_transactions_with_filter_fn(&filter_sender)?;
+
+        for pending_tx in pending_txs {
+            if tx.nonce() <= pending_tx.1[0].nonce() {
+                return Err(MempoolError::InvalidNonce);
+            }
+        }
+
         if let Some(chain_id) = tx.chain_id() {
             if chain_id != config.chain_id {
                 return Err(MempoolError::InvalidChainId(config.chain_id));
             }
-        }
-
-        Ok(())
-    }
-
-    pub async fn update_account_nonce_from_txs(
-        &self,
-        txs: &Vec<Transaction>,
-    ) -> Result<(), MempoolError> {
-        let mut lock = self.senders_nonce.write().unwrap();
-        for tx in txs {
-            let nonce = tx.nonce() + 1;
-            let sender = tx.sender();
-            lock.insert(sender, nonce);
         }
 
         Ok(())

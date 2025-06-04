@@ -481,9 +481,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         valid_txs.push(tx.clone());
                     }
                     if !valid_txs.is_empty() {
-                        self.blockchain
-                            .update_account_nonce_from_txs(&valid_txs)
-                            .await?;
                         self.broadcast_message(Message::Transactions(Transactions::new(
                             valid_txs,
                         )))?;
