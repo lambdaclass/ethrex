@@ -1,15 +1,17 @@
 use std::sync::Arc;
 
 use crate::SequencerConfig;
-use block_producer::start_block_producer;
+use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use execution_cache::ExecutionCache;
 use l1_committer::L1Committer;
+use l1_proof_sender::L1ProofSender;
 use l1_watcher::L1Watcher;
+#[cfg(feature = "metrics")]
+use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
-use tokio::task::JoinSet;
 use tracing::{error, info};
 
 pub mod block_producer;
@@ -39,7 +41,11 @@ pub async fn start_l2(
 
     let execution_cache = Arc::new(ExecutionCache::default());
 
-    L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone()).await;
+    let _ = L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone())
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Watcher: {err}");
+        });
     let _ = L1Committer::spawn(
         store.clone(),
         rollup_store.clone(),
@@ -55,31 +61,24 @@ pub async fn start_l2(
         .inspect_err(|err| {
             error!("Error starting Proof Coordinator: {err}");
         });
-
-    let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
-    task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
-    task_set.spawn(start_block_producer(
+    let _ = L1ProofSender::spawn(cfg.clone()).await.inspect_err(|err| {
+        error!("Error starting Proof Coordinator: {err}");
+    });
+    let _ = BlockProducer::spawn(
         store.clone(),
         blockchain,
-        execution_cache,
+        execution_cache.clone(),
         cfg.clone(),
-    ));
-    #[cfg(feature = "metrics")]
-    task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
+    )
+    .await
+    .inspect_err(|err| {
+        error!("Error starting Block Producer: {err}");
+    });
 
-    while let Some(res) = task_set.join_next().await {
-        match res {
-            Ok(Ok(_)) => {}
-            Ok(Err(err)) => {
-                error!("Error starting Proposer: {err}");
-                task_set.abort_all();
-                break;
-            }
-            Err(err) => {
-                error!("JoinSet error: {err}");
-                task_set.abort_all();
-                break;
-            }
-        };
-    }
+    #[cfg(feature = "metrics")]
+    let _ = MetricsGatherer::spawn(cfg, rollup_store, l2_url)
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Block Producer: {err}");
+        });
 }
