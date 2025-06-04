@@ -238,12 +238,12 @@ impl Mempool {
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
-        let same = pooled_transactions
+        let count = pooled_transactions
             .iter()
             .filter(|(_, tx)| tx.nonce() == nonce && tx.sender() == sender)
             .count();
 
-        Ok(same != 0)
+        Ok(count != 0)
     }
 }
 
