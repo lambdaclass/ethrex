@@ -7,6 +7,7 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use execution_cache::ExecutionCache;
 use l1_committer::L1Committer;
+use l1_proof_sender::L1ProofSender;
 use l1_watcher::L1Watcher;
 use proof_coordinator::ProofCoordinator;
 use tokio::task::JoinSet;
@@ -39,7 +40,11 @@ pub async fn start_l2(
 
     let execution_cache = Arc::new(ExecutionCache::default());
 
-    L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone()).await;
+    let _ = L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone())
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Watcher: {err}");
+        });
     let _ = L1Committer::spawn(
         store.clone(),
         rollup_store.clone(),
@@ -55,9 +60,11 @@ pub async fn start_l2(
         .inspect_err(|err| {
             error!("Error starting Proof Coordinator: {err}");
         });
+    let _ = L1ProofSender::spawn(cfg.clone()).await.inspect_err(|err| {
+        error!("Error starting Proof Coordinator: {err}");
+    });
 
     let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
-    task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
     task_set.spawn(start_block_producer(
         store.clone(),
         blockchain,
