@@ -13,10 +13,11 @@ HOODI_BOOTNODES ?= enode://60203fcb3524e07c5df60a14ae1c9c5b24023ea5d47463dfae051
 CURRENT_DATETIME = $(shell date +'%y.%m.%d-%H.%M.%S')
 BATCH_SIZE ?= 1024
 OS = $(shell uname)
-ifeq $(OS) Darwin
+ifeq ($(OS), Darwin)
 	DATA_PATH = ~/Library/Application Support/
 else 
 	DATA_PATH = ~/.local/share/
+endif
 
 help: ## Display help for the makefile.
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
