@@ -96,19 +96,10 @@ impl Blockchain {
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
-        // Feda (#2831): We search for the entire block because during full/batch sync
-        // we can have the header without the body indicating it's still syncing.
-        let parent = self
-            .storage
-            .get_block_by_hash(block.header.parent_hash)
-            .await?;
-        let parent_header = match parent {
-            Some(parent_block) => parent_block.header,
-            None => {
-                // If the parent is not present, we store it as pending.
-                self.storage.add_pending_block(block.clone()).await?;
-                return Err(ChainError::ParentNotFound);
-            }
+        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            // If the parent is not present, we store it as pending.
+            self.storage.add_pending_block(block.clone()).await?;
+            return Err(ChainError::ParentNotFound);
         };
 
         let chain_config = self.storage.get_chain_config()?;
@@ -238,7 +229,14 @@ impl Blockchain {
             .get_chain_config()
             .map_err(|e| (e.into(), None))?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), first_block_header.parent_hash);
+        // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
+        let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
+
+        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
+            self.storage.clone(),
+            first_block_header.parent_hash,
+            block_hash_cache,
+        );
         let mut vm = Evm::new(self.evm_engine, vm_db);
 
         let blocks_len = blocks.len();

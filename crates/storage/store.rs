@@ -1106,6 +1106,25 @@ impl Store {
             next_hash: block_hash,
         }
     }
+
+    /// Get the canonical block hash for a given block number.
+    pub fn get_canonical_block_hash_sync(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        self.engine.get_canonical_block_hash_sync(block_number)
+    }
+
+    /// Checks if a given block belongs to the current canonical chain. Returns false if the block is not known
+    pub fn is_canonical_sync(&self, block_hash: BlockHash) -> Result<bool, StoreError> {
+        let Some(block_number) = self.engine.get_block_number_sync(block_hash)? else {
+            return Ok(false);
+        };
+        Ok(self
+            .engine
+            .get_canonical_block_hash_sync(block_number)?
+            .is_some_and(|h| h == block_hash))
+    }
 }
 
 pub struct AncestorIterator {
@@ -1389,7 +1408,6 @@ mod tests {
             tx_type: TxType::EIP2930,
             succeeded: true,
             cumulative_gas_used: 1747,
-            bloom: Bloom::random(),
             logs: vec![],
         };
         let block_number = 6;
