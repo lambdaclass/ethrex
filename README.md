@@ -419,7 +419,6 @@ Most of them are [here](https://github.com/ethpandaops/ethereum-package/blob/mai
 ## ethrex L2 Docs
 
 - [ethrex L2 Docs](./crates/l2/docs/README.md)
-- [ethrex L2 CLI Docs](./cmd/ethrex_l2/README.md)
 
 
 ## 📚 References and acknowledgements
