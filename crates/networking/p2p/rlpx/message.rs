@@ -193,7 +193,11 @@ impl Message {
         if let Some(eth_capability) = eth_capability {
             if eth_msg_id < eth_capability.length() {
                 return match eth_msg_id {
-                    StatusMessage::CODE => Ok(Message::Status(StatusMessage::decode(data)?)),
+                    StatusMessage::CODE => match eth_capability.version {
+                        68 => Ok(Message::Status(StatusMessage::decode68(data)?)),
+                        69 => Ok(Message::Status(StatusMessage::decode(data)?)),
+                        _ => Err(RLPDecodeError::MalformedData),
+                    },
                     Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
                     GetBlockHeaders::CODE => {
                         Ok(Message::GetBlockHeaders(GetBlockHeaders::decode(data)?))
@@ -272,7 +276,17 @@ impl Message {
             Message::Disconnect(msg) => msg.encode(buf),
             Message::Ping(msg) => msg.encode(buf),
             Message::Pong(msg) => msg.encode(buf),
-            Message::Status(msg) => msg.encode(buf),
+            Message::Status(msg) => {
+                if let Some(eth_capability) = eth_capability {
+                    match eth_capability.version {
+                        68 => msg.encode68(buf),
+                        69 => msg.encode(buf),
+                        _ => Err(RLPEncodeError::Custom("TODO".into())),
+                    }
+                } else {
+                    Err(RLPEncodeError::Custom("TODO".into()))
+                }
+            }
             Message::Transactions(msg) => msg.encode(buf),
             Message::GetBlockHeaders(msg) => msg.encode(buf),
             Message::BlockHeaders(msg) => msg.encode(buf),

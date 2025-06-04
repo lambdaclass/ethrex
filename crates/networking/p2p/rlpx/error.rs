@@ -51,8 +51,6 @@ pub(crate) enum RLPxError {
     IoError(#[from] std::io::Error),
     #[error("Failed to decode message due to invalid frame: {0}")]
     InvalidMessageFrame(String),
-    #[error("Incompatible Protocol")]
-    IncompatibleProtocol,
     #[error("Invalid block range")]
     InvalidBlockRange,
 }
