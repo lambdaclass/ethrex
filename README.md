@@ -192,8 +192,9 @@ ethrex Execution client
 Usage: ethrex [OPTIONS] [COMMAND]
 
 Commands:
-  removedb            Remove the database
-  import              Import blocks to the database
+  removedb  Remove the database
+  import    Import blocks to the database
+  export    Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
   help                Print this message or the help of the given subcommand(s)
 
