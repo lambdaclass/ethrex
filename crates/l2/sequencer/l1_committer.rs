@@ -118,8 +118,7 @@ impl L1Committer {
         l1_committer
             .cast(InMessage::Commit)
             .await
-            .map_err(CommitterError::GenServerError)?;
-        Ok(())
+            .map_err(CommitterError::GenServerError)
     }
 }
 
