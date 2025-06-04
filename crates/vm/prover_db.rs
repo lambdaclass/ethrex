@@ -193,3 +193,78 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
         .finalize()
         .to_vec()
 }
+
+pub fn to_exec_db_from_witness(
+    chain_config: ChainConfig,
+    witness: &ExecutionWitnessResult,
+) -> Result<ProverDB, ProverDBError> {
+    let mut code = HashMap::new();
+    for witness_code in &witness.codes {
+        code.insert(code_hash(witness_code), witness_code.clone());
+    }
+
+    let mut block_hashes = HashMap::new();
+
+    let initial_state_hash = witness.parent_block_header.state_root;
+
+    for header in witness.block_headers.iter() {
+        block_hashes.insert(header.number, header.hash());
+    }
+
+    let mut initial_node = None;
+
+    for node in witness.state.iter() {
+        let x = Node::decode_raw(node).expect("invalid node");
+        let hash = x.compute_hash().finalize();
+        if hash == initial_state_hash {
+            initial_node = Some(node.clone());
+            break;
+        }
+    }
+
+    let state_trie =
+        Trie::from_nodes(initial_node.as_ref(), &witness.state).expect("failed to create trie");
+
+    let mut storage_tries = HashMap::new();
+    for (addr, nodes) in &witness.storage_tries {
+        let hashed_address = hash_address(addr);
+        let Some(encoded_state) = state_trie
+            .get(&hashed_address)
+            .expect("Failed to get from trie")
+        else {
+            // TODO re-explore this. When testing with hoodi this happened block 521990 an this continue fixed it
+            continue;
+        };
+
+        let state =
+            AccountState::decode(&encoded_state).expect("Failed to get state from encoded state");
+
+        let mut initial_node = None;
+
+        for node in nodes.iter() {
+            let x = Node::decode_raw(node).expect("invalid node");
+            let hash = x.compute_hash().finalize();
+            if hash == state.storage_root {
+                initial_node = Some(node);
+                break;
+            }
+        }
+
+        let Ok(storage_trie) = Trie::from_nodes(initial_node, nodes) else {
+            return Err(ProverDBError::Custom("error".to_string()));
+        };
+
+        storage_tries.insert(*addr, storage_trie);
+    }
+
+    let state_trie = Arc::new(Mutex::new(state_trie));
+    let storage_tries = Arc::new(Mutex::new(storage_tries));
+
+    Ok(ProverDB {
+        code,
+        block_hashes,
+        chain_config,
+        state_trie,
+        storage_tries,
+    })
+}
