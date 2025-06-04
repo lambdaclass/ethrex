@@ -328,6 +328,13 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Clears all checkpoint data created during the last snap sync
     async fn clear_snap_state(&self) -> Result<(), StoreError>;
 
+    /// Write an account batch into the current state snapshot. Blocking non-async version.
+    fn write_snapshot_account_batch_blocking(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<AccountState>,
+    ) -> Result<(), StoreError>;
+
     /// Write an account batch into the current state snapshot
     async fn write_snapshot_account_batch(
         &self,
@@ -345,6 +352,14 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     /// Write multiple storage batches belonging to different accounts into the current storage snapshot
     async fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError>;
+
+    /// Write multiple storage batches belonging to different accounts into the current storage snapshot. Blocking non-async version.
+    fn write_snapshot_storage_batches_blocking(
         &self,
         account_hashes: Vec<H256>,
         storage_keys: Vec<Vec<H256>>,
@@ -385,6 +400,16 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         start: H256,
         account_hash: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError>;
+
+    /// Gets a single account from the snapshot state.
+    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError>;
+
+    /// Gets a single storage value from the snapshot state.
+    fn get_storage_snapshot(
+        &self,
+        account_hash: H256,
+        storage_hash: H256,
+    ) -> Result<Option<U256>, StoreError>;
 
     /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
     /// when processing an invalid payload. To provide this, we must track invalid chains.

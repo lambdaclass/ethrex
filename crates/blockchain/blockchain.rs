@@ -169,7 +169,17 @@ impl Blockchain {
         self.storage
             .add_receipts(block.hash(), execution_result.receipts)
             .await
-            .map_err(ChainError::StoreError)
+            .map_err(ChainError::StoreError)?;
+
+        if let Err(error) = self
+            .storage
+            .add_block_snapshot(block.clone(), account_updates.to_vec())
+            .await
+        {
+            tracing::error!("Error adding block snapshot: {}", error);
+        }
+
+        Ok(())
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
