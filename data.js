@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749052459768,
+  "lastUpdate": 1749053187912,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10885,6 +10885,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177882065314,
             "range": "± 371506781",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d0048fdbc8785364ea685be66ec2ab62d6956598",
+          "message": "feat(l1): rpc endpoint `debug_traceTransaction` with support for `callTracer` (#2919)\n\n**Motivation**\nSupport Geth-like `debug_traceTransaction` with support for `callTracer`\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add `tracing` modules to `rpc`, `blockchain`, `vm` and\n`vm/backends/revm` modules\n* Add all necessary methods, functions and structs in order to\nsuccessfully fulfill a `debug_traceTransaction` rpc request.\n\n**Limitations**\n* Only the `callTracer` is currenlty supported for the endpoint\n* The endpoint will not work (it will return an error) if the evm\nbackend is LEVM\n\n**Counter-Spec**\n* When not specifying a tracer, the `callTracer` will be used by default\ninstead of an equivalent of Geth's default one, as it is the only one we\nhave yet.\n\n**Notes**\n\n* Issue #3022 may also affect tracing, #3034 should also be applied to\ntracing when either it or this PR is merged\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nPart of  #2872\n\n---------\n\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-06-04T15:19:17Z",
+          "tree_id": "60b15a0ef8f1b42372642ed476bf93dac157d448",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d0048fdbc8785364ea685be66ec2ab62d6956598"
+        },
+        "date": 1749053183724,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177129080038,
+            "range": "± 646915005",
             "unit": "ns/iter"
           }
         ]
