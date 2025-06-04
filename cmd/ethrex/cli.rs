@@ -378,38 +378,31 @@ pub async fn import_blocks(
     let size = blocks.len();
     for block in &blocks {
         let hash = block.hash();
-
-        info!(
-            "Adding block {} with hash {:#x}.",
-            block.header.number, hash
-        );
+        let number = block.header.number;
+        info!("Adding block {number} with hash {hash:#x}.");
         // Check if the block is already in the blockchain, if it is do nothing, if not add it
-        match store.get_block_number(hash).await {
-            Ok(Some(_)) => {
-                info!("Block {} is already in the blockchain", block.hash());
-                continue;
-            }
-            Ok(None) => {
-                if let Err(error) = blockchain.add_block(block).await {
-                    warn!(
-                        "Failed to add block {} with hash {:#x}",
-                        block.header.number, hash
-                    );
-                    return Err(error);
-                }
-            }
-            Err(_) => {
-                return Err(ChainError::Custom(String::from(
-                    "Couldn't check if block is already in the blockchain",
-                )));
-            }
+        let block_number = store.get_block_number(hash).await.map_err(|_e| {
+            ChainError::Custom(String::from(
+                "Couldn't check if block is already in the blockchain",
+            ))
+        })?;
+
+        if block_number.is_some() {
+            info!("Block {} is already in the blockchain", block.hash());
+            continue;
         }
+
+        blockchain
+            .add_block(block)
+            .await
+            .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
     }
+
     if let Some(last_block) = blocks.last() {
         let hash = last_block.hash();
-        if let Err(error) = apply_fork_choice(&store, hash, hash, hash).await {
-            warn!("Failed to apply fork choice: {}", error);
-        }
+        let _ = apply_fork_choice(&store, hash, hash, hash)
+            .await
+            .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
     }
     info!("Added {size} blocks to blockchain");
     Ok(())
