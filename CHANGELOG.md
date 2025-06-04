@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-06-04
+
+- Use libmdbx cursor on TrieDB put batch to avoid reopning the table on every key value pair. [3039](https://github.com/lambdaclass/ethrex/pull/3039)
+
 ### 2025-05-27
 
 - Improved the performance of shift instructions. [2933](https://github.com/lambdaclass/ethrex/pull/2933)
