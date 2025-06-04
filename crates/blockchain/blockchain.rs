@@ -454,7 +454,7 @@ impl Blockchain {
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if tx.nonce() < sender_acc_info.nonce + 1 || tx.nonce() == u64::MAX {
+            if tx.nonce() <= sender_acc_info.nonce + 1 || tx.nonce() == u64::MAX {
                 return Err(MempoolError::InvalidNonce);
             }
 
