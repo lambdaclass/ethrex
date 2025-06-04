@@ -11,6 +11,7 @@ use ethrex_rpc::clients::EngineClientError;
 use ethrex_storage::error::StoreError;
 use ethrex_trie::TrieError;
 use ethrex_vm::{EvmError, ProverDBError};
+use spawned_concurrency::GenServerError;
 use tokio::task::JoinError;
 
 #[derive(Debug, thiserror::Error)]
@@ -49,6 +50,8 @@ pub enum L1WatcherError {
     FailedAccessingStore(#[from] StoreError),
     #[error("{0}")]
     Custom(String),
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -101,6 +104,8 @@ pub enum ProofSenderError {
     InternalError(String),
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -181,6 +186,8 @@ pub enum CommitterError {
     InternalError(String),
     #[error("Failed to get withdrawals: {0}")]
     FailedToGetWithdrawals(#[from] UtilsError),
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]

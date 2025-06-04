@@ -80,21 +80,20 @@ impl L1Watcher {
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
         sequencer_state: Arc<Mutex<SequencerState>>,
-    ) {
-        match L1WatcherState::new(
-            store.clone(),
-            blockchain.clone(),
+    ) -> Result<(), L1WatcherError> {
+        let state = L1WatcherState::new(
+            store,
+            blockchain,
             &cfg.eth,
             &cfg.l1_watcher,
             sequencer_state,
-        ) {
-            Ok(state) => {
-                let mut l1_watcher = L1Watcher::start(state);
-                // Perform the check and suscribe a periodic Watch.
-                let _ = l1_watcher.cast(InMessage::Watch).await;
-            }
-            Err(error) => error!("L1 Watcher Error: {}", error),
-        };
+        )?;
+        let mut l1_watcher = L1Watcher::start(state);
+        // Perform the check and suscribe a periodic Watch.
+        l1_watcher
+            .cast(InMessage::Watch)
+            .await
+            .map_err(L1WatcherError::GenServerError)
     }
 }
 
