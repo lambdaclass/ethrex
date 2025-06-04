@@ -582,13 +582,17 @@ impl StoreEngine for RedBStore {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
 
-        Ok(table
-            .get(<H256 as Into<TransactionHashRLP>>::into(transaction_hash))?
-            .map_while(|res| res.ok().map(|t| t.value().to().expect("RLP decode failed")))
-            .find(|(number, hash, _index)| {
-                self.get_block_hash_by_block_number(*number)
-                    .is_ok_and(|o| o == Some(*hash))
-            }))
+        let mut table_vec = Vec::new();
+        for res in table.get(<H256 as Into<TransactionHashRLP>>::into(transaction_hash))? {
+            match res {
+                Ok(res) => table_vec.push(res.value().to()?),
+                Err(_) => break,
+            }
+        }
+        Ok(table_vec.into_iter().find(|(number, hash, _index)| {
+            self.get_block_hash_by_block_number(*number)
+                .is_ok_and(|o| o == Some(*hash))
+        }))
     }
 
     async fn add_receipt(
@@ -1041,18 +1045,14 @@ impl StoreEngine for RedBStore {
         // Read values
         let txn = self.db.begin_read()?;
         let table = txn.open_table(STORAGE_HEAL_PATHS_TABLE)?;
-        let res: Vec<(H256, Vec<Nibbles>)> = table
-            .range(<H256 as Into<AccountHashRLP>>::into(Default::default())..)?
-            .map_while(|val| {
-                val.ok().map(|(hash, paths)| {
-                    (
-                        hash.value().to().expect("RLP decode failed"),
-                        paths.value().to().expect("RLP decode failed"),
-                    )
-                })
-            })
-            .take(limit)
-            .collect();
+        let mut res: Vec<(H256, Vec<Nibbles>)> = Vec::new();
+        for val in table.range(<H256 as Into<AccountHashRLP>>::into(Default::default())..)? {
+            match val {
+                Ok((hash, paths)) => res.push((hash.value().to()?, paths.value().to()?)),
+                Err(_) => break,
+            }
+        }
+        res = res.into_iter().take(limit).collect();
         txn.close()?;
         // Delete read values
         let txn = self.db.begin_write()?;
@@ -1222,18 +1222,17 @@ impl StoreEngine for RedBStore {
     ) -> Result<Vec<(H256, ethrex_common::types::AccountState)>, StoreError> {
         let read_tx = self.db.begin_read()?;
         let table = read_tx.open_table(STATE_SNAPSHOT_TABLE)?;
-        Ok(table
+        let mut table_vec = Vec::new();
+        for elem in table
             .range(<H256 as Into<AccountHashRLP>>::into(start)..)?
             .take(MAX_SNAPSHOT_READS)
-            .map_while(|elem| {
-                elem.ok().map(|(key, value)| {
-                    (
-                        key.value().to().expect("RLP decode failed"),
-                        value.value().to().expect("RLP decode failed"),
-                    )
-                })
-            })
-            .collect())
+        {
+            match elem {
+                Ok((key, value)) => table_vec.push((key.value().to()?, value.value().to()?)),
+                Err(_) => break,
+            }
+        }
+        Ok(table_vec)
     }
 
     async fn read_storage_snapshot(
