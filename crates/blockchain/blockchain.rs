@@ -176,7 +176,7 @@ impl Blockchain {
             .add_block_snapshot(block.clone(), account_updates.to_vec())
             .await
         {
-            tracing::error!("Error adding block snapshot: {}", error);
+            ::tracing::error!("Error adding block snapshot: {}", error);
         }
 
         Ok(())
