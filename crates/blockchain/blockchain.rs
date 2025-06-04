@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::info;
+use ::tracing::{error, info};
 use constants::MAX_INITCODE_SIZE;
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -150,7 +150,7 @@ impl Blockchain {
             .add_block_snapshot(block.clone(), account_updates.to_vec())
             .await
         {
-            tracing::error!("Error adding block snapshot: {}", error);
+            error!("Error adding block snapshot: {}", error);
         }
 
         Ok(())
