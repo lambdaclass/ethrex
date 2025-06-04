@@ -26,8 +26,8 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      # - name: Add Rust Cache
-      #   uses: Swatinem/rust-cache@v2
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Run cargo check
         run: cargo check --workspace
@@ -53,8 +53,8 @@ jobs:
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@1.82.0
 
-      # - name: Caching
-      #   uses: Swatinem/rust-cache@v2
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
 
       - name: Run tests
         run: |
