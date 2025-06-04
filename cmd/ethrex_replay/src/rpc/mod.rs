@@ -1,6 +1,5 @@
-use ethrex_common::types::Block;
+use ethrex_common::types::{block_execution_witness::ExecutionWitnessResult, Block};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_rpc::types::block_execution_witness::ExecutionWitnessResult;
 
 use serde::de::DeserializeOwned;
 

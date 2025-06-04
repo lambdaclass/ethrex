@@ -3,14 +3,14 @@ use std::{
     io::{BufReader, BufWriter},
 };
 
-use ethrex_common::types::{Block, BlockHeader, ChainConfig};
-use ethrex_rpc::types::block_execution_witness::ExecutionWitnessResult;
-use ethrex_vm::ProverDB;
+use ethrex_common::types::{
+    block_execution_witness::ExecutionWitnessResult, Block, BlockHeader, ChainConfig,
+};
+
+use ethrex_vm::{to_exec_db_from_witness, ProverDB};
 
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize};
-
-use crate::fetcher::to_exec_db_from_witness;
 
 #[derive(Serialize)]
 pub struct Cache {
