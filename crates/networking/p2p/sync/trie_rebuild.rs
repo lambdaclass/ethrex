@@ -163,7 +163,7 @@ async fn rebuild_state_trie_segment(
     store: Store,
     cancel_token: CancellationToken,
 ) -> Result<(H256, H256), SyncError> {
-    let mut state_trie = store.open_state_trie(root);
+    let mut state_trie = store.open_state_trie(root)?;
     let mut snapshot_reads_since_last_commit = 0;
     loop {
         if cancel_token.is_cancelled() {
@@ -263,7 +263,7 @@ async fn rebuild_storage_trie(
     store: Store,
 ) -> Result<(), SyncError> {
     let mut start = H256::zero();
-    let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
+    let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
     let mut snapshot_reads_since_last_commit = 0;
     loop {
         snapshot_reads_since_last_commit += 1;

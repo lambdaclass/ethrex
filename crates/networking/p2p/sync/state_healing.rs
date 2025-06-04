@@ -115,7 +115,7 @@ async fn heal_state_batch(
         // - If it is a leaf, request its bytecode & storage
         // - If it is a leaf, add its path & value to the trie
         {
-            let trie = store.open_state_trie(*EMPTY_TRIE_HASH);
+            let trie = store.open_state_trie(*EMPTY_TRIE_HASH)?;
             for node in nodes.iter() {
                 let path = batch.remove(0);
                 batch.extend(node_missing_children(node, &path, trie.db())?);

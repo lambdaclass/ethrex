@@ -18,7 +18,7 @@ pub fn process_account_range_request(
 ) -> Result<AccountRange, StoreError> {
     let mut accounts = vec![];
     let mut bytes_used = 0;
-    for (hash, account) in store.iter_accounts(request.root_hash) {
+    for (hash, account) in store.iter_accounts(request.root_hash)? {
         if hash >= request.starting_hash {
             let account = AccountStateSlim::from(account);
             bytes_used += 32 + account.length() as u64;
@@ -197,8 +197,8 @@ mod tests {
     }
 
     #[test]
-    fn hive_account_range_a() {
-        let (store, root) = setup_initial_state();
+    fn hive_account_range_a() -> Result<(), StoreError> {
+        let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
             root_hash: root,
@@ -215,11 +215,12 @@ mod tests {
             H256::from_str("0x445cb5c1278fdce2f9cbdb681bdd76c52f8e50e41dbd9e220242a69ba99ac099")
                 .unwrap()
         );
+        Ok(())
     }
 
     #[test]
-    fn hive_account_range_b() {
-        let (store, root) = setup_initial_state();
+    fn hive_account_range_b() -> Result<(), StoreError> {
+        let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
             root_hash: root,
@@ -236,11 +237,12 @@ mod tests {
             H256::from_str("0x2e6fe1362b3e388184fd7bf08e99e74170b26361624ffd1c5f646da7067b58b6")
                 .unwrap()
         );
+        Ok(())
     }
 
     #[test]
-    fn hive_account_range_c() {
-        let (store, root) = setup_initial_state();
+    fn hive_account_range_c() -> Result<(), StoreError> {
+        let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
             root_hash: root,
@@ -257,11 +259,12 @@ mod tests {
             H256::from_str("0x1c3f74249a4892081ba0634a819aec9ed25f34c7653f5719b9098487e65ab595")
                 .unwrap()
         );
+        Ok(())
     }
 
     #[test]
-    fn hive_account_range_d() {
-        let (store, root) = setup_initial_state();
+    fn hive_account_range_d() -> Result<(), StoreError> {
+        let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
             root_hash: root,
@@ -274,11 +277,12 @@ mod tests {
         assert_eq!(res.accounts.len(), 1);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
         assert_eq!(res.accounts.last().unwrap().hash, *HASH_FIRST);
+        Ok(())
     }
 
     #[test]
-    fn hive_account_range_e() {
-        let (store, root) = setup_initial_state();
+    fn hive_account_range_e() -> Result<(), StoreError> {
+        let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
             root_hash: root,
@@ -291,14 +295,15 @@ mod tests {
         assert_eq!(res.accounts.len(), 1);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
         assert_eq!(res.accounts.last().unwrap().hash, *HASH_FIRST);
+        Ok(())
     }
 
     #[test]
-    fn hive_account_range_f() {
+    fn hive_account_range_f() -> Result<(), StoreError> {
         // In this test, we request a range where startingHash is before the first available
         // account key, and limitHash is after. The server should return the first and second
         // account of the state (because the second account is the 'next available').
-        let (store, root) = setup_initial_state();
+        let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
             root_hash: root,
@@ -311,13 +316,14 @@ mod tests {
         assert_eq!(res.accounts.len(), 2);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
         assert_eq!(res.accounts.last().unwrap().hash, *HASH_SECOND);
+        Ok(())
     }
 
     #[test]
-    fn hive_account_range_g() {
+    fn hive_account_range_g() -> Result<(), StoreError> {
         // Here we request range where both bounds are before the first available account key.
         // This should return the first account (even though it's out of bounds).
-        let (store, root) = setup_initial_state();
+        let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
             root_hash: root,
@@ -330,13 +336,14 @@ mod tests {
         assert_eq!(res.accounts.len(), 1);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
         assert_eq!(res.accounts.last().unwrap().hash, *HASH_FIRST);
+        Ok(())
     }
 
     #[test]
-    fn hive_account_range_h() {
+    fn hive_account_range_h() -> Result<(), StoreError> {
         // In this test, both startingHash and limitHash are zero.
         // The server should return the first available account.
-        let (store, root) = setup_initial_state();
+        let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
             root_hash: root,
@@ -349,11 +356,12 @@ mod tests {
         assert_eq!(res.accounts.len(), 1);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
         assert_eq!(res.accounts.last().unwrap().hash, *HASH_FIRST);
+        Ok(())
     }
 
     #[test]
-    fn hive_account_range_i() {
-        let (store, root) = setup_initial_state();
+    fn hive_account_range_i() -> Result<(), StoreError> {
+        let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
             root_hash: root,
@@ -370,11 +378,12 @@ mod tests {
             H256::from_str("0x445cb5c1278fdce2f9cbdb681bdd76c52f8e50e41dbd9e220242a69ba99ac099")
                 .unwrap()
         );
+        Ok(())
     }
 
     #[test]
-    fn hive_account_range_j() {
-        let (store, root) = setup_initial_state();
+    fn hive_account_range_j() -> Result<(), StoreError> {
+        let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
             root_hash: root,
@@ -391,6 +400,7 @@ mod tests {
             H256::from_str("0x4615e5f5df5b25349a00ad313c6cd0436b6c08ee5826e33a018661997f85ebaa")
                 .unwrap()
         );
+        Ok(())
     }
 
     // Tests for different roots skipped (we don't have other state's data loaded)
@@ -398,10 +408,10 @@ mod tests {
     // Non-sensical requests
 
     #[test]
-    fn hive_account_range_k() {
+    fn hive_account_range_k() -> Result<(), StoreError> {
         // In this test, the startingHash is the first available key, and limitHash is
         // a key before startingHash (wrong order). The server should return the first available key.
-        let (store, root) = setup_initial_state();
+        let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
             root_hash: root,
@@ -414,13 +424,14 @@ mod tests {
         assert_eq!(res.accounts.len(), 1);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
         assert_eq!(res.accounts.last().unwrap().hash, *HASH_FIRST);
+        Ok(())
     }
 
     #[test]
-    fn hive_account_range_m() {
+    fn hive_account_range_m() -> Result<(), StoreError> {
         // In this test, the startingHash is the first available key and limitHash is zero.
         // (wrong order). The server should return the first available key.
-        let (store, root) = setup_initial_state();
+        let (store, root) = setup_initial_state()?;
         let request = GetAccountRange {
             id: 0,
             root_hash: root,
@@ -433,11 +444,12 @@ mod tests {
         assert_eq!(res.accounts.len(), 1);
         assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
         assert_eq!(res.accounts.last().unwrap().hash, *HASH_FIRST);
+        Ok(())
     }
 
     // Initial state setup for hive snap tests
 
-    fn setup_initial_state() -> (Store, H256) {
+    fn setup_initial_state() -> Result<(Store, H256), StoreError> {
         // We cannot process the old blocks that hive uses for the devp2p snap tests
         // So I copied the state from a geth execution of the test suite
 
@@ -972,7 +984,7 @@ mod tests {
 
         // Create a store and load it up with the accounts
         let store = Store::new("null", EngineType::InMemory).unwrap();
-        let mut state_trie = store.new_state_trie_for_test();
+        let mut state_trie = store.new_state_trie_for_test()?;
         for (address, account) in accounts {
             let hashed_address = H256::from_str(address).unwrap().as_bytes().to_vec();
             let account = AccountState::from(AccountStateSlim::decode(&account).unwrap());
@@ -980,6 +992,6 @@ mod tests {
                 .insert(hashed_address, account.encode_to_vec())
                 .unwrap();
         }
-        (store, state_trie.hash().unwrap())
+        Ok((store, state_trie.hash().unwrap()))
     }
 }
