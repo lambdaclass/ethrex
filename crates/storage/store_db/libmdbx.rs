@@ -540,20 +540,11 @@ impl StoreEngine for Store {
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        match self
-            .read::<CanonicalBlockHashes>(number)
+        self.read::<CanonicalBlockHashes>(number)
             .await
-            .map(|o| o.map(|hash_rlp| hash_rlp.to()))
-        {
-            Ok(canonical_block_hash_decoded) => match canonical_block_hash_decoded {
-                Some(canonical_block_hash_decoded) => match canonical_block_hash_decoded {
-                    Ok(canonical_block_hash_decoded) => Ok(Some(canonical_block_hash_decoded)),
-                    Err(_) => Err(StoreError::Custom("RLP decode failed".to_string())),
-                },
-                None => Ok(None),
-            },
-            Err(error) => Err(error),
-        }
+            .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
@@ -562,14 +553,12 @@ impl StoreEngine for Store {
     }
 
     async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        let r = self.read::<Payloads>(payload_id).await?;
-        Ok(match r.map(|b| b.to()) {
-            Some(payload_decoded) => match payload_decoded {
-                Ok(payload_decoded) => Some(payload_decoded),
-                Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
-            },
-            None => None,
-        })
+        Ok(self
+            .read::<Payloads>(payload_id)
+            .await?
+            .map(|b| b.to())
+            .transpose()
+            .map_err(StoreError::from)?)
     }
 
     async fn update_payload(
@@ -638,19 +627,11 @@ impl StoreEngine for Store {
     }
 
     async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
-        Ok(
-            match self
-                .read::<PendingBlocks>(block_hash.into())
-                .await?
-                .map(|b| b.to())
-            {
-                Some(pending_blocks_decoded) => match pending_blocks_decoded {
-                    Ok(pending_blocks_decoded) => Some(pending_blocks_decoded),
-                    Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
-                },
-                None => None,
-            },
-        )
+        self.read::<PendingBlocks>(block_hash.into())
+            .await?
+            .map(|b| b.to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_transaction_locations(
@@ -1017,22 +998,10 @@ impl StoreEngine for Store {
         &self,
         block: BlockHash,
     ) -> Result<Option<BlockHash>, StoreError> {
-        Ok(
-            match self
-                .read::<InvalidAncestors>(block.into())
-                .await
-                .map(|o| o.map(|a| a.to()))
-            {
-                Ok(latest_valid_ancestor_decoded) => match latest_valid_ancestor_decoded {
-                    Some(latest_valid_ancestor_decoded) => match latest_valid_ancestor_decoded {
-                        Ok(latest_valid_ancestor_decoded) => Some(latest_valid_ancestor_decoded),
-                        Err(_) => return Err(StoreError::Custom("RLP decode failed".to_string())),
-                    },
-                    None => None,
-                },
-                Err(error) => return Err(error),
-            },
-        )
+        self.read::<InvalidAncestors>(block.into())
+            .await
+            .map(|o| o.map(|a| a.to()))
+            .transpose();
     }
 
     async fn set_latest_valid_ancestor(
