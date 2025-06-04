@@ -98,6 +98,14 @@ impl ProverDB {
             }
         }
     }
+
+    pub fn state_trie_root(&self) -> Result<H256, ProverDBError> {
+        let lock = self
+            .state_trie
+            .lock()
+            .map_err(|_| ProverDBError::Database("Failed to lock state trie".to_string()))?;
+        Ok(lock.hash_no_commit())
+    }
 }
 
 impl VmDatabase for ProverDB {

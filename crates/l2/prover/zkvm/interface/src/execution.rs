@@ -6,10 +6,9 @@ use crate::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
 use crate::io::{ProgramInput, ProgramOutput};
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::types::{AccountUpdate, Block, BlockHeader};
-use ethrex_common::{Address, H256};
+use ethrex_common::types::{Block, BlockHeader};
+use ethrex_common::H256;
 use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDB, ProverDBError};
-use std::collections::HashMap;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StatelessExecutionError {
@@ -161,7 +160,6 @@ fn execute_stateless(
     }
 
     let mut parent_header = parent_block_header;
-    let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
     let mut acc_receipts = Vec::new();
 
     for block in blocks {
@@ -187,16 +185,6 @@ fn execute_stateless(
         // Update db for the next block
         db.apply_account_updates_from_trie(&account_updates);
 
-        // Update acc_account_updates
-        for account in account_updates {
-            let address = account.address;
-            if let Some(existing) = acc_account_updates.get_mut(&address) {
-                existing.merge(account);
-            } else {
-                acc_account_updates.insert(address, account);
-            }
-        }
-
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
         parent_header = &block.header;
@@ -208,13 +196,10 @@ fn execute_stateless(
         .last()
         .ok_or(StatelessExecutionError::EmptyBatchError)?;
     let last_block_state_root = last_block.header.state_root;
-    let final_state_hash = {
-        let state_trie_lock = db
-            .state_trie
-            .lock()
-            .map_err(|_| StatelessExecutionError::InvalidFinalStateTrie)?;
-        state_trie_lock.hash_no_commit()
-    };
+    let final_state_hash = db
+        .state_trie_root()
+        .map_err(|_| StatelessExecutionError::InvalidDatabase)?;
+
     if final_state_hash != last_block_state_root {
         return Err(StatelessExecutionError::InvalidFinalStateTrie);
     }
