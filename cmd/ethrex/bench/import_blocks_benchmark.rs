@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use ethrex::{
     cli::{import_blocks, remove_db},
     networks::Network,
-    utils::set_datadir,
+    utils::get_datadir,
     DEFAULT_DATADIR,
 };
 use ethrex_vm::EvmEngine;
@@ -10,18 +10,19 @@ use ethrex_vm::EvmEngine;
 #[inline]
 fn block_import() {
     let data_dir = DEFAULT_DATADIR;
-    set_datadir(data_dir);
+
+    let network = Network::from("../../test_data/genesis-perf-ci.json");
+
+    get_datadir(data_dir, &network);
     remove_db(data_dir, true);
 
     let evm_engine = EvmEngine::default();
-
-    let network = Network::from("../../test_data/genesis-perf-ci.json");
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(
         "../../test_data/l2-1k-erc20.rlp",
         data_dir,
-        network.get_genesis(),
+        &network,
         evm_engine,
     ))
     .expect("Failed to import blocks on the Tokio runtime");

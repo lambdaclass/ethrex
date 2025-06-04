@@ -1,11 +1,11 @@
 use crate::{
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
-        get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
-        init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
+        get_local_node_record, get_local_p2p_node, get_signer, init_blockchain, init_metrics,
+        init_network, init_rollup_store, init_rpc_api, init_store,
     },
     l2::options::Options,
-    utils::{set_datadir, store_node_config_file, NodeConfigFile},
+    utils::{get_datadir, store_node_config_file, NodeConfigFile},
     DEFAULT_L2_DATADIR,
 };
 use clap::Subcommand;
@@ -85,10 +85,10 @@ impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             Command::Init { opts } => {
-                let data_dir = set_datadir(&opts.node_opts.datadir);
-                let rollup_store_dir = data_dir.clone() + "/rollup_store";
+                let network = &opts.node_opts.network.clone();
 
-                let network = get_network(&opts.node_opts);
+                let data_dir = get_datadir(&opts.node_opts.datadir, network);
+                let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
                 let genesis = network.get_genesis();
                 let store = init_store(&data_dir, genesis).await;
@@ -115,6 +115,7 @@ impl Command {
 
                 init_rpc_api(
                     &opts.node_opts,
+                    &data_dir,
                     &opts,
                     peer_table.clone(),
                     local_p2p_node.clone(),
@@ -135,7 +136,7 @@ impl Command {
                 if opts.node_opts.p2p_enabled {
                     init_network(
                         &opts.node_opts,
-                        &network,
+                        network,
                         &data_dir,
                         local_p2p_node,
                         local_node_record.clone(),
