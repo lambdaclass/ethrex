@@ -473,14 +473,17 @@ impl Blockchain {
             return Err(MempoolError::NotEnoughBalance);
         }
 
+        // Check the nonce of pendings TXs in the mempool from the same sender
         let filter_sender = |tx: &Transaction| -> bool { tx.sender() == sender };
-
-        let pending_txs = self
+        let pending_txs: Vec<MempoolTransaction> = self
             .mempool
-            .filter_transactions_with_filter_fn(&filter_sender)?;
+            .filter_transactions_with_filter_fn(&filter_sender)?
+            .into_values()
+            .flatten()
+            .collect();
 
         for pending_tx in pending_txs {
-            if tx.nonce() <= pending_tx.1[0].nonce() {
+            if tx.nonce() < pending_tx.nonce() {
                 return Err(MempoolError::InvalidNonce);
             }
         }
