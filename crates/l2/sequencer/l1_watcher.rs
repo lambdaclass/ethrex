@@ -76,8 +76,7 @@ impl L1Watcher {
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
     ) -> Result<(), L1WatcherError> {
-        let state =
-            L1WatcherState::new(store, blockchain, &cfg.eth, &cfg.l1_watcher)?;
+        let state = L1WatcherState::new(store, blockchain, &cfg.eth, &cfg.l1_watcher)?;
         let mut l1_watcher = L1Watcher::start(state);
         // Perform the check and suscribe a periodic Watch.
         l1_watcher
