@@ -12,6 +12,7 @@ use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::nibbles::Nibbles;
@@ -222,7 +223,7 @@ impl Trie {
         }
     }
 
-    /// Builds a trie from a set of nodes.
+    /// Builds a trie from a set of nodes with an InMemoryTrieDB as a backend.
     ///
     /// Note: This method will not ensure that all node references are valid. Invalid references
     ///   will cause other methods (including, but not limited to `Trie::get`, `Trie::insert` and
@@ -281,8 +282,17 @@ impl Trie {
             })
         }
 
-        let mut trie = Trie::stateless();
-        trie.root = inner(&mut storage, root)?.into();
+        let root = inner(&mut storage, root)?.into();
+
+        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(
+            storage
+                .into_iter()
+                .map(|(node_hash, nodes)| (node_hash, nodes.clone()))
+                .collect::<HashMap<_, _>>(),
+        ))));
+
+        let mut trie = Trie::new(in_memory_trie);
+        trie.root = root;
 
         Ok(trie)
     }
