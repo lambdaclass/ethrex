@@ -9,7 +9,6 @@ use ethrex_rpc::clients::eth::{
     get_address_from_secret_key, BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY,
     MIN_RETRY_DELAY,
 };
-use reqwest::Url;
 use secp256k1::SecretKey;
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -26,6 +25,7 @@ pub struct Options {
         help_heading = "L2 options"
     )]
     pub sponsorable_addresses_file_path: Option<String>,
+    //TODO: make optional when the the sponsored feature is complete
     #[arg(long, default_value = "0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192", value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
     pub sponsor_private_key: SecretKey,
 }
@@ -40,8 +40,6 @@ impl Default for Options {
                 "0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192",
             )
             .unwrap(),
-            #[cfg(feature = "based")]
-            based_opts: BasedOptions::default(),
         }
     }
 }
@@ -175,7 +173,7 @@ pub struct EthOptions {
 impl Default for EthOptions {
     fn default() -> Self {
         Self {
-            rpc_url: Url::parse("http://localhost:8545").unwrap(),
+            rpc_url: vec!["http://localhost:8545".to_string()],
             maximum_allowed_max_fee_per_gas: Default::default(),
             maximum_allowed_max_fee_per_blob_gas: Default::default(),
             max_number_of_retries: MAX_NUMBER_OF_RETRIES,

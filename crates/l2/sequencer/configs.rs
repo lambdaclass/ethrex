@@ -1,5 +1,4 @@
 use ethrex_common::{Address, U256};
-use reqwest::Url;
 use secp256k1::SecretKey;
 use std::net::IpAddr;
 
