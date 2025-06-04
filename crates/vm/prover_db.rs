@@ -1,10 +1,13 @@
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountInfo, AccountState, AccountUpdate, ChainConfig},
+    types::{
+        block_execution_witness::ExecutionWitnessResult, code_hash, AccountInfo, AccountState,
+        AccountUpdate, ChainConfig, EMPTY_KECCACK_HASH,
+    },
     Address, H256, U256,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::Trie;
+use ethrex_trie::{Node, Trie};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{
@@ -166,6 +169,9 @@ impl VmDatabase for ProverDB {
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<bytes::Bytes, EvmError> {
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(Bytes::new());
+        }
         match self.code.get(&code_hash) {
             Some(code) => Ok(code.clone()),
             None => Err(EvmError::DB(format!(
