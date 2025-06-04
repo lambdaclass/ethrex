@@ -118,14 +118,9 @@ impl GenServer for BlockProducer {
         state: &mut Self::State,
     ) -> CastResponse {
         // Right now we only have the Produce message, so we ignore the message
-        let _ = produce_block(
-            state,
-            state.store.clone(),
-            state.blockchain.clone(),
-            state.execution_cache.clone(),
-        )
-        .await
-        .inspect_err(|e| error!("Block Producer Error: {e}"));
+        let _ = produce_block(state)
+            .await
+            .inspect_err(|e| error!("Block Producer Error: {e}"));
         send_after(
             Duration::from_millis(state.block_time_ms),
             tx.clone(),
@@ -135,16 +130,12 @@ impl GenServer for BlockProducer {
     }
 }
 
-pub async fn produce_block(
-    state: &BlockProducerState,
-    store: Store,
-    blockchain: Arc<Blockchain>,
-    execution_cache: Arc<ExecutionCache>,
-) -> Result<(), BlockProducerError> {
+pub async fn produce_block(state: &BlockProducerState) -> Result<(), BlockProducerError> {
     let version = 3;
     let head_header = {
-        let current_block_number = store.get_latest_block_number().await?;
-        store
+        let current_block_number = state.store.get_latest_block_number().await?;
+        state
+            .store
             .get_block_header(current_block_number)?
             .ok_or(BlockProducerError::StorageDataIsNone)?
     };
@@ -168,10 +159,11 @@ pub async fn produce_block(
         version,
         elasticity_multiplier: state.elasticity_multiplier,
     };
-    let payload = create_payload(&args, &store)?;
+    let payload = create_payload(&args, &state.store)?;
 
     // Blockchain builds the payload from mempool txs and executes them
-    let payload_build_result = build_payload(blockchain.clone(), payload, &store).await?;
+    let payload_build_result =
+        build_payload(state.blockchain.clone(), payload, &state.store).await?;
     info!(
         "Built payload for new block {}",
         payload_build_result.payload.header.number
@@ -179,7 +171,7 @@ pub async fn produce_block(
 
     // Blockchain stores block
     let block = payload_build_result.payload;
-    let chain_config = store.get_chain_config()?;
+    let chain_config = state.store.get_chain_config()?;
     validate_block(
         &block,
         &head_header,
@@ -194,17 +186,18 @@ pub async fn produce_block(
         requests: Vec::new(),
     };
 
-    blockchain
+    state
+        .blockchain
         .store_block(&block, execution_result.clone(), &account_updates)
         .await?;
     info!("Stored new block {:x}", block.hash());
     // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
     // Cache execution result
-    execution_cache.push(block.hash(), account_updates)?;
+    state.execution_cache.push(block.hash(), account_updates)?;
 
     // Make the new head be part of the canonical chain
-    apply_fork_choice(&store, block.hash(), block.hash(), block.hash()).await?;
+    apply_fork_choice(&state.store, block.hash(), block.hash(), block.hash()).await?;
 
     metrics!(
         let _ = METRICS_BLOCKS

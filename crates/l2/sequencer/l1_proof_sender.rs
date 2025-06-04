@@ -103,11 +103,9 @@ pub enum InMessage {
     Send,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, PartialEq)]
 pub enum OutMessage {
     Done,
-    Error,
 }
 
 pub struct L1ProofSender;
@@ -120,8 +118,7 @@ impl L1ProofSender {
         l1_proof_sender
             .cast(InMessage::Send)
             .await
-            .map_err(ProofSenderError::GenServerError)?;
-        Ok(())
+            .map_err(ProofSenderError::GenServerError)
     }
 }
 

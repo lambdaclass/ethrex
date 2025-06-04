@@ -70,7 +70,8 @@ pub async fn start_l2(
         execution_cache.clone(),
         cfg.clone(),
     )
-    .await.inspect_err(|err| {
+    .await
+    .inspect_err(|err| {
         error!("Error starting Block Producer: {err}");
     });
 
