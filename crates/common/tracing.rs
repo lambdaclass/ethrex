@@ -5,13 +5,13 @@ use serde::Serialize;
 
 /// Collection of traces of each call frame as defined in geth's `callTracer` output
 /// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
-pub type CallTrace = Vec<TracingCallframe>;
+pub type CallTrace = Vec<CallTraceFrame>;
 
 /// Trace of each call frame as defined in geth's `callTracer` output
 /// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
 #[derive(Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct TracingCallframe {
+pub struct CallTraceFrame {
     /// Type of the Call
     #[serde(rename = "type")]
     pub call_type: CallType,
@@ -38,7 +38,7 @@ pub struct TracingCallframe {
     /// Revert reason if the call reverted
     pub revert_reason: Option<String>,
     /// List of nested sub-calls
-    pub calls: Vec<TracingCallframe>,
+    pub calls: Vec<CallTraceFrame>,
     /// Logs (if enabled)
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub logs: Vec<CallLog>,

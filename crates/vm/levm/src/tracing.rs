@@ -4,7 +4,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    tracing::{CallLog, CallType, TracingCallframe},
+    tracing::{CallLog, CallTraceFrame, CallType},
     types::Log,
     Address, U256,
 };
@@ -14,7 +14,7 @@ use ethrex_common::{
 #[derive(Debug, Default)]
 pub struct LevmCallTracer {
     /// Stack for tracer callframes, at the end of execution there will be only one element.
-    pub callframes: Vec<TracingCallframe>,
+    pub callframes: Vec<CallTraceFrame>,
     /// If true, trace only the top call (a.k.a. the external transaction)
     pub only_top_call: bool,
     /// If true, trace logs
@@ -61,7 +61,7 @@ impl LevmCallTracer {
             return;
         }
 
-        let callframe = TracingCallframe {
+        let callframe = CallTraceFrame {
             call_type,
             from,
             to,
@@ -167,7 +167,7 @@ impl LevmCallTracer {
         Ok(())
     }
 
-    fn current_callframe_mut(&mut self) -> Result<&mut TracingCallframe, InternalError> {
+    fn current_callframe_mut(&mut self) -> Result<&mut CallTraceFrame, InternalError> {
         self.callframes
             .last_mut()
             .ok_or(InternalError::CouldNotAccessLastCallframe)
@@ -175,7 +175,7 @@ impl LevmCallTracer {
 }
 
 fn process_output(
-    callframe: &mut TracingCallframe,
+    callframe: &mut CallTraceFrame,
     gas_used: u64,
     output: Bytes,
     error: Option<String>,
@@ -188,7 +188,7 @@ fn process_output(
 }
 
 /// Clear logs of callframe if it reverted and repeat the same with its subcalls.
-fn clear_reverted_logs(callframe: &mut TracingCallframe) {
+fn clear_reverted_logs(callframe: &mut CallTraceFrame) {
     if callframe.error.is_some() {
         callframe.logs.clear();
     }
@@ -199,7 +199,7 @@ fn clear_reverted_logs(callframe: &mut TracingCallframe) {
 
 impl<'a> VM<'a> {
     /// This method is intended to be accessed after transaction execution
-    pub fn get_trace_result(&mut self) -> Result<TracingCallframe, VMError> {
+    pub fn get_trace_result(&mut self) -> Result<CallTraceFrame, VMError> {
         self.tracer
             .callframes
             .pop()
