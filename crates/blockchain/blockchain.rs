@@ -7,7 +7,6 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-
 use ::tracing::info;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
