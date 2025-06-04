@@ -365,12 +365,11 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?;
 
         let mut transaction_hashes = Vec::new();
-        for res in cursor.walk_key(transaction_hash.into(), None) {
-            match res {
-                Ok(res) => {
-                    transaction_hashes.push(res.to().map_err(StoreError::from)?);
-                }
-                Err(_) => break,
+        for maybe_tx in cursor.walk_key(transaction_hash.into(), None) {
+            if let Ok(tx) = maybe_tx {
+                transaction_hashes.push(tx.to().map_err(StoreError::from)?);
+            } else {
+                break;
             }
         }
 
@@ -797,10 +796,11 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?;
 
         let mut res = Vec::new();
-        for i_res in cursor.walk(None) {
-            match i_res {
-                Ok((hash, paths)) => res.push((hash.to()?, paths.to()?)),
-                Err(_) => break,
+        for maybe_elem in cursor.walk(None) {
+            if let Ok((hash, paths)) = maybe_elem {
+                res.push((hash.to()?, paths.to()?));
+            } else {
+                break;
             }
         }
         res = res.into_iter().take(limit).collect::<Vec<_>>();
@@ -978,10 +978,11 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?;
 
         let mut account_snapshots = Vec::new();
-        for res in cursor.walk(Some(start.into())) {
-            match res {
-                Ok((hash, acc)) => account_snapshots.push((hash.to()?, acc.to()?)),
-                Err(_) => break,
+        for maybe_elem in cursor.walk(Some(start.into())) {
+            if let Ok((hash, acc)) = maybe_elem {
+                account_snapshots.push((hash.to()?, acc.to()?));
+            } else {
+                break;
             }
         }
         Ok(account_snapshots

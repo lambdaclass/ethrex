@@ -583,10 +583,11 @@ impl StoreEngine for RedBStore {
         let table = read_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
 
         let mut table_vec = Vec::new();
-        for res in table.get(<H256 as Into<TransactionHashRLP>>::into(transaction_hash))? {
-            match res {
-                Ok(res) => table_vec.push(res.value().to()?),
-                Err(_) => break,
+        for maybe_res in table.get(<H256 as Into<TransactionHashRLP>>::into(transaction_hash))? {
+            if let Ok(res) = maybe_res {
+                table_vec.push(res.value().to()?)
+            } else {
+                break;
             }
         }
         Ok(table_vec.into_iter().find(|(number, hash, _index)| {
@@ -1046,10 +1047,11 @@ impl StoreEngine for RedBStore {
         let txn = self.db.begin_read()?;
         let table = txn.open_table(STORAGE_HEAL_PATHS_TABLE)?;
         let mut res: Vec<(H256, Vec<Nibbles>)> = Vec::new();
-        for val in table.range(<H256 as Into<AccountHashRLP>>::into(Default::default())..)? {
-            match val {
-                Ok((hash, paths)) => res.push((hash.value().to()?, paths.value().to()?)),
-                Err(_) => break,
+        for maybe_val in table.range(<H256 as Into<AccountHashRLP>>::into(Default::default())..)? {
+            if let Ok((hash, paths)) = maybe_val {
+                res.push((hash.value().to()?, paths.value().to()?));
+            } else {
+                break;
             }
         }
         res = res.into_iter().take(limit).collect();
@@ -1223,13 +1225,14 @@ impl StoreEngine for RedBStore {
         let read_tx = self.db.begin_read()?;
         let table = read_tx.open_table(STATE_SNAPSHOT_TABLE)?;
         let mut table_vec = Vec::new();
-        for elem in table
+        for maybe_elem in table
             .range(<H256 as Into<AccountHashRLP>>::into(start)..)?
             .take(MAX_SNAPSHOT_READS)
         {
-            match elem {
-                Ok((key, value)) => table_vec.push((key.value().to()?, value.value().to()?)),
-                Err(_) => break,
+            if let Ok((key, value)) = maybe_elem {
+                table_vec.push((key.value().to()?, value.value().to()?));
+            } else {
+                break;
             }
         }
         Ok(table_vec)
