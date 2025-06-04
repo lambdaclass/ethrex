@@ -288,7 +288,6 @@ impl Syncer {
                         .download_and_run_blocks(
                             &block_hashes,
                             &block_headers,
-                            sync_head,
                             sync_head_found,
                             store.clone(),
                         )
@@ -366,7 +365,6 @@ impl Syncer {
         &mut self,
         block_hashes: &[BlockHash],
         block_headers: &[BlockHeader],
-        sync_head: BlockHash,
         sync_head_found: bool,
         store: Store,
     ) -> Result<Option<H256>, SyncError> {
