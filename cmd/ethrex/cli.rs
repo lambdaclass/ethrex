@@ -2,6 +2,7 @@ use std::{
     fs::{metadata, read_dir},
     io::{self, Write},
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
@@ -361,6 +362,8 @@ pub async fn import_blocks(
 
     let mut last_block = None;
 
+    let start = Instant::now();
+
     for (i, block) in blocks.into_iter().enumerate() {
         if let Some(limit) = limit {
             info!("Reached block limit {limit}.",);
@@ -406,6 +409,12 @@ pub async fn import_blocks(
             warn!("Failed to apply fork choice: {}", error);
         }
     }
-    info!("Added {size} blocks to blockchain");
+
+    let elapsed = start.elapsed();
+    info!(
+        "Added {} blocks to blockchain in {:?}",
+        limit.unwrap_or(size),
+        elapsed
+    );
     Ok(())
 }
