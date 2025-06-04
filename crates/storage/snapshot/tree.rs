@@ -809,7 +809,7 @@ mod tests {
 
     // Utility function that creates account state and hashed address.
     fn acc(number: u64) -> (Address, AccountState) {
-        let address = Address::from_low_u64_be(number as u64);
+        let address = Address::from_low_u64_be(number);
         let account_state = AccountState {
             nonce: 1,
             balance: U256::from(number * 100),
@@ -858,7 +858,8 @@ mod tests {
             root2,
             HashMap::from([(hashed_2, Some(acc_2.clone()))]),
             HashMap::new(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Retrieve the first account and check it returns None for the 2nd and 3rd blocks.
         let retrieved_account = tree.get_account_state(root3, address_1).unwrap();
@@ -919,7 +920,8 @@ mod tests {
             root2,
             HashMap::from([(hashed_2, Some(acc_2.clone()))]),
             HashMap::new(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Flatten the tree
         tree.cap(root3, 1).unwrap();
