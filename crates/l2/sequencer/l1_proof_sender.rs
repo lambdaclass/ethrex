@@ -138,6 +138,16 @@ impl L1ProofSender {
             .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
 
+        let last_committed_batch = self
+            .eth_client
+            .get_last_committed_batch(self.on_chain_proposer_address)
+            .await?;
+
+        if last_committed_batch < batch_to_verify {
+            info!("Next batch to verify ({batch_to_verify}) is not yet committed");
+            return Ok(());
+        }
+
         if batch_number_has_all_needed_proofs(batch_to_verify, &self.needed_proof_types)
             .inspect_err(|_| info!("Missing proofs for batch {batch_to_verify}, skipping sending"))
             .unwrap_or_default()

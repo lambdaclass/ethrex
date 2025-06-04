@@ -12,9 +12,9 @@ use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     types::{
-        blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, BlobsBundleError,
-        Block, BlockHeader, BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
-        BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
+        batch::Batch, blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle,
+        BlobsBundleError, Block, BlockHeader, BlockNumber, PrivilegedL2Transaction, Receipt,
+        Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
 };
@@ -186,80 +186,115 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
         .await?;
     let batch_to_commit = last_committed_batch_number + 1;
 
-    // Get the last committed block_number
-    let last_committed_block_number = state
-        .rollup_store
-        .get_block_numbers_by_batch(last_committed_batch_number)
-        .await?
-        .and_then(|blocks| blocks.last().copied())
-        .ok_or_else(|| CommitterError::InternalError("Invalid rollup_storage state".into()))?;
-
-    let first_block_to_commit = last_committed_block_number + 1;
-
-    // Try to prepare batch
-    let (
-        blobs_bundle,
-        new_state_root,
-        withdrawal_hashes,
-        deposit_logs_hash,
-        last_block_of_batch,
-        encoded_blocks,
-    ) = prepare_batch_from_block(state, last_committed_block_number).await?;
-
-    if last_committed_block_number == last_block_of_batch {
-        debug!("No new blocks to commit, skipping");
-        return Ok(());
-    }
-
-    let withdrawal_logs_merkle_root = get_withdrawals_merkle_root(withdrawal_hashes.clone())?;
-
-    info!("Sending commitment for batch {batch_to_commit}. first_block: {first_block_to_commit}, last_block: {last_block_of_batch}");
-
-    let commit_tx_hash = send_commitment(
-                state,
-                batch_to_commit,
-                new_state_root,
-                withdrawal_logs_merkle_root,
-                deposit_logs_hash,
+    let batch = match state.rollup_store.get_batch(batch_to_commit).await? {
+        Some(batch) => batch,
+        None => {
+            let last_committed_batch = state
+                .rollup_store
+                .get_batch(last_committed_batch_number)
+                .await?.ok_or(CommitterError::InternalError(format!("Failed to get batch with batch number {last_committed_batch_number}. Batch is missing when it should be present. This is a bug")))?;
+            let first_block_to_commit = last_committed_batch.last_block + 1;
+            // Try to prepare batch
+            let (
                 blobs_bundle,
-                encoded_blocks,
-            )
-            .await
-            .map_err(|error| CommitterError::FailedToSendCommitment(format!(
-                "Failed to send commitment for batch {batch_to_commit}. first_block: {first_block_to_commit} last_block: {last_block_of_batch}: {error}"
-            )))?;
+                new_state_root,
+                withdrawal_hashes,
+                deposit_logs_hash,
+                last_block_of_batch,
+            ) = prepare_batch_from_block(state, last_committed_batch.last_block).await?;
 
-    metrics!(
-    let _ = METRICS_L2
-        .set_block_type_and_block_number(
-            MetricsL2BlockType::LastCommittedBlock,
-            last_block_of_batch,
-        )
-        .inspect_err(|e| {
-            tracing::error!(
-                "Failed to set metric: last committed block {}",
-                e.to_string()
-            )
-        });
+            if last_committed_batch.last_block == last_block_of_batch {
+                debug!("No new blocks to commit, skipping");
+                return Ok(());
+            }
+
+            let batch = Batch {
+                number: batch_to_commit,
+                first_block: first_block_to_commit,
+                last_block: last_block_of_batch,
+                state_root: new_state_root,
+                deposit_logs_hash,
+                withdrawal_hashes,
+                blobs_bundle,
+            };
+
+            state.rollup_store.seal_batch(batch.clone()).await?;
+
+            debug!(
+                first_block = batch.first_block,
+                last_block = batch.last_block,
+                "Batch {} stored in database",
+                batch.number
+            );
+
+            batch
+        }
+    };
+
+    let encoded_blocks = if state.based {
+        let mut encoded_blocks: Vec<Bytes> = Vec::new();
+        for i in batch.first_block..=batch.last_block {
+            let block_header = state
+                .store
+                .get_block_header(i)
+                .map_err(CommitterError::from)?
+                .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
+
+            let block_body = state
+                .store
+                .get_block_body(i)
+                .await
+                .map_err(CommitterError::from)?
+                .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
+
+            let block = Block::new(block_header, block_body);
+            encoded_blocks.push(block.encode_to_vec().into());
+        }
+        encoded_blocks
+    } else {
+        vec![]
+    };
+
+    info!(
+        first_block = batch.first_block,
+        last_block = batch.last_block,
+        "Sending commitment for batch {}",
+        batch.number,
     );
 
-    info!("Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}.",);
-    state
-        .rollup_store
-        .seal_batch(
-            batch_to_commit,
-            first_block_to_commit,
-            last_block_of_batch,
-            withdrawal_hashes,
-        )
-        .await?;
-    Ok(())
+    match send_commitment(state, &batch, encoded_blocks).await {
+        Ok(commit_tx_hash) => {
+            metrics!(
+            let _ = METRICS_L2
+                .set_block_type_and_block_number(
+                    MetricsL2BlockType::LastCommittedBlock,
+                    batch.last_block,
+                )
+                .inspect_err(|e| {
+                    tracing::error!(
+                        "Failed to set metric: last committed block {}",
+                        e.to_string()
+                    )
+                });
+            );
+
+            info!(
+                "Commitment sent for batch {}, with tx hash {commit_tx_hash:#x}.",
+                batch.number
+            );
+            Ok(())
+        }
+        Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
+            "Failed to send commitment for batch {}. first_block: {} last_block: {}: {error}",
+            batch.number, batch.first_block, batch.last_block
+        ))),
+    }
 }
 
 async fn prepare_batch_from_block(
     state: &mut CommitterState,
     mut last_added_block_number: BlockNumber,
-) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber, Vec<Bytes>), CommitterError> {
+) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
     let first_block_of_batch = last_added_block_number + 1;
     let mut blobs_bundle = BlobsBundle::default();
 
@@ -269,7 +304,6 @@ async fn prepare_batch_from_block(
     let mut withdrawal_hashes = vec![];
     let mut deposit_logs_hashes = vec![];
     let mut new_state_root = H256::default();
-    let mut encoded_blocks = vec![];
 
     #[cfg(feature = "metrics")]
     let mut tx_count = 0_u64;
@@ -338,10 +372,6 @@ async fn prepare_batch_from_block(
                 vm.get_state_transitions()?
             };
 
-        // Accumulate block data with the rest of the batch.
-        if state.based {
-            encoded_blocks.push(block_to_commit.encode_to_vec().into());
-        }
         acc_withdrawals.extend(withdrawals.clone());
         acc_deposits.extend(deposits.clone());
         for account in account_updates {
@@ -426,7 +456,6 @@ async fn prepare_batch_from_block(
         withdrawal_hashes,
         deposit_logs_hash,
         last_added_block_number,
-        encoded_blocks,
     ))
 }
 
@@ -445,7 +474,9 @@ fn get_withdrawals_merkle_root(withdrawals_hashes: Vec<H256>) -> Result<H256, Co
     merkelize(withdrawals_hashes).map_err(CommitterError::FailedToMerkelize)
 }
 
-fn get_block_deposits(txs_and_receipts: &[(Transaction, Receipt)]) -> Vec<PrivilegedL2Transaction> {
+pub fn get_block_deposits(
+    txs_and_receipts: &[(Transaction, Receipt)],
+) -> Vec<PrivilegedL2Transaction> {
     let deposits = txs_and_receipts
         .iter()
         .filter_map(|(tx, _)| {
@@ -460,7 +491,7 @@ fn get_block_deposits(txs_and_receipts: &[(Transaction, Receipt)]) -> Vec<Privil
     deposits
 }
 
-fn get_deposit_hash(deposit_hashes: Vec<H256>) -> Result<H256, CommitterError> {
+pub fn get_deposit_hash(deposit_hashes: Vec<H256>) -> Result<H256, CommitterError> {
     if deposit_hashes.is_empty() {
         return Ok(H256::zero());
     }
@@ -564,15 +595,11 @@ fn generate_blobs_bundle(state_diff: &StateDiff) -> Result<(BlobsBundle, usize),
 
 async fn send_commitment(
     state: &mut CommitterState,
-    batch_number: u64,
-    new_state_root: H256,
-    withdrawal_logs_merkle_root: H256,
-    deposit_logs_hash: H256,
-    blobs_bundle: BlobsBundle,
+    batch: &Batch,
     encoded_blocks: Vec<Bytes>,
 ) -> Result<H256, CommitterError> {
     let state_diff_kzg_versioned_hash = if !state.validium {
-        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+        let blob_versioned_hashes = batch.blobs_bundle.generate_versioned_hashes();
         *blob_versioned_hashes
             .first()
             .ok_or(BlobsBundleError::BlobBundleEmptyError)
@@ -582,12 +609,14 @@ async fn send_commitment(
         [0u8; 32] // Validium doesn't send state_diff_kzg_versioned_hash.
     };
 
+    let withdrawal_logs_merkle_root = get_withdrawals_merkle_root(batch.withdrawal_hashes.clone())?;
+
     let mut calldata_values = vec![
-        Value::Uint(U256::from(batch_number)),
-        Value::FixedBytes(new_state_root.0.to_vec().into()),
+        Value::Uint(U256::from(batch.number)),
+        Value::FixedBytes(batch.state_root.0.to_vec().into()),
         Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
         Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
-        Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
+        Value::FixedBytes(batch.deposit_logs_hash.0.to_vec().into()),
     ];
 
     let (commit_function_signature, values) = if state.based {
@@ -636,7 +665,7 @@ async fn send_commitment(
                     max_priority_fee_per_gas: Some(gas_price),
                     ..Default::default()
                 },
-                blobs_bundle,
+                batch.blobs_bundle.clone(),
             )
             .await
             .map_err(CommitterError::from)?;

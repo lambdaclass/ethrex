@@ -2,7 +2,7 @@ use std::{cmp::min, ops::Deref, sync::Arc, time::Duration};
 
 use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
 use ethrex_common::{
-    types::{Block, BlockNumber, Transaction},
+    types::{batch::Batch, BlobsBundle, Block, BlockNumber, Transaction},
     Address, H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -325,28 +325,11 @@ impl BlockFetcher {
         batch: &[Block],
         batch_number: U256,
     ) -> Result<(), BlockFetcherError> {
-        self.rollup_store
-            .seal_batch(
-                batch_number.as_u64(),
-                batch
-                    .first()
-                    .ok_or(BlockFetcherError::InternalError(
-                        "Batch is empty. This shouldn't happen.".to_owned(),
-                    ))?
-                    .header
-                    .number,
-                batch
-                    .last()
-                    .ok_or(BlockFetcherError::InternalError(
-                        "Batch is empty. This shouldn't happen.".to_owned(),
-                    ))?
-                    .header
-                    .number,
-                self.get_batch_withdrawal_hashes(batch).await?,
-            )
-            .await?;
+        let batch = self.get_batch(batch, batch_number).await?;
 
-        info!("Sealed batch {batch_number}."); //. First block: {}, last block: {}",);
+        self.rollup_store.seal_batch(batch).await?;
+
+        info!("Sealed batch {batch_number}.");
 
         Ok(())
     }
@@ -409,4 +392,81 @@ impl BlockFetcher {
         }
         Ok(ret)
     }
+
+    async fn get_batch(
+        &self,
+        batch: &[Block],
+        batch_number: U256,
+    ) -> Result<Batch, BlockFetcherError> {
+        let deposit_hashes: Vec<H256> = batch
+            .iter()
+            .flat_map(|block| {
+                block.body.transactions.iter().filter_map(|tx| {
+                    if let Transaction::PrivilegedL2Transaction(tx) = tx {
+                        tx.get_deposit_hash()
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        let deposit_logs_hash = get_deposit_logs_hash(deposit_hashes)?;
+
+        let first_block = batch.first().ok_or(BlockFetcherError::InternalError(
+            "Batch is empty. This shouldn't happen.".to_owned(),
+        ))?;
+
+        let last_block = batch.last().ok_or(BlockFetcherError::InternalError(
+            "Batch is empty. This shouldn't happen.".to_owned(),
+        ))?;
+
+        let new_state_root = self
+            .store
+            .state_trie(last_block.hash())?
+            .ok_or(BlockFetcherError::InternalError(
+                "This block should be in the store".to_owned(),
+            ))?
+            .hash_no_commit();
+
+        let blobs_bundle = BlobsBundle::default();
+
+        Ok(Batch {
+            number: batch_number.as_u64(),
+            first_block: first_block.header.number,
+            last_block: last_block.header.number,
+            state_root: new_state_root,
+            deposit_logs_hash,
+            withdrawal_hashes: self.get_batch_withdrawal_hashes(batch).await?,
+            blobs_bundle,
+        })
+    }
+}
+
+fn get_deposit_logs_hash(deposit_hashes: Vec<H256>) -> Result<H256, BlockFetcherError> {
+    if deposit_hashes.is_empty() {
+        return Ok(H256::zero());
+    }
+    let deposit_hashes_len: u16 = deposit_hashes.len().try_into().map_err(|e| {
+        BlockFetcherError::InternalError(format!("Failed to convert usize to u16: {e}"))
+    })?;
+    Ok(H256::from_slice(
+        [
+            &deposit_hashes_len.to_be_bytes(),
+            keccak(
+                deposit_hashes
+                    .iter()
+                    .map(H256::as_bytes)
+                    .collect::<Vec<&[u8]>>()
+                    .concat(),
+            )
+            .as_bytes()
+            .get(2..32)
+            .ok_or(BlockFetcherError::WrongBatchCalldata(
+                "Failed to decode deposit hashes".to_string(),
+            ))?,
+        ]
+        .concat()
+        .as_slice(),
+    ))
 }
