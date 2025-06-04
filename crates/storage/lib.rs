@@ -3,7 +3,6 @@ mod api;
 pub mod query_plan;
 #[cfg(any(feature = "libmdbx", feature = "redb"))]
 mod rlp;
-#[cfg(feature = "snapshots")]
 mod snapshot;
 mod store;
 mod store_db;

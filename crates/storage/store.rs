@@ -1,9 +1,7 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::query_plan::QueryPlan;
-#[cfg(feature = "snapshots")]
 use crate::snapshot::error::SnapshotError;
-#[cfg(feature = "snapshots")]
 use crate::snapshot::SnapshotTree;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
@@ -36,7 +34,6 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Store {
     pub(crate) engine: Arc<dyn StoreEngine>,
-    #[cfg(feature = "snapshots")]
     pub snapshots: SnapshotTree,
 }
 
@@ -68,7 +65,6 @@ impl Store {
 
         let store = Self {
             engine: engine.clone(),
-            #[cfg(feature = "snapshots")]
             snapshots: SnapshotTree::new(engine),
         };
 
@@ -107,7 +103,6 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        #[cfg(feature = "snapshots")]
         match self.snapshots.get_account_state(block_hash, address) {
             Ok(Some(account_state)) => {
                 return Ok(Some(AccountInfo {
@@ -687,7 +682,6 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        #[cfg(feature = "snapshots")]
         match self
             .snapshots
             .get_storage_at_hash(block_hash, address, storage_key)
@@ -850,7 +844,6 @@ impl Store {
             return Ok(None);
         };
 
-        #[cfg(feature = "snapshots")]
         match self.snapshots.get_account_state(block_hash, address) {
             Ok(value) => return Ok(value),
             Err(snapshot_error) => {
@@ -869,7 +862,6 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        #[cfg(feature = "snapshots")]
         match self.snapshots.get_account_state(block_hash, address) {
             Ok(value) => return Ok(value),
             Err(snapshot_error) => {
@@ -1279,7 +1271,6 @@ impl Store {
             .await
     }
 
-    #[cfg(feature = "snapshots")]
     /// Creates a snapshot of the block adding a diff (or disk) layer.
     ///
     /// Uses owned parameter values due to moving them into am (non-awaited) task.
