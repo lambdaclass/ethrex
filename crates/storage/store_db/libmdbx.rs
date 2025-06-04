@@ -1000,8 +1000,9 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read::<InvalidAncestors>(block.into())
             .await
-            .map(|o| o.map(|a| a.to()))
-            .transpose();
+            .map(|o| o.map(|a| a.to()))?
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn set_latest_valid_ancestor(
