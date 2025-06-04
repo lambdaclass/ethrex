@@ -53,7 +53,7 @@ ifndef NETWORK
 	$(error "Sync network not provided")
 endif
 	cd $(ETHREX_DIR) && git checkout main
-	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(BLOCK_NUM)-$(LOGNAME).log
+	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(SYNC_BLOCK_NUM)-$(LOGNAME).log
 
 flamegraph-branch: ## Run flamegraph on custom branch. NETWORK and SYNC_BLOCK_NUM environment variables required (for the network and block to start from respectively). EVM can also be set to select the evm to use. xecution logs are output to log file.
 ifndef SYNC_BLOCK_NUM
@@ -66,7 +66,7 @@ ifndef NETWORK
 	$(error "Sync network not provided")
 endif
 	cd $(ETHREX_DIR) && git checkout $(BRANCH)
-	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-$(BRANCH)-block-$(BLOCK_NUM)-$(LOGNAME).log
+	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-$(BRANCH)-block-$(SYNC_BLOCK_NUM)-$(LOGNAME).log
 
 flamegraph-holesky: ## Run flamegraph on holesky.
 	cd $(ETHREX_DIR) && CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
