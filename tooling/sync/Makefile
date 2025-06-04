@@ -14,7 +14,7 @@ CURRENT_DATETIME = $(shell date +'%y.%m.%d-%H.%M.%S')
 BATCH_SIZE ?= 1024
 OS = $(shell uname)
 ifeq ($(OS), Darwin)
-	DATA_PATH = ~/Library/Application Support/
+	DATA_PATH = ~/Library/Application\ Support/
 else 
 	DATA_PATH = ~/.local/share/
 endif
@@ -69,7 +69,7 @@ endif
 	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-$(BRANCH)-block-$(BLOCK_NUM)-$(LOGNAME).log
 
 flamegraph-holesky: ## Run flamegraph on holesky.
-	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
 		--http.port 8545 \
 		--authrpc.port 8551 \
 		--p2p.port 30303\
@@ -81,7 +81,7 @@ flamegraph-holesky: ## Run flamegraph on holesky.
 		--evm $(EVM) \
 
 flamegraph-hoodi: ## Run flamegraph on hoodi.
-	-cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
+	-cd $(ETHREX_DIR) && CARGO_PROFILE_RELEASE_DEBUG=true RUST_LOG=3 cargo flamegraph --features "libmdbx sync-test" --bin ethrex -- \
 		--http.port 8545 \
 		--authrpc.port 8551 \
 		--p2p.port 30303\
@@ -134,7 +134,7 @@ endif
 
 
 start_ethrex_hoodi: ## Start ethrex for hoodi
-	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE) RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
     		--http.port 8545 \
     		--authrpc.port 8551 \
     		--p2p.port 30303\
@@ -146,7 +146,7 @@ start_ethrex_hoodi: ## Start ethrex for hoodi
     		--evm $(EVM)
 
 start_ethrex_holesky: ## Start ethrex for holesky
-	cd $(ETHREX_DIR) && BLOCK_HEADER_LIMIT=$(BATCH_SIZE)  RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
     		--http.port 8545 \
     		--authrpc.port 8551 \
     		--p2p.port 30303\
