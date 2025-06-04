@@ -1,19 +1,25 @@
-#[cfg(feature = "l2")]
-use crate::deposits::{get_block_deposits, get_deposit_hash};
-#[cfg(feature = "l2")]
-use crate::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
-
 use crate::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
 };
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::types::{AccountUpdate, Block, BlockHeader, Commitment, Proof};
+#[cfg(feature = "l2")]
+use ethrex_common::types::BlobsBundleError;
+use ethrex_common::types::{
+    blob_from_bytes, kzg_commitment_to_versioned_hash, AccountUpdate, Block, BlockHeader,
+    Commitment, Proof, Receipt,
+};
 use ethrex_common::{Address, H256};
-use ethrex_l2_common::{StateDiff, StateDiffError};
+#[cfg(feature = "l2")]
+use ethrex_l2_common::state_diff::{StateDiff, StateDiffError};
+use ethrex_l2_common::{
+    deposits::{compute_deposit_logs_hash, get_block_deposits, DepositError},
+    withdrawals::{compute_withdrawals_merkle_root, get_block_withdrawal_hashes, WithdrawalError},
+};
 use ethrex_trie::Trie;
 use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDB, ProverDBError};
+use kzg_rs::{get_kzg_settings, Blob, Bytes48, KzgProof};
 use std::collections::HashMap;
 
 #[derive(Debug, thiserror::Error)]
@@ -30,13 +36,25 @@ pub enum StatelessExecutionError {
     EvmError(EvmError),
     #[cfg(feature = "l2")]
     #[error("Withdrawal calculation error: {0}")]
-    WithdrawalError(crate::withdrawals::Error),
+    WithdrawalError(#[from] WithdrawalError),
     #[cfg(feature = "l2")]
     #[error("Deposit calculation error: {0}")]
-    DepositError(crate::deposits::DepositError),
+    DepositError(#[from] DepositError),
     #[cfg(feature = "l2")]
     #[error("State diff error: {0}")]
     StateDiffError(#[from] StateDiffError),
+    #[cfg(feature = "l2")]
+    #[error("Blobs bundle error: {0}")]
+    BlobsBundleError(#[from] BlobsBundleError),
+    #[cfg(feature = "l2")]
+    #[error("KZG error (proof couldn't be verified): {0}")]
+    KzgError(kzg_rs::KzgError),
+    #[cfg(feature = "l2")]
+    #[error("Invalid KZG blob proof")]
+    InvalidBlobProof,
+    #[cfg(feature = "l2")]
+    #[error("Invalid state diff")]
+    InvalidStateDiff,
     #[error("Batch has no blocks")]
     EmptyBatchError,
     #[error("Invalid database")]
@@ -47,6 +65,14 @@ pub enum StatelessExecutionError {
     InvalidFinalStateTrie,
     #[error("Missing deposit hash")]
     MissingDepositHash,
+    #[error("Internal error: {0}")]
+    Internal(String),
+}
+
+impl From<kzg_rs::KzgError> for StatelessExecutionError {
+    fn from(value: kzg_rs::KzgError) -> Self {
+        StatelessExecutionError::KzgError(value)
+    }
 }
 
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
@@ -71,7 +97,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             elasticity_multiplier,
             state_diff,
             blob_commitment,
-            blob_proof
+            blob_proof,
         );
     }
     stateless_validation_l1(
@@ -113,106 +139,35 @@ pub fn stateless_validation_l2(
     elasticity_multiplier: u64,
     state_diff: StateDiff,
     blob_commitment: Commitment,
-    blob_proof: Proof
+    blob_proof: Proof,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
-    use ethrex_l2_common::{compute_withdrawals_merkle_root, get_block_withdrawal_hashes};
-
     let StatelessResult {
         receipts,
         initial_state_hash,
         final_state_hash,
         state_trie,
-        account_updates
+        account_updates,
     } = execute_stateless(blocks, parent_block_header, db, elasticity_multiplier)?;
 
-    let mut withdrawal_hashes = vec![];
-    let mut deposits_hashes = vec![];
-
-    // Get L2 withdrawals and deposits for this block
-    for (block, receipts) in blocks.iter().zip(receipts) {
-        let txs = block.body.transactions;
-        let block_deposits = get_block_deposits(&txs);
-
-        let txs_and_receipts: Vec<_> =
-            txs.into_iter().zip(receipts.clone().into_iter()).collect();
-        let block_withdrawal_hashes = get_block_withdrawal_hashes(&txs_and_receipts)?;
-
-        let mut block_deposit_hashes = Vec::with_capacity(block_deposits.len());
-        for deposit in &block_deposits {
-            if let Some(hash) = deposit.get_deposit_hash() {
-                block_deposit_hashes.push(hash);
-            } else {
-                return Err("Failed to get deposit hash for tx".to_string().into());
-            }
-        }
-        withdrawal_hashes.extend(block_withdrawal_hashes);
-        deposits_hashes.extend(block_deposit_hashes);
-    }
-
-    // Calculate L2 withdrawals root
-    let withdrawals_merkle_root = compute_withdrawals_merkle_root(withdrawal_hashes)?;
-
-    // Calculate L2 deposits logs root
-    let deposit_logs_hash =
-        get_deposit_hash(deposits_hashes).map_err(StatelessExecutionError::DepositError)?;
+    let (withdrawals_merkle_root, deposit_logs_hash) =
+        compute_withdrawals_and_deposits_digests(&blocks, &receipts)?;
 
     // TODO: this could be replaced with something like a ProverConfig in the future.
-    #[cfg(feature = "l2")]
     let validium = (blob_commitment, blob_proof) == ([0; 48], [0; 48]);
 
     // Check state diffs are valid
-    #[cfg(feature = "l2")]
     if !validium {
-        let state_diff_updates = state_diff
-            .to_account_updates(&state_trie)
-            .map_err(|_| "Failed to calculate account updates from state diffs".to_string())?;
-
-        if state_diff_updates != account_updates {
-            return Err("Invalid state diffs".to_string().into());
-        }
+        verify_state_diff(&state_diff, &account_updates);
     }
 
-    // Verify KZG blob proof
-    #[cfg(feature = "l2")]
-    let blob_versioned_hash = {
-        use kzg_rs::{get_kzg_settings, Blob, Bytes48, KzgProof};
-
-        let encoded_state_diff = state_diff
-            .encode()
-            .map_err(|e| format!("failed to encode state diff: {}", e))?;
-        let blob_data = blob_from_bytes(encoded_state_diff)
-            .map_err(|e| format!("failed to convert encoded state diff into blob data: {}", e))?;
-        let blob = Blob::from_slice(&blob_data)
-            .map_err(|_| "failed to convert blob data into Blob".to_string())?;
-
-        let blob_proof_valid = KzgProof::verify_blob_kzg_proof(
-            blob,
-            &Bytes48::from_slice(&blob_commitment)
-                .map_err(|_| "failed type conversion for blob commitment".to_string())?,
-            &Bytes48::from_slice(&blob_proof)
-                .map_err(|_| "failed type conversion for blob proof".to_string())?,
-            &get_kzg_settings(),
-        )
-        .map_err(|e| {
-            format!(
-                "failed to verify blob proof (neither valid or invalid proof): {}",
-                e
-            )
-        })?;
-
-        if !blob_proof_valid {
-            return Err("invalid blob proof".into());
-        }
-
-        kzg_commitment_to_versioned_hash(&blob_commitment)
-    };
-
+    let blob_versioned_hash = verify_blob(state_diff, blob_commitment, blob_proof)?;
 
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
         withdrawals_merkle_root,
         deposit_logs_hash,
+        blob_versioned_hash,
     })
 }
 
@@ -222,7 +177,7 @@ struct StatelessResult {
     initial_state_hash: H256,
     final_state_hash: H256,
     state_trie: Trie,
-    account_updates: HashMap<Address, AccountUpdate>
+    account_updates: HashMap<Address, AccountUpdate>,
 }
 
 fn execute_stateless(
@@ -308,6 +263,79 @@ fn execute_stateless(
         initial_state_hash,
         final_state_hash,
         state_trie,
-        account_updates: acc_account_updates
+        account_updates: acc_account_updates,
     })
+}
+
+fn compute_withdrawals_and_deposits_digests(
+    blocks: &[Block],
+    receipts: &[Vec<Receipt>],
+) -> Result<(H256, H256), StatelessExecutionError> {
+    let mut withdrawal_hashes = vec![];
+    let mut deposits_hashes = vec![];
+
+    // Get withdrawals and deposits for this block
+    for (block, receipts) in blocks.iter().zip(receipts) {
+        let txs = &block.body.transactions;
+        let block_deposits = get_block_deposits(txs);
+
+        let block_withdrawal_hashes = get_block_withdrawal_hashes(txs, receipts)?;
+
+        let mut block_deposit_hashes = Vec::with_capacity(block_deposits.len());
+        for deposit in &block_deposits {
+            let hash = deposit
+                .get_deposit_hash()
+                .ok_or(StatelessExecutionError::Internal(
+                    "Privileged transaction is not a deposit".to_string(),
+                ))?;
+            block_deposit_hashes.push(hash);
+        }
+        withdrawal_hashes.extend(block_withdrawal_hashes);
+        deposits_hashes.extend(block_deposit_hashes);
+    }
+
+    let withdrawals_merkle_root = compute_withdrawals_merkle_root(withdrawal_hashes)?;
+    let deposit_logs_hash = compute_deposit_logs_hash(deposits_hashes)
+        .map_err(StatelessExecutionError::DepositError)?;
+
+    Ok((withdrawals_merkle_root, deposit_logs_hash))
+}
+
+fn verify_state_diff(
+    state_diff: &StateDiff,
+    account_updates: &HashMap<Address, AccountUpdate>,
+) -> Result<(), StatelessExecutionError> {
+    if !state_diff.is_equivalent_to_account_updates(account_updates) {
+        return Err(StatelessExecutionError::InvalidStateDiff);
+    }
+
+    // TODO: check withdrawals and deposits
+    if !todo!() {
+        return Err(StatelessExecutionError::InvalidStateDiff);
+    }
+
+    Ok(())
+}
+
+fn verify_blob(
+    state_diff: StateDiff,
+    blob_commitment: Commitment,
+    blob_proof: Proof,
+) -> Result<H256, StatelessExecutionError> {
+    let encoded_state_diff = state_diff.encode()?;
+    let blob_data = blob_from_bytes(encoded_state_diff)?;
+    let blob = Blob::from_slice(&blob_data)?;
+
+    let is_blob_proof_valid = KzgProof::verify_blob_kzg_proof(
+        blob,
+        &Bytes48::from_slice(&blob_commitment)?,
+        &Bytes48::from_slice(&blob_proof)?,
+        &get_kzg_settings(),
+    )?;
+
+    if !is_blob_proof_valid {
+        return Err(StatelessExecutionError::InvalidBlobProof);
+    }
+
+    Ok(kzg_commitment_to_versioned_hash(&blob_commitment))
 }

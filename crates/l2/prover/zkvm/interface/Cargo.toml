@@ -9,6 +9,7 @@ serde_with = "3.11.0"
 serde_json = "1.0.117"
 thiserror = "2.0.9"
 keccak-hash.workspace = true
+kzg-rs = "0.2.6"
 
 ethrex-common = { path = "../../../../common/", default-features = false }
 ethrex-blockchain = { path = "../../../../blockchain/", default-features = false }

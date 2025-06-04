@@ -11698,6 +11698,7 @@ dependencies = [
  "ethrex-trie",
  "ethrex-vm",
  "keccak-hash",
+ "kzg-rs",
  "pico-cli",
  "risc0-build",
  "serde",

@@ -1,14 +1,13 @@
-// TODO: We should move this to some kind of "common" library for the L2, but the zkvm programs
-// can't depend on ethrex-l2 because of incompatible dependencies.
-
 use std::str::FromStr;
 
+use ethereum_types::{Address, H256};
 use ethrex_common::{
     types::{Receipt, Transaction, TxKind},
-    Address, H160, H256,
+    H160, U256,
 };
-
 use keccak_hash::keccak;
+
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
@@ -16,8 +15,25 @@ pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xff,
 ]);
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WithdrawalLog {
+    pub address: Address,
+    pub amount: U256,
+    pub tx_hash: H256,
+}
+
+impl WithdrawalLog {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        encoded.extend(self.address.0);
+        encoded.extend_from_slice(&self.amount.to_big_endian());
+        encoded.extend(&self.tx_hash.0);
+        encoded
+    }
+}
+
 #[derive(Debug, Error)]
-pub enum Error {
+pub enum WithdrawalError {
     #[error("Withdrawal transaction was invalid")]
     InvalidWithdrawalTransaction,
     #[error("Failed to merkelize withdrawals")]
@@ -28,14 +44,16 @@ pub enum Error {
     WithdrawalHash,
 }
 
-pub fn get_block_withdrawals(
+pub fn get_block_withdrawal_hashes(
     txs: &[Transaction],
     receipts: &[Receipt],
-) -> Result<Vec<H256>, Error> {
+) -> Result<Vec<H256>, WithdrawalError> {
     txs.iter()
         .zip(receipts.iter())
         .filter(|(tx, receipt)| is_withdrawal_l2(tx, receipt))
-        .map(|(withdrawal, _)| get_withdrawal_hash(withdrawal).ok_or(Error::WithdrawalHash))
+        .map(|(withdrawal, _)| {
+            get_withdrawal_hash(withdrawal).ok_or(WithdrawalError::WithdrawalHash)
+        })
         .collect::<Result<Vec<_>, _>>()
 }
 
@@ -54,14 +72,6 @@ fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> bool {
     }
 }
 
-pub fn get_withdrawals_merkle_root(withdrawals_hashes: Vec<H256>) -> Result<H256, Error> {
-    if !withdrawals_hashes.is_empty() {
-        merkelize(withdrawals_hashes)
-    } else {
-        Ok(H256::zero())
-    }
-}
-
 pub fn get_withdrawal_hash(tx: &Transaction) -> Option<H256> {
     let to_bytes: [u8; 20] = match tx.data().get(16..36)?.try_into() {
         Ok(value) => value,
@@ -76,15 +86,25 @@ pub fn get_withdrawal_hash(tx: &Transaction) -> Option<H256> {
     ))
 }
 
-pub fn merkelize(data: Vec<H256>) -> Result<H256, Error> {
+pub fn compute_withdrawals_merkle_root(
+    withdrawals_hashes: Vec<H256>,
+) -> Result<H256, WithdrawalError> {
+    if !withdrawals_hashes.is_empty() {
+        merkelize(withdrawals_hashes)
+    } else {
+        Ok(H256::zero())
+    }
+}
+
+pub fn merkelize(data: Vec<H256>) -> Result<H256, WithdrawalError> {
     let mut data = data;
     let mut first = true;
     while data.len() > 1 || first {
         first = false;
         data = data
             .chunks(2)
-            .flat_map(|chunk| -> Result<H256, Error> {
-                let left = chunk.first().ok_or(Error::FailedToMerkelize)?;
+            .flat_map(|chunk| -> Result<H256, WithdrawalError> {
+                let left = chunk.first().ok_or(WithdrawalError::FailedToMerkelize)?;
                 let right = *chunk.get(1).unwrap_or(left);
                 Ok(keccak([left.as_bytes(), right.as_bytes()].concat())
                     .as_fixed_bytes()
@@ -92,5 +112,7 @@ pub fn merkelize(data: Vec<H256>) -> Result<H256, Error> {
             })
             .collect();
     }
-    data.first().copied().ok_or(Error::FailedToMerkelize)
+    data.first()
+        .copied()
+        .ok_or(WithdrawalError::FailedToMerkelize)
 }
