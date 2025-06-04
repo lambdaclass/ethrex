@@ -29,7 +29,6 @@ help: ## 📚 Show help for each of the Makefile recipes
 
 setup-test-dirs:
 	mkdir -p $(VECTORS_DIR)
-	mkdir -p $(VECTORS_DIR)/LegacyTests/Constantinople/GeneralStateTests
 	mkdir -p $(VECTORS_DIR)/LegacyTests/Cancun/GeneralStateTests
 	mkdir -p $(VECTORS_DIR)/GeneralStateTests
 	mkdir -p $(VECTORS_DIR)/state_tests
@@ -39,7 +38,6 @@ clone-ef-tests: ## 📥 Download Ethereum Tests repository with submodules
 	git clone --recurse-submodules --depth 1 --branch $(ETH_TEST_TAG) $(ETH_TEST_URL) $(TESTS_REPO)
 	cd $(TESTS_REPO)/LegacyTests && git checkout $(COMMIT_LEGACY_TESTS_FOR_TAG)
 	cp -r $(TESTS_REPO)/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
-	cp -r $(TESTS_REPO)/LegacyTests/Constantinople/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Constantinople/GeneralStateTests/
 	cp -r $(TESTS_REPO)/LegacyTests/Cancun/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Cancun/GeneralStateTests/;
 
 download-evm-ef-tests: $(VECTORS_DIR) ## 📥 Download and setup state tests fixtures
@@ -51,7 +49,7 @@ clean-evm-ef-tests: ## 🗑️ Clean test vectors and temporary files
 
 refresh-evm-ef-tests: clean-evm-ef-tests download-evm-ef-tests ## Cleans and re-downloads tests, useful when they are outdated!
 
-run-evm-ef-tests: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests
+run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
 		time cargo test --quiet --test all --release -- $(flags) --summary;\
 	elif [ "$(DEBUG)" = "true" ]; then \
@@ -61,10 +59,10 @@ run-evm-ef-tests: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests
 	fi
 
 run-evm-ef-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
-	time cargo test --test all --release -- --summary
+	time cargo test -p ef_tests-state --test all --release -- --summary
 
 generate-evm-ef-tests-report:$(VECTORS_DIR) ## 📊 Generate EF Tests Report
-	cargo test --test all --release -- --summary
+	cargo test -p ef_tests-state --test all --release -- --summary
 
 test-levm: $(VECTORS_DIR)
 	$(MAKE) run-evm-ef-tests flags="--summary"
