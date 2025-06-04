@@ -583,13 +583,13 @@ impl StoreEngine for RedBStore {
         let table = read_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
 
         let mut table_vec = Vec::new();
-        for maybe_res in table.get(<H256 as Into<TransactionHashRLP>>::into(transaction_hash))? {
-            if let Ok(res) = maybe_res {
-                table_vec.push(res.value().to()?)
-            } else {
-                break;
-            }
+        while let Some(Ok(res)) = table
+            .get(<H256 as Into<TransactionHashRLP>>::into(transaction_hash))?
+            .next()
+        {
+            table_vec.push(res.value().to()?)
         }
+
         Ok(table_vec.into_iter().find(|(number, hash, _index)| {
             self.get_block_hash_by_block_number(*number)
                 .is_ok_and(|o| o == Some(*hash))
@@ -1047,13 +1047,13 @@ impl StoreEngine for RedBStore {
         let txn = self.db.begin_read()?;
         let table = txn.open_table(STORAGE_HEAL_PATHS_TABLE)?;
         let mut res: Vec<(H256, Vec<Nibbles>)> = Vec::new();
-        for maybe_val in table.range(<H256 as Into<AccountHashRLP>>::into(Default::default())..)? {
-            if let Ok((hash, paths)) = maybe_val {
-                res.push((hash.value().to()?, paths.value().to()?));
-            } else {
-                break;
-            }
+        while let Some(Ok((hash, paths))) = table
+            .range(<H256 as Into<AccountHashRLP>>::into(Default::default())..)?
+            .next()
+        {
+            res.push((hash.value().to()?, paths.value().to()?));
         }
+
         res = res.into_iter().take(limit).collect();
         txn.close()?;
         // Delete read values
@@ -1225,16 +1225,14 @@ impl StoreEngine for RedBStore {
         let read_tx = self.db.begin_read()?;
         let table = read_tx.open_table(STATE_SNAPSHOT_TABLE)?;
         let mut table_vec = Vec::new();
-        for maybe_elem in table
+        while let Some(Ok((key, value))) = table
             .range(<H256 as Into<AccountHashRLP>>::into(start)..)?
             .take(MAX_SNAPSHOT_READS)
+            .next()
         {
-            if let Ok((key, value)) = maybe_elem {
-                table_vec.push((key.value().to()?, value.value().to()?));
-            } else {
-                break;
-            }
+            table_vec.push((key.value().to()?, value.value().to()?));
         }
+
         Ok(table_vec)
     }
 

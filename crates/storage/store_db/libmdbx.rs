@@ -365,12 +365,9 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?;
 
         let mut transaction_hashes = Vec::new();
-        for maybe_tx in cursor.walk_key(transaction_hash.into(), None) {
-            if let Ok(tx) = maybe_tx {
-                transaction_hashes.push(tx.to().map_err(StoreError::from)?);
-            } else {
-                break;
-            }
+        let mut cursor_it = cursor.walk_key(transaction_hash.into(), None);
+        while let Some(Ok(tx)) = cursor_it.next() {
+            transaction_hashes.push(tx.to().map_err(StoreError::from)?);
         }
 
         Ok(transaction_hashes
@@ -796,13 +793,11 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?;
 
         let mut res = Vec::new();
-        for maybe_elem in cursor.walk(None) {
-            if let Ok((hash, paths)) = maybe_elem {
-                res.push((hash.to()?, paths.to()?));
-            } else {
-                break;
-            }
+        let mut cursor_it = cursor.walk(None);
+        while let Some(Ok((hash, paths))) = cursor_it.next() {
+            res.push((hash.to()?, paths.to()?));
         }
+
         res = res.into_iter().take(limit).collect::<Vec<_>>();
 
         // Delete fetched entries from the table
@@ -978,13 +973,11 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?;
 
         let mut account_snapshots = Vec::new();
-        for maybe_elem in cursor.walk(Some(start.into())) {
-            if let Ok((hash, acc)) = maybe_elem {
-                account_snapshots.push((hash.to()?, acc.to()?));
-            } else {
-                break;
-            }
+        let mut cursor_it = cursor.walk(Some(start.into()));
+        while let Some(Ok((hash, acc))) = cursor_it.next() {
+            account_snapshots.push((hash.to()?, acc.to()?));
         }
+
         Ok(account_snapshots
             .into_iter()
             .take(MAX_SNAPSHOT_READS)
