@@ -218,7 +218,7 @@ async fn handle_forkchoice(
     }
 
     match apply_fork_choice(
-        &context.storage,
+        &context.blockchain,
         fork_choice_state.head_block_hash,
         fork_choice_state.safe_block_hash,
         fork_choice_state.finalized_block_hash,

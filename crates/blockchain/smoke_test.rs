@@ -62,7 +62,7 @@ mod blockchain_integration_test {
 
         // Receive block 2 as new head.
         apply_fork_choice(
-            &store,
+            &blockchain,
             block_2.hash(),
             genesis_header.hash(),
             genesis_header.hash(),
@@ -89,7 +89,7 @@ mod blockchain_integration_test {
         let block_1 = new_block(&store, &genesis_header).await;
         let hash_1 = block_1.hash();
         blockchain.add_block(&block_1).await.unwrap();
-        apply_fork_choice(&store, hash_1, H256::zero(), H256::zero())
+        apply_fork_choice(&blockchain, hash_1, H256::zero(), H256::zero())
             .await
             .unwrap();
 
@@ -103,7 +103,7 @@ mod blockchain_integration_test {
         // block 2 should now be pending.
         assert!(store.get_pending_block(hash_2).await.unwrap().is_some());
 
-        let fc_result = apply_fork_choice(&store, hash_2, H256::zero(), H256::zero()).await;
+        let fc_result = apply_fork_choice(&blockchain, hash_2, H256::zero(), H256::zero()).await;
         assert!(matches!(fc_result, Err(InvalidForkChoice::Syncing)));
 
         // block 2 should still be pending.
@@ -135,7 +135,7 @@ mod blockchain_integration_test {
             .add_block(&block_1b)
             .await
             .expect("Could not add block 1b.");
-        apply_fork_choice(&store, hash_1b, genesis_hash, genesis_hash)
+        apply_fork_choice(&blockchain, hash_1b, genesis_hash, genesis_hash)
             .await
             .unwrap();
         let retrieved_1b = store.get_block_header(1).unwrap().unwrap();
@@ -152,7 +152,7 @@ mod blockchain_integration_test {
             .add_block(&block_2)
             .await
             .expect("Could not add block 2.");
-        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash)
+        apply_fork_choice(&blockchain, hash_2, genesis_hash, genesis_hash)
             .await
             .unwrap();
         let retrieved_2 = store.get_block_header_by_hash(hash_2).unwrap();
@@ -167,7 +167,7 @@ mod blockchain_integration_test {
 
         // Receive block 1a as new head.
         apply_fork_choice(
-            &store,
+            &blockchain,
             block_1a.hash(),
             genesis_header.hash(),
             genesis_header.hash(),
@@ -212,14 +212,14 @@ mod blockchain_integration_test {
         assert!(!is_canonical(&store, 2, hash_2).await.unwrap());
 
         // Make that chain the canonical one.
-        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash)
+        apply_fork_choice(&blockchain, hash_2, genesis_hash, genesis_hash)
             .await
             .unwrap();
 
         assert!(is_canonical(&store, 1, hash_1).await.unwrap());
         assert!(is_canonical(&store, 2, hash_2).await.unwrap());
 
-        let result = apply_fork_choice(&store, hash_1, hash_1, hash_1).await;
+        let result = apply_fork_choice(&blockchain, hash_1, hash_1, hash_1).await;
 
         assert!(matches!(
             result,
@@ -266,7 +266,7 @@ mod blockchain_integration_test {
         );
 
         // Make that chain the canonical one.
-        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash)
+        apply_fork_choice(&blockchain, hash_2, genesis_hash, genesis_hash)
             .await
             .unwrap();
 
@@ -284,7 +284,7 @@ mod blockchain_integration_test {
         assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_2);
 
         // if we apply fork choice to the new one, then we should
-        apply_fork_choice(&store, hash_b, genesis_hash, genesis_hash)
+        apply_fork_choice(&blockchain, hash_b, genesis_hash, genesis_hash)
             .await
             .unwrap();
 

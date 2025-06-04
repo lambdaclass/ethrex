@@ -146,7 +146,7 @@ impl BlockProducer {
         execution_cache.push(block.hash(), account_updates)?;
 
         // Make the new head be part of the canonical chain
-        apply_fork_choice(&store, block.hash(), block.hash(), block.hash()).await?;
+        apply_fork_choice(&blockchain, block.hash(), block.hash(), block.hash()).await?;
 
         metrics!(
             let _ = METRICS_BLOCKS
