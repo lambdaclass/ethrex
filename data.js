@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749061660973,
+  "lastUpdate": 1749077545192,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -10975,6 +10975,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178225898929,
             "range": "± 603399896",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a59e11aa0a88dbd075be82104b280c2d20867fef",
+          "message": "feat(l1): drop unwraps storage (#3002)\n\n**Motivation**\n\nDissallow unwraps on l1.\n\n**Description**\n\nThis pr drops unwraps on crate storage. Test's unwraps remain. Resolves\npartially #2879.",
+          "timestamp": "2025-06-04T22:06:24Z",
+          "tree_id": "ae0a66652efbc3959de5753d7fc7446cad85fcf1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a59e11aa0a88dbd075be82104b280c2d20867fef"
+        },
+        "date": 1749077540099,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 176722207465,
+            "range": "± 880957677",
             "unit": "ns/iter"
           }
         ]
