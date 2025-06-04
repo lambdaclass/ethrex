@@ -7,7 +7,7 @@ use ethrex_trie::NodeHash;
 
 pub struct QueryPlan {
     pub account_updates: (
-        Vec<(NodeHash, Vec<u8>)>, // vec<(node_hash, node_data)>
+        Vec<(NodeHash, Vec<u8>)>,                 // vec<(node_hash, node_data)>
         Vec<(Vec<u8>, Vec<(NodeHash, Vec<u8>)>)>, // hashed_address, vec<(node_hash, node_data)>
     ),
     pub block: Block,
