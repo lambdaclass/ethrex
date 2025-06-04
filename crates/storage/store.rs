@@ -516,6 +516,13 @@ impl Store {
         self.engine.get_block_by_hash(block_hash).await
     }
 
+    pub async fn get_block_by_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Block>, StoreError> {
+        self.engine.get_block_by_number(block_number).await
+    }
+
     pub async fn get_storage_at(
         &self,
         block_number: BlockNumber,
