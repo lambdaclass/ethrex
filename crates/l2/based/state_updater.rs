@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use ethrex_blockchain::{error::InvalidForkChoice, fork_choice::apply_fork_choice};
+use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_common::{types::Block, Address};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::{clients::Overrides, EthClient};
@@ -162,9 +162,6 @@ impl StateUpdater {
                 "No blocks found for the last committed batch {last_l2_committed_batch}"
             )));
         };
-        self.store
-            .update_latest_block_number(*last_l2_committed_batch_block_number)
-            .await?;
 
         debug!("Last committed batch block number: {last_l2_committed_batch_block_number}");
 
@@ -191,17 +188,17 @@ impl StateUpdater {
         let last_l2_committed_batch_block_hash = last_l2_committed_batch_block.hash();
 
         info!("Reverting uncommitted state to the last committed batch block {last_l2_committed_batch_block_number} with hash {last_l2_committed_batch_block_hash:#x}");
-
-        match apply_fork_choice(
+        self.store
+            .update_latest_block_number(*last_l2_committed_batch_block_number)
+            .await?;
+        let _ = apply_fork_choice(
             &self.store,
             last_l2_committed_batch_block_hash,
             last_l2_committed_batch_block_hash,
             last_l2_committed_batch_block_hash,
         )
         .await
-        {
-            Ok(_) | Err(InvalidForkChoice::NewHeadAlreadyCanonical) => Ok(()),
-            Err(err) => Err(err.into()),
-        }
+        .map_err(StateUpdaterError::InvalidForkChoice)?;
+        Ok(())
     }
 }
