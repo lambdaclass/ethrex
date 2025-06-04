@@ -12,6 +12,11 @@ HOODI_CHECKPOINT_SYNC_URL ?= https://hoodi.beaconstate.ethstaker.cc
 HOODI_BOOTNODES ?= enode://60203fcb3524e07c5df60a14ae1c9c5b24023ea5d47463dfae051d2c9f3219f309657537576090ca0ae641f73d419f53d8e8000d7a464319d4784acd7d2abc41@209.38.124.160:30303
 CURRENT_DATETIME = $(shell date +'%y.%m.%d-%H.%M.%S')
 BATCH_SIZE ?= 1024
+OS = $(shell uname)
+ifeq $(OS) Darwin
+	DATA_PATH = ~/Library/Application Support/
+else 
+	DATA_PATH = ~/.local/share/
 
 help: ## Display help for the makefile.
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -20,13 +25,13 @@ create_data_dir: ## Create the data folder for the network. NETWORK environment 
 ifndef NETWORK
 	$(error "Sync network not provided")
 endif
-	mkdir -p ~/.local/share/$(NETWORK)_data
+	mkdir -p $(DATA_PATH)/$(NETWORK)_data
 
 gen_jwt: create_data_dir ## Create the jwt for a given network. NETWORK environment variable required.
 ifndef NETWORK
 	$(error "Sync network not provided")
 endif
-	openssl rand -hex 32 | tr -d "\n" | tee ~/.local/share/$(NETWORK)_data/jwt.hex
+	openssl rand -hex 32 | tr -d "\n" | tee $(DATA_PATH)/$(NETWORK)_data/jwt.hex
 
 sync: create_data_dir ## Run the sync for a given network. NETWORK and SYNC_BLOCK_NUM environment variables required (for the network and block to start from respectively). EVM can also be set to select the evm to use.
 ifndef SYNC_BLOCK_NUM
@@ -70,7 +75,7 @@ flamegraph-holesky: ## Run flamegraph on holesky.
 		--discovery.port 30303 \
 		--network holesky \
 		--datadir holesky_data/ethrex/$(EVM) \
-		--authrpc.jwtsecret ~/.local/share/holesky_data/jwt.hex \
+		--authrpc.jwtsecret $(DATA_PATH)/holesky_data/jwt.hex \
 		--bootnodes $(HOLESKY_BOOTNODES) \
 		--evm $(EVM) \
 
@@ -82,7 +87,7 @@ flamegraph-hoodi: ## Run flamegraph on hoodi.
 		--discovery.port 30303 \
 		--network hoodi \
 		--datadir hoodi_data/ethrex/$(EVM) \
-		--authrpc.jwtsecret ~/.local/share/hoodi_data/jwt.hex \
+		--authrpc.jwtsecret $(DATA_PATH)/hoodi_data/jwt.hex \
 		--bootnodes $(HOODI_BOOTNODES) \
 		--evm $(EVM)
 
@@ -96,24 +101,24 @@ holesky-lighthouse: ## Start lighthouse for holesky.
 	lighthouse bn \
 		--network holesky \
 		--execution-endpoint http://localhost:${ENGINE_PORT} \
-		--execution-jwt ~/.local/share/holesky_data/jwt.hex \
+		--execution-jwt $(DATA_PATH)/holesky_data/jwt.hex \
 		--checkpoint-sync-url $(HOLESKY_CHECKPOINT_SYNC_URL) \
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--datadir ~/.local/share/holesky_data/lighthouse_${NODE_NAME}_$(EVM) \
+		--datadir $(DATA_PATH)/holesky_data/lighthouse_${NODE_NAME}_$(EVM) \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
 hoodi-lighthouse: ## Start lighthouse for hoodi.
 	lighthouse bn \
 		--network hoodi \
 		--execution-endpoint http://localhost:${ENGINE_PORT} \
-		--execution-jwt ~/.local/share/hoodi_data/jwt.hex \
+		--execution-jwt $(DATA_PATH)/hoodi_data/jwt.hex \
 		--checkpoint-sync-url $(HOODI_CHECKPOINT_SYNC_URL) \
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
-		--datadir ~/.local/share/hoodi_data/lighthouse_${NODE_NAME}_$(EVM) \
+		--datadir $(DATA_PATH)/hoodi_data/lighthouse_${NODE_NAME}_$(EVM) \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
 
@@ -122,9 +127,9 @@ backup-db: ## Back-up the store db. EVM and NETWORK environment variables need t
 ifndef NETWORK
 	$(error "Sync network not provided")
 endif
-	mkdir -p ~/.local/share/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
-	rsync -ah --info=progress2 ~/.local/share/$(NETWORK)_data/ethrex/$(EVM)/mdbx.* ~/.local/share/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
-	cp ./logs/ethrex-sync-$(NETWORK)-$(EVM).log ~/.local/share/ethrex_db_backups/$(NETWORK)/$(EVM)/$(CURRENT_DATETIME)/ethrex_sync_$(NETWORK)_$(EVM).log
+	mkdir -p $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
+	rsync -ah --info=progress2 $(DATA_PATH)/$(NETWORK)_data/ethrex/$(EVM)/mdbx.* $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/db_backup_$(CURRENT_DATETIME)
+	cp ./logs/ethrex-sync-$(NETWORK)-$(EVM).log $(DATA_PATH)/ethrex_db_backups/$(NETWORK)/$(EVM)/$(CURRENT_DATETIME)/ethrex_sync_$(NETWORK)_$(EVM).log
 
 
 start_ethrex_hoodi: ## Start ethrex for hoodi
@@ -135,7 +140,7 @@ start_ethrex_hoodi: ## Start ethrex for hoodi
     		--discovery.port 30303 \
     		--network hoodi \
     		--datadir "hoodi_data/ethrex/$(EVM)" \
-    		--authrpc.jwtsecret ~/.local/share/hoodi_data/jwt.hex \
+    		--authrpc.jwtsecret $(DATA_PATH)/hoodi_data/jwt.hex \
     		--bootnodes $(HOODI_BOOTNODES) \
     		--evm $(EVM)
 
@@ -147,7 +152,7 @@ start_ethrex_holesky: ## Start ethrex for holesky
     		--discovery.port 30303 \
     		--network holesky \
     		--datadir "holesky_data/ethrex/$(EVM)" \
-    		--authrpc.jwtsecret ~/.local/share/holesky_data/jwt.hex \
+    		--authrpc.jwtsecret $(DATA_PATH)/holesky_data/jwt.hex \
     		--bootnodes $(HOLESKY_BOOTNODES) \
     		--evm $(EVM)
 
