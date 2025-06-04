@@ -254,40 +254,31 @@ impl Blockchain {
         for (i, block) in blocks.iter().enumerate() {
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
-                match find_parent_header(&block.header, &self.storage) {
-                    Ok(parent_header) => parent_header,
-                    Err(error) => {
-                        return Err((
-                            error,
-                            Some(BatchBlockProcessingFailure {
-                                failed_block_hash: block.hash(),
-                                last_valid_hash,
-                            }),
-                        ))
-                    }
-                }
-            } else {
-                // for the subsequent ones, the parent is the previous block
-                blocks[i - 1].header.clone()
-            };
-
-            let BlockExecutionResult { receipts, .. } = match self.execute_block_from_state(
-                &parent_header,
-                block,
-                &chain_config,
-                &mut vm,
-            ) {
-                Ok(result) => result,
-                Err(err) => {
-                    return Err((
+                find_parent_header(&block.header, &self.storage).map_err(|err| {
+                    (
                         err,
                         Some(BatchBlockProcessingFailure {
                             failed_block_hash: block.hash(),
                             last_valid_hash,
                         }),
-                    ))
-                }
+                    )
+                })?
+            } else {
+                // for the subsequent ones, the parent is the previous block
+                blocks[i - 1].header.clone()
             };
+
+            let BlockExecutionResult { receipts, .. } = self
+                .execute_block_from_state(&parent_header, block, &chain_config, &mut vm)
+                .map_err(|err| {
+                    (
+                        err,
+                        Some(BatchBlockProcessingFailure {
+                            failed_block_hash: block.hash(),
+                            last_valid_hash,
+                        }),
+                    )
+                })?;
 
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
@@ -299,14 +290,14 @@ impl Blockchain {
             .get_state_transitions()
             .map_err(|err| (ChainError::EvmError(err), None))?;
 
-        let Some(last_block) = blocks.last() else {
-            return Err((ChainError::Custom("Last block not found".into()), None));
-        };
+        let last_block = blocks
+            .last()
+            .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
 
         // Apply the account updates over all blocks and compute the new state root
-        let new_state_root = self
+        let (new_state_root, state_query_plan, accounts_query_plan) = self
             .storage
-            .apply_account_updates(first_block_header.parent_hash, &account_updates)
+            .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;

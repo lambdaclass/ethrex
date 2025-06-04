@@ -20,3 +20,19 @@ impl QueryPlan {
         Ok(())
     }
 }
+
+pub struct QueryPlanVec {
+    pub account_updates: (
+        Vec<(NodeHash, Vec<u8>)>,                 // vec<(node_hash, node_data)>
+        Vec<(Vec<u8>, Vec<(NodeHash, Vec<u8>)>)>, // hashed_address, vec<(node_hash, node_data)>
+    ),
+    pub block: Vec<Block>,
+    pub receipts: Vec<(H256, Vec<Receipt>)>,
+}
+
+impl QueryPlanVec {
+    pub async fn apply_to_store(self, store: Store) -> Result<(), StoreError> {
+        store.store_changes(self).await?;
+        Ok(())
+    }
+}

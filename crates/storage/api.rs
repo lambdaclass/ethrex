@@ -6,7 +6,11 @@ use ethrex_common::types::{
 };
 use std::{collections::HashMap, fmt::Debug, panic::RefUnwindSafe};
 
-use crate::{error::StoreError, query_plan::QueryPlan, store::STATE_TRIE_SEGMENTS};
+use crate::{
+    error::StoreError,
+    query_plan::{QueryPlan, QueryPlanVec},
+    store::STATE_TRIE_SEGMENTS,
+};
 use ethrex_trie::{Nibbles, Trie};
 
 // We need async_trait because the stabilized feature lacks support for object safety
@@ -15,6 +19,8 @@ use ethrex_trie::{Nibbles, Trie};
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Store changes in a batch
     async fn store_changes(&self, query_plan: QueryPlan) -> Result<(), StoreError>;
+    /// Store changes in a batch from a vec of blocks
+    async fn store_changes_batch(&self, query_plan: QueryPlanVec) -> Result<(), StoreError>;
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError>;
