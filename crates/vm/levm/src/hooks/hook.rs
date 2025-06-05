@@ -21,7 +21,7 @@ pub fn get_hooks(_tx: &Transaction) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
     #[cfg(not(feature = "l2"))]
     {
         use crate::hooks::default_hook::DefaultHook;
-        return vec![Rc::new(RefCell::new(DefaultHook))];
+        vec![Rc::new(RefCell::new(DefaultHook))]
     }
 
     #[cfg(feature = "l2")]
