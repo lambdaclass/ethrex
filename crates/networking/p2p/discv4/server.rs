@@ -662,7 +662,7 @@ impl Discv4Server {
             node.node_id(),
             Some(hash),
             current_unix_time(),
-        )?;
+        );
 
         Ok(())
     }

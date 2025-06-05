@@ -1,12 +1,10 @@
-use std::sync::Arc;
-
-use crate::discv4::server::DiscoveryError;
 use crate::{
     discv4::messages::FindNodeRequest,
     rlpx::{message::Message as RLPxMessage, p2p::Capability},
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, U256};
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
@@ -165,31 +163,23 @@ impl KademliaTable {
     }
 
     pub fn pong_answered(&mut self, node_id: H256, pong_at: u64) {
-        let peer = self.get_by_node_id_mut(node_id);
+        let Some(peer) = self.get_by_node_id_mut(node_id) else {
+            return;
+        };
 
-       let Some(peer) = self.get_by_node_id_mut(node_id) else {
-           return;
-       };
-      
-       peer.is_proven = true;
-       peer.last_pong = pong_at;
-       peer.last_ping_hash = None;
-       peer.revalidation = peer.revalidation.and(Some(true));
-    pub fn update_peer_ping(
-        &mut self,
-        node_id: H256,
-        ping_hash: Option<H256>,
-        ping_at: u64,
-    ) -> Result<(), DiscoveryError> {
-        let peer = self.get_by_node_id_mut(node_id);
+        peer.is_proven = true;
+        peer.last_pong = pong_at;
+        peer.last_ping_hash = None;
+        peer.revalidation = peer.revalidation.and(Some(true));
+    }
 
-        if let Some(peer) = peer {
-            peer.last_ping_hash = ping_hash;
-            peer.last_ping = ping_at;
-        } else {
-            return Err(DiscoveryError::MessageExpired);
-        }
-        Ok(())
+    pub fn update_peer_ping(&mut self, node_id: H256, ping_hash: Option<H256>, ping_at: u64) {
+        let Some(peer) = self.get_by_node_id_mut(node_id) else {
+            return;
+        };
+
+        peer.last_ping_hash = ping_hash;
+        peer.last_ping = ping_at;
     }
 
     /// ## Returns
