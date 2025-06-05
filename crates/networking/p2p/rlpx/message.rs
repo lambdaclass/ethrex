@@ -30,15 +30,18 @@ pub trait RLPxMessage: Sized {
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError>;
 }
+
 #[derive(Debug)]
 pub(crate) enum Message {
+    // p2p capability
+    // https://github.com/ethereum/devp2p/blob/master/rlpx.md
     Hello(HelloMessage),
     Disconnect(DisconnectMessage),
     Ping(PingMessage),
     Pong(PongMessage),
-    Status(StatusMessage),
     // eth capability
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md
+    Status(StatusMessage),
     GetBlockHeaders(GetBlockHeaders),
     BlockHeaders(BlockHeaders),
     Transactions(Transactions),
@@ -65,6 +68,7 @@ pub(crate) enum Message {
 impl Message {
     fn protocol(&self) -> MessageProtocol {
         match self {
+            // p2p capability
             Message::Hello(_) => MessageProtocol::P2P,
             Message::Disconnect(_) => MessageProtocol::P2P,
             Message::Ping(_) => MessageProtocol::P2P,
@@ -83,6 +87,7 @@ impl Message {
             Message::GetReceipts(_) => MessageProtocol::ETH,
             Message::Receipts(_) => MessageProtocol::ETH,
             Message::BlockRangeUpdate(_) => MessageProtocol::ETH,
+
             // snap capability
             Message::GetAccountRange(_) => MessageProtocol::SNAP,
             Message::AccountRange(_) => MessageProtocol::SNAP,
@@ -97,6 +102,7 @@ impl Message {
 
     pub fn code(&self) -> u8 {
         match self {
+            // p2p capability
             Message::Hello(_) => HelloMessage::CODE,
             Message::Disconnect(_) => DisconnectMessage::CODE,
             Message::Ping(_) => PingMessage::CODE,
@@ -115,6 +121,7 @@ impl Message {
             Message::GetReceipts(_) => GetReceipts::CODE,
             Message::Receipts(_) => Receipts::CODE,
             Message::BlockRangeUpdate(_) => BlockRangeUpdate::CODE,
+
             // snap capability
             Message::GetAccountRange(_) => GetAccountRange::CODE,
             Message::AccountRange(_) => AccountRange::CODE,
@@ -160,7 +167,7 @@ impl Message {
                 }
             }
         }
-        Err(RLPEncodeError::Custom("TODO".into()))
+        Err(RLPEncodeError::IncompatibleProtocol)
     }
 
     pub fn decode(
@@ -171,7 +178,7 @@ impl Message {
         snap_capability: &Option<Capability>,
     ) -> Result<Message, RLPDecodeError> {
         let Some(p2p_capability) = p2p_capability else {
-            return Err(RLPDecodeError::MalformedData);
+            return Err(RLPDecodeError::IncompatibleProtocol);
         };
 
         // P2P protocol
@@ -196,7 +203,7 @@ impl Message {
                     StatusMessage::CODE => match eth_capability.version {
                         68 => Ok(Message::Status(StatusMessage::decode68(data)?)),
                         69 => Ok(Message::Status(StatusMessage::decode(data)?)),
-                        _ => Err(RLPDecodeError::MalformedData),
+                        _ => Err(RLPDecodeError::IncompatibleProtocol),
                     },
                     Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
                     GetBlockHeaders::CODE => {
@@ -220,7 +227,7 @@ impl Message {
                     Receipts::CODE => match eth_capability.version {
                         68 => Ok(Message::Receipts(Receipts::decode68(data)?)),
                         69 => Ok(Message::Receipts(Receipts::decode(data)?)),
-                        _ => Err(RLPDecodeError::MalformedData),
+                        _ => Err(RLPDecodeError::IncompatibleProtocol),
                     },
 
                     BlockRangeUpdate::CODE => {
@@ -281,10 +288,10 @@ impl Message {
                     match eth_capability.version {
                         68 => msg.encode68(buf),
                         69 => msg.encode(buf),
-                        _ => Err(RLPEncodeError::Custom("TODO".into())),
+                        _ => Err(RLPEncodeError::IncompatibleProtocol),
                     }
                 } else {
-                    Err(RLPEncodeError::Custom("TODO".into()))
+                    Err(RLPEncodeError::IncompatibleProtocol)
                 }
             }
             Message::Transactions(msg) => msg.encode(buf),
@@ -301,10 +308,10 @@ impl Message {
                     match eth_capability.version {
                         68 => msg.encode68(buf),
                         69 => msg.encode(buf),
-                        _ => Err(RLPEncodeError::Custom("TODO".into())),
+                        _ => Err(RLPEncodeError::IncompatibleProtocol),
                     }
                 } else {
-                    Err(RLPEncodeError::Custom("TODO".into()))
+                    Err(RLPEncodeError::IncompatibleProtocol)
                 }
             }
             Message::BlockRangeUpdate(msg) => msg.encode(buf),

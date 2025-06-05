@@ -29,7 +29,7 @@ impl RLPxMessage for StatusMessage {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let (Some(earliest_block), Some(latest_block)) = (self.earliest_block, self.latest_block)
         else {
-            return Err(RLPEncodeError::Custom("TODO".into()));
+            return Err(RLPEncodeError::MalformedData);
         };
 
         let mut encoded_data = vec![];
