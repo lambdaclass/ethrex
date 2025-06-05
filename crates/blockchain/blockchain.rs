@@ -420,7 +420,7 @@ impl Blockchain {
                     ))
                 }
             };
-
+            info!("Processed block {} out of {}", i, blocks.len());
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
