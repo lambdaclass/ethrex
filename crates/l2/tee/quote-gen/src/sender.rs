@@ -8,7 +8,6 @@ use ethrex_l2::{
     sequencer::proof_coordinator::ProofData,
     utils::prover::proving_systems::{ProofCalldata, ProverType},
 };
-use ethrex_vm::to_exec_db_from_witness;
 
 use ethrex_common::Bytes;
 
@@ -24,19 +23,15 @@ pub async fn get_batch() -> Result<(u64, ProgramInput), String> {
             batch_number,
             input,
         } => match (batch_number, input) {
-            (Some(batch_number), Some(input)) => {
-                let db = to_exec_db_from_witness(input.chain_config, &input.db)
-                    .map_err(|e| e.to_string())?;
-                Ok((
-                    batch_number,
-                    ProgramInput {
-                        blocks: input.blocks,
-                        parent_block_header: input.parent_block_header,
-                        db,
-                        elasticity_multiplier: input.elasticity_multiplier,
-                    },
-                ))
-            }
+            (Some(batch_number), Some(input)) => Ok((
+                batch_number,
+                ProgramInput {
+                    blocks: input.blocks,
+                    parent_block_header: input.parent_block_header,
+                    db: input.db,
+                    elasticity_multiplier: input.elasticity_multiplier,
+                },
+            )),
             _ => Err("No blocks to prove.".to_owned()),
         },
         _ => Err("Expecting ProofData::Response".to_owned()),
