@@ -43,9 +43,7 @@ impl Hook for DefaultHook {
             .env
             .gas_price
             .checked_mul(vm.env.gas_limit.into())
-            .ok_or(VMError::TxValidation(
-                TxValidationError::GasLimitPriceProductOverflow,
-            ))?;
+            .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
         validate_sender_balance(vm, sender_balance)?;
 
@@ -70,14 +68,15 @@ impl Hook for DefaultHook {
 
         // (7) NONCE_IS_MAX
         vm.increment_account_nonce(sender_address)
-            .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
+            .map_err(|_| TxValidationError::NonceIsMax)?;
 
         // check for nonce mismatch
         if sender_nonce != vm.env.tx_nonce {
-            return Err(VMError::TxValidation(TxValidationError::NonceMismatch {
+            return Err(TxValidationError::NonceMismatch {
                 expected: sender_nonce,
                 actual: vm.env.tx_nonce,
-            }));
+            }
+            .into());
         }
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
@@ -86,9 +85,7 @@ impl Hook for DefaultHook {
             vm.env.tx_max_fee_per_gas,
         ) {
             if tx_max_priority_fee > tx_max_fee_per_gas {
-                return Err(VMError::TxValidation(
-                    TxValidationError::PriorityGreaterThanMaxFeePerGas,
-                ));
+                return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas.into());
             }
         }
 
@@ -254,7 +251,7 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
 
     let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
     if vm.current_call_frame()?.gas_limit < min_gas_limit {
-        return Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow));
+        return Err(TxValidationError::IntrinsicGasTooLow.into());
     }
 
     Ok(())
@@ -267,9 +264,7 @@ pub fn validate_max_fee_per_blob_gas(
     if tx_max_fee_per_blob_gas
         < get_base_fee_per_blob_gas(vm.env.block_excess_blob_gas, &vm.env.config)?
     {
-        return Err(VMError::TxValidation(
-            TxValidationError::InsufficientMaxFeePerBlobGas,
-        ));
+        return Err(TxValidationError::InsufficientMaxFeePerBlobGas.into());
     }
     Ok(())
 }
@@ -279,18 +274,14 @@ pub fn validate_init_code_size(vm: &mut VM<'_>) -> Result<(), VMError> {
     if vm.current_call_frame()?.calldata.len() > INIT_CODE_MAX_SIZE
         && vm.env.config.fork >= Fork::Shanghai
     {
-        return Err(VMError::TxValidation(
-            TxValidationError::InitcodeSizeExceeded,
-        ));
+        return Err(TxValidationError::InitcodeSizeExceeded.into());
     }
     Ok(())
 }
 
-pub fn validate_sufficient_max_fee_per_gas(vm: &mut VM<'_>) -> Result<(), VMError> {
+pub fn validate_sufficient_max_fee_per_gas(vm: &mut VM<'_>) -> Result<(), TxValidationError> {
     if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < vm.env.base_fee_per_gas {
-        return Err(VMError::TxValidation(
-            TxValidationError::InsufficientMaxFeePerGas,
-        ));
+        return Err(TxValidationError::InsufficientMaxFeePerGas);
     }
     Ok(())
 }
@@ -298,14 +289,14 @@ pub fn validate_sufficient_max_fee_per_gas(vm: &mut VM<'_>) -> Result<(), VMErro
 pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     // (11) TYPE_3_TX_PRE_FORK
     if vm.env.config.fork < Fork::Cancun {
-        return Err(VMError::TxValidation(TxValidationError::Type3TxPreFork));
+        return Err(TxValidationError::Type3TxPreFork.into());
     }
 
     let blob_hashes = &vm.env.tx_blob_hashes;
 
     // (12) TYPE_3_TX_ZERO_BLOBS
     if blob_hashes.is_empty() {
-        return Err(VMError::TxValidation(TxValidationError::Type3TxZeroBlobs));
+        return Err(TxValidationError::Type3TxZeroBlobs.into());
     }
 
     // (13) TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH
@@ -313,9 +304,7 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
         let blob_hash = blob_hash.as_bytes();
         if let Some(first_byte) = blob_hash.first() {
             if !VALID_BLOB_PREFIXES.contains(first_byte) {
-                return Err(VMError::TxValidation(
-                    TxValidationError::Type3TxInvalidBlobVersionedHash,
-                ));
+                return Err(TxValidationError::Type3TxInvalidBlobVersionedHash.into());
             }
         }
     }
@@ -329,9 +318,7 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?
     {
-        return Err(VMError::TxValidation(
-            TxValidationError::Type3TxBlobCountExceeded,
-        ));
+        return Err(TxValidationError::Type3TxBlobCountExceeded.into());
     }
 
     // (15) TYPE_3_TX_CONTRACT_CREATION
@@ -342,9 +329,7 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     // For more information, please check the following thread:
     // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
     if vm.is_create() {
-        return Err(VMError::TxValidation(
-            TxValidationError::Type3TxContractCreation,
-        ));
+        return Err(TxValidationError::Type3TxContractCreation.into());
     }
 
     Ok(())
@@ -358,7 +343,7 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
 
     // (16) TYPE_4_TX_PRE_FORK
     if vm.env.config.fork < Fork::Prague {
-        return Err(VMError::TxValidation(TxValidationError::Type4TxPreFork));
+        return Err(TxValidationError::Type4TxPreFork.into());
     }
 
     // (17) TYPE_4_TX_CONTRACT_CREATION
@@ -370,17 +355,13 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     // For more information, please check the following thread:
     // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
     if vm.is_create() {
-        return Err(VMError::TxValidation(
-            TxValidationError::Type4TxContractCreation,
-        ));
+        return Err(TxValidationError::Type4TxContractCreation.into());
     }
 
     // (18) TYPE_4_TX_LIST_EMPTY
     // From the EIP docs: The transaction is considered invalid if the length of authorization_list is zero.
     if auth_list.is_empty() {
-        return Err(VMError::TxValidation(
-            TxValidationError::Type4TxAuthorizationListIsEmpty,
-        ));
+        return Err(TxValidationError::Type4TxAuthorizationListIsEmpty.into());
     }
 
     vm.eip7702_set_access_code()
@@ -388,16 +369,14 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
 
 pub fn validate_sender(sender_account: &Account) -> Result<(), VMError> {
     if sender_account.has_code() && !has_delegation(sender_account)? {
-        return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
+        return Err(TxValidationError::SenderNotEOA.into());
     }
     Ok(())
 }
 
-pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), VMError> {
+pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> {
     if vm.env.gas_limit > vm.env.block_gas_limit {
-        return Err(VMError::TxValidation(
-            TxValidationError::GasAllowanceExceeded,
-        ));
+        return Err(TxValidationError::GasAllowanceExceeded);
     }
     Ok(())
 }
@@ -418,24 +397,16 @@ pub fn validate_sender_balance(vm: &mut VM<'_>, sender_balance: U256) -> Result<
         .tx_max_fee_per_gas
         .unwrap_or(vm.env.gas_price)
         .checked_mul(vm.env.gas_limit.into())
-        .ok_or(VMError::TxValidation(
-            TxValidationError::GasLimitPriceProductOverflow,
-        ))?;
+        .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
     let balance_for_valid_tx = gas_fee_for_valid_tx
         .checked_add(value)
-        .ok_or(VMError::TxValidation(
-            TxValidationError::InsufficientAccountFunds,
-        ))?
+        .ok_or(TxValidationError::InsufficientAccountFunds)?
         .checked_add(max_blob_gas_cost)
-        .ok_or(VMError::TxValidation(
-            TxValidationError::InsufficientAccountFunds,
-        ))?;
+        .ok_or(TxValidationError::InsufficientAccountFunds)?;
 
     if sender_balance < balance_for_valid_tx {
-        return Err(VMError::TxValidation(
-            TxValidationError::InsufficientAccountFunds,
-        ));
+        return Err(TxValidationError::InsufficientAccountFunds.into());
     }
 
     Ok(())
@@ -458,13 +429,9 @@ pub fn deduct_caller(
     // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
     let up_front_cost = gas_limit_price_product
         .checked_add(value)
-        .ok_or(VMError::TxValidation(
-            TxValidationError::InsufficientAccountFunds,
-        ))?
+        .ok_or(TxValidationError::InsufficientAccountFunds)?
         .checked_add(blob_gas_cost)
-        .ok_or(VMError::TxValidation(
-            TxValidationError::InsufficientAccountFunds,
-        ))?;
+        .ok_or(TxValidationError::InsufficientAccountFunds)?;
     // There is no error specified for overflow in up_front_cost
     // in ef_tests. We went for "InsufficientAccountFunds" simply
     // because if the upfront cost is bigger than U256, then,

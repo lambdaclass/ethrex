@@ -36,9 +36,7 @@ impl Hook for L2Hook {
                 .env
                 .gas_price
                 .checked_mul(vm.env.gas_limit.into())
-                .ok_or(VMError::TxValidation(
-                    TxValidationError::GasLimitPriceProductOverflow,
-                ))?;
+                .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
             default_hook::validate_sender_balance(vm, sender_balance)?;
 
@@ -47,14 +45,15 @@ impl Hook for L2Hook {
 
             // (7) NONCE_IS_MAX
             vm.increment_account_nonce(sender_address)
-                .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
+                .map_err(|_| TxValidationError::NonceIsMax)?;
 
             // check for nonce mismatch
             if sender_nonce != vm.env.tx_nonce {
-                return Err(VMError::TxValidation(TxValidationError::NonceMismatch {
+                return Err(TxValidationError::NonceMismatch {
                     expected: sender_nonce,
                     actual: vm.env.tx_nonce,
-                }));
+                }
+                .into());
             }
 
             // (9) SENDER_NOT_EOA
@@ -83,9 +82,7 @@ impl Hook for L2Hook {
             vm.env.tx_max_fee_per_gas,
         ) {
             if tx_max_priority_fee > tx_max_fee_per_gas {
-                return Err(VMError::TxValidation(
-                    TxValidationError::PriorityGreaterThanMaxFeePerGas,
-                ));
+                return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas.into());
             }
         }
 
