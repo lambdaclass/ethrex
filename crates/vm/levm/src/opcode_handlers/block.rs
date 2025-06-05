@@ -157,9 +157,7 @@ impl<'a> VM<'a> {
             .map_err(|_| InternalError::TypeConversion)?;
 
         //This should never fail because we check if the index fits above
-        let blob_hash = blob_hashes
-            .get(index)
-            .ok_or(InternalError::BlobHashOutOfRange)?;
+        let blob_hash = blob_hashes.get(index).ok_or(InternalError::SlicingError)?;
         let hash = U256::from_big_endian(blob_hash.as_bytes());
 
         self.current_call_frame_mut()?.stack.push(hash)?;

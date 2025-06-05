@@ -61,7 +61,7 @@ pub fn address_to_word(address: Address) -> U256 {
 pub fn calculate_create_address(
     sender_address: Address,
     sender_nonce: u64,
-) -> Result<Address, VMError> {
+) -> Result<Address, InternalError> {
     let mut encoded = Vec::new();
     (sender_address, sender_nonce).encode(&mut encoded);
     let mut hasher = Keccak256::new();
@@ -70,7 +70,7 @@ pub fn calculate_create_address(
         hasher
             .finalize()
             .get(12..)
-            .ok_or(InternalError::CouldNotComputeCreateAddress)?,
+            .ok_or(InternalError::SlicingError)?,
     ))
 }
 
@@ -83,7 +83,7 @@ pub fn calculate_create2_address(
     sender_address: Address,
     initialization_code: &Bytes,
     salt: U256,
-) -> Result<Address, VMError> {
+) -> Result<Address, InternalError> {
     let init_code_hash = keccak(initialization_code);
 
     let generated_address = Address::from_slice(
@@ -98,7 +98,7 @@ pub fn calculate_create2_address(
         )
         .as_bytes()
         .get(12..)
-        .ok_or(InternalError::CouldNotComputeCreate2Address)?,
+        .ok_or(InternalError::SlicingError)?,
     );
     Ok(generated_address)
 }
@@ -193,7 +193,7 @@ pub fn get_max_blob_gas_price(
     let max_blob_gas_cost = tx_max_fee_per_blob_gas
         .unwrap_or_default()
         .checked_mul(blob_gas_used.into())
-        .ok_or(InternalError::UndefinedState(1))?;
+        .ok_or(InternalError::Overflow)?;
 
     Ok(max_blob_gas_cost)
 }
@@ -619,7 +619,7 @@ impl<'a> VM<'a> {
             spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
             spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
             spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
-            _ => return Err(InternalError::InvalidSpecId.into()),
+            _ => return Err(InternalError::InvalidFork.into()),
         };
         for i in 1..=max_precompile_address {
             initial_touched_accounts.insert(Address::from_low_u64_be(i));
@@ -678,8 +678,7 @@ impl<'a> VM<'a> {
             TxKind::Create => {
                 let sender_nonce = self.db.get_account(self.env.origin)?.info.nonce;
 
-                let created_address = calculate_create_address(self.env.origin, sender_nonce)
-                    .map_err(|_| InternalError::CouldNotComputeCreateAddress)?;
+                let created_address = calculate_create_address(self.env.origin, sender_nonce)?;
 
                 self.substate.touched_accounts.insert(created_address);
                 self.substate.created_accounts.insert(created_address);

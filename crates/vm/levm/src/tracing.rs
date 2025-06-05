@@ -83,7 +83,7 @@ impl LevmCallTracer {
         error: Option<String>,
         revert_reason: Option<String>,
     ) -> Result<(), InternalError> {
-        let mut callframe = self.callframes.pop().ok_or(InternalError::Callframe)?;
+        let mut callframe = self.callframes.pop().ok_or(InternalError::CallFrame)?;
 
         process_output(&mut callframe, gas_used, output, error, revert_reason);
 
@@ -165,7 +165,7 @@ impl LevmCallTracer {
     }
 
     fn current_callframe_mut(&mut self) -> Result<&mut CallTraceFrame, InternalError> {
-        self.callframes.last_mut().ok_or(InternalError::Callframe)
+        self.callframes.last_mut().ok_or(InternalError::CallFrame)
     }
 }
 
@@ -198,6 +198,6 @@ impl<'a> VM<'a> {
         self.tracer
             .callframes
             .pop()
-            .ok_or(InternalError::Callframe.into())
+            .ok_or(InternalError::CallFrame.into())
     }
 }

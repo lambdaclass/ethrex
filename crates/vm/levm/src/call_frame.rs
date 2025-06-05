@@ -193,15 +193,15 @@ impl CallFrame {
 
 impl<'a> VM<'a> {
     pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, InternalError> {
-        self.call_frames.last_mut().ok_or(InternalError::Callframe)
+        self.call_frames.last_mut().ok_or(InternalError::CallFrame)
     }
 
     pub fn current_call_frame(&self) -> Result<&CallFrame, InternalError> {
-        self.call_frames.last().ok_or(InternalError::Callframe)
+        self.call_frames.last().ok_or(InternalError::CallFrame)
     }
 
     pub fn pop_call_frame(&mut self) -> Result<CallFrame, InternalError> {
-        self.call_frames.pop().ok_or(InternalError::Callframe)
+        self.call_frames.pop().ok_or(InternalError::CallFrame)
     }
 
     pub fn is_initial_call_frame(&self) -> bool {

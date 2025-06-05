@@ -40,8 +40,7 @@ impl GeneralizedDatabase {
             let account = self.get_account_from_database(address)?;
             cache::insert_account(&mut self.cache, address, account);
         }
-        cache::get_account(&self.cache, &address)
-            .ok_or(InternalError::AccountShouldHaveBeenCached.into())
+        cache::get_account(&self.cache, &address).ok_or(InternalError::AccountNotFound.into())
     }
 
     /// **Accesses to an account's information.**
@@ -239,7 +238,7 @@ impl<'a> VM<'a> {
             }
         } else {
             // When requesting storage of an account we should've previously requested and cached the account
-            return Err(InternalError::AccountShouldHaveBeenCached.into());
+            return Err(InternalError::AccountNotFound.into());
         }
 
         let value = self.db.get_value_from_database(address, key)?;

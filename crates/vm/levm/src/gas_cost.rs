@@ -925,11 +925,11 @@ pub fn max_message_call_gas(current_call_frame: &CallFrame) -> Result<u64, VMErr
     let mut remaining_gas = current_call_frame
         .gas_limit
         .checked_sub(current_call_frame.gas_used)
-        .ok_or(InternalError::GasOverflow)?;
+        .ok_or(InternalError::Underflow)?;
 
     remaining_gas = remaining_gas
         .checked_sub(remaining_gas / 64)
-        .ok_or(InternalError::GasOverflow)?;
+        .ok_or(InternalError::Underflow)?;
 
     Ok(remaining_gas)
 }

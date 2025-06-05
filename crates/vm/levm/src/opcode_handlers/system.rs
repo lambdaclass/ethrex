@@ -81,9 +81,9 @@ impl<'a> VM<'a> {
             .current_call_frame()?
             .gas_limit
             .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::GasOverflow)?
+            .ok_or(InternalError::Underflow)?
             .checked_sub(eip7702_gas_consumed)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
 
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
@@ -182,9 +182,9 @@ impl<'a> VM<'a> {
             .current_call_frame()?
             .gas_limit
             .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::GasOverflow)?
+            .ok_or(InternalError::Underflow)?
             .checked_sub(eip7702_gas_consumed)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
 
         let (cost, gas_limit) = gas_cost::callcode(
             new_memory_size,
@@ -307,9 +307,9 @@ impl<'a> VM<'a> {
             .current_call_frame()?
             .gas_limit
             .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::GasOverflow)?
+            .ok_or(InternalError::Underflow)?
             .checked_sub(eip7702_gas_consumed)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
 
         let (cost, gas_limit) = gas_cost::delegatecall(
             new_memory_size,
@@ -404,9 +404,9 @@ impl<'a> VM<'a> {
             .current_call_frame()?
             .gas_limit
             .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::GasOverflow)?
+            .ok_or(InternalError::Underflow)?
             .checked_sub(eip7702_gas_consumed)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
 
         let (cost, gas_limit) = gas_cost::staticcall(
             new_memory_size,
@@ -805,7 +805,7 @@ impl<'a> VM<'a> {
         let backup = self
             .substate_backups
             .pop()
-            .ok_or(InternalError::Callframe)?;
+            .ok_or(InternalError::CallFrame)?;
         if !tx_report.is_success() {
             self.substate = backup;
             self.restore_cache_state()?;
@@ -848,11 +848,11 @@ impl<'a> VM<'a> {
         // Return gas left from subcontext
         let child_unused_gas = gas_limit
             .checked_sub(tx_report.gas_used)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
         parent_call_frame.gas_used = parent_call_frame
             .gas_used
             .checked_sub(child_unused_gas)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
 
         // Append logs
         parent_call_frame.logs.extend(tx_report.logs.clone());
@@ -897,11 +897,11 @@ impl<'a> VM<'a> {
         // Return unused gas
         let unused_gas = gas_limit
             .checked_sub(tx_report.gas_used)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
         parent_call_frame.gas_used = parent_call_frame
             .gas_used
             .checked_sub(unused_gas)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
 
         // Append logs
         parent_call_frame.logs.extend(tx_report.logs.clone());
@@ -939,7 +939,7 @@ impl<'a> VM<'a> {
         callframe.gas_used = callframe
             .gas_used
             .checked_sub(gas_limit)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
         callframe.stack.push(FAIL)?; // It's the same as revert for CREATE
 
         self.tracer.exit_early(0, Some(reason))?;

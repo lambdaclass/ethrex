@@ -166,8 +166,6 @@ pub enum TxValidationError {
     Type4TxContractCreation,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
-    #[error("Gas limit is too low")]
-    GasLimitTooLow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error, Serialize, Deserialize)]
@@ -192,35 +190,22 @@ pub enum InternalError {
     Overflow,
     #[error("Arithmetic operation underflowed")]
     Underflow,
-    #[error("Account should have been cached")]
-    AccountShouldHaveBeenCached,
     #[error("Tried to convert one type to another")]
     TypeConversion,
-    #[error("Tried to access last call frame but found none")]
-    Callframe, // Last callframe before execution is the same as the first, but after execution the last callframe is actually the initial CF
-    #[error("Tried to access blobhash but was out of range")]
-    BlobHashOutOfRange,
-    #[error("Failed computing CREATE address")]
-    CouldNotComputeCreateAddress,
-    #[error("Failed computing CREATE2 address")]
-    CouldNotComputeCreate2Address,
+    #[error("CallFrame not found")]
+    CallFrame,
     #[error("Tried to slice non-existing data")]
     SlicingError,
-    #[error("Account not found")]
+    #[error("Account not found when it should've been in the cache.")]
     AccountNotFound,
-    #[error("Unexpected overflow in gas operation")]
-    GasOverflow,
-    #[error("Undefined state: {0}")]
-    UndefinedState(i32), // This error is temporarily for things that cause an undefined state.
     #[error("Invalid precompile address. Tried to execute a precompile that does not exist.")]
     InvalidPrecompileAddress,
-    #[error("Spec Id doesn't match to any fork")]
-    InvalidSpecId,
+    #[error("Invalid Fork")]
+    InvalidFork,
     #[error("Account should had been delegated")]
     AccountNotDelegated,
-    #[error("No recipient found for privilege transaction")]
-    RecipientNotFoundForPrivilegeTransaction,
-    //TODO: Refactor all errors. https://github.com/lambdaclass/ethrex/issues/2886
+    #[error("No recipient found for privileged transaction")]
+    RecipientNotFoundForPrivilegedTransaction,
     #[error("Custom error: {0}")]
     Custom(String),
 }

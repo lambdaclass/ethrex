@@ -14,7 +14,7 @@ impl Hook for L2Hook {
     fn prepare_execution(&self, vm: &mut crate::vm::VM<'_>) -> Result<(), crate::errors::VMError> {
         if vm.env.is_privileged {
             let Some(recipient) = self.recipient else {
-                return Err(InternalError::RecipientNotFoundForPrivilegeTransaction.into());
+                return Err(InternalError::RecipientNotFoundForPrivilegedTransaction.into());
             };
             vm.increase_account_balance(recipient, vm.current_call_frame()?.msg_value)?;
             vm.current_call_frame_mut()?.msg_value = U256::from(0);

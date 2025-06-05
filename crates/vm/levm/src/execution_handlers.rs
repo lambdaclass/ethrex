@@ -192,7 +192,7 @@ impl<'a> VM<'a> {
                     let gas_refunded = self
                         .substate_backups
                         .last()
-                        .ok_or(InternalError::Callframe)?
+                        .ok_or(InternalError::CallFrame)?
                         .refunded_gas;
 
                     return Ok(ExecutionReport {
@@ -233,7 +233,7 @@ impl<'a> VM<'a> {
         let gas_refunded = self
             .substate_backups
             .last()
-            .ok_or(InternalError::Callframe)?
+            .ok_or(InternalError::CallFrame)?
             .refunded_gas;
         let output = std::mem::take(&mut self.current_call_frame_mut()?.output); // Bytes::new() if error is not RevertOpcode
         let gas_used = self.current_call_frame()?.gas_used;
