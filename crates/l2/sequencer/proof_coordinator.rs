@@ -256,7 +256,7 @@ impl GenServer for ProofCoordinator {
                 let sequencer_state = state.sequencer_state.lock().await.clone();
                 match sequencer_state {
                     SequencerState::Sequencing => handle_listens(state, listener).await,
-                    SequencerState::Following => {}
+                    SequencerState::Following => handle_listens(state, listener).await,
                 }
             }
         }
