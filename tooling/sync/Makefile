@@ -119,6 +119,9 @@ hoodi-lighthouse: ## Start lighthouse for hoodi.
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
+		--metrics \
+  		--metrics-address 0.0.0.0 \
+  		--metrics-port 5054 \
 		--datadir $(DATA_PATH)/hoodi_data/lighthouse_${NODE_NAME}_$(EVM) \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
@@ -141,8 +144,11 @@ endif
 start_ethrex_hoodi: ## Start ethrex for hoodi
 	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
     		--http.port 8545 \
+    		--http.addr 0.0.0.0 \
     		--authrpc.port 8551 \
     		--p2p.port 30303\
+			--metrics \
+  			--metrics.port 3701 \
     		--discovery.port 30303 \
     		--network hoodi \
     		--datadir "hoodi_data/ethrex/$(EVM)" \
