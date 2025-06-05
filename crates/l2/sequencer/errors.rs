@@ -1,4 +1,5 @@
-use crate::based::error::{BlockFetcherError, StateUpdaterError};
+use crate::based::block_fetcher::BlockFetcherError;
+use crate::based::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use crate::utils::prover::errors::SaveStateError;
 use crate::utils::prover::proving_systems::ProverType;

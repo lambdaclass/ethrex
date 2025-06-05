@@ -91,10 +91,10 @@ impl BlockProducer {
         execution_cache: Arc<ExecutionCache>,
         sequencer_state: Arc<Mutex<SequencerState>>,
     ) -> Result<(), BlockProducerError> {
-        match *sequencer_state.lock().await {
-            SequencerState::Sequencing => self.produce(store, blockchain, execution_cache).await,
-            SequencerState::Following => Ok(()),
+        if let SequencerState::Following = *sequencer_state.lock().await {
+            return Ok(());
         }
+        self.produce(store, blockchain, execution_cache).await
     }
 
     pub async fn produce(

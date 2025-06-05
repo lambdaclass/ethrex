@@ -17,7 +17,7 @@ use tokio::{sync::Mutex, time::sleep};
 use tracing::{debug, error, info};
 
 use crate::{
-    based::{error::BlockFetcherError, sequencer_state::SequencerState},
+    based::sequencer_state::SequencerState,
     sequencer::{
         errors::SequencerError,
         l1_committer::{generate_blobs_bundle, prepare_state_diff},
@@ -25,6 +25,32 @@ use crate::{
     utils::helpers::is_withdrawal_l2,
     SequencerConfig,
 };
+
+#[derive(Debug, thiserror::Error)]
+pub enum BlockFetcherError {
+    #[error("Block Fetcher failed due to an EthClient error: {0}")]
+    EthClientError(#[from] ethrex_rpc::clients::EthClientError),
+    #[error("Block Fetcher failed due to a Store error: {0}")]
+    StoreError(#[from] ethrex_storage::error::StoreError),
+    #[error("Internal Error: {0}")]
+    InternalError(String),
+    #[error("Failed to store fetched block: {0}")]
+    ChainError(#[from] ethrex_blockchain::error::ChainError),
+    #[error("Failed to apply fork choice for fetched block: {0}")]
+    InvalidForkChoice(#[from] ethrex_blockchain::error::InvalidForkChoice),
+    #[error("Failed to push fetched block to execution cache: {0}")]
+    ExecutionCacheError(#[from] crate::sequencer::errors::ExecutionCacheError),
+    #[error("Failed to RLP decode fetched block: {0}")]
+    RLPDecodeError(#[from] ethrex_rlp::error::RLPDecodeError),
+    #[error("Block Fetcher failed in a helper function: {0}")]
+    UtilsError(#[from] crate::utils::error::UtilsError),
+    #[error("Missing bytes from calldata: {0}")]
+    WrongBatchCalldata(String),
+    #[error("Failed due to an EVM error: {0}")]
+    EvmError(#[from] ethrex_vm::EvmError),
+    #[error("Failed to produce the blob bundle")]
+    BlobBundleError,
+}
 
 pub struct BlockFetcher {
     eth_client: EthClient,
@@ -85,19 +111,19 @@ impl BlockFetcher {
 
     pub async fn run(&mut self) {
         loop {
-            if let Err(err) = self.main_logic().await {
+            let _ = self.main_logic().await.inspect_err(|err| {
                 error!("Block Fetcher Error: {err}");
-            }
+            });
 
             sleep(Duration::from_millis(self.fetch_interval_ms)).await;
         }
     }
 
     pub async fn main_logic(&mut self) -> Result<(), BlockFetcherError> {
-        match *self.sequencer_state.clone().lock().await {
-            SequencerState::Sequencing => Ok(()),
-            SequencerState::Following => self.fetch().await,
+        if let SequencerState::Sequencing = *self.sequencer_state.clone().lock().await {
+            return Ok(());
         }
+        self.fetch().await
     }
 
     async fn fetch(&mut self) -> Result<(), BlockFetcherError> {

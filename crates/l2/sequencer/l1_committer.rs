@@ -164,18 +164,13 @@ impl GenServer for L1Committer {
         state: &mut Self::State,
     ) -> CastResponse {
         // Right now we only have the Commit message, so we ignore the message
+        if let SequencerState::Sequencing = *state.sequencer_state.clone().lock().await {
+            let _ = commit_next_batch_to_l1(state)
+                .await
+                .inspect_err(|err| error!("L1 Committer Error: {err}"));
+        }
         let check_interval = random_duration(state.commit_time_ms);
         send_after(check_interval, tx.clone(), Self::InMsg::Commit);
-        let sequencer_state = state.sequencer_state.lock().await.clone();
-        match sequencer_state {
-            SequencerState::Sequencing => {
-                let _ = commit_next_batch_to_l1(state)
-                    .await
-                    .inspect_err(|err| error!("L1 Committer Error: {}", err));
-            }
-            SequencerState::Following => {}
-        }
-
         CastResponse::NoReply
     }
 }

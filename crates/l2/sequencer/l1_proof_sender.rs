@@ -163,14 +163,10 @@ impl GenServer for L1ProofSender {
         state: &mut Self::State,
     ) -> CastResponse {
         // Right now we only have the Send message, so we ignore the message
-        let sequencer_state = state.sequencer_state.lock().await.clone();
-        match sequencer_state {
-            SequencerState::Following => {}
-            SequencerState::Sequencing => {
-                let _ = verify_and_send_proof(state)
-                    .await
-                    .inspect_err(|err| error!("L1 Proof Sender: {err}"));
-            }
+        if let SequencerState::Sequencing = *state.sequencer_state.lock().await {
+            let _ = verify_and_send_proof(state)
+                .await
+                .inspect_err(|err| error!("L1 Proof Sender: {err}"));
         }
         let check_interval = random_duration(state.proof_send_interval_ms);
         send_after(check_interval, tx.clone(), Self::InMsg::Send);
