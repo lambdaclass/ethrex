@@ -69,8 +69,6 @@ pub enum ExceptionalHalt {
     OutOfGas,
     #[error("Precompile execution error: {0}")]
     Precompile(#[from] PrecompileError),
-    #[error("Other, see what to do")] //TODO: REmove this
-    Other,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

@@ -196,29 +196,29 @@ impl<'a> VM<'a> {
                 if original_value != U256::zero() && new_storage_slot_value == U256::zero() {
                     gas_refunds = gas_refunds
                         .checked_add(remove_slot_cost)
-                        .ok_or(ExceptionalHalt::Other)?; //TODO: Change this errors for internal maybe.
+                        .ok_or(InternalError::Overflow)?;
                 }
             } else {
                 if original_value != U256::zero() {
                     if current_value == U256::zero() {
                         gas_refunds = gas_refunds
                             .checked_sub(remove_slot_cost)
-                            .ok_or(ExceptionalHalt::Other)?;
+                            .ok_or(InternalError::Underflow)?;
                     } else if new_storage_slot_value == U256::zero() {
                         gas_refunds = gas_refunds
                             .checked_add(remove_slot_cost)
-                            .ok_or(ExceptionalHalt::Other)?;
+                            .ok_or(InternalError::Overflow)?;
                     }
                 }
                 if new_storage_slot_value == original_value {
                     if original_value == U256::zero() {
                         gas_refunds = gas_refunds
                             .checked_add(restore_empty_slot_cost)
-                            .ok_or(ExceptionalHalt::Other)?;
+                            .ok_or(InternalError::Overflow)?;
                     } else {
                         gas_refunds = gas_refunds
                             .checked_add(restore_slot_cost)
-                            .ok_or(ExceptionalHalt::Other)?;
+                            .ok_or(InternalError::Overflow)?;
                     }
                 }
             }
