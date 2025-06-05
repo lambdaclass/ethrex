@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749078128656,
+  "lastUpdate": 1749131785368,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11035,6 +11035,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 176281644184,
             "range": "± 507973789",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "pdeymon@fi.uba.ar",
+            "name": "Pablo Deymonnaz",
+            "username": "pablodeymo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5d2161b113d4510dcafd96b4423d64e530e3d30f",
+          "message": "chore(core): improve trie remove readability (#3046)\n\n**Motivation**\n\nThis PR simplifies `remove` method of trie.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-05T13:10:42Z",
+          "tree_id": "f3551e5c9c31f575aaba4d3aac1a5876ae6fb3e4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5d2161b113d4510dcafd96b4423d64e530e3d30f"
+        },
+        "date": 1749131780649,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177595891222,
+            "range": "± 408350008",
             "unit": "ns/iter"
           }
         ]
