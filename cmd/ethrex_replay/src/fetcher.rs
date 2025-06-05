@@ -4,8 +4,8 @@ use std::hash::RandomState;
 use crate::cache::{load_cache, load_cache_batch, write_cache, write_cache_batch, Cache};
 use crate::rpc::{db::RpcDB, get_block, get_latest_block_number};
 use ethrex_common::types::ChainConfig;
-use eyre::{ContextCompat, WrapErr};
 use ethrex_common::{Address, H256};
+use eyre::{ContextCompat, WrapErr};
 
 pub async fn or_latest(maybe_number: Option<usize>, rpc_url: &str) -> eyre::Result<usize> {
     Ok(match maybe_number {
@@ -120,7 +120,7 @@ pub async fn get_rangedata(
         .min()
         .wrap_err("no block hashes required (should at least contain parent hash)")?;
     // from oldest required to parent:
-    for number in *oldest_required_block_number..block.header.number {
+    for number in *oldest_required_block_number..first_block.header.number {
         let number: usize = number
             .try_into()
             .wrap_err("failed to convert block number to usize from u64")?;

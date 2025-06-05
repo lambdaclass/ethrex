@@ -510,31 +510,38 @@ async fn create_prover_input(
         )));
     };
 
+    let first_block_number_in_batch = *block_numbers
+        .first()
+        .ok_or(ProverServerError::InternalError("empty batch".to_string()))?;
+
     let blocks = fetch_blocks(state, block_numbers).await?;
 
     // Create prover_db
     let db = to_prover_db(&state.store.clone(), &blocks).await?;
 
-    // Get the block_header of the parent of the first block
-    let parent_hash = blocks
-        .first()
-        .ok_or_else(|| {
-            ProverServerError::Custom("No blocks found for the given batch number".to_string())
-        })?
-        .header
-        .parent_hash;
-
-    let parent_block_header = state
-        .store
-        .get_block_header_by_hash(parent_hash)?
-        .ok_or(ProverServerError::StorageDataIsNone)?;
+    let mut block_headers = Vec::new();
+    let oldest_required_block_number =
+        *db.block_hashes
+            .keys()
+            .min()
+            .ok_or(ProverServerError::InternalError(
+                "no block hashes required (should at least contain parent hash)".to_string(),
+            ))?;
+    // from oldest required to parent:
+    for number in oldest_required_block_number..first_block_number_in_batch {
+        let header = state
+            .store
+            .get_block_header(number)?
+            .ok_or(ProverServerError::StorageDataIsNone)?;
+        block_headers.push(header);
+    }
 
     debug!("Created prover input for batch {batch_number}");
 
     Ok(ProverInputData {
         db,
         blocks,
-        parent_block_header,
+        block_headers,
         elasticity_multiplier: state.elasticity_multiplier,
     })
 }
