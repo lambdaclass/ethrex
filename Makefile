@@ -117,19 +117,19 @@ HIVE_CLIENT_FILE_GIT := ../test_data/network/hive_clients/ethrex_git.yml
 HIVE_CLIENT_FILE_LOCAL := ../test_data/network/hive_clients/ethrex_local.yml
 
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --sim.loglevel "$(SIM_LOG_LEVEL)" 
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
 	$(MAKE) view-hive
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)" --sim.loglevel "$(SIM_LOG_LEVEL)" 
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ".*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) 
 	$(MAKE) view-hive
 
 run-hive-local: setup-hive-local
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE_LOCAL) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)"  --sim.loglevel "$(SIM_LOG_LEVEL)" --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE_LOCAL) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)"  --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM)
 	$(MAKE) view-hive
 
 run-hive-local-all: setup-hive-local
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE_LOCAL) --client ethrex --sim ".*" --sim.loglevel "$(SIM_LOG_LEVEL)" --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE_LOCAL) --client ethrex --sim ".*" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM)
 	$(MAKE) view-hive
 
 clean-hive-logs: ## 🧹 Clean Hive logs
