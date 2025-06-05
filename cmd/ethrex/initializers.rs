@@ -36,7 +36,6 @@ use crate::l2::L2Options;
 use ::{
     ethrex_common::Address,
     ethrex_storage_rollup::{EngineTypeRollup, StoreRollup},
-    secp256k1::SecretKey,
 };
 
 pub fn init_tracing(opts: &Options) {
@@ -155,7 +154,7 @@ pub async fn init_rpc_api(
         #[cfg(feature = "l2")]
         get_valid_delegation_addresses(l2_opts),
         #[cfg(feature = "l2")]
-        get_sponsor_pk(l2_opts),
+        l2_opts.sponsor_private_key,
         #[cfg(feature = "l2")]
         rollup_store,
     )
@@ -387,12 +386,4 @@ pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
         warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
     }
     addresses
-}
-
-#[cfg(feature = "l2")]
-pub fn get_sponsor_pk(opts: &L2Options) -> SecretKey {
-    if let Some(pk) = opts.sponsor_private_key {
-        return pk;
-    }
-    opts.sequencer_opts.watcher_opts.l2_proposer_private_key
 }

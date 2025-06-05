@@ -194,7 +194,12 @@ jobs:
         run: |
           cd crates/l2
           touch .env
-          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up contract_deployer
+          CI_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Run tests
         run: |

@@ -11,18 +11,23 @@ pub struct ProverCLI {
 #[derive(Parser)]
 pub struct ProverClientOptions {
     #[arg(
-        long = "prover-server-endpoint",
-        value_name = "PROVER_SERVER_ENDPOINT",
-        env = "PROVER_CLIENT_PROVER_SERVER_ENDPOINT",
-        help = "Endpoint address where the server is running",
-        help_heading = "Prover client options",
-        default_value = "localhost:3900"
+        long = "http.addr",
+        value_name = "IP_ADDRESS",
+        env = "PROVER_CLIENT_PROVER_CLIENT_ADDRESS",
+        help_heading = "Prover client options"
     )]
-    pub prover_server_endpoint: String,
+    pub http_addr: String,
+    #[arg(
+        long = "http.port",
+        value_name = "PORT",
+        env = "PROVER_CLIENT_PROVER_CLIENT_PORT",
+        help_heading = "Prover client options"
+    )]
+    pub http_port: u16,
     #[arg(
         long = "proving-time",
-        value_name = "PROVING_TIME_MS",
-        env = "PROVER_CLIENT_PROVING_TIME_MS",
+        value_name = "PROVING_TIME",
+        env = "PROVER_CLIENT_PROVING_TIME",
         help = "Time to wait before requesting new data to prove",
         help_heading = "Prover client options",
         default_value_t = 5000
@@ -34,14 +39,16 @@ pub struct ProverClientOptions {
         value_name = "LOG_LEVEL",
         help = "The verbosity level used for logs.",
         long_help = "Possible values: info, debug, trace, warn, error",
-        help_heading = "Prover client options")]
+        help_heading = "Prover client options"
+    )]
     pub log_level: Level,
 }
 
 impl From<ProverClientOptions> for ProverConfig {
     fn from(config: ProverClientOptions) -> Self {
         Self {
-            prover_server_endpoint: config.prover_server_endpoint,
+            http_addr: config.http_addr,
+            http_port: config.http_port,
             proving_time_ms: config.proving_time_ms,
         }
     }
@@ -50,7 +57,8 @@ impl From<ProverClientOptions> for ProverConfig {
 impl Default for ProverClientOptions {
     fn default() -> Self {
         Self {
-            prover_server_endpoint: "localhost:3900".to_string(),
+            http_addr: "127.0.0.1".to_string(),
+            http_port: 3900,
             proving_time_ms: 5000,
             log_level: Level::INFO,
         }
