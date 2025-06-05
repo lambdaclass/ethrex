@@ -148,7 +148,7 @@ pub fn stateless_validation_l2(
         final_state_hash,
         state_trie,
         account_updates,
-        last_block_header
+        last_block_header,
     } = execute_stateless(blocks, parent_block_header, db, elasticity_multiplier)?;
 
     let (withdrawals, deposits) = get_batch_withdrawals_and_deposits(blocks, &receipts)?;
@@ -275,7 +275,7 @@ fn execute_stateless(
         final_state_hash,
         state_trie,
         account_updates: acc_account_updates,
-        last_block_header: parent_header.clone()
+        last_block_header: parent_header.clone(),
     })
 }
 

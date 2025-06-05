@@ -14,9 +14,7 @@ use ethrex_common::{
 use ethrex_l2_common::{
     deposits::{compute_deposit_logs_hash, get_block_deposits},
     state_diff::{prepare_state_diff, StateDiff},
-    withdrawals::{
-        compute_withdrawals_merkle_root, get_block_withdrawals,
-    },
+    withdrawals::{compute_withdrawals_merkle_root, get_block_withdrawals},
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_metrics::metrics;
