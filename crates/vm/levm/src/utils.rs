@@ -68,10 +68,7 @@ pub fn calculate_create_address(
     let mut hasher = Keccak256::new();
     hasher.update(encoded);
     Ok(Address::from_slice(
-        hasher
-            .finalize()
-            .get(12..)
-            .ok_or(InternalError::SlicingError)?,
+        hasher.finalize().get(12..).ok_or(InternalError::Slicing)?,
     ))
 }
 
@@ -99,7 +96,7 @@ pub fn calculate_create2_address(
         )
         .as_bytes()
         .get(12..)
-        .ok_or(InternalError::SlicingError)?,
+        .ok_or(InternalError::Slicing)?,
     );
     Ok(generated_address)
 }
@@ -255,7 +252,7 @@ pub fn word_to_address(word: U256) -> Address {
 pub fn has_delegation(account: &Account) -> Result<bool, VMError> {
     let mut has_delegation = false;
     if account.has_code() && account.code.len() == EIP7702_DELEGATED_CODE_LEN {
-        let first_3_bytes = &account.code.get(..3).ok_or(InternalError::SlicingError)?;
+        let first_3_bytes = &account.code.get(..3).ok_or(InternalError::Slicing)?;
 
         if *first_3_bytes == SET_CODE_DELEGATION_BYTES {
             has_delegation = true;
@@ -271,7 +268,7 @@ pub fn get_authorized_address(account: &Account) -> Result<Address, VMError> {
         let address_bytes = &account
             .code
             .get(SET_CODE_DELEGATION_BYTES.len()..)
-            .ok_or(InternalError::SlicingError)?;
+            .ok_or(InternalError::Slicing)?;
         // It shouldn't panic when doing Address::from_slice()
         // because the length is checked inside the has_delegation() function
         let address = Address::from_slice(address_bytes);
@@ -332,13 +329,13 @@ pub fn eip7702_recover_address(
 
     let public_key = authority.serialize_uncompressed();
     let mut hasher = Keccak256::new();
-    hasher.update(public_key.get(1..).ok_or(InternalError::SlicingError)?);
+    hasher.update(public_key.get(1..).ok_or(InternalError::Slicing)?);
     let address_hash = hasher.finalize();
 
     // Get the last 20 bytes of the hash -> Address
     let authority_address_bytes: [u8; 20] = address_hash
         .get(12..32)
-        .ok_or(InternalError::SlicingError)?
+        .ok_or(InternalError::Slicing)?
         .try_into()
         .map_err(|_| InternalError::TypeConversion)?;
     Ok(Some(Address::from_slice(&authority_address_bytes)))

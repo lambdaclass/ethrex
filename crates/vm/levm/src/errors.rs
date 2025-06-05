@@ -123,7 +123,7 @@ pub enum InternalError {
     #[error("CallFrame not found")]
     CallFrame,
     #[error("Tried to slice non-existing data")]
-    SlicingError,
+    Slicing,
     #[error("Account not found when it should've been in the cache.")]
     AccountNotFound,
     #[error("Invalid precompile address. Tried to execute a precompile that does not exist.")]

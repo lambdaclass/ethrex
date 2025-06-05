@@ -946,12 +946,12 @@ pub fn bls12_msm(k: usize, discount_table: &[u64; 128], mul_cost: u64) -> Result
         discount_table
             .get(k.checked_sub(1).ok_or(InternalError::Underflow)?)
             .copied()
-            .ok_or(InternalError::SlicingError)?
+            .ok_or(InternalError::Slicing)?
     } else {
         discount_table
             .last()
             .copied()
-            .ok_or(InternalError::SlicingError)?
+            .ok_or(InternalError::Slicing)?
     };
 
     let gas_cost = u64::try_from(k)
