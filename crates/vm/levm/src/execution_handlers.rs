@@ -149,7 +149,7 @@ impl<'a> VM<'a> {
         if (self.is_create() && self.current_call_frame()?.depth == 0)
             || self.current_call_frame()?.create_op_called
         {
-            let contract_code = std::mem::take(&mut self.current_call_frame_mut()?.output);
+            let contract_code = self.current_call_frame_mut()?.output.clone();
             let code_length = contract_code.len();
 
             let code_length_u64: u64 = code_length
@@ -204,7 +204,7 @@ impl<'a> VM<'a> {
                         result: TxResult::Revert(error),
                         gas_used: self.current_call_frame()?.gas_used,
                         gas_refunded,
-                        output: std::mem::take(&mut self.current_call_frame_mut()?.output),
+                        output: Bytes::new(),
                         logs: vec![],
                     });
                 }

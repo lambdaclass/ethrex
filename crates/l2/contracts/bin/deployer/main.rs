@@ -366,6 +366,11 @@ async fn initialize_contracts(
 
     trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
 
+    let genesis = read_genesis_file(
+        opts.genesis_l2_path
+            .to_str()
+            .ok_or(DeployerError::FailedToGetStringFromPath)?,
+    );
     let sp1_vk_string = read_to_string(&opts.sp1_vk_path).unwrap_or_else(|_| {
         warn!(
             path = opts.sp1_vk_path,
@@ -381,7 +386,6 @@ async fn initialize_contracts(
         })?
         .into();
 
-    let genesis = read_genesis_file(&opts.genesis_l2_path);
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
     let initialize_tx_hash = {
@@ -510,9 +514,19 @@ async fn make_deposits(
     opts: &DeployerOptions,
 ) -> Result<(), DeployerError> {
     trace!("Making deposits");
-    let genesis = read_genesis_file(&opts.genesis_l1_path);
-    let pks = read_to_string(&opts.private_keys_file_path)
-        .map_err(|_| DeployerError::FailedToGetStringFromPath)?;
+    let genesis = read_genesis_file(
+        opts.genesis_l1_path
+            .clone()
+            .ok_or(DeployerError::ConfigValueNotSet(
+                "--genesis-l1-path".to_string(),
+            ))?
+            .to_str()
+            .ok_or(DeployerError::FailedToGetStringFromPath)?,
+    );
+    let pks = read_to_string(opts.private_keys_file_path.clone().ok_or(
+        DeployerError::ConfigValueNotSet("--private-keys-file-path".to_string()),
+    )?)
+    .map_err(|_| DeployerError::FailedToGetStringFromPath)?;
     let private_keys: Vec<String> = pks
         .lines()
         .filter(|line| !line.trim().is_empty())
