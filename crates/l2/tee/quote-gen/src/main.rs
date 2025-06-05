@@ -6,24 +6,12 @@ use tokio::time::sleep;
 use ethrex_common::Bytes;
 use ethrex_l2_sdk::calldata::{encode_tuple, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
-use ethrex_vm::Evm;
-use zkvm_interface::{
-    io::ProgramInput,
-    trie::{update_tries, verify_db},
-};
+use zkvm_interface::io::ProgramInput;
 
 use keccak_hash::keccak;
 use secp256k1::{generate_keypair, rand, Message, SecretKey};
 mod sender;
 use sender::{get_batch, submit_proof, submit_quote};
-
-#[cfg(feature = "l2")]
-use ethrex_l2_common::{
-    get_block_deposits, get_block_withdrawal_hashes, compute_deposit_logs_hash, compute_withdrawals_merkle_root,
-    StateDiff
-};
-#[cfg(feature = "l2")]
-use ethrex_common::types::{kzg_commitment_to_versioned_hash, blob_from_bytes};
 
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 
@@ -58,6 +46,8 @@ fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
     let withdrawals_merkle_root_bytes = output.withdrawals_merkle_root.0.to_vec();
     #[cfg(feature = "l2")]
     let deposit_logs_hash_bytes = output.deposit_logs_hash.0.to_vec();
+    #[cfg(feature = "l2")]
+    let blob_versioned_hash_bytes = output.blob_versioned_hash.0.to_vec();
 
     let data = vec![
         Value::FixedBytes(initial_hash_bytes.into()),

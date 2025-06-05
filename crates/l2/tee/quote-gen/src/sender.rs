@@ -31,11 +31,9 @@ pub async fn get_batch() -> Result<(u64, ProgramInput), String> {
                     db: input.db,
                     elasticity_multiplier: input.elasticity_multiplier,
                     #[cfg(feature = "l2")]
-                    state_diff: input.state_diff,
-                    #[cfg(feature = "l2")]
                     blob_commitment: input.blob_commitment,
                     #[cfg(feature = "l2")]
-                    blob_proof: input.blob_proof
+                    blob_proof: input.blob_proof,
                 },
             )),
             _ => Err("No blocks to prove.".to_owned()),
