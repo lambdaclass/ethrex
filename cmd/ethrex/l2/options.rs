@@ -383,54 +383,50 @@ impl Default for ProofCoordinatorOptions {
 #[derive(Parser)]
 pub struct AlignedOptions {
     #[arg(
-        long,
         default_value = "5000",
         value_name = "UINT64",
-        env = "ALIGNED_VERIFIER_INTERVAL_MS",
+        env = "ETHREX_ALIGNED_VERIFIER_INTERVAL_MS",
         help_heading = "Aligned options"
     )]
     pub aligned_verifier_interval_ms: u64,
     #[arg(
-        long = "beacon-url",
+        long = "aligned.beacon-url",
         default_value = "http://localhost:58801",
         value_name = "BEACON_URL",
-        env = "BEACON_URL",
+        env = "ETHREX_ALIGNED_BEACON_URL",
         help = "Beacon url to use.",
         help_heading = "Aligned options"
     )]
     pub beacon_url: String,
     #[arg(
-        long = "Aligned-network",
         default_value = "devnet",
         value_name = "NETWORK",
-        env = "ALIGNED_NETWORK",
+        env = "ETHREX_ALIGNED_NETWORK",
         help = "L1 network name for Aligned sdk",
         help_heading = "Aligned options"
     )]
     pub aligned_network: String,
     #[arg(
-        long = "Aligned-fee-estimate",
+        long = "aligned.fee-estimate",
         default_value = "instant",
         value_name = "FEE_ESTIMATE",
-        env = "ALIGNED_FEE_ESTIMATE",
+        env = "ETHREX_ALIGNED_FEE_ESTIMATE",
         help = "Fee estimate for Aligned sdk",
         help_heading = "Aligned options"
     )]
     pub fee_estimate: String,
     #[arg(
-        long,
         default_value_t = format!("{}/../../crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
-        env = "ALIGNED_SP1_VERIFICATION_KEY_PATH",
+        env = "ETHREX_ALIGNED_SP1_VERIFICATION_KEY_PATH",
         help_heading = "Aligned options",
         help = "Path to the SP1 verification key. This is used for proof verification."
     )]
     pub aligned_sp1_vk_path: String,
     #[arg(
-        long,
         default_value_t = format!("{}/../../crates/l2/prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf", env!("CARGO_MANIFEST_DIR")),
         value_name = "PATH",
-        env = "ALIGNED_SP1_ELF_PATH",
+        env = "ETHREX_ALIGNED_SP1_ELF_PATH",
         help_heading = "Aligned options",
         help = "Path to the SP1 elf. This is used for proof verification."
     )]
