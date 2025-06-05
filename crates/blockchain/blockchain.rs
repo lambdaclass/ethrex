@@ -4,8 +4,10 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 mod smoke_test;
+pub mod tracing;
 pub mod vm;
 
+use ::tracing::info;
 use constants::MAX_INITCODE_SIZE;
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -306,7 +308,7 @@ impl Blockchain {
                     ))
                 }
             };
-
+            info!("Processed block {} out of {}", i, blocks.len());
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();

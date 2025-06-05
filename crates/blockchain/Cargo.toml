@@ -18,6 +18,7 @@ tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
 bytes.workspace = true
 cfg-if = "1.0.0"
+tokio = { workspace = true, features = ["time", "rt"] }
 
 k256 = { version = "0.13.3", features = ["ecdh"] }
 
