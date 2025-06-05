@@ -1,5 +1,6 @@
 pub mod db;
 pub mod error;
+pub mod logger;
 mod nibbles;
 mod node;
 mod node_hash;
@@ -14,6 +15,7 @@ use sha3::{Digest, Keccak256};
 use std::collections::{HashMap, HashSet};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
+pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
 pub use self::verify_range::verify_range;
 pub use self::{
