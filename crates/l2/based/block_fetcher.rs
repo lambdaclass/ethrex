@@ -1,4 +1,4 @@
-use std::{cmp::min, collections::HashMap, ops::Deref, sync::Arc, time::Duration};
+use std::{cmp::min, collections::HashMap, sync::Arc, time::Duration};
 
 use ethrex_blockchain::{fork_choice::apply_fork_choice, vm::StoreVmDatabase, Blockchain};
 use ethrex_common::{
