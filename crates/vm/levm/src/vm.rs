@@ -1,5 +1,3 @@
-#[cfg(feature = "l2")]
-use crate::call_frame::CallFrameBackup;
 use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
@@ -17,8 +15,9 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use std::{
+    cell::RefCell,
     collections::{BTreeSet, HashMap, HashSet},
-    sync::Arc,
+    rc::Rc,
 };
 
 pub type Storage = HashMap<U256, H256>;
@@ -40,7 +39,7 @@ pub struct VM<'a> {
     pub substate: Substate,
     pub db: &'a mut GeneralizedDatabase,
     pub tx: Transaction,
-    pub hooks: Vec<Arc<dyn Hook>>,
+    pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
@@ -121,11 +120,6 @@ impl<'a> VM<'a> {
             return Err(e);
         }
 
-        // Here we need to backup the callframe because in the L2 we want to undo a transaction if it exceeds blob size
-        // even if the transaction succeeds.
-        #[cfg(feature = "l2")]
-        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
-
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame_mut()?.call_frame_backup.clear();
@@ -143,19 +137,6 @@ impl<'a> VM<'a> {
 
         self.finalize_execution(&mut report)?;
 
-        // We want to restore to the initial state, this includes reverting the changes made by the prepare execution
-        // and the changes made by the execution itself.
-        #[cfg(feature = "l2")]
-        {
-            let current_backup: &mut CallFrameBackup =
-                &mut self.current_call_frame_mut()?.call_frame_backup;
-            current_backup
-                .original_accounts_info
-                .extend(callframe_backup.original_accounts_info);
-            current_backup
-                .original_account_storage_slots
-                .extend(callframe_backup.original_account_storage_slots);
-        }
         Ok(report)
     }
 
@@ -223,21 +204,16 @@ impl<'a> VM<'a> {
     }
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {
-        // NOTE: ATTOW the default hook is created in VM::new(), so
-        // (in theory) _at least_ the default prepare execution should
-        // run
         for hook in self.hooks.clone() {
-            hook.prepare_execution(self)?;
+            hook.borrow_mut().prepare_execution(self)?;
         }
+
         Ok(())
     }
 
     fn finalize_execution(&mut self, report: &mut ExecutionReport) -> Result<(), VMError> {
-        // NOTE: ATTOW the default hook is created in VM::new(), so
-        // (in theory) _at least_ the default finalize execution should
-        // run
         for hook in self.hooks.clone() {
-            hook.finalize_execution(self, report)?;
+            hook.borrow_mut().finalize_execution(self, report)?;
         }
 
         self.tracer.exit_report(report, true)?;

@@ -32,8 +32,9 @@ use secp256k1::{
 };
 use sha3::{Digest, Keccak256};
 use std::{
+    cell::RefCell,
     collections::{BTreeSet, HashMap, HashSet},
-    sync::Arc,
+    rc::Rc,
 };
 pub type Storage = HashMap<U256, H256>;
 
@@ -664,11 +665,12 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    pub fn get_hooks(_tx: &Transaction) -> Vec<Arc<dyn Hook + 'static>> {
+    pub fn get_hooks(_tx: &Transaction) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
         #[cfg(not(feature = "l2"))]
-        let hooks: Vec<Arc<dyn Hook>> = vec![Arc::new(DefaultHook)];
+        let hooks: Vec<Rc<RefCell<dyn Hook>>> = vec![Rc::new(RefCell::new(DefaultHook))];
+
         #[cfg(feature = "l2")]
-        let hooks: Vec<Arc<dyn Hook>> = {
+        let hooks: Vec<Rc<RefCell<dyn Hook>>> = {
             let recipient = if let Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
                 recipient,
                 ..
@@ -678,8 +680,13 @@ impl<'a> VM<'a> {
             } else {
                 None
             };
-            vec![Arc::new(L2Hook { recipient })]
+
+            vec![Rc::new(RefCell::new(L2Hook {
+                recipient,
+                callframe_backup: CallFrameBackup::default(), // It will be modified afterwards.
+            }))]
         };
+
         hooks
     }
 

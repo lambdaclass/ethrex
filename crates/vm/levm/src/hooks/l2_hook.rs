@@ -1,4 +1,5 @@
 use crate::{
+    call_frame::CallFrameBackup,
     errors::{ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{default_hook, hook::Hook},
     vm::VM,
@@ -8,10 +9,14 @@ use ethrex_common::{types::Fork, Address, U256};
 
 pub struct L2Hook {
     pub recipient: Option<Address>,
+    pub callframe_backup: CallFrameBackup,
 }
 
 impl Hook for L2Hook {
-    fn prepare_execution(&self, vm: &mut crate::vm::VM<'_>) -> Result<(), crate::errors::VMError> {
+    fn prepare_execution(
+        &mut self,
+        vm: &mut crate::vm::VM<'_>,
+    ) -> Result<(), crate::errors::VMError> {
         if vm.env.is_privileged {
             let Some(recipient) = self.recipient else {
                 return Err(VMError::Internal(
@@ -109,11 +114,15 @@ impl Hook for L2Hook {
 
         default_hook::set_bytecode_and_code_address(vm)?;
 
+        // Here we need to backup the callframe because in the L2 we want to undo a transaction if it exceeds blob size
+        // even if the transaction succeeds.
+        self.callframe_backup = vm.current_call_frame()?.call_frame_backup.clone();
+
         Ok(())
     }
 
     fn finalize_execution(
-        &self,
+        &mut self,
         vm: &mut crate::vm::VM<'_>,
         report: &mut crate::errors::ExecutionReport,
     ) -> Result<(), crate::errors::VMError> {
@@ -140,6 +149,12 @@ impl Hook for L2Hook {
         }
 
         default_hook::delete_self_destruct_accounts(vm)?;
+
+        // We want to restore to the initial state, this includes reverting the changes made by the prepare execution
+        // and the changes made by the execution itself.
+        let execution_backup = &mut vm.current_call_frame_mut()?.call_frame_backup;
+        let pre_execution_backup = std::mem::take(&mut self.callframe_backup);
+        execution_backup.extend(pre_execution_backup);
 
         Ok(())
     }

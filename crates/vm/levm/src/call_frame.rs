@@ -114,6 +114,23 @@ impl CallFrameBackup {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
     }
+
+    pub fn extend(&mut self, other: CallFrameBackup) {
+        for (address, account) in &other.original_accounts_info {
+            self.original_accounts_info
+                .entry(*address)
+                .or_insert_with(|| account.clone());
+        }
+        for (address, storage) in &other.original_account_storage_slots {
+            let entry = self
+                .original_account_storage_slots
+                .entry(*address)
+                .or_default();
+            for (slot, value) in storage {
+                entry.entry(*slot).or_insert(*value);
+            }
+        }
+    }
 }
 
 impl CallFrame {
