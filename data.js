@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749131785368,
+  "lastUpdate": 1749131945547,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11065,6 +11065,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177595891222,
             "range": "± 408350008",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a9a750295e55b20ad8e82ec51112802a4c2d6f20",
+          "message": "refactor(core): make TrieDB::put a provided method (#3038)\n\n**Motivation**\n\nRemove redundant code.\n\n**Description**\n\nSimplify the TraitDB implementations by treating `put` as a special\ncase of `put_batch`, implementing it as a provided method in the\ntrait itself.\n\n**Discussion**\n\nThe method itself is only used in tests, so it might be better to\nchange the tests to use the actual `put_batch` and just delete the\n`put` method.",
+          "timestamp": "2025-06-05T13:13:49Z",
+          "tree_id": "e539d294c8afae011297e59242da1f585279d4bb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a9a750295e55b20ad8e82ec51112802a4c2d6f20"
+        },
+        "date": 1749131940985,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177210549025,
+            "range": "± 366056839",
             "unit": "ns/iter"
           }
         ]
