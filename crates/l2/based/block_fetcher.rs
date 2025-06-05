@@ -199,6 +199,9 @@ impl BlockFetcher {
             .map_err(BlockFetcherError::StoreError)
     }
 
+    /// Fetch logs from the L1 chain for the BatchCommitted event.
+    /// This function fetches logs, starting from the last fetched block number (aka the last block that was processed)
+    /// and going up to the current block number.
     async fn get_logs(&mut self) -> Result<Vec<RpcLog>, BlockFetcherError> {
         let last_l1_block_number = self.eth_client.get_block_number().await?;
 
@@ -237,6 +240,9 @@ impl BlockFetcher {
         Ok(batch_committed_logs)
     }
 
+    /// Given the logs from the event `BatchCommitted`,
+    /// this function gets the committed batches that are missing in the local store.
+    /// It does that by comparing if the batch number is greater than the last known batch number.
     async fn filter_logs(
         &self,
         logs: &[RpcLog],
