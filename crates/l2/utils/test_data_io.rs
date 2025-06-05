@@ -74,7 +74,7 @@ pub async fn generate_program_input(
     let store = Store::new("memory", EngineType::InMemory)?;
     rt.block_on(store.add_initial_state(genesis))?;
     // create blockchain
-    let blockchain = Blockchain::default_with_store(store.clone()).await;
+    let blockchain = Blockchain::default_with_store(store.clone()).await?;
     for block in chain {
         rt.block_on(blockchain.add_block(&block))?;
     }

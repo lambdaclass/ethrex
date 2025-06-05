@@ -776,7 +776,11 @@ pub(super) mod tests {
             blocks => setup_storage(blocks).await.expect("Storage setup"),
         };
 
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()).await);
+        let blockchain = Arc::new(
+            Blockchain::default_with_store(storage.clone())
+                .await
+                .unwrap(),
+        );
         let table = Arc::new(Mutex::new(KademliaTable::new(local_node.node_id())));
         let (broadcast, _) = tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<RLPxMessage>)>(
             MAX_MESSAGES_TO_BROADCAST,

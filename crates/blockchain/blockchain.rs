@@ -55,45 +55,31 @@ pub struct BatchBlockProcessingFailure {
 }
 
 impl Blockchain {
-    pub async fn new(evm_engine: EvmEngine, store: Store) -> Self {
-        let block_number = store.get_latest_block_number().await.unwrap();
-        let block_header = store.get_block_header(block_number).unwrap().unwrap();
-        let state_trie = store.open_state_trie(block_header.state_root).unwrap();
+    pub async fn new(evm_engine: EvmEngine, store: Store) -> Result<Self, StoreError> {
+        let (state_hash, state_trie) = match store.get_latest_block_number().await {
+            Ok(block_number) => {
+                let block_header = store.get_block_header(block_number)?.unwrap();
+                (
+                    block_header.hash(),
+                    store.open_state_trie(block_header.state_root)?,
+                )
+            }
+            Err(StoreError::MissingLatestBlockNumber) => (H256::default(), Trie::stateless()),
+            Err(e) => return Err(e),
+        };
 
-        Self {
+        Ok(Self {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
 
-            state_trie: RwLock::new((block_header.hash(), state_trie)),
-        }
+            state_trie: RwLock::new((state_hash, state_trie)),
+        })
     }
 
-    pub async fn default_with_store(store: Store) -> Self {
-        let (state_hash, state_trie) = match store.get_latest_block_number().await {
-            Ok(block_number) => {
-                let block_header = store.get_block_header(block_number).unwrap().unwrap();
-                (
-                    block_header.hash(),
-                    store.open_state_trie(block_header.state_root).unwrap(),
-                )
-            }
-            Err(StoreError::MissingLatestBlockNumber) => (H256::default(), Trie::stateless()),
-            e => {
-                e.unwrap();
-                unreachable!()
-            }
-        };
-
-        Self {
-            evm_engine: EvmEngine::default(),
-            storage: store,
-            mempool: Mempool::new(),
-            is_synced: AtomicBool::new(false),
-
-            state_trie: RwLock::new((state_hash, state_trie)),
-        }
+    pub async fn default_with_store(store: Store) -> Result<Self, StoreError> {
+        Self::new(EvmEngine::default(), store).await
     }
 
     /// Executes a block withing a new vm instance and state

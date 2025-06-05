@@ -318,10 +318,6 @@ impl Store {
         state_trie: &mut Trie,
         account_updates: &[AccountUpdate],
     ) -> Result<H256, StoreError> {
-        // let Some(state_trie) = self.state_trie(block_hash)? else {
-        //     return Ok(None);
-        // };
-
         self.apply_account_updates_from_trie(state_trie, account_updates)
             .await?;
 

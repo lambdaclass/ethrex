@@ -24,7 +24,7 @@ mod blockchain_integration_test {
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone()).await;
+        let blockchain = Blockchain::default_with_store(store.clone()).await.unwrap();
 
         // Add first block. We'll make it canonical.
         let block_1a = new_block(&store, &genesis_header).await;
@@ -83,7 +83,7 @@ mod blockchain_integration_test {
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone()).await;
+        let blockchain = Blockchain::default_with_store(store.clone()).await.unwrap();
 
         // Build a single valid block.
         let block_1 = new_block(&store, &genesis_header).await;
@@ -118,7 +118,7 @@ mod blockchain_integration_test {
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone()).await;
+        let blockchain = Blockchain::default_with_store(store.clone()).await.unwrap();
 
         // Add first block. Not canonical.
         let block_1a = new_block(&store, &genesis_header).await;
@@ -190,7 +190,7 @@ mod blockchain_integration_test {
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone()).await;
+        let blockchain = Blockchain::default_with_store(store.clone()).await.unwrap();
 
         // Add block at height 1.
         let block_1 = new_block(&store, &genesis_header).await;
@@ -243,11 +243,10 @@ mod blockchain_integration_test {
         let genesis_hash = genesis_header.hash();
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone()).await;
+        let blockchain = Blockchain::default_with_store(store.clone()).await.unwrap();
 
         // Add block at height 1.
         let block_1 = new_block(&store, &genesis_header).await;
-        eprintln!("genesis_hash = {genesis_hash}");
         blockchain
             .add_block(&block_1)
             .await
@@ -256,7 +255,6 @@ mod blockchain_integration_test {
         // Add child at height 2.
         let block_2 = new_block(&store, &block_1.header).await;
         let hash_2 = block_2.hash();
-        eprintln!("block_1.hash() = {}", block_1.header.hash());
         blockchain
             .add_block(&block_2)
             .await
@@ -277,7 +275,6 @@ mod blockchain_integration_test {
         // Add a new, non canonical block, starting from genesis.
         let block_1b = new_block(&store, &genesis_header).await;
         let hash_b = block_1b.hash();
-        eprintln!("genesis_hash = {genesis_hash}");
         blockchain
             .add_block(&block_1b)
             .await
@@ -308,7 +305,9 @@ mod blockchain_integration_test {
         };
 
         // Create blockchain
-        let blockchain = Blockchain::default_with_store(store.clone().clone()).await;
+        let blockchain = Blockchain::default_with_store(store.clone().clone())
+            .await
+            .unwrap();
 
         let block = create_payload(&args, store).unwrap();
         let result = blockchain.build_payload(block).await.unwrap();

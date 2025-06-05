@@ -384,7 +384,11 @@ pub mod test_utils {
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
             .await
             .expect("Failed to build test genesis");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()).await);
+        let blockchain = Arc::new(
+            Blockchain::default_with_store(storage.clone())
+                .await
+                .unwrap(),
+        );
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
         #[cfg(feature = "l2")]
@@ -416,7 +420,11 @@ pub mod test_utils {
     }
 
     pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()).await);
+        let blockchain = Arc::new(
+            Blockchain::default_with_store(storage.clone())
+                .await
+                .unwrap(),
+        );
         RpcApiContext {
             storage,
             blockchain,
