@@ -75,14 +75,17 @@ impl RLPxCodec {
     }
 
     pub fn set_p2p_protocol(&mut self, cap: &Capability) {
+        assert_eq!(cap.protocol, "p2p", "The protocol should be p2p");
         self.p2p_protocol = Some(cap.clone());
     }
 
     pub fn set_eth_protocol(&mut self, cap: &Capability) {
+        assert_eq!(cap.protocol, "eth", "The protocol should be eth");
         self.eth_protocol = Some(cap.clone());
     }
 
     pub fn set_snap_protocol(&mut self, cap: &Capability) {
+        assert_eq!(cap.protocol, "snap", "The protocol should be snap");
         self.snap_protocol = Some(cap.clone());
     }
 }
