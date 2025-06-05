@@ -92,40 +92,44 @@ setup-hive: ## 🐝 Set up Hive testing framework
 		go build .; \
 	fi
 
-TEST_PATTERN ?= /
-SIM_LOG_LEVEL ?= 4
-SIM_PARALLELISM := 16
-
-# Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080
-# The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
-# For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
-# `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
-
-HIVE_CLIENT_FILE := ../test_data/network/hive_clients/ethrex.yml
-HIVE_CLIENT_FILE_GIT := ../test_data/network/hive_clients/ethrex_git.yml
-HIVE_CLIENT_FILE_LOCAL := ../test_data/network/hive_clients/ethrex_local.yml
-
-run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
-	$(MAKE) view-hive
-
-run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
-	$(MAKE) view-hive
-
-run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	- cd hive && ./hive --sim $(SIMULATION) --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
-	$(MAKE) view-hive
-
-run-hive-local: setup-hive
+setup-hive-local: setup-hive ## 🐝 Set up Hive testing framework with local files
 	- mkdir hive/clients/ethrex/ethrex && \ 
 	cp -R cmd/ hive/clients/ethrex/ethrex/cmd/ && \
 	cp -R crates/ hive/clients/ethrex/ethrex/crates/ && \
 	cp -R tooling/ hive/clients/ethrex/ethrex/tooling/ && \
 	cp -R test_data/ hive/clients/ethrex/ethrex/test_data/ && \
 	cp Cargo.toml hive/clients/ethrex/ethrex/ && \
-	cp Makefile hive/clients/ethrex/ethrex/ && \
-	cd hive && ./hive --client-file $(HIVE_CLIENT_FILE_LOCAL) --client ethrex --sim.loglevel 4 --sim.limit "/" --sim.parallelism "16" --docker.output --sim devp2p
+	cp Makefile hive/clients/ethrex/ethrex/ 
+
+TEST_PATTERN ?= /
+SIM_LOG_LEVEL ?= 1
+SIM_PARALLELISM := 16
+
+# Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080
+# The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
+# For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
+# `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
+# The evm can be selected by using seting HIVE_ETHREX_FLAGS='--evm revm' (the default is levm)
+# The log level can be selected by switching SIM_LOG_LEVEL from 1 up to 4
+
+HIVE_CLIENT_FILE := ../test_data/network/hive_clients/ethrex.yml
+HIVE_CLIENT_FILE_GIT := ../test_data/network/hive_clients/ethrex_git.yml
+HIVE_CLIENT_FILE_LOCAL := ../test_data/network/hive_clients/ethrex_local.yml
+
+run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --sim.loglevel "$(SIM_LOG_LEVEL)" 
+	$(MAKE) view-hive
+
+run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)" --sim.loglevel "$(SIM_LOG_LEVEL)" 
+	$(MAKE) view-hive
+
+run-hive-local: setup-hive-local
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE_LOCAL) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)"  --sim.loglevel "$(SIM_LOG_LEVEL)" --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
+	$(MAKE) view-hive
+
+run-hive-local-all: setup-hive-local
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE_LOCAL) --client ethrex --sim ".*" --sim.loglevel "$(SIM_LOG_LEVEL)" --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
 	$(MAKE) view-hive
 
 clean-hive-logs: ## 🧹 Clean Hive logs
