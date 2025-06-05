@@ -69,16 +69,16 @@ pub enum VMError {
     #[error("Offset out of bounds")]
     OutOfBounds,
     #[error("Precompile execution error: {0}")]
-    PrecompileError(#[from] PrecompileError),
+    Precompile(#[from] PrecompileError),
     #[error("Database access error: {0}")]
-    DatabaseError(#[from] DatabaseError),
+    Database(#[from] DatabaseError),
 }
 
 impl VMError {
     /// These errors are unexpected and indicate critical issues.
     /// They should not cause a transaction to revert silently but instead fail loudly, propagating the error.
     pub fn should_propagate(&self) -> bool {
-        matches!(self, VMError::Internal(_)) || matches!(self, VMError::DatabaseError(_))
+        matches!(self, VMError::Internal(_)) || matches!(self, VMError::Database(_))
     }
 }
 
