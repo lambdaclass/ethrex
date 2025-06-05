@@ -62,10 +62,10 @@ pub struct ProofCoordinatorConfig {
 
 #[derive(Clone, Debug)]
 pub struct AlignedConfig {
+    pub aligned_mode: bool,
     pub aligned_verifier_interval_ms: u64,
     pub beacon_url: String,
     pub network: String,
     pub fee_estimate: String,
-    pub aligned_sp1_vk_path: String,
     pub aligned_sp1_elf_path: String,
 }

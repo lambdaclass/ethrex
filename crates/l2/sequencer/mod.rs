@@ -52,6 +52,11 @@ pub async fn start_l2(
         return;
     };
 
+    if needed_proof_types.contains(&ProverType::Aligned) && !cfg.aligned.aligned_mode {
+        error!("Aligned mode is required. Please set the `--aligned` flag or use the `ALIGNED_MODE` environment variable to true.");
+        return;
+    }
+
     let _ = L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone())
         .await
         .inspect_err(|err| {
