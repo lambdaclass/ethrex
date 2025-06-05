@@ -1,4 +1,9 @@
-# Based ethrex
+# ethrex L2 Based Module
+
+> [!NOTE]
+>
+> 1. This module contains all the logic related to the current implementation of the based feature for the L2 Sequencer which is currently under development. Anything on this module is subject to change in the future.
+> 2. This module only includes the sequencer logic, the new and modified contracts can be found in [this directory](../contracts/src/l1/based/).
 
 ## Table of Contents
 
@@ -127,19 +132,19 @@ In a console with `crates/l2` as the current directory, run the following comman
 
 ```bash
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
-	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
-	--genesis-l2-path ../../test_data/genesis-l2.json \
-	--contracts-path contracts \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-	--pico.verifier-address 0x00000000000000000000000000000000000000aa \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
-	--bridge-owner <ADDRESS> \
-	--on-chain-proposer-owner <ADDRESS> \
-	--deposit-rich \
-	--private-keys-file-path ../../test_data/private_keys_l1.txt \
-	--deploy-based-contracts \
-	--sequencer-registry-owner <ADDRESS>
+    --genesis-l1-path ../../test_data/genesis-l1-dev.json \
+    --genesis-l2-path ../../test_data/genesis-l2.json \
+    --contracts-path contracts \
+    --sp1.verifier-address 0x00000000000000000000000000000000000000aa \
+    --pico.verifier-address 0x00000000000000000000000000000000000000aa \
+    --risc0.verifier-address 0x00000000000000000000000000000000000000aa \
+    --tdx.verifier-address 0x00000000000000000000000000000000000000aa \
+    --bridge-owner <ADDRESS> \
+    --on-chain-proposer-owner <ADDRESS> \
+    --deposit-rich \
+    --private-keys-file-path ../../test_data/private_keys_l1.txt \
+    --deploy-based-contracts \
+    --sequencer-registry-owner <ADDRESS>
 ```
 
 This command will:
