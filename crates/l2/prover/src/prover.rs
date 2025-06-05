@@ -32,7 +32,7 @@ impl Prover {
         Self {
             prover_server_endpoint: format!("{}:{}", cfg.http_addr, cfg.http_port),
             proving_time_ms: cfg.proving_time_ms,
-            aligned_mode: config.aligned_mode,
+            aligned_mode: cfg.aligned_mode,
         }
     }
 
