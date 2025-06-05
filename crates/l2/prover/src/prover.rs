@@ -28,15 +28,16 @@ struct Prover {
 }
 
 impl Prover {
-    pub fn new(config: ProverConfig) -> Self {
+    pub fn new(cfg: ProverConfig) -> Self {
         Self {
-            prover_server_endpoint: config.prover_server_endpoint,
-            proving_time_ms: config.proving_time_ms,
+            prover_server_endpoint: format!("{}:{}", cfg.http_addr, cfg.http_port),
+            proving_time_ms: cfg.proving_time_ms,
             aligned_mode: config.aligned_mode,
         }
     }
 
     pub async fn start(&self) {
+        info!("Prover started on {}", self.prover_server_endpoint);
         // Build the prover depending on the prover_type passed as argument.
         loop {
             sleep(Duration::from_millis(self.proving_time_ms)).await;
@@ -128,7 +129,6 @@ async fn connect_to_prover_server_wr(
 
     let mut buffer = Vec::new();
     stream.read_to_end(&mut buffer).await?;
-    debug!("Got response {}", hex::encode(&buffer));
 
     let response: Result<ProofData, _> = serde_json::from_slice(&buffer);
     Ok(response?)
