@@ -63,13 +63,13 @@ impl Receipts {
 
     pub fn encode68(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
-        let mut transformed_receipts = vec![];
+        let mut receipts_with_bloom = vec![];
         for r in &self.receipts {
-            transformed_receipts.push(vec![ReceiptWithBloom::from(&r[0])]);
+            receipts_with_bloom.push(vec![ReceiptWithBloom::from(&r[0])]);
         }
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
-            .encode_field(&transformed_receipts)
+            .encode_field(&receipts_with_bloom)
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
