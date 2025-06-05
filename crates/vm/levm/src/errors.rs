@@ -174,6 +174,8 @@ pub enum InternalError {
     Overflow,
     #[error("Arithmetic operation underflowed")]
     Underflow,
+    #[error("Cannot divide by zero")]
+    DivisionByZero,
     #[error("Tried to convert one type to another")]
     TypeConversion,
     #[error("CallFrame not found")]

@@ -313,11 +313,11 @@ fn copy_behavior(
     let minimum_word_size_cost = dynamic_base
         .checked_mul(minimum_word_size)
         .ok_or(OutOfGas)?;
-    Ok(static_cost
+    static_cost
         .checked_add(minimum_word_size_cost)
         .ok_or(OutOfGas)?
         .checked_add(memory_expansion_cost)
-        .ok_or(OutOfGas)?)
+        .ok_or(OutOfGas)
 }
 
 pub fn keccak256(
@@ -349,13 +349,13 @@ pub fn log(
     let size: u64 = size.try_into().map_err(|_| VMError::VeryLargeNumber)?;
     let bytes_cost = LOGN_DYNAMIC_BYTE_BASE.checked_mul(size).ok_or(OutOfGas)?;
 
-    Ok(topics_cost
+    topics_cost
         .checked_add(LOGN_STATIC)
         .ok_or(OutOfGas)?
         .checked_add(bytes_cost)
         .ok_or(OutOfGas)?
         .checked_add(memory_expansion_cost)
-        .ok_or(OutOfGas)?)
+        .ok_or(OutOfGas)
 }
 
 pub fn mload(new_memory_size: usize, current_memory_size: usize) -> Result<u64, VMError> {
@@ -377,9 +377,9 @@ fn mem_expansion_behavior(
 ) -> Result<u64, VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    Ok(static_cost
+    static_cost
         .checked_add(memory_expansion_cost)
-        .ok_or(OutOfGas)?)
+        .ok_or(OutOfGas)
 }
 
 pub fn sload(storage_slot_was_cold: bool) -> Result<u64, VMError> {
@@ -389,7 +389,7 @@ pub fn sload(storage_slot_was_cold: bool) -> Result<u64, VMError> {
     } else {
         SLOAD_WARM_DYNAMIC
     };
-    Ok(static_gas.checked_add(dynamic_cost).ok_or(OutOfGas)?)
+    static_gas.checked_add(dynamic_cost).ok_or(OutOfGas)
 }
 
 pub fn sstore(
@@ -417,7 +417,7 @@ pub fn sstore(
             .checked_add(SSTORE_COLD_DYNAMIC)
             .ok_or(OutOfGas)?;
     }
-    Ok(static_gas.checked_add(base_dynamic_gas).ok_or(OutOfGas)?)
+    static_gas.checked_add(base_dynamic_gas).ok_or(OutOfGas)
 }
 
 pub fn mcopy(
@@ -441,11 +441,11 @@ pub fn mcopy(
         .checked_mul(words_copied)
         .ok_or(OutOfGas)?;
 
-    Ok(MCOPY_STATIC
+    MCOPY_STATIC
         .checked_add(copied_words_cost)
         .ok_or(OutOfGas)?
         .checked_add(memory_expansion_cost)
-        .ok_or(OutOfGas)?)
+        .ok_or(OutOfGas)
 }
 
 pub fn create(
@@ -585,7 +585,7 @@ fn address_access_cost(
         warm_dynamic_cost
     };
 
-    Ok(static_cost.checked_add(dynamic_cost).ok_or(OutOfGas)?)
+    static_cost.checked_add(dynamic_cost).ok_or(OutOfGas)
 }
 
 pub fn balance(address_was_cold: bool) -> Result<u64, VMError> {
@@ -626,9 +626,9 @@ pub fn extcodecopy(
         EXTCODECOPY_WARM_DYNAMIC,
     )?;
 
-    Ok(base_access_cost
+    base_access_cost
         .checked_add(expansion_access_cost)
-        .ok_or(OutOfGas)?)
+        .ok_or(OutOfGas)
 }
 
 pub fn extcodehash(address_was_cold: bool) -> Result<u64, VMError> {
@@ -789,14 +789,14 @@ pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Res
             .checked_mul(numerator)
             .ok_or(InternalError::Overflow)?
             .checked_div(denominator.checked_mul(i).ok_or(InternalError::Overflow)?)
-            .ok_or(InternalError::Overflow)?;
+            .ok_or(InternalError::DivisionByZero)?;
 
         i = i.checked_add(U256::one()).ok_or(InternalError::Overflow)?;
     }
 
-    Ok(output
+    output
         .checked_div(denominator)
-        .ok_or(InternalError::Overflow)?)
+        .ok_or(InternalError::DivisionByZero.into())
 }
 
 pub fn sha2_256(data_size: usize) -> Result<u64, VMError> {
@@ -878,7 +878,7 @@ fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u
     let static_gas = static_cost;
     let dynamic_gas = dynamic_base.checked_mul(data_word_cost).ok_or(OutOfGas)?;
 
-    Ok(static_gas.checked_add(dynamic_gas).ok_or(OutOfGas)?)
+    static_gas.checked_add(dynamic_gas).ok_or(OutOfGas)
 }
 
 pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
