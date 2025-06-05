@@ -634,8 +634,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::TrieNodes(response)).await?
             }
             Message::NewBlock(req) if peer_supports_based => {
-                if let Ok(Some(_)) = self.storage.get_block_header(req.block.header.number) {
-                    debug!("Block received by peer already exists, ignoring it");
+                if let Ok(Some(_)) = self.storage.get_block_body_by_hash(req.block.hash()).await {
+                    info!("Block received by peer already exists, ignoring it");
                     return Ok(());
                 }
                 let _ = self
@@ -655,7 +655,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::BatchSealed(req) => {
                 #[cfg(feature = "l2")]
                 {
-                    if !self.store_rollup.contains_batch(&req.batch_number).await? {
+                    if !self.store_rollup.contains_batch(&req.batch_number).await?
+                        && req.batch_number == self.batches_broadcasted + 1
+                    {
                         let first_block_number =
                             req.block_numbers.first().ok_or(RLPxError::InternalError(
                                 "No block numbers found in BatchSealed message".to_string(),
@@ -676,6 +678,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                             "Sealed batch {} with blocks from {} to {}",
                             req.batch_number, first_block_number, last_block_number
                         );
+                    } else {
+                        info!("Batch {} already sealed, ignoring it", req.batch_number);
                     }
                 }
             }

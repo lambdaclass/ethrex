@@ -148,16 +148,21 @@ impl BlockFetcher {
         Ok(())
     }
 
-    async fn node_is_up_to_date(&self) -> Result<bool, BlockFetcherError> {
+    async fn node_is_up_to_date(&mut self) -> Result<bool, BlockFetcherError> {
         let last_committed_batch_number = self
             .eth_client
             .get_last_committed_batch(self.on_chain_proposer_address)
             .await?;
 
-        self.rollup_store
+        let contained = self
+            .rollup_store
             .contains_batch(&last_committed_batch_number)
             .await
-            .map_err(BlockFetcherError::StoreError)
+            .map_err(BlockFetcherError::StoreError)?;
+        if contained {
+            self.latest_batch_stored = last_committed_batch_number;
+        }
+        Ok(contained)
     }
 
     async fn get_logs(&mut self) -> Result<Vec<RpcLog>, BlockFetcherError> {
@@ -289,7 +294,7 @@ impl BlockFetcher {
     async fn store_batch(&self, batch: &[Block]) -> Result<(), BlockFetcherError> {
         for block in batch.iter() {
             if let Ok(Some(_)) = self.store.get_block_header(block.header.number) {
-                debug!("Block {} already exists in store", block.header.number);
+                info!("Block {} already exists in store", block.header.number);
                 continue;
             }
             self.blockchain.add_block(block).await?;
