@@ -19,7 +19,7 @@ use ethrex_common::{
 use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-use ethrex_levm::errors::TxValidationError;
+use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::restore_cache_state;
 use ethrex_levm::EVMConfig;
@@ -606,7 +606,7 @@ fn vm_from_generic<'a>(
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
                 TxKind::Call(to) => to,
-                TxKind::Create => return Err(VMError::InvalidTransaction),
+                TxKind::Create => return Err(InternalError::msg("Cannot be Create type").into()),
             },
             value: tx.value,
             data: tx.input.clone(),

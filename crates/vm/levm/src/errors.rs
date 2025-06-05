@@ -1,9 +1,75 @@
 use bytes::Bytes;
+use derive_more::derive::Display;
 use ethrex_common::types::Log;
 use serde::{Deserialize, Serialize};
 use thiserror;
 
 use crate::db::error::DatabaseError;
+
+//TODO: Rename to VMError afterwards
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize, Display)]
+pub enum EVMError {
+    /// Errors caused by bugs, things that shouldn't ever happen.
+    Internal(#[from] InternalError),
+    /// Unexpected error when accessing the database, used in trait `Database`.
+    Database(#[from] DatabaseError),
+    /// Returned when a transaction doesn't pass all validations before executing.
+    TxValidation(#[from] TxValidationError),
+    /// Errors contemplated by the EVM, they revert and consume all gas of the current context.
+    ExceptionalHalt(#[from] ExceptionalHalt),
+    /// Revert Opcode called. Unlike exceptional gas, this doesn't consume all gas of the context.
+    RevertOpcode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
+pub enum ExceptionalHalt {
+    #[error("Stack Underflow")]
+    StackUnderflow,
+    #[error("Stack Overflow")]
+    StackOverflow,
+    #[error("Invalid Jump")]
+    InvalidJump,
+    #[error("Opcode Not Allowed In Static Context")]
+    OpcodeNotAllowedInStaticContext,
+    #[error("Invalid Contract Prefix")]
+    InvalidContractPrefix,
+    #[error("Very Large Number")]
+    VeryLargeNumber,
+    #[error("Invalid Transaction")]
+    InvalidTransaction,
+    #[error("Invalid Opcode")]
+    InvalidOpcode,
+    #[error("Gas price is lower than base fee")]
+    GasPriceIsLowerThanBaseFee,
+    #[error("Address Already Occupied")]
+    AddressAlreadyOccupied,
+    #[error("Contract Output Too Big")]
+    ContractOutputTooBig,
+    #[error("Balance Overflow")]
+    BalanceOverflow,
+    #[error("Balance Underflow")]
+    BalanceUnderflow,
+    #[error("Gas refunds underflow")]
+    GasRefundsUnderflow,
+    #[error("Gas refunds overflow")]
+    GasRefundsOverflow,
+    #[error("Memory size overflows")]
+    MemorySizeOverflow,
+    #[error("Nonce overflowed")]
+    NonceOverflow,
+    #[error("Offset out of bounds")]
+    OutOfBounds,
+    #[error("Out Of Gas")]
+    OutOfGas(#[from] OutOfGasError),
+    #[error("Internal error: {0}")]
+    Internal(#[from] InternalError),
+    #[error("Transaction validation error: {0}")]
+    TxValidation(#[from] TxValidationError),
+    #[error("Precompile execution error: {0}")]
+    Precompile(#[from] PrecompileError),
+    #[error("Database access error: {0}")]
+    Database(#[from] DatabaseError),
+}
 
 /// Errors that halt the program
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -183,6 +249,12 @@ pub enum InternalError {
     //TODO: Refactor all errors. https://github.com/lambdaclass/ethrex/issues/2886
     #[error("Custom error: {0}")]
     Custom(String),
+}
+
+impl InternalError {
+    pub fn msg(msg: &'static str) -> Self {
+        Self::Custom(msg.to_owned())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
