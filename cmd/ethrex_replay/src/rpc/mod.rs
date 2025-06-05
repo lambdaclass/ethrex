@@ -80,8 +80,7 @@ pub async fn get_witness_range(
 
     let response = CLIENT.post(rpc_url).json(request).send().await?;
     let res = response.json::<serde_json::Value>().await?;
-    let result: Result<ExecutionWitnessResult, eyre::Error> = get_result(res);
-    result
+    get_result(res)
 }
 
 fn get_result<T: DeserializeOwned>(response: serde_json::Value) -> eyre::Result<T> {
