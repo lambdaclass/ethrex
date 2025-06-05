@@ -236,9 +236,12 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 # State reconstruction tests
 state-diff-test:
 	touch .env
-	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config create ci --default
-	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
-	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
+	cargo run --release --manifest-path ../../cmd/ethrex/Cargo.toml --features l2 --bin ethrex -- \
+	l2 reconstruct \
+	-g ../../test_data/genesis-l2.json \
+	-b ../../test_data/blobs/ \
+	-s $$PWD/store \
+	-c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	cargo b --manifest-path ../../Cargo.toml --release
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
