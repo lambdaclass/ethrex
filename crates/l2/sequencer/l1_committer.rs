@@ -214,6 +214,15 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
     }
 
     let withdrawal_logs_merkle_root = get_withdrawals_merkle_root(withdrawal_hashes.clone())?;
+    state
+        .rollup_store
+        .seal_batch(
+            batch_to_commit,
+            first_block_to_commit,
+            last_block_of_batch,
+            withdrawal_hashes,
+        )
+        .await?;
 
     info!("Sending commitment for batch {batch_to_commit}. first_block: {first_block_to_commit}, last_block: {last_block_of_batch}");
 
@@ -246,15 +255,7 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
     );
 
     info!("Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}.",);
-    state
-        .rollup_store
-        .seal_batch(
-            batch_to_commit,
-            first_block_to_commit,
-            last_block_of_batch,
-            withdrawal_hashes,
-        )
-        .await?;
+
     Ok(())
 }
 
