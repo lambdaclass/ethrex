@@ -1,8 +1,6 @@
-use ethrex_rlp::decode::RLPDecode;
-
-use crate::{error::TrieError, Node, NodeHash};
+use crate::{error::TrieError, NodeHash};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
@@ -11,52 +9,32 @@ pub trait TrieDB: Send + Sync {
     fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError>;
     // fn put_batch(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError>;
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError>;
-    fn witness(&self) -> Result<HashSet<Vec<u8>>, TrieError>;
-    fn record_witness(&mut self);
 }
 
 /// InMemory implementation for the TrieDB trait, with get and put operations.
 pub struct InMemoryTrieDB {
     inner: Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>,
-    witness: Arc<Mutex<HashSet<Vec<u8>>>>,
-    record_witness: bool,
 }
 
 impl InMemoryTrieDB {
     pub fn new(map: Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>) -> Self {
-        Self {
-            inner: map,
-            witness: Arc::new(Mutex::new(HashSet::new())),
-            record_witness: false,
-        }
+        Self { inner: map }
     }
     pub fn new_empty() -> Self {
         Self {
             inner: Default::default(),
-            witness: Default::default(),
-            record_witness: false,
         }
     }
 }
 
 impl TrieDB for InMemoryTrieDB {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        let value = self
+        Ok(self
             .inner
             .lock()
             .map_err(|_| TrieError::LockError)?
             .get(&key)
-            .cloned();
-        if !self.record_witness {
-            return Ok(value);
-        }
-        if let Some(value) = value.as_ref() {
-            if let Ok(decoded) = Node::decode(value) {
-                let mut lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
-                lock.insert(decoded.encode_raw());
-            }
-        }
-        Ok(value)
+            .cloned())
     }
 
     fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
@@ -75,14 +53,5 @@ impl TrieDB for InMemoryTrieDB {
         }
 
         Ok(())
-    }
-
-    fn record_witness(&mut self) {
-        self.record_witness = true;
-    }
-
-    fn witness(&self) -> Result<HashSet<Vec<u8>>, TrieError> {
-        let lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
-        Ok(lock.clone())
     }
 }

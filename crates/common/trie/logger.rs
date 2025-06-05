@@ -51,12 +51,4 @@ impl TrieDB for TrieLogger {
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         self.inner_db.put_batch(key_values)
     }
-
-    fn record_witness(&mut self) {
-        todo!()
-    }
-
-    fn witness(&self) -> Result<HashSet<Vec<u8>>, TrieError> {
-        todo!()
-    }
 }

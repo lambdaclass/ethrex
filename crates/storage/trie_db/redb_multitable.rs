@@ -1,12 +1,8 @@
-use std::{
-    collections::HashSet,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
 
-use ethrex_rlp::decode::RLPDecode;
 use redb::{Database, MultimapTableDefinition};
 
-use ethrex_trie::{Node, NodeHash, TrieDB, TrieError};
+use ethrex_trie::{NodeHash, TrieDB, TrieError};
 
 use super::utils::node_hash_to_fixed_size;
 
@@ -19,31 +15,15 @@ const STORAGE_TRIE_NODES_TABLE: MultimapTableDefinition<([u8; 32], [u8; 33]), &[
 pub struct RedBMultiTableTrieDB {
     db: Arc<Database>,
     fixed_key: [u8; 32],
-    record_witness: bool,
-    witness: Arc<Mutex<HashSet<Vec<u8>>>>,
 }
 
 impl RedBMultiTableTrieDB {
     pub fn new(db: Arc<Database>, fixed_key: [u8; 32]) -> Self {
-        Self {
-            db,
-            fixed_key,
-            record_witness: false,
-            witness: Arc::new(Mutex::new(HashSet::new())),
-        }
+        Self { db, fixed_key }
     }
 }
 
 impl TrieDB for RedBMultiTableTrieDB {
-    fn record_witness(&mut self) {
-        self.record_witness = true;
-    }
-
-    fn witness(&self) -> Result<HashSet<Vec<u8>>, TrieError> {
-        let lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
-        Ok(lock.clone())
-    }
-
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let read_txn = self
             .db
@@ -72,13 +52,6 @@ impl TrieDB for RedBMultiTableTrieDB {
         if ret.is_empty() {
             Ok(None)
         } else {
-            if !self.record_witness {
-                return Ok(Some(ret_flattened));
-            }
-            if let Ok(decoded) = Node::decode(&ret_flattened) {
-                let mut lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
-                lock.insert(decoded.encode_raw());
-            }
             Ok(Some(ret_flattened))
         }
     }

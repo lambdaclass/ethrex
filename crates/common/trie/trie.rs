@@ -320,12 +320,6 @@ impl Trie {
             fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
                 Ok(())
             }
-
-            fn record_witness(&mut self) {}
-
-            fn witness(&self) -> Result<HashSet<Vec<u8>>, TrieError> {
-                Ok(HashSet::new())
-            }
         }
 
         Trie::new(Box::new(NullTrieDB))
@@ -396,10 +390,6 @@ impl Trie {
         } else {
             Ok(Vec::new())
         }
-    }
-
-    pub fn record_witness(&mut self) {
-        self.db.record_witness();
     }
 
     pub fn root_node(&self) -> Result<Option<Node>, TrieError> {
