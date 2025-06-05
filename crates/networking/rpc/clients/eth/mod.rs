@@ -169,6 +169,21 @@ impl EthClient {
         response
     }
 
+    async fn send_request_to_all(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, EthClientError> {
+        let mut response = Err(EthClientError::Custom("All rpc calls failed".to_string()));
+
+        for url in self.urls.iter() {
+            let maybe_response = self.send_request_to_url(url, &request).await;
+            if maybe_response.is_ok() {
+                response = maybe_response;
+            }
+        }
+        response
+    }
+
     async fn send_request_to_url(
         &self,
         rpc_url: &Url,
@@ -195,7 +210,7 @@ impl EthClient {
             params: Some(vec![json!("0x".to_string() + &hex::encode(data))]),
         };
 
-        match self.send_request(request).await {
+        match self.send_request_to_all(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(SendRawTransactionError::SerdeJSONError)
                 .map_err(EthClientError::from),

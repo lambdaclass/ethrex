@@ -21,6 +21,7 @@ ethrex-blockchain.workspace = true
 ethrex-p2p.workspace = true
 ethrex-rlp.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
+ethereum-types.workspace = true
 hex.workspace = true
 axum-extra = { version = "0.10.0", features = ["typed-header"] }
 jsonwebtoken.workspace = true

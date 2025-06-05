@@ -187,6 +187,16 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         Ok(Some(Block::new(header, body)))
     }
 
+    async fn get_block_by_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Block>, StoreError> {
+        let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
+            return Ok(None);
+        };
+        self.get_block_by_hash(block_hash).await
+    }
+
     // Get the canonical block hash for a given block number.
     async fn get_canonical_block_hash(
         &self,
@@ -243,12 +253,16 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Obtain a storage trie from the given address and storage_root
     /// Doesn't check if the account is stored
     /// Used for internal store operations
-    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie;
+    fn open_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError>;
 
     /// Obtain a state trie from the given state root
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
-    fn open_state_trie(&self, state_root: H256) -> Trie;
+    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError>;
 
     /// Set the canonical block hash for a given block number.
     async fn set_canonical_block(
@@ -390,5 +404,17 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn get_latest_valid_ancestor(
         &self,
         block: BlockHash,
+    ) -> Result<Option<BlockHash>, StoreError>;
+
+    /// Obtain block number for a given hash
+    fn get_block_number_sync(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError>;
+
+    /// Get the canonical block hash for a given block number.
+    fn get_canonical_block_hash_sync(
+        &self,
+        block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError>;
 }

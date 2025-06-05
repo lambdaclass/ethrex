@@ -3,7 +3,6 @@ members = [
   "cmd/ef_tests/blockchain",
   "cmd/ef_tests/state",
   "cmd/ethrex",
-  "cmd/ethrex_l2",
   "cmd/ethrex_replay",
   "crates/blockchain",
   "crates/blockchain/dev",
@@ -26,7 +25,7 @@ members = [
   "tooling/genesis",
   "tooling/hive_report",
   "tooling/load_test",
-  "tooling/loc"
+  "tooling/loc",
 ]
 resolver = "2"
 
