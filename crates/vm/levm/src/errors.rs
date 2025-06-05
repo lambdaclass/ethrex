@@ -128,11 +128,11 @@ impl From<DatabaseError> for VMError {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum TxValidationError {
-    #[error("Sender account should not have bytecode")]
+    #[error("Sender account shouldn't be a contract")]
     SenderNotEOA,
     #[error("Insufficient account founds")]
     InsufficientAccountFunds,
-    #[error("Nonce is max (overflow)")]
+    #[error("Nonce is max")]
     NonceIsMax,
     #[error("Nonce mismatch: expected {expected}, got {actual}")]
     NonceMismatch { expected: u64, actual: u64 },
