@@ -431,7 +431,9 @@ mod tests {
 
         let blocks = test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
         // create blockchain
-        let blockchain = Blockchain::default_with_store(in_memory_db.clone()).await;
+        let blockchain = Blockchain::default_with_store(in_memory_db.clone())
+            .await
+            .unwrap();
         for block in &blocks {
             blockchain.add_block(block).await.unwrap();
         }
