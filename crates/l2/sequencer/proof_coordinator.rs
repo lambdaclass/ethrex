@@ -44,8 +44,6 @@ pub struct ProverInputData {
     pub db: ProverDB,
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
-    pub state_diff: StateDiff,
-    #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
     pub blob_commitment: blobs_bundle::Commitment,
     #[cfg(feature = "l2")]
@@ -553,16 +551,15 @@ async fn create_prover_input(
         .ok_or(ProverServerError::StorageDataIsNone)?;
 
     // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
-    let (state_diff, blob_commitment, blob_proof) = if state.validium {
-        (StateDiff::default(), [0; 48], [0; 48])
+    let (blob_commitment, blob_proof) = if state.validium {
+        ([0; 48], [0; 48])
     } else {
         let Some(mut bundle) = state.blobs_bundle_cache.get(batch_number)? else {
             return Err(ProverServerError::Custom(format!(
                 "BlobsBundle for batch {batch_number} not found in cache and coordinator is in rollup mode (no validium). Prover input cannot be created."
             )));
         };
-        let (Some(blob), Some(commitment), Some(proof)) = (
-            bundle.blobs.pop(),
+        let (Some(commitment), Some(proof)) = (
             bundle.commitments.pop(),
             bundle.proofs.pop(),
         ) else {
@@ -570,8 +567,7 @@ async fn create_prover_input(
                 "Cached BlobsBundle for batch {batch_number} is empty"
             )));
         };
-        let state_diff = StateDiff::decode(&bytes_from_blob(blob.to_vec().into()))?;
-        (state_diff, commitment, proof)
+        (commitment, proof)
     };
 
     debug!("Created prover input for batch {batch_number}");
@@ -581,8 +577,6 @@ async fn create_prover_input(
         blocks,
         parent_block_header,
         elasticity_multiplier: state.elasticity_multiplier,
-        #[cfg(feature = "l2")]
-        state_diff,
         #[cfg(feature = "l2")]
         blob_commitment,
         #[cfg(feature = "l2")]

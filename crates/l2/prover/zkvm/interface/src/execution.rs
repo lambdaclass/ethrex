@@ -83,8 +83,6 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         mut db,
         elasticity_multiplier,
         #[cfg(feature = "l2")]
-        state_diff,
-        #[cfg(feature = "l2")]
         blob_commitment,
         #[cfg(feature = "l2")]
         blob_proof,
@@ -96,7 +94,6 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
             &parent_block_header,
             &mut db,
             elasticity_multiplier,
-            state_diff,
             blob_commitment,
             blob_proof,
         );
@@ -138,7 +135,6 @@ pub fn stateless_validation_l2(
     parent_block_header: &BlockHeader,
     db: &mut ProverDB,
     elasticity_multiplier: u64,
-    state_diff: StateDiff,
     blob_commitment: Commitment,
     blob_proof: Proof,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
@@ -146,7 +142,6 @@ pub fn stateless_validation_l2(
         receipts,
         initial_state_hash,
         final_state_hash,
-        state_trie,
         account_updates,
         last_block_header,
     } = execute_stateless(blocks, parent_block_header, db, elasticity_multiplier)?;
@@ -182,11 +177,9 @@ pub fn stateless_validation_l2(
 }
 
 struct StatelessResult {
-    #[cfg(feature = "l2")]
     receipts: Vec<Vec<ethrex_common::types::Receipt>>,
     initial_state_hash: H256,
     final_state_hash: H256,
-    state_trie: Trie,
     account_updates: HashMap<Address, AccountUpdate>,
     last_block_header: BlockHeader,
 }
@@ -269,11 +262,9 @@ fn execute_stateless(
         return Err(StatelessExecutionError::InvalidFinalStateTrie);
     }
     Ok(StatelessResult {
-        #[cfg(feature = "l2")]
         receipts: acc_receipts,
         initial_state_hash,
         final_state_hash,
-        state_trie,
         account_updates: acc_account_updates,
         last_block_header: parent_header.clone(),
     })
@@ -314,22 +305,6 @@ fn compute_withdrawals_and_deposits_digests(
         compute_deposit_logs_hash(deposit_hashes).map_err(StatelessExecutionError::DepositError)?;
 
     Ok((withdrawals_merkle_root, deposit_logs_hash))
-}
-
-fn verify_state_diff(
-    state_diff: &StateDiff,
-    account_updates: &HashMap<Address, AccountUpdate>,
-) -> Result<(), StatelessExecutionError> {
-    if !state_diff.is_equivalent_to_account_updates(account_updates) {
-        return Err(StatelessExecutionError::InvalidStateDiff);
-    }
-
-    // TODO: check withdrawals and deposits
-    if !todo!() {
-        return Err(StatelessExecutionError::InvalidStateDiff);
-    }
-
-    Ok(())
 }
 
 fn verify_blob(

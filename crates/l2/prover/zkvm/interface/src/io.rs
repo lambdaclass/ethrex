@@ -23,13 +23,12 @@ pub struct ProgramInput {
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
-    #[serde_as(as = "SerdeJSON")]
-    pub state_diff: StateDiff,
-    #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
+    /// KZG commitment to the blob data
     pub blob_commitment: blobs_bundle::Commitment,
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
+    /// KZG opening for a challenge over the blob commitment
     pub blob_proof: blobs_bundle::Proof,
 }
 
@@ -40,8 +39,6 @@ impl Default for ProgramInput {
             parent_block_header: Default::default(),
             db: Default::default(),
             elasticity_multiplier: Default::default(),
-            #[cfg(feature = "l2")]
-            state_diff: Default::default(),
             #[cfg(feature = "l2")]
             blob_commitment: [0; 48],
             #[cfg(feature = "l2")]
