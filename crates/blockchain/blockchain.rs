@@ -224,6 +224,14 @@ impl Blockchain {
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
 
+        let progress_marks = [
+            blocks_len / 5,
+            2 * blocks_len / 5,
+            3 * blocks_len / 5,
+            4 * blocks_len / 5,
+            blocks_len,
+        ];
+
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
             // for the first block, we need to query the store
@@ -262,23 +270,8 @@ impl Blockchain {
                     ))
                 }
             };
-            match ((i as f64 * 100.0) / blocks_len as f64) as u64 {
-                20 => {
-                    info!("Processed 20% of current batch");
-                }
-                40 => {
-                    info!("Processed 40% of current batch");
-                }
-                60 => {
-                    info!("Processed 60% of current batch");
-                }
-                80 => {
-                    info!("Processed 80% of current batch");
-                }
-                100 => {
-                    info!("Processed 100% of current batch");
-                }
-                _ => {}
+            if let Some(pos) = progress_marks.iter().position(|val| *val == i) {
+                info!("Processed {}% of current batch", (pos + 1) * 20);
             }
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
