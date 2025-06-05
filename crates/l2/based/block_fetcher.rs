@@ -155,7 +155,9 @@ impl BlockFetcher {
 
             let batch_committed_logs = self.get_logs().await?;
 
-            let mut missing_batches_logs = self.filter_logs(&batch_committed_logs).await?;
+            let mut missing_batches_logs = self
+                .filter_logs(&batch_committed_logs, last_l2_batch_number_known)
+                .await?;
 
             missing_batches_logs.sort_by_key(|(_log, batch_number)| *batch_number);
 
@@ -235,18 +237,12 @@ impl BlockFetcher {
         Ok(batch_committed_logs)
     }
 
-    async fn filter_logs(&self, logs: &[RpcLog]) -> Result<Vec<(RpcLog, U256)>, BlockFetcherError> {
+    async fn filter_logs(
+        &self,
+        logs: &[RpcLog],
+        last_batch_number_known: u64,
+    ) -> Result<Vec<(RpcLog, U256)>, BlockFetcherError> {
         let mut filtered_logs = Vec::new();
-
-        let last_block_number_known = self.store.get_latest_block_number().await?;
-
-        let last_batch_number_known = self
-            .rollup_store
-            .get_batch_number_by_block(last_block_number_known)
-            .await?
-            .ok_or(BlockFetcherError::InternalError(format!(
-                "Failed to get last batch number known for block {last_block_number_known}"
-            )))?;
 
         // Filter missing batches logs
         for batch_committed_log in logs.iter().cloned() {
