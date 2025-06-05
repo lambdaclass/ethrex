@@ -339,28 +339,24 @@ where
         {
             let mut map = HashMap::new();
 
-            while let Some(entry) = seq.next_element::<serde_json::Value>()? {
-                let obj = entry
-                    .as_object()
-                    .ok_or_else(|| de::Error::custom("Expected an object in keys array"))?;
+            #[derive(Deserialize)]
+            struct CodeEntry(HashMap<String, String>);
 
-                if obj.len() != 1 {
+            while let Some(CodeEntry(entry)) = seq.next_element::<CodeEntry>()? {
+                if entry.len() != 1 {
                     return Err(de::Error::custom(
                         "Each object must contain exactly one key",
                     ));
                 }
 
-                for (k, v) in obj {
+                for (k, v) in entry {
                     let code_hash =
                         H256::from_str(k.trim_start_matches("0x")).map_err(de::Error::custom)?;
 
-                    let arr = v
-                        .as_str()
-                        .ok_or_else(|| de::Error::custom("Expected string as value"))?;
+                    let bytecode =
+                        decode_hex(v.trim_start_matches("0x")).map_err(de::Error::custom)?;
 
-                    if let Ok(decoded_bytecode) = decode_hex(arr) {
-                        map.insert(code_hash, Bytes::from(decoded_bytecode));
-                    }
+                    map.insert(code_hash, Bytes::from(bytecode));
                 }
             }
             Ok(map)
@@ -393,11 +389,11 @@ where
         {
             let mut map = HashMap::new();
 
-            while let Some(entry) = seq.next_element::<serde_json::Value>()? {
-                let obj = entry
-                    .as_object()
-                    .ok_or_else(|| de::Error::custom("Expected an object in keys array"))?;
+            #[derive(Deserialize)]
+            struct KeyEntry(HashMap<String, Vec<String>>);
 
+            while let Some(entry) = seq.next_element::<KeyEntry>()? {
+                let obj = entry.0;
                 if obj.len() != 1 {
                     return Err(de::Error::custom(
                         "Each object must contain exactly one key",
@@ -408,19 +404,13 @@ where
                     let h160 =
                         H160::from_str(k.trim_start_matches("0x")).map_err(de::Error::custom)?;
 
-                    let arr = v
-                        .as_array()
-                        .ok_or_else(|| de::Error::custom("Expected array as value"))?;
-
-                    let mut vecs = Vec::new();
-                    for item in arr {
-                        let s = item
-                            .as_str()
-                            .ok_or_else(|| de::Error::custom("Expected string in array"))?;
-                        let bytes =
-                            hex::decode(s.trim_start_matches("0x")).map_err(de::Error::custom)?;
-                        vecs.push(bytes);
-                    }
+                    let vecs = v
+                        .into_iter()
+                        .map(|s| {
+                            let s = s.trim_start_matches("0x");
+                            hex::decode(s).map_err(de::Error::custom)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
 
                     map.insert(h160, vecs);
                 }
