@@ -18,7 +18,6 @@ use ethrex_l2_common::{
     state_diff::{prepare_state_diff, StateDiff, StateDiffError},
     withdrawals::{compute_withdrawals_merkle_root, WithdrawalError},
 };
-use ethrex_trie::Trie;
 use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDB, ProverDBError};
 use kzg_rs::{get_kzg_settings, Blob, Bytes48, KzgProof};
 use std::collections::HashMap;

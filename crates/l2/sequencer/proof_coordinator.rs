@@ -10,11 +10,9 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    types::{blobs_bundle, bytes_from_blob, Block, BlockHeader},
+    types::{blobs_bundle, Block, BlockHeader},
     Address,
 };
-#[cfg(feature = "l2")]
-use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -559,10 +557,8 @@ async fn create_prover_input(
                 "BlobsBundle for batch {batch_number} not found in cache and coordinator is in rollup mode (no validium). Prover input cannot be created."
             )));
         };
-        let (Some(commitment), Some(proof)) = (
-            bundle.commitments.pop(),
-            bundle.proofs.pop(),
-        ) else {
+        let (Some(commitment), Some(proof)) = (bundle.commitments.pop(), bundle.proofs.pop())
+        else {
             return Err(ProverServerError::Custom(format!(
                 "Cached BlobsBundle for batch {batch_number} is empty"
             )));

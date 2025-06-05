@@ -2,8 +2,6 @@ use ethrex_common::{
     types::{blobs_bundle, Block, BlockHeader},
     H256,
 };
-#[cfg(feature = "l2")]
-use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_vm::ProverDB;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::{serde_as, DeserializeAs, SerializeAs};
