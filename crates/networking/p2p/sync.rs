@@ -6,6 +6,7 @@ mod storage_fetcher;
 mod storage_healing;
 mod trie_rebuild;
 
+use crate::peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST};
 use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{error::ChainError, BatchBlockProcessingFailure, Blockchain};
 use ethrex_common::{
@@ -32,8 +33,6 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use trie_rebuild::TrieRebuilder;
-
-use crate::peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
@@ -620,7 +619,6 @@ impl Syncer {
             if let Some(trie_rebuilder) = self.trie_rebuilder.as_ref() {
                 storage_trie_rebuilder_sender = trie_rebuilder.storage_rebuilder_sender.clone();
             } else {
-                info!("Storage trie rebuilder sender is None");
                 return Err(SyncError::Trie(TrieError::InconsistentTree));
             }
 
@@ -645,7 +643,6 @@ impl Syncer {
         if let Some(rebuilder) = self.trie_rebuilder.take() {
             rebuilder.complete().await?;
         } else {
-            info!("State trie is None");
             return Err(SyncError::Trie(TrieError::InconsistentTree));
         }
         info!(

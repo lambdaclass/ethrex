@@ -7,7 +7,6 @@ use k256::{
 };
 use sha3::{Digest, Keccak256};
 use snap::raw::{max_compress_len, Decoder as SnappyDecoder, Encoder as SnappyEncoder};
-use std::array::TryFromSliceError;
 use tracing::{debug, error, warn};
 
 pub fn sha256(data: &[u8]) -> [u8; 32] {
@@ -19,12 +18,12 @@ pub fn sha256_hmac(
     key: &[u8],
     inputs: &[&[u8]],
     size_data: &[u8],
-) -> Result<[u8; 32], RLPEncodeError> {
+) -> Result<[u8; 32], RLPDecodeError> {
     use hmac::Mac;
     use k256::sha2::Sha256;
 
-    let mut hasher = hmac::Hmac::<Sha256>::new_from_slice(key)
-        .map_err(|error| RLPEncodeError::Custom(error.to_string()))?;
+    let mut hasher =
+        hmac::Hmac::<Sha256>::new_from_slice(key).map_err(|_| RLPDecodeError::InvalidLength)?;
     for input in inputs {
         hasher.update(input);
     }
@@ -39,13 +38,13 @@ pub fn ecdh_xchng(
     k256::ecdh::diffie_hellman(secret_key.to_nonzero_scalar(), public_key.as_affine())
         .raw_secret_bytes()[..32]
         .try_into()
-        .map_err(|error: TryFromSliceError| RLPDecodeError::Custom(error.to_string()))
+        .map_err(|_| RLPDecodeError::InvalidLength)
 }
 
-pub fn kdf(secret: &[u8], output: &mut [u8]) -> Result<(), RLPEncodeError> {
+pub fn kdf(secret: &[u8], output: &mut [u8]) -> Result<(), RLPDecodeError> {
     // We don't use the `other_info` field
     concat_kdf::derive_key_into::<k256::sha2::Sha256>(secret, &[], output)
-        .map_err(|error: concat_kdf::Error| RLPEncodeError::Custom(error.to_string()))?;
+        .map_err(|_| RLPDecodeError::InvalidLength)?;
     Ok(())
 }
 

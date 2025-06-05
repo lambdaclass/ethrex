@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::discv4::server::DiscoveryError;
 use crate::{
     discv4::messages::FindNodeRequest,
     rlpx::{message::Message as RLPxMessage, p2p::Capability},
@@ -174,13 +175,21 @@ impl KademliaTable {
         }
     }
 
-    pub fn update_peer_ping(&mut self, node_id: H256, ping_hash: Option<H256>, ping_at: u64) {
+    pub fn update_peer_ping(
+        &mut self,
+        node_id: H256,
+        ping_hash: Option<H256>,
+        ping_at: u64,
+    ) -> Result<(), DiscoveryError> {
         let peer = self.get_by_node_id_mut(node_id);
 
         if let Some(peer) = peer {
             peer.last_ping_hash = ping_hash;
             peer.last_ping = ping_at;
+        } else {
+            return Err(DiscoveryError::MessageExpired);
         }
+        Ok(())
     }
 
     /// ## Returns
