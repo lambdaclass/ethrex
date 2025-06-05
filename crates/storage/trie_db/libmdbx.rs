@@ -30,12 +30,6 @@ where
         txn.get::<T>(key).map_err(TrieError::DbError)
     }
 
-    fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
-        let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
-        txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
-        txn.commit().map_err(TrieError::DbError)
-    }
-
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
         for (key, value) in key_values {
