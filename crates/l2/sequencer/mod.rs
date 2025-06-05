@@ -72,16 +72,11 @@ pub async fn start_l2(
     .inspect_err(|err| {
         error!("Error starting Committer: {err}");
     });
-    let _ = ProofCoordinator::spawn(
-        store.clone(),
-        rollup_store.clone(),
-        cfg.clone(),
-        shared_state.clone(),
-    )
-    .await
-    .inspect_err(|err| {
-        error!("Error starting Proof Coordinator: {err}");
-    });
+    let _ = ProofCoordinator::spawn(store.clone(), rollup_store.clone(), cfg.clone())
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Proof Coordinator: {err}");
+        });
     let _ = L1ProofSender::spawn(cfg.clone(), shared_state.clone())
         .await
         .inspect_err(|err| {

@@ -1,4 +1,3 @@
-use crate::based::sequencer_state::SequencerState;
 use crate::sequencer::errors::ProverServerError;
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::utils::prover::db::to_prover_db;
@@ -22,9 +21,8 @@ use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use spawned_concurrency::{CallResponse, CastResponse, GenServer};
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::{fmt::Debug, net::IpAddr};
-use tokio::sync::{Mutex, OwnedSemaphorePermit};
+use tokio::sync::OwnedSemaphorePermit;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -141,7 +139,6 @@ pub struct ProofCoordinatorState {
     rollup_store: StoreRollup,
     rpc_url: String,
     l1_private_key: SecretKey,
-    sequencer_state: Arc<Mutex<SequencerState>>,
 }
 
 impl ProofCoordinatorState {
@@ -152,7 +149,6 @@ impl ProofCoordinatorState {
         proposer_config: &BlockProducerConfig,
         store: Store,
         rollup_store: StoreRollup,
-        sequencer_state: Arc<Mutex<SequencerState>>,
     ) -> Result<Self, ProverServerError> {
         let eth_client = EthClient::new_with_config(
             eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
@@ -183,7 +179,6 @@ impl ProofCoordinatorState {
             rollup_store,
             rpc_url,
             l1_private_key: config.l1_private_key,
-            sequencer_state: sequencer_state.clone(),
         })
     }
 }
@@ -204,7 +199,6 @@ impl ProofCoordinator {
         store: Store,
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
-        sequencer_state: Arc<Mutex<SequencerState>>,
     ) -> Result<(), ProverServerError> {
         let state = ProofCoordinatorState::new(
             &cfg.proof_coordinator,
@@ -213,7 +207,6 @@ impl ProofCoordinator {
             &cfg.block_producer,
             store,
             rollup_store,
-            sequencer_state,
         )
         .await?;
         let listener = TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?;
@@ -253,11 +246,7 @@ impl GenServer for ProofCoordinator {
         info!("Receiving message");
         match message {
             ProofCordInMessage::Listen { listener } => {
-                let sequencer_state = state.sequencer_state.lock().await.clone();
-                match sequencer_state {
-                    SequencerState::Sequencing => handle_listens(state, listener).await,
-                    SequencerState::Following => handle_listens(state, listener).await,
-                }
+                handle_listens(state, listener).await;
             }
         }
         CastResponse::Stop
