@@ -7,6 +7,7 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use execution_cache::ExecutionCache;
 use l1_committer::L1Committer;
+use l1_proof_sender::L1ProofSender;
 use l1_watcher::L1Watcher;
 use proof_coordinator::ProofCoordinator;
 use tokio::task::JoinSet;
@@ -51,7 +52,21 @@ pub async fn start_l2(
         return;
     };
 
-    L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone()).await;
+    let Ok(needed_proof_types) = get_needed_proof_types(
+        cfg.proof_coordinator.dev_mode,
+        cfg.eth.rpc_url.clone(),
+        cfg.l1_committer.on_chain_proposer_address,
+    )
+    .await
+    .inspect_err(|e| error!("Error starting Proposer: {e}")) else {
+        return;
+    };
+
+    let _ = L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone())
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Watcher: {err}");
+        });
     let _ = L1Committer::spawn(
         store.clone(),
         rollup_store.clone(),
@@ -73,12 +88,18 @@ pub async fn start_l2(
         error!("Error starting Proof Coordinator: {err}");
     });
 
-    let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
-    task_set.spawn(l1_proof_sender::start_l1_proof_sender(
+    let _ = L1ProofSender::spawn(
         cfg.clone(),
         rollup_store.clone(),
         needed_proof_types.clone(),
-    ));
+    )
+    .await
+    .inspect_err(|err| {
+        error!("Error starting Proof Coordinator: {err}");
+    });
+
+    let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
+
     if needed_proof_types.contains(&ProverType::Aligned) {
         task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(cfg.clone()));
     }

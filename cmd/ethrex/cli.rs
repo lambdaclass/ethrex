@@ -1,18 +1,21 @@
 use std::{
-    fs::{metadata, read_dir},
+    fs::{metadata, read_dir, File},
     io::{self, Write},
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{error::ChainError, fork_choice::apply_fork_choice};
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{sync::SyncMode, types::Node};
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
-    initializers::{init_blockchain, init_store},
+    initializers::{init_blockchain, init_store, open_store},
     networks::{Network, PublicNetwork},
     utils::{self, get_client_version, set_datadir},
     DEFAULT_DATADIR,
@@ -240,6 +243,30 @@ pub enum Subcommand {
         removedb: bool,
     },
     #[command(
+        name = "export",
+        about = "Export blocks in the current chain into a file in rlp encoding"
+    )]
+    Export {
+        #[arg(
+            required = true,
+            value_name = "FILE_PATH",
+            help = "Path to the file where the rlp blocks will be written to"
+        )]
+        path: String,
+        #[arg(
+            long = "first",
+            value_name = "NUMBER",
+            help = "First block number to export"
+        )]
+        first: Option<u64>,
+        #[arg(
+            long = "last",
+            value_name = "NUMBER",
+            help = "Last block number to export"
+        )]
+        last: Option<u64>,
+    },
+    #[command(
         name = "compute-state-root",
         about = "Compute the state root from a genesis file"
     )]
@@ -278,6 +305,9 @@ impl Subcommand {
 
                 let network = &opts.network;
                 import_blocks(&path, &opts.datadir, network.get_genesis(), opts.evm).await?;
+            }
+            Subcommand::Export { path, first, last } => {
+                export_blocks(&path, &opts.datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let state_root = Network::from(genesis_path)
@@ -348,39 +378,84 @@ pub async fn import_blocks(
     let size = blocks.len();
     for block in &blocks {
         let hash = block.hash();
-
-        info!(
-            "Adding block {} with hash {:#x}.",
-            block.header.number, hash
-        );
+        let number = block.header.number;
+        info!("Adding block {number} with hash {hash:#x}.");
         // Check if the block is already in the blockchain, if it is do nothing, if not add it
-        match store.get_block_number(hash).await {
-            Ok(Some(_)) => {
-                info!("Block {} is already in the blockchain", block.hash());
-                continue;
-            }
-            Ok(None) => {
-                if let Err(error) = blockchain.add_block(block).await {
-                    warn!(
-                        "Failed to add block {} with hash {:#x}",
-                        block.header.number, hash
-                    );
-                    return Err(error);
-                }
-            }
-            Err(_) => {
-                return Err(ChainError::Custom(String::from(
-                    "Couldn't check if block is already in the blockchain",
-                )));
-            }
+        let block_number = store.get_block_number(hash).await.map_err(|_e| {
+            ChainError::Custom(String::from(
+                "Couldn't check if block is already in the blockchain",
+            ))
+        })?;
+
+        if block_number.is_some() {
+            info!("Block {} is already in the blockchain", block.hash());
+            continue;
         }
+
+        blockchain
+            .add_block(block)
+            .await
+            .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
     }
+
     if let Some(last_block) = blocks.last() {
         let hash = last_block.hash();
-        if let Err(error) = apply_fork_choice(&store, hash, hash, hash).await {
-            warn!("Failed to apply fork choice: {}", error);
-        }
+        let _ = apply_fork_choice(&store, hash, hash, hash)
+            .await
+            .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
     }
     info!("Added {size} blocks to blockchain");
     Ok(())
+}
+
+pub async fn export_blocks(
+    path: &str,
+    data_dir: &str,
+    first_number: Option<u64>,
+    last_number: Option<u64>,
+) {
+    let data_dir = set_datadir(data_dir);
+    let store = open_store(&data_dir);
+    let start = first_number.unwrap_or_default();
+    // If we have no latest block then we don't have any blocks to export
+    let latest_number = match store.get_latest_block_number().await {
+        Ok(number) => number,
+        Err(StoreError::MissingLatestBlockNumber) => {
+            warn!("No blocks in the current chain, nothing to export!");
+            return;
+        }
+        Err(_) => panic!("Internal DB Error"),
+    };
+    // Check that the requested range doesn't exceed our current chain length
+    if last_number.is_some_and(|number| number > latest_number) {
+        warn!("The requested block range exceeds the current amount of blocks in the chain {latest_number}");
+        return;
+    }
+    let end = last_number.unwrap_or(latest_number);
+    // Check that the requested range makes sense
+    if start > end {
+        warn!("Cannot export block range [{start}..{end}], please input a valid range");
+        return;
+    }
+    // Fetch blocks from the store and export them to the file
+    let mut file = File::create(path).expect("Failed to open file");
+    let mut buffer = vec![];
+    let mut last_output = Instant::now();
+    for n in start..=end {
+        let block = store
+            .get_block_by_number(n)
+            .await
+            .ok()
+            .flatten()
+            .expect("Failed to read block from DB");
+        block.encode(&mut buffer);
+        // Exporting the whole chain can take a while, so we need to show some output in the meantime
+        if last_output.elapsed() > Duration::from_secs(5) {
+            info!("Exporting block {n}/{end}, {}% done", n * 100 / end);
+            last_output = Instant::now();
+        }
+        file.write_all(&buffer).expect("Failed to write to file");
+        buffer.clear();
+    }
+    info!("Exported {} blocks to file {path}", end - start);
 }
