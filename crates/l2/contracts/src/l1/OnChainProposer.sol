@@ -308,6 +308,10 @@ contract OnChainProposer is
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
         require(
+            ALIGNEDPROOFAGGREGATOR == DEV_MODE,
+            "OnChainProposer: ALIGNEDPROOFAGGREGATOR is set. Use verifyBatchAligned instead"
+        );
+        require(
             batchNumber == lastVerifiedBatch + 1,
             "OnChainProposer: batch already verified"
         );
@@ -377,6 +381,10 @@ contract OnChainProposer is
         bytes32[] calldata alignedMerkleProof
     ) external override onlySequencer {
         require(
+            ALIGNEDPROOFAGGREGATOR != DEV_MODE,
+            "OnChainProposer: ALIGNEDPROOFAGGREGATOR is not set"
+        );
+        require(
             batchNumber == lastVerifiedBatch + 1,
             "OnChainProposer: batch already verified"
         );
@@ -385,31 +393,26 @@ contract OnChainProposer is
             "OnChainProposer: cannot verify an uncommitted batch"
         );
 
-        if (ALIGNEDPROOFAGGREGATOR != DEV_MODE) {
-            // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, alignedPublicInputs[8:]);
+        // If the verification fails, it will revert.
+        _verifyPublicData(batchNumber, alignedPublicInputs[8:]);
 
-            bytes memory callData = abi.encodeWithSignature(
-                "verifyProofInclusion(bytes32[],bytes32,bytes)",
-                alignedMerkleProof,
-                alignedProgramVKey,
-                alignedPublicInputs
-            );
-
-            (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
-                .staticcall(callData);
-
-            require(
-                callResult,
-                "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
-            );
-
-            bool proofVerified = abi.decode(response, (bool));
-            require(
-                proofVerified,
-                "OnChainProposer: Aligned proof verification failed"
-            );
-        }
+        bytes memory callData = abi.encodeWithSignature(
+            "verifyProofInclusion(bytes32[],bytes32,bytes)",
+            alignedMerkleProof,
+            alignedProgramVKey,
+            alignedPublicInputs
+        );
+        (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
+            .staticcall(callData);
+        require(
+            callResult,
+            "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
+        );
+        bool proofVerified = abi.decode(response, (bool));
+        require(
+            proofVerified,
+            "OnChainProposer: Aligned proof verification failed"
+        );
 
         lastVerifiedBatch = batchNumber;
 
