@@ -385,7 +385,7 @@ impl Store {
                 let mut storage_trie = self.engine.open_storage_trie(
                     H256::from_slice(&hashed_address),
                     account_state.storage_root,
-                );
+                )?;
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
