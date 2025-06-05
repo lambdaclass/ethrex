@@ -408,14 +408,17 @@ impl Store {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let (_witness, storage_trie) =
-                        storage_tries.entry(update.address).or_insert_with(|| {
+                    let (_witness, storage_trie) = match storage_tries.entry(update.address) {
+                        std::collections::hash_map::Entry::Occupied(value) => value.into_mut(),
+                        std::collections::hash_map::Entry::Vacant(vacant) => {
                             let trie = self.engine.open_storage_trie(
                                 H256::from_slice(&hashed_address),
                                 account_state.storage_root,
-                            );
-                            TrieLogger::open_trie(trie)
-                        });
+                            )?;
+                            vacant.insert(TrieLogger::open_trie(trie))
+                        }
+                    };
+
                     for (storage_key, storage_value) in &update.added_storage {
                         let hashed_key = hash_key(storage_key);
                         if storage_value.is_zero() {

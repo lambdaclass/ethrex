@@ -17,7 +17,7 @@ pub struct InMemoryTrieDB {
 }
 
 impl InMemoryTrieDB {
-    pub fn new(map: Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>) -> Self {
+    pub const fn new(map: Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>) -> Self {
         Self { inner: map }
     }
     pub fn new_empty() -> Self {
