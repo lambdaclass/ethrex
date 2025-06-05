@@ -29,6 +29,9 @@ pub struct ProverDB {
     pub block_hashes: HashMap<u64, H256>,
     /// stored chain config
     pub chain_config: ChainConfig,
+    pub state_trie_nodes: Vec<Vec<u8>>,
+    pub storage_trie_nodes: HashMap<Address, Vec<Vec<u8>>>,
+    pub initial_state_root: H256,
     #[serde(skip)]
     pub state_trie: Arc<Mutex<Trie>>,
     #[serde(skip)]
@@ -39,6 +42,59 @@ pub struct ProverDB {
 impl ProverDB {
     pub fn get_chain_config(&self) -> ChainConfig {
         self.chain_config
+    }
+
+    pub fn rebuild_tries(&mut self) -> Result<(), ProverDBError> {
+        let mut initial_node = None;
+
+        for node in self.state_trie_nodes.iter() {
+            let x = Node::decode_raw(node).expect("invalid node");
+            let hash = x.compute_hash().finalize();
+            if hash == self.initial_state_root {
+                initial_node = Some(node.clone());
+                break;
+            }
+        }
+
+        let state_trie = Trie::from_nodes(initial_node.as_ref(), &self.state_trie_nodes)
+            .expect("failed to create trie");
+
+        let mut storage_tries = HashMap::new();
+        for (addr, nodes) in &self.storage_trie_nodes {
+            let hashed_address = hash_address(addr);
+            let Some(encoded_state) = state_trie
+                .get(&hashed_address)
+                .expect("Failed to get from trie")
+            else {
+                // TODO re-explore this. When testing with hoodi this happened block 521990 an this continue fixed it
+                continue;
+            };
+
+            let state = AccountState::decode(&encoded_state)
+                .expect("Failed to get state from encoded state");
+
+            let mut initial_node = None;
+
+            for node in nodes.iter() {
+                let x = Node::decode_raw(node).expect("invalid node");
+                let hash = x.compute_hash().finalize();
+                if hash == state.storage_root {
+                    initial_node = Some(node);
+                    break;
+                }
+            }
+
+            let Ok(storage_trie) = Trie::from_nodes(initial_node, nodes) else {
+                return Err(ProverDBError::Custom("error".to_string()));
+            };
+
+            storage_tries.insert(*addr, storage_trie);
+        }
+
+        self.state_trie = Arc::new(Mutex::new(state_trie));
+        self.storage_tries = Arc::new(Mutex::new(storage_tries));
+
+        Ok(())
     }
 
     pub fn apply_account_updates_from_trie(&mut self, account_updates: &[AccountUpdate]) {
@@ -266,5 +322,8 @@ pub fn to_exec_db_from_witness(
         chain_config,
         state_trie,
         storage_tries,
+        initial_state_root: initial_state_hash,
+        state_trie_nodes: witness.state.clone(),
+        storage_trie_nodes: witness.storage_tries.clone(),
     })
 }

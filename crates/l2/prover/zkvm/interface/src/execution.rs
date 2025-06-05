@@ -147,6 +147,7 @@ fn execute_stateless(
     db: &mut ProverDB,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
+    let _ = db.rebuild_tries();
     // Validate the initial state
     let initial_state_hash = db
         .state_trie_root()
