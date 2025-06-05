@@ -148,7 +148,11 @@ async fn state_sync_segment(
                 accounts.len()
             );
             // Update starting hash for next batch
-            start_account_hash = *account_hashes.last().unwrap();
+            if let Some(last_account_hash) = account_hashes.last() {
+                start_account_hash = *last_account_hash;
+            } else {
+                return Err(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree));
+            };
             // Fetch Account Storage & Bytecode
             let mut code_hashes = vec![];
             let mut account_hashes_and_storage_roots = vec![];

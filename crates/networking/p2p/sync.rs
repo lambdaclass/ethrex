@@ -109,18 +109,19 @@ impl Syncer {
 
     /// Creates a dummy Syncer for tests where syncing is not needed
     /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub fn dummy() -> Self {
-        Self {
+    pub fn dummy() -> Result<Self, SyncError> {
+        Ok(Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
             peers: PeerHandler::dummy(),
             last_snap_pivot: 0,
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
-            blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).unwrap(),
-            )),
-        }
+            blockchain: Arc::new(Blockchain::default_with_store(Store::new(
+                "",
+                EngineType::InMemory,
+            )?)),
+        })
     }
 
     /// Starts a sync cycle, updating the state with all blocks between the current head and the sync head
@@ -615,16 +616,20 @@ impl Syncer {
                     .any(|(ch, end)| ch < end)
             })
         {
+            let storage_trie_rebuilder_sender;
+            if let Some(trie_rebuilder) = self.trie_rebuilder.as_ref() {
+                storage_trie_rebuilder_sender = trie_rebuilder.storage_rebuilder_sender.clone();
+            } else {
+                info!("Storage trie rebuilder sender is None");
+                return Err(SyncError::Trie(TrieError::InconsistentTree));
+            }
+
             let stale_pivot = state_sync(
                 state_root,
                 store.clone(),
                 self.peers.clone(),
                 key_checkpoints,
-                self.trie_rebuilder
-                    .as_ref()
-                    .unwrap()
-                    .storage_rebuilder_sender
-                    .clone(),
+                storage_trie_rebuilder_sender,
             )
             .await?;
             if stale_pivot {
@@ -637,7 +642,12 @@ impl Syncer {
         // Wait for the trie rebuilder to finish
         info!("Waiting for the trie rebuild to finish");
         let rebuild_start = Instant::now();
-        self.trie_rebuilder.take().unwrap().complete().await?;
+        if let Some(rebuilder) = self.trie_rebuilder.take() {
+            rebuilder.complete().await?;
+        } else {
+            info!("State trie is None");
+            return Err(SyncError::Trie(TrieError::InconsistentTree));
+        }
         info!(
             "State trie rebuilt from snapshot, overtime: {}",
             rebuild_start.elapsed().as_secs()
@@ -701,7 +711,7 @@ fn seconds_to_readable(seconds: U512) -> String {
 }
 
 #[derive(thiserror::Error, Debug)]
-enum SyncError {
+pub enum SyncError {
     #[error(transparent)]
     Chain(#[from] ChainError),
     #[error(transparent)]
