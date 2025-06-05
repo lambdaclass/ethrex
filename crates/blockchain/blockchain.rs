@@ -98,6 +98,24 @@ impl Blockchain {
         &self,
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
+        if block.header.parent_hash != self.state_trie.read().await.0 {
+            let (hash, trie) = &mut *self.state_trie.write().await;
+            *hash = block.header.parent_hash;
+            *trie = self.storage.open_state_trie(
+                match self
+                    .storage
+                    .get_block_by_hash(block.header.parent_hash)
+                    .await?
+                {
+                    Some(block) => block.header.state_root,
+                    None => {
+                        self.storage.add_pending_block(block.clone()).await?;
+                        return Err(ChainError::ParentNotFound);
+                    }
+                },
+            );
+        }
+
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -170,19 +188,15 @@ impl Blockchain {
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
-        let block_hash = block.header.parent_hash;
-        if block_hash != self.state_trie.read().await.0 {
-            let (hash, trie) = &mut *self.state_trie.write().await;
-            *hash = block_hash;
-            *trie = self.storage.open_state_trie(block_hash);
-        }
-
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();
         let result = self.store_block(block, res, &updates).await;
         let stored = Instant::now();
         Self::print_add_block_logs(block, since, executed, stored);
+
+        self.state_trie.write().await.0 = block.header.hash();
+
         result
     }
 

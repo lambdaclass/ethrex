@@ -247,6 +247,7 @@ mod blockchain_integration_test {
 
         // Add block at height 1.
         let block_1 = new_block(&store, &genesis_header).await;
+        eprintln!("genesis_hash = {genesis_hash}");
         blockchain
             .add_block(&block_1)
             .await
@@ -255,6 +256,7 @@ mod blockchain_integration_test {
         // Add child at height 2.
         let block_2 = new_block(&store, &block_1.header).await;
         let hash_2 = block_2.hash();
+        eprintln!("block_1.hash() = {}", block_1.header.hash());
         blockchain
             .add_block(&block_2)
             .await
@@ -275,6 +277,7 @@ mod blockchain_integration_test {
         // Add a new, non canonical block, starting from genesis.
         let block_1b = new_block(&store, &genesis_header).await;
         let hash_b = block_1b.hash();
+        eprintln!("genesis_hash = {genesis_hash}");
         blockchain
             .add_block(&block_1b)
             .await
