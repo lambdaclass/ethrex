@@ -14,11 +14,10 @@ ethrex-vm.workspace = true
 
 thiserror.workspace = true
 sha3.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "time", "rt"] }
 tracing.workspace = true
 bytes.workspace = true
 cfg-if = "1.0.0"
-tokio = { workspace = true, features = ["time", "rt"] }
 
 k256 = { version = "0.13.3", features = ["ecdh"] }
 
@@ -27,7 +26,6 @@ ethrex-metrics = { path = "./metrics", default-features = false }
 [dev-dependencies]
 serde_json.workspace = true
 hex = "0.4.3"
-tokio.workspace = true
 
 [lib]
 path = "./blockchain.rs"
