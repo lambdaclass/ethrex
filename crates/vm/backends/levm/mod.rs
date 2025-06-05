@@ -606,7 +606,9 @@ fn vm_from_generic<'a>(
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
                 TxKind::Call(to) => to,
-                TxKind::Create => return Err(InternalError::msg("Cannot be Create type").into()),
+                TxKind::Create => {
+                    return Err(InternalError::msg("Generic Tx cannot be create type").into())
+                }
             },
             value: tx.value,
             data: tx.input.clone(),
