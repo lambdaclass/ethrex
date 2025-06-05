@@ -65,8 +65,10 @@ mod tests {
     use super::validate_status;
     use crate::rlpx::eth::status::StatusMessage;
     use crate::rlpx::p2p::Capability;
-    use ethrex_common::types::Genesis;
-
+    use ethrex_common::{
+        types::{ForkId, Genesis},
+        H256, U256,
+    };
     use ethrex_storage::{EngineType, Store};
     use std::{fs::File, io::BufReader};
 
@@ -87,8 +89,28 @@ mod tests {
             .await
             .expect("Failed to add genesis block to DB");
 
+        storage
+            .add_initial_state(genesis.clone())
+            .await
+            .expect("Failed to add genesis block to DB");
+        let config = genesis.config;
+        let total_difficulty = U256::from(config.terminal_total_difficulty.unwrap_or_default());
+        let genesis_header = genesis.get_block().header;
+        let genesis_hash = genesis_header.hash();
+        let fork_id = ForkId::new(config, genesis_header, 2707305664, 123);
+
         let eth = Capability::eth(68);
-        let message = StatusMessage::new(&storage, &eth).await.unwrap();
+        let message = StatusMessage {
+            eth_version: eth.version,
+            network_id: 3503995874084926,
+            total_difficulty,
+            genesis: genesis_hash,
+            fork_id,
+            earliest_block: None,
+            latest_block: None,
+            latest_block_hash: H256::random(),
+        };
+
         let result = validate_status(message, &storage, &eth).await;
         assert!(result.is_ok());
     }
