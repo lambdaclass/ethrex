@@ -159,7 +159,7 @@ impl LevmCallTracer {
             data: log.data.clone(),
             position: match callframe.calls.len().try_into() {
                 Ok(pos) => pos,
-                Err(_) => return Err(InternalError::ConversionError),
+                Err(_) => return Err(InternalError::TypeConversion),
             },
         };
 

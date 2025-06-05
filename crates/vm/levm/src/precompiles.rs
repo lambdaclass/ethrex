@@ -320,8 +320,8 @@ pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
         return Ok(Bytes::new());
     }
 
-    let v = u8::try_from(v).map_err(|_| InternalError::ConversionError)?;
-    let recovery_id_from_rpc = v.checked_sub(27).ok_or(InternalError::ConversionError)?;
+    let v = u8::try_from(v).map_err(|_| InternalError::TypeConversion)?;
+    let recovery_id_from_rpc = v.checked_sub(27).ok_or(InternalError::TypeConversion)?;
     let Ok(recovery_id) = RecoveryId::from_i32(recovery_id_from_rpc.into()) else {
         return Ok(Bytes::new());
     };
@@ -424,15 +424,15 @@ pub fn modexp(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<By
 
     let base_limit = base_size
         .checked_add(96)
-        .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        .ok_or(InternalError::Overflow)?;
 
     let exponent_limit = exponent_size
         .checked_add(base_limit)
-        .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        .ok_or(InternalError::Overflow)?;
 
     let modulus_limit = modulus_size
         .checked_add(exponent_limit)
-        .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        .ok_or(InternalError::Overflow)?;
 
     let b = get_slice_or_default(&calldata, 96, base_limit, base_size)?;
     let base = BigUint::from_bytes_be(&b);
@@ -500,7 +500,7 @@ pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError
     if result.len() < m_size {
         let size_diff = m_size
             .checked_sub(result.len())
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?;
+            .ok_or(InternalError::Underflow)?;
         padded_result
             .get_mut(size_diff..)
             .ok_or(InternalError::SlicingError)?
@@ -810,10 +810,10 @@ pub fn ecpairing(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
         // Define the input indexes and slice calldata to get the input data
         let input_start = input_index
             .checked_mul(192)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let input_end = input_start
             .checked_add(192)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
 
         let input_data = calldata
             .get(input_start..input_end)
@@ -1035,7 +1035,7 @@ pub fn blake2f(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<B
         .map_err(|_| PrecompileError::ParsingInputError)?;
 
     let gas_cost =
-        u64::try_from(rounds).map_err(|_| InternalError::ConversionError)? * BLAKE2F_ROUND_COST;
+        u64::try_from(rounds).map_err(|_| InternalError::TypeConversion)? * BLAKE2F_ROUND_COST;
     increase_precompile_consumed_gas(gas_limit, gas_cost, gas_used)?;
 
     let (h, m, t) = parse_slice_arguments(calldata)?;
@@ -1208,13 +1208,13 @@ pub fn bls12_g1msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
     for i in 0..k {
         let point_offset = i
             .checked_mul(BLS12_381_G1_MSM_PAIR_LENGTH)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let scalar_offset = point_offset
             .checked_add(128)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let pair_end = scalar_offset
             .checked_add(32)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
 
         let point = parse_g1_point(calldata.get(point_offset..scalar_offset), false)?;
         let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
@@ -1281,13 +1281,13 @@ pub fn bls12_g2msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
     for i in 0..k {
         let point_offset = i
             .checked_mul(BLS12_381_G2_MSM_PAIR_LENGTH)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let scalar_offset = point_offset
             .checked_add(256)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let pair_end = scalar_offset
             .checked_add(32)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
 
         let point = parse_g2_point(calldata.get(point_offset..scalar_offset), false)?;
         let scalar = parse_scalar(calldata.get(scalar_offset..pair_end))?;
@@ -1331,13 +1331,13 @@ pub fn bls12_pairing_check(
     for i in 0..k {
         let g1_point_offset = i
             .checked_mul(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let g2_point_offset = g1_point_offset
             .checked_add(128)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let pair_end = g2_point_offset
             .checked_add(256)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
 
         // The check for the subgroup is required
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L194
@@ -1485,7 +1485,7 @@ fn parse_g1_point(
         let g1_bytes: [u8; 96] = [x, y]
             .concat()
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
 
         if unchecked {
             // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
@@ -1537,7 +1537,7 @@ fn parse_g2_point(
         let g2_bytes: [u8; 192] = [x_1, x_0, y_1, y_0]
             .concat()
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
 
         if unchecked {
             // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141

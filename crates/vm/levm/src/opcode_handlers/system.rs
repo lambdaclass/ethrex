@@ -670,7 +670,7 @@ impl<'a> VM<'a> {
             .current_call_frame_mut()?
             .depth
             .checked_add(1)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
 
         // Validations that push 0 (FAIL) to the stack and return reserved gas to deployer
         // 1. Sender doesn't have enough balance to send value.
@@ -762,7 +762,7 @@ impl<'a> VM<'a> {
             .current_call_frame()?
             .depth
             .checked_add(1)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         if new_depth > 1024 {
             self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });

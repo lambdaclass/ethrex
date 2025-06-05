@@ -165,16 +165,16 @@ impl<'a> VM<'a> {
         let new_addend: U512 = addend.into();
 
         let sum = new_augend.checked_add(new_addend).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow,
+            InternalError::Overflow,
         ))?;
 
         let sum_mod = sum
             .checked_rem(modulus.into())
             .ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
+                InternalError::Overflow,
             ))?
             .try_into()
-            .map_err(|_err| VMError::Internal(InternalError::ArithmeticOperationOverflow))?;
+            .map_err(|_err| VMError::Internal(InternalError::Overflow))?;
 
         current_call_frame.stack.push(sum_mod)?;
 
@@ -200,14 +200,14 @@ impl<'a> VM<'a> {
 
         let product = multiplicand
             .checked_mul(multiplier)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         let product_mod: U256 = product
             .checked_rem(modulus.into())
             .ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
+                InternalError::Overflow,
             ))?
             .try_into()
-            .map_err(|_err| VMError::Internal(InternalError::ArithmeticOperationOverflow))?;
+            .map_err(|_err| VMError::Internal(InternalError::Overflow))?;
 
         current_call_frame.stack.push(product_mod)?;
 
@@ -250,7 +250,7 @@ impl<'a> VM<'a> {
             .checked_mul(byte_size_minus_one)
             .and_then(|total_bits| total_bits.checked_add(sign_bit_position_on_byte))
             .ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
+                InternalError::Overflow,
             ))?;
 
         #[expect(clippy::arithmetic_side_effects)]
@@ -260,7 +260,7 @@ impl<'a> VM<'a> {
         let sign_bit_mask = checked_shift_left(U256::one(), sign_bit_index)?
             .checked_sub(U256::one())
             .ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationUnderflow,
+                InternalError::Underflow,
             ))?; //Shifted should be at least one
 
         let result = if sign_bit.is_zero() {

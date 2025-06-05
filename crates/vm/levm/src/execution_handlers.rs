@@ -154,13 +154,13 @@ impl<'a> VM<'a> {
 
             let code_length_u64: u64 = code_length
                 .try_into()
-                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+                .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
 
             let code_deposit_cost: u64 =
                 code_length_u64
                     .checked_mul(CODE_DEPOSIT_COST)
                     .ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationOverflow,
+                        InternalError::Overflow,
                     ))?;
 
             // Revert

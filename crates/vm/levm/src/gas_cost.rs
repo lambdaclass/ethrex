@@ -796,35 +796,27 @@ pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Res
     // Initial multiplication: factor * denominator
     let mut numerator_accum = factor
         .checked_mul(denominator)
-        .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        .ok_or(InternalError::Overflow)?;
 
     while !numerator_accum.is_zero() {
         // Safe addition to output
         output = output
             .checked_add(numerator_accum)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
 
         // Safe multiplication and division within loop
         numerator_accum = numerator_accum
             .checked_mul(numerator)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?
-            .checked_div(
-                denominator
-                    .checked_mul(i)
-                    .ok_or(InternalError::ArithmeticOperationOverflow)?,
-            )
-            .ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
-            ))?;
+            .ok_or(InternalError::Overflow)?
+            .checked_div(denominator.checked_mul(i).ok_or(InternalError::Overflow)?)
+            .ok_or(VMError::Internal(InternalError::Overflow))?;
 
-        i = i
-            .checked_add(U256::one())
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+        i = i.checked_add(U256::one()).ok_or(InternalError::Overflow)?;
     }
 
     Ok(output
         .checked_div(denominator)
-        .ok_or(InternalError::ArithmeticOperationOverflow)?)
+        .ok_or(InternalError::Overflow)?)
 }
 
 pub fn sha2_256(data_size: usize) -> Result<u64, VMError> {
@@ -870,18 +862,18 @@ pub fn modexp(
             exponent_first_32_bytes
                 .bits()
                 .checked_sub(1)
-                .ok_or(InternalError::ArithmeticOperationUnderflow)?
+                .ok_or(InternalError::Underflow)?
         } else if exponent_size > 32 {
             let extra_size = (exponent_size
                 .checked_sub(32)
-                .ok_or(InternalError::ArithmeticOperationUnderflow)?)
+                .ok_or(InternalError::Underflow)?)
             .checked_mul(8)
             .ok_or(OutOfGasError::GasCostOverflow)?;
             extra_size
                 .checked_add(exponent_first_32_bytes.bits().max(1))
                 .ok_or(OutOfGasError::GasCostOverflow)?
                 .checked_sub(1)
-                .ok_or(InternalError::ArithmeticOperationUnderflow)?
+                .ok_or(InternalError::Underflow)?
         } else {
             0
         }
@@ -917,7 +909,7 @@ fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u
 }
 
 pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
-    let groups_number = u64::try_from(groups_number).map_err(|_| InternalError::ConversionError)?;
+    let groups_number = u64::try_from(groups_number).map_err(|_| InternalError::TypeConversion)?;
 
     let groups_cost = groups_number
         .checked_mul(ECPAIRING_GROUP_COST)
@@ -979,9 +971,10 @@ pub fn bls12_msm(k: usize, discount_table: &[u64; 128], mul_cost: u64) -> Result
 
     let discount = if k < discount_table.len() {
         discount_table
-            .get(k.checked_sub(1).ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationUnderflow,
-            ))?)
+            .get(
+                k.checked_sub(1)
+                    .ok_or(VMError::Internal(InternalError::Underflow))?,
+            )
             .copied()
             .ok_or(VMError::Internal(InternalError::SlicingError))?
     } else {

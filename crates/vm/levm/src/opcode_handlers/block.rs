@@ -154,7 +154,7 @@ impl<'a> VM<'a> {
 
         let index: usize = index
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
 
         //This should never fail because we check if the index fits above
         let blob_hash = blob_hashes

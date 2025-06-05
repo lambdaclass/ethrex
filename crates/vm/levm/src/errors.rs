@@ -53,30 +53,16 @@ pub enum ExceptionalHalt {
     AddressAlreadyOccupied,
     #[error("Contract Output Too Big")]
     ContractOutputTooBig,
-    #[error("Balance Overflow")]
-    BalanceOverflow,
-    #[error("Balance Underflow")]
-    BalanceUnderflow,
-    #[error("Gas refunds underflow")]
-    GasRefundsUnderflow,
-    #[error("Gas refunds overflow")]
-    GasRefundsOverflow,
     #[error("Memory size overflows")]
-    MemorySizeOverflow,
+    MemorySizeOverflow, //TODO: Check if this should be internal.
     #[error("Nonce overflowed")]
     NonceOverflow,
     #[error("Offset out of bounds")]
     OutOfBounds,
     #[error("Out Of Gas")]
     OutOfGas(#[from] OutOfGasError),
-    #[error("Internal error: {0}")]
-    Internal(#[from] InternalError),
-    #[error("Transaction validation error: {0}")]
-    TxValidation(#[from] TxValidationError),
     #[error("Precompile execution error: {0}")]
     Precompile(#[from] PrecompileError),
-    #[error("Database access error: {0}")]
-    Database(#[from] DatabaseError),
 }
 
 /// Errors that halt the program
@@ -202,28 +188,18 @@ pub enum OutOfGasError {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum InternalError {
-    #[error("Overflowed when incrementing program counter")]
-    PCOverflowed,
-    #[error("Underflowed when decrementing program counter")]
-    PCUnderflowed,
     #[error("Arithmetic operation overflowed")]
-    ArithmeticOperationOverflow,
+    Overflow,
     #[error("Arithmetic operation underflowed")]
-    ArithmeticOperationUnderflow,
-    #[error("Arithmetic operation divided by zero")]
-    ArithmeticOperationDividedByZero,
+    Underflow,
     #[error("Account should have been cached")]
     AccountShouldHaveBeenCached,
     #[error("Tried to convert one type to another")]
-    ConversionError,
-    #[error("Division error")]
-    DivisionError,
+    TypeConversion,
     #[error("Tried to access last call frame but found none")]
     CouldNotAccessLastCallframe, // Last callframe before execution is the same as the first, but after execution the last callframe is actually the initial CF
     #[error("Tried to access blobhash but was out of range")]
     BlobHashOutOfRange,
-    #[error("Tried to read from empty code")]
-    TriedToIndexEmptyCode,
     #[error("Failed computing CREATE address")]
     CouldNotComputeCreateAddress,
     #[error("Failed computing CREATE2 address")]
@@ -234,12 +210,6 @@ pub enum InternalError {
     CouldNotPopCallframe,
     #[error("Account not found")]
     AccountNotFound,
-    #[error("ExcessBlobGas should not be None")]
-    ExcessBlobGasShouldNotBeNone,
-    #[error("Error in utils file")]
-    UtilsError,
-    #[error("PC out of bounds")]
-    PCOutOfBounds,
     #[error("Unexpected overflow in gas operation")]
     GasOverflow,
     #[error("Undefined state: {0}")]

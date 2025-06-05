@@ -118,22 +118,21 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
             valid_jump_destinations.insert(pc);
         } else if (Opcode::PUSH1..=Opcode::PUSH32).contains(&current_opcode) {
             // If current opcode is push, skip as many positions as the size of the push
-            let size_to_push =
-                opcode_number
-                    .checked_sub(u8::from(Opcode::PUSH1))
-                    .ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationUnderflow,
-                    ))?;
-            let skip_length = usize::from(size_to_push.checked_add(1).ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
-            ))?);
+            let size_to_push = opcode_number
+                .checked_sub(u8::from(Opcode::PUSH1))
+                .ok_or(VMError::Internal(InternalError::Underflow))?;
+            let skip_length = usize::from(
+                size_to_push
+                    .checked_add(1)
+                    .ok_or(VMError::Internal(InternalError::Overflow))?,
+            );
             pc = pc.checked_add(skip_length).ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow, // to fail, pc should be at least usize max - 31
+                InternalError::Overflow, // to fail, pc should be at least usize max - 31
             ))?;
         }
 
         pc = pc.checked_add(1).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow, // to fail, code len should be more than usize max
+            InternalError::Overflow, // to fail, code len should be more than usize max
         ))?;
     }
 
@@ -192,7 +191,7 @@ pub fn get_max_blob_gas_price(
     let blobhash_amount: u64 = tx_blob_hashes
         .len()
         .try_into()
-        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
 
     let blob_gas_used: u64 = blobhash_amount
         .checked_mul(BLOB_GAS_PER_BLOB)
@@ -214,7 +213,7 @@ pub fn get_blob_gas_price(
     let blobhash_amount: u64 = tx_blob_hashes
         .len()
         .try_into()
-        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
 
     let blob_gas_price: u64 = blobhash_amount
         .checked_mul(BLOB_GAS_PER_BLOB)
@@ -326,7 +325,7 @@ pub fn eip7702_recover_address(
         auth_tuple
             .y_parity
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?,
+            .map_err(|_| VMError::Internal(InternalError::TypeConversion))?,
     ) else {
         return Ok(None);
     };
@@ -354,7 +353,7 @@ pub fn eip7702_recover_address(
         .get(12..32)
         .ok_or(VMError::Internal(InternalError::SlicingError))?
         .try_into()
-        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
     Ok(Some(Address::from_slice(&authority_address_bytes)))
 }
 
@@ -532,7 +531,7 @@ impl<'a> VM<'a> {
                     .checked_mul(2)
                     .ok_or(OutOfGasError::ConsumedGasOverflow)?
                     .try_into()
-                    .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+                    .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
 
                 intrinsic_gas = intrinsic_gas
                     .checked_add(double_number_of_words)
@@ -565,7 +564,7 @@ impl<'a> VM<'a> {
             Some(list) => list
                 .len()
                 .try_into()
-                .map_err(|_| VMError::Internal(InternalError::ConversionError))?,
+                .map_err(|_| VMError::Internal(InternalError::TypeConversion))?,
         };
         let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
             .checked_mul(amount_of_auth_tuples)

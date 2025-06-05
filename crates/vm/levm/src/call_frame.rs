@@ -164,7 +164,7 @@ impl CallFrame {
         self.pc = self
             .pc
             .checked_add(count)
-            .ok_or(VMError::Internal(InternalError::PCOverflowed))?;
+            .ok_or(VMError::Internal(InternalError::Overflow))?;
         Ok(())
     }
 

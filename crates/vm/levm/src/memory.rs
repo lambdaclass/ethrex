@@ -17,9 +17,9 @@ pub fn try_resize(memory: &mut Memory, unchecked_new_size: usize) -> Result<(), 
         .ok_or(VMError::OutOfBounds)?;
 
     if new_size > memory.len() {
-        let additional_size = new_size.checked_sub(memory.len()).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationUnderflow,
-        ))?;
+        let additional_size = new_size
+            .checked_sub(memory.len())
+            .ok_or(VMError::Internal(InternalError::Underflow))?;
         memory
             .try_reserve(additional_size)
             .map_err(|_err| VMError::MemorySizeOverflow)?;
@@ -177,7 +177,7 @@ pub fn expansion_cost(new_memory_size: usize, current_memory_size: usize) -> Res
     } else {
         cost(new_memory_size)?
             .checked_sub(cost(current_memory_size)?)
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?
+            .ok_or(InternalError::Underflow)?
     };
     Ok(cost)
 }
@@ -188,7 +188,7 @@ fn cost(memory_size: usize) -> Result<u64, VMError> {
         .checked_add(
             WORD_SIZE_IN_BYTES_USIZE
                 .checked_sub(1)
-                .ok_or(InternalError::ArithmeticOperationUnderflow)?,
+                .ok_or(InternalError::Underflow)?,
         )
         .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
         / WORD_SIZE_IN_BYTES_USIZE;

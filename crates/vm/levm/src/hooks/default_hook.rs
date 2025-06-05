@@ -321,7 +321,7 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
             .blob_schedule
             .max
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?
+            .map_err(|_| VMError::Internal(InternalError::TypeConversion))?
     {
         return Err(VMError::TxValidation(
             TxValidationError::Type3TxBlobCountExceeded,
