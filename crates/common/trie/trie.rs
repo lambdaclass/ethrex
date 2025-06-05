@@ -121,19 +121,16 @@ impl Trie {
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: PathRLP) -> Result<Option<ValueRLP>, TrieError> {
-        let value;
-        (self.root, value) = if self.root.is_valid() {
-            // If the trie is not empty, call the root node's removal logic.
-            let (node, value) = self
-                .root
-                .get_node(self.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?
-                .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
-
-            (node.map(Into::into).unwrap_or_default(), value)
-        } else {
-            (NodeRef::default(), None)
-        };
+        if !self.root.is_valid() {
+            return Ok(None);
+        }
+        // If the trie is not empty, call the root node's removal logic.
+        let (node, value) = self
+            .root
+            .get_node(self.db.as_ref())?
+            .ok_or(TrieError::InconsistentTree)?
+            .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
+        self.root = node.map(Into::into).unwrap_or_default();
 
         Ok(value)
     }
@@ -321,10 +318,6 @@ impl Trie {
         impl TrieDB for NullTrieDB {
             fn get(&self, _key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
                 Ok(None)
-            }
-
-            fn put(&self, _key: NodeHash, _value: Vec<u8>) -> Result<(), TrieError> {
-                Ok(())
             }
 
             fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
