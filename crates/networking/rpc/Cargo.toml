@@ -10,7 +10,7 @@ axum.workspace = true
 tower-http = { version = "0.6.2", features = ["cors"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
-tokio = { workspace = true, features = ["full"] }
+tokio = { workspace = true, features = ["full", "signal"] }
 bytes.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -31,8 +31,6 @@ reqwest.workspace = true
 k256 = { version = "0.13.3", features = ["ecdh"] }
 sha3 = "0.10.8"
 sha2.workspace = true
-
-tokio-stream = "0.1.17"
 
 # Clients
 envy = "0.4.2"
