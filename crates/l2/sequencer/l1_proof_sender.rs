@@ -1,9 +1,8 @@
 use super::{
     configs::AlignedConfig,
     errors::SequencerError,
-    utils::{get_latest_sent_batch, resolve_aligned_network, send_verify_tx, sleep_random},
+    utils::{get_latest_sent_batch, random_duration, resolve_aligned_network, send_verify_tx},
 };
-use super::{errors::SequencerError, utils::random_duration};
 use crate::{
     sequencer::errors::ProofSenderError,
     utils::prover::{
@@ -111,7 +110,7 @@ impl L1ProofSender {
         cfg: SequencerConfig,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
-    ) -> Result<(), ProofSenderError> {
+    ) -> Result<(), SequencerError> {
         let state = L1ProofSenderState::new(
             &cfg.proof_coordinator,
             &cfg.l1_committer,
@@ -125,7 +124,8 @@ impl L1ProofSender {
         l1_proof_sender
             .cast(InMessage::Send)
             .await
-            .map_err(ProofSenderError::GenServerError)
+            .map_err(ProofSenderError::GenServerError)?;
+        Ok(())
     }
 }
 
@@ -167,10 +167,10 @@ impl GenServer for L1ProofSender {
 
 async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSenderError> {
     let batch_to_send = 1 + get_latest_sent_batch(
-        self.needed_proof_types.clone(),
-        &self.rollup_storage,
-        &self.eth_client,
-        self.on_chain_proposer_address,
+        state.needed_proof_types.clone(),
+        &state.rollup_storage,
+        &state.eth_client,
+        state.on_chain_proposer_address,
     )
     .await
     .map_err(|err| {
@@ -178,17 +178,23 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         ProofSenderError::InternalError(err.to_string())
     })?;
 
+    let last_committed_batch = state
+        .eth_client
+        .get_last_committed_batch(state.on_chain_proposer_address)
+        .await?;
+
     if last_committed_batch < batch_to_send {
         info!("Next batch to send ({batch_to_send}) is not yet committed");
         return Ok(());
     }
 
-    if batch_number_has_all_needed_proofs(batch_to_send, &self.needed_proof_types)
+    if batch_number_has_all_needed_proofs(batch_to_send, &state.needed_proof_types)
         .inspect_err(|_| info!("Missing proofs for batch {batch_to_send}, skipping sending"))
         .unwrap_or_default()
     {
-        self.send_proof(batch_to_send).await?;
-        self.rollup_storage
+        send_proof(state, batch_to_send).await?;
+        state
+            .rollup_storage
             .set_lastest_sent_batch_proof(batch_to_send)
             .await?;
     }
@@ -200,27 +206,30 @@ pub async fn send_proof(
     state: &L1ProofSenderState,
     batch_number: u64,
 ) -> Result<(), ProofSenderError> {
-    if self.needed_proof_types.contains(&ProverType::Aligned) {
-        return self.send_proof_to_aligned(batch_number).await;
+    if state.needed_proof_types.contains(&ProverType::Aligned) {
+        return send_proof_to_aligned(state, batch_number).await;
     }
-    self.send_proof_to_contract(batch_number).await
+    send_proof_to_contract(state, batch_number).await
 }
 
-async fn send_proof_to_aligned(&self, batch_number: u64) -> Result<(), ProofSenderError> {
+async fn send_proof_to_aligned(
+    state: &L1ProofSenderState,
+    batch_number: u64,
+) -> Result<(), ProofSenderError> {
     let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
-    let elf = std::fs::read(self.aligned_sp1_elf_path.clone())
+    let elf = std::fs::read(state.aligned_sp1_elf_path.clone())
         .map_err(|e| ProofSenderError::InternalError(format!("Failed to read ELF file: {e}")))?;
 
     let verification_data = VerificationData {
         proving_system: ProvingSystemId::SP1,
         proof: proof.proof(),
-        proof_generator_addr: self.l1_address.0.into(),
+        proof_generator_addr: state.l1_address.0.into(),
         vm_program_code: Some(elf),
         verification_key: None,
         pub_input: None,
     };
 
-    let rpc_url = self
+    let rpc_url = state
         .eth_client
         .urls
         .first()
@@ -229,25 +238,25 @@ async fn send_proof_to_aligned(&self, batch_number: u64) -> Result<(), ProofSend
         })?
         .as_str();
 
-    let fee_estimation = estimate_fee(rpc_url, self.fee_estimate.clone())
+    let fee_estimation = estimate_fee(rpc_url, state.fee_estimate.clone())
         .await
         .map_err(|err| ProofSenderError::AlignedFeeEstimateError(err.to_string()))?;
 
-    let nonce = get_nonce_from_batcher(self.network.clone(), self.l1_address.0.into())
+    let nonce = get_nonce_from_batcher(state.network.clone(), state.l1_address.0.into())
         .await
         .map_err(|err| {
             ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {:?}", err))
         })?;
 
-    let wallet = Wallet::from_bytes(self.l1_private_key.as_ref())
+    let wallet = Wallet::from_bytes(state.l1_private_key.as_ref())
         .map_err(|_| ProofSenderError::InternalError("Failed to create wallet".to_owned()))?;
 
-    let wallet = wallet.with_chain_id(self.l1_chain_id);
+    let wallet = wallet.with_chain_id(state.l1_chain_id);
 
     debug!("Sending proof to Aligned");
 
     submit(
-        self.network.clone(),
+        state.network.clone(),
         &verification_data,
         fee_estimation,
         wallet,
@@ -263,7 +272,10 @@ async fn send_proof_to_aligned(&self, batch_number: u64) -> Result<(), ProofSend
     Ok(())
 }
 
-pub async fn send_proof_to_contract(&self, batch_number: u64) -> Result<(), ProofSenderError> {
+pub async fn send_proof_to_contract(
+    state: &L1ProofSenderState,
+    batch_number: u64,
+) -> Result<(), ProofSenderError> {
     // TODO: change error
     // TODO: If the proof is not needed, a default calldata is used,
     // the structure has to match the one defined in the OnChainProposer.sol contract.
@@ -305,10 +317,10 @@ pub async fn send_proof_to_contract(&self, batch_number: u64) -> Result<(), Proo
 
     let verify_tx_hash = send_verify_tx(
         calldata,
-        &self.eth_client,
-        self.on_chain_proposer_address,
-        self.l1_address,
-        &self.l1_private_key,
+        &state.eth_client,
+        state.on_chain_proposer_address,
+        state.l1_address,
+        &state.l1_private_key,
     )
     .await?;
 

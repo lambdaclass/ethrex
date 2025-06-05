@@ -52,16 +52,6 @@ pub async fn start_l2(
         return;
     };
 
-    let Ok(needed_proof_types) = get_needed_proof_types(
-        cfg.proof_coordinator.dev_mode,
-        cfg.eth.rpc_url.clone(),
-        cfg.l1_committer.on_chain_proposer_address,
-    )
-    .await
-    .inspect_err(|e| error!("Error starting Proposer: {e}")) else {
-        return;
-    };
-
     let _ = L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone())
         .await
         .inspect_err(|err| {
