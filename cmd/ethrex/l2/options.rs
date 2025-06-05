@@ -2,8 +2,9 @@ use crate::{cli::Options as NodeOptions, utils};
 use clap::Parser;
 use ethrex_common::Address;
 use ethrex_l2::{
-    sequencer::configs::AlignedConfig, BlockProducerConfig, CommitterConfig, EthConfig,
-    L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig,
+    sequencer::{configs::AlignedConfig, utils::resolve_aligned_network},
+    BlockProducerConfig, CommitterConfig, EthConfig, L1WatcherConfig, ProofCoordinatorConfig,
+    SequencerConfig,
 };
 use ethrex_rpc::clients::eth::get_address_from_secret_key;
 use secp256k1::SecretKey;
@@ -94,7 +95,9 @@ impl From<SequencerOptions> for SequencerConfig {
                 aligned_mode: opts.aligned_opts.aligned,
                 aligned_verifier_interval_ms: opts.aligned_opts.aligned_verifier_interval_ms,
                 beacon_url: opts.aligned_opts.beacon_url.unwrap_or_default(),
-                network: opts.aligned_opts.aligned_network.unwrap_or_default(),
+                network: resolve_aligned_network(
+                    &opts.aligned_opts.aligned_network.unwrap_or_default(),
+                ),
                 fee_estimate: opts.aligned_opts.fee_estimate,
                 aligned_sp1_elf_path: opts.aligned_opts.aligned_sp1_elf_path.unwrap_or_default(),
             },
