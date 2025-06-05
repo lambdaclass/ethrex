@@ -1221,8 +1221,10 @@ impl StoreEngine for Store {
     fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError> {
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         txn.get::<StateSnapShot>(account_hash.into())
-            .map_err(StoreError::LibmdbxError)
-            .map(|x| x.map(|y| y.to()))
+            .map_err(StoreError::LibmdbxError)?
+            .map(|x| x.to())
+            .transpose()
+            .map_err(Into::into)
     }
 
     fn get_storage_snapshot(

@@ -90,6 +90,14 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    fn write_snapshot_account_batch_blocking(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<AccountState>,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
+
     async fn store_changes(&self, _query_plan: QueryPlan) -> Result<(), StoreError> {
         todo!()
     }
@@ -731,7 +739,7 @@ impl StoreEngine for Store {
     }
 
     fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError> {
-        Ok(self.inner().state_snapshot.get(&account_hash).cloned())
+        Ok(self.inner()?.state_snapshot.get(&account_hash).cloned())
     }
 
     fn get_storage_snapshot(
@@ -740,7 +748,7 @@ impl StoreEngine for Store {
         storage_hash: H256,
     ) -> Result<Option<U256>, StoreError> {
         Ok(self
-            .inner()
+            .inner()?
             .storage_snapshot
             .get(&account_hash)
             .and_then(|x| x.get(&storage_hash))

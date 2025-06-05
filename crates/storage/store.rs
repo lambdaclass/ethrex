@@ -1305,7 +1305,7 @@ impl Store {
 
         // Create the accounts and storage maps for the diff layer.
         let mut accounts = HashMap::new();
-        let state_trie = store.open_state_trie(state_root);
+        let state_trie = store.open_state_trie(state_root)?;
 
         let mut storage: HashMap<H256, HashMap<H256, Option<U256>>> = HashMap::new();
 
@@ -1313,7 +1313,9 @@ impl Store {
             let hashed_address = hash_address_fixed(&update.address);
 
             if !update.removed {
-                let account_state = match state_trie.get(&hashed_address.as_bytes().into()).unwrap()
+                let account_state = match state_trie
+                    .get(&hashed_address.as_bytes().into())
+                    .map_err(|_e| SnapshotError::StoreError(StoreError::Custom("mal fla".into())))?
                 {
                     Some(encoded_state) => AccountState::decode(&encoded_state).unwrap(),
                     None => AccountState::default(),
