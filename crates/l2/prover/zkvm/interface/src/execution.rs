@@ -269,6 +269,7 @@ fn execute_stateless(
     })
 }
 
+#[cfg(feature = "l2")]
 fn get_batch_withdrawals_and_deposits(
     blocks: &[Block],
     receipts: &[Vec<Receipt>],
@@ -285,6 +286,7 @@ fn get_batch_withdrawals_and_deposits(
     Ok((withdrawals, deposits))
 }
 
+#[cfg(feature = "l2")]
 fn compute_withdrawals_and_deposits_digests(
     withdrawals: &[Transaction],
     deposits: &[PrivilegedL2Transaction],
@@ -306,6 +308,7 @@ fn compute_withdrawals_and_deposits_digests(
     Ok((withdrawals_merkle_root, deposit_logs_hash))
 }
 
+#[cfg(feature = "l2")]
 fn verify_blob(
     state_diff: StateDiff,
     blob_commitment: Commitment,
