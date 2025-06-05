@@ -9,6 +9,8 @@ services:
       - --metrics-port=9093
     ports:
       - "9093:9093"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - prometheus
 
