@@ -167,14 +167,14 @@ impl KademliaTable {
     pub fn pong_answered(&mut self, node_id: H256, pong_at: u64) {
         let peer = self.get_by_node_id_mut(node_id);
 
-        if let Some(peer) = peer {
-            peer.is_proven = true;
-            peer.last_pong = pong_at;
-            peer.last_ping_hash = None;
-            peer.revalidation = peer.revalidation.and(Some(true));
-        }
-    }
-
+       let Some(peer) = self.get_by_node_id_mut(node_id) else {
+           return;
+       };
+      
+       peer.is_proven = true;
+       peer.last_pong = pong_at;
+       peer.last_ping_hash = None;
+       peer.revalidation = peer.revalidation.and(Some(true));
     pub fn update_peer_ping(
         &mut self,
         node_id: H256,
