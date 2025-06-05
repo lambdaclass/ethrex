@@ -417,4 +417,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError>;
+
+    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError>;
+
+    fn get_storage_snapshot(&self, account_hash: H256, storage_hash: H256) -> Result<Option<U256>, StoreError>;
 }

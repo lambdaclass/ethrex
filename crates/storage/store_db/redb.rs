@@ -1285,6 +1285,14 @@ impl StoreEngine for RedBStore {
         )
         .await
     }
+
+    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError> {
+        todo!()
+    }
+
+    fn get_storage_snapshot(&self, account_hash: H256, storage_hash: H256) -> Result<Option<U256>, StoreError> {
+        todo!()
+    }
 }
 
 impl redb::Value for ChainDataIndex {
