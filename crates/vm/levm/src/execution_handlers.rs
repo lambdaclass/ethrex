@@ -1,6 +1,6 @@
 use crate::{
     constants::*,
-    errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
+    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
     utils::*,
@@ -176,7 +176,7 @@ impl<'a> VM<'a> {
                 .increase_consumed_gas(code_deposit_cost)
                 .is_err()
             {
-                Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
+                Err(VMError::OutOfGas)
             } else {
                 Ok(self.current_call_frame()?.to)
             };

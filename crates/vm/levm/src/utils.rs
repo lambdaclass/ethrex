@@ -2,7 +2,7 @@ use crate::{
     call_frame::CallFrameBackup,
     constants::*,
     db::{cache, gen_db::GeneralizedDatabase},
-    errors::{InternalError, OutOfGasError, TxValidationError, VMError},
+    errors::{InternalError, TxValidationError, VMError},
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
         BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
@@ -35,6 +35,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
+use VMError::OutOfGas;
 pub type Storage = HashMap<U256, H256>;
 
 #[cfg(not(feature = "l2"))]
@@ -487,24 +488,19 @@ impl<'a> VM<'a> {
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame()?.calldata)
-            .map_err(VMError::OutOfGas)?;
+        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame()?.calldata)?;
 
-        intrinsic_gas = intrinsic_gas
-            .checked_add(calldata_cost)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        intrinsic_gas = intrinsic_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
 
         // Base Cost
-        intrinsic_gas = intrinsic_gas
-            .checked_add(TX_BASE_COST)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        intrinsic_gas = intrinsic_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
 
         // Create Cost
         if self.is_create() {
             // https://eips.ethereum.org/EIPS/eip-2#specification
             intrinsic_gas = intrinsic_gas
                 .checked_add(CREATE_BASE_COST)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+                .ok_or(OutOfGas)?;
 
             // https://eips.ethereum.org/EIPS/eip-3860
             if self.env.config.fork >= Fork::Shanghai {
@@ -515,13 +511,13 @@ impl<'a> VM<'a> {
                     .div_ceil(WORD_SIZE);
                 let double_number_of_words: u64 = number_of_words
                     .checked_mul(2)
-                    .ok_or(OutOfGasError::ConsumedGasOverflow)?
+                    .ok_or(OutOfGas)?
                     .try_into()
                     .map_err(|_| InternalError::TypeConversion)?;
 
                 intrinsic_gas = intrinsic_gas
                     .checked_add(double_number_of_words)
-                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+                    .ok_or(OutOfGas)?;
             }
         }
 
@@ -530,17 +526,17 @@ impl<'a> VM<'a> {
         for (_, keys) in self.tx.access_list() {
             access_lists_cost = access_lists_cost
                 .checked_add(ACCESS_LIST_ADDRESS_COST)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+                .ok_or(OutOfGas)?;
             for _ in keys {
                 access_lists_cost = access_lists_cost
                     .checked_add(ACCESS_LIST_STORAGE_KEY_COST)
-                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+                    .ok_or(OutOfGas)?;
             }
         }
 
         intrinsic_gas = intrinsic_gas
             .checked_add(access_lists_cost)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            .ok_or(OutOfGas)?;
 
         // Authorization List Cost
         // `unwrap_or_default` will return an empty vec when the `authorization_list` field is None.
@@ -558,7 +554,7 @@ impl<'a> VM<'a> {
 
         intrinsic_gas = intrinsic_gas
             .checked_add(authorization_list_cost)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            .ok_or(OutOfGas)?;
 
         Ok(intrinsic_gas)
     }
@@ -576,8 +572,7 @@ impl<'a> VM<'a> {
         // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
         // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
         // see it in https://eips.ethereum.org/EIPS/eip-7623
-        let tokens_in_calldata: u64 =
-            gas_cost::tx_calldata(calldata).map_err(VMError::OutOfGas)? / STANDARD_TOKEN_COST;
+        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata)? / STANDARD_TOKEN_COST;
 
         // min_gas_used = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
         let mut min_gas_used: u64 = tokens_in_calldata

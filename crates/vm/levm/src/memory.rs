@@ -1,8 +1,9 @@
 use crate::{
     constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE_IN_BYTES_USIZE},
-    errors::{InternalError, OutOfGasError, VMError},
+    errors::{InternalError, VMError},
 };
 use ethrex_common::U256;
+use VMError::OutOfGas;
 
 /// Memory of the EVM, a volatile byte array.
 pub type Memory = Vec<u8>;
@@ -190,19 +191,12 @@ fn cost(memory_size: usize) -> Result<u64, VMError> {
                 .checked_sub(1)
                 .ok_or(InternalError::Underflow)?,
         )
-        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
+        .ok_or(OutOfGas)?
         / WORD_SIZE_IN_BYTES_USIZE;
 
-    let gas_cost = (memory_size_word
-        .checked_pow(2)
-        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?
-        / MEMORY_EXPANSION_QUOTIENT)
-        .checked_add(
-            3usize
-                .checked_mul(memory_size_word)
-                .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?,
-        )
-        .ok_or(OutOfGasError::MemoryExpansionCostOverflow)?;
+    let gas_cost = (memory_size_word.checked_pow(2).ok_or(OutOfGas)? / MEMORY_EXPANSION_QUOTIENT)
+        .checked_add(3usize.checked_mul(memory_size_word).ok_or(OutOfGas)?)
+        .ok_or(OutOfGas)?;
 
     gas_cost.try_into().map_err(|_| VMError::VeryLargeNumber)
 }
@@ -212,9 +206,7 @@ pub fn calculate_memory_size(offset: U256, size: usize) -> Result<usize, VMError
         return Ok(0);
     }
 
-    let offset: usize = offset
-        .try_into()
-        .map_err(|_err| VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow))?;
+    let offset: usize = offset.try_into().map_err(|_err| OutOfGas)?;
 
     offset
         .checked_add(size)

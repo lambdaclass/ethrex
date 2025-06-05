@@ -1,6 +1,6 @@
 use crate::{
     constants::STACK_LIMIT,
-    errors::{InternalError, OutOfGasError, VMError},
+    errors::{InternalError, VMError},
     memory::Memory,
     opcodes::Opcode,
     utils::{get_valid_jump_destinations, restore_cache_state},
@@ -171,12 +171,9 @@ impl CallFrame {
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
     pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), VMError> {
-        let potential_consumed_gas = self
-            .gas_used
-            .checked_add(gas)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+        let potential_consumed_gas = self.gas_used.checked_add(gas).ok_or(VMError::OutOfGas)?;
         if potential_consumed_gas > self.gas_limit {
-            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
+            return Err(VMError::OutOfGas);
         }
 
         self.gas_used = potential_consumed_gas;

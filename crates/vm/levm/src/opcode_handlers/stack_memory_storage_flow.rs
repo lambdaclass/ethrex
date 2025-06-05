@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
-    errors::{OpcodeResult, OutOfGasError, VMError},
+    errors::{InternalError, OpcodeResult, VMError},
     gas_cost::{self, SSTORE_STIPEND},
     memory::{self, calculate_memory_size},
     vm::VM,
@@ -174,9 +174,9 @@ impl<'a> VM<'a> {
             .current_call_frame()?
             .gas_limit
             .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            .ok_or(VMError::OutOfGas)?;
         if gas_left <= SSTORE_STIPEND {
-            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
+            return Err(VMError::OutOfGas);
         }
 
         // Get current and original (pre-tx) values.
@@ -256,7 +256,7 @@ impl<'a> VM<'a> {
         let remaining_gas = current_call_frame
             .gas_limit
             .checked_sub(current_call_frame.gas_used)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
         // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
         current_call_frame.stack.push(remaining_gas.into())?;
 

@@ -60,7 +60,7 @@ pub enum ExceptionalHalt {
     #[error("Offset out of bounds")]
     OutOfBounds,
     #[error("Out Of Gas")]
-    OutOfGas(#[from] OutOfGasError),
+    OutOfGas,
     #[error("Precompile execution error: {0}")]
     Precompile(#[from] PrecompileError),
 }
@@ -101,7 +101,7 @@ pub enum VMError {
     #[error("Gas refunds overflow")]
     GasRefundsOverflow,
     #[error("Out Of Gas")]
-    OutOfGas(#[from] OutOfGasError),
+    OutOfGas,
     #[error("Internal error: {0}")]
     Internal(#[from] InternalError),
     #[error("Transaction validation error: {0}")]
@@ -166,22 +166,6 @@ pub enum TxValidationError {
     Type4TxContractCreation,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error, Serialize, Deserialize)]
-pub enum OutOfGasError {
-    #[error("Gas Cost Overflow")]
-    GasCostOverflow,
-    #[error("Gas Used Overflow")]
-    GasUsedOverflow,
-    #[error("Creation Cost Is Too High")]
-    CreationCostIsTooHigh,
-    #[error("Consumed Gas Overflow")]
-    ConsumedGasOverflow,
-    #[error("Max Gas Limit Exceeded")]
-    MaxGasLimitExceeded,
-    #[error("Memory Expansion Cost Overflow")]
-    MemoryExpansionCostOverflow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

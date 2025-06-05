@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
-    errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
+    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     utils::{address_to_word, word_to_address, *},
@@ -616,7 +616,7 @@ impl<'a> VM<'a> {
         // Validations that can cause out of gas.
         // 1. [EIP-3860] - Cant exceed init code max size
         if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.config.fork >= Fork::Shanghai {
-            return Err(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow));
+            return Err(VMError::OutOfGas);
         }
 
         let current_call_frame = self.current_call_frame_mut()?;
