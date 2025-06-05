@@ -84,10 +84,6 @@ mod tests {
         let reader = BufReader::new(file);
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
-        storage
-            .add_initial_state(genesis.clone())
-            .await
-            .expect("Failed to add genesis block to DB");
 
         storage
             .add_initial_state(genesis.clone())
