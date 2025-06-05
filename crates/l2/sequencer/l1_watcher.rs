@@ -1,5 +1,5 @@
 use super::utils::random_duration;
-use crate::based::sequencer_state::SequencerState;
+use super::SequencerState;
 use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use bytes::Bytes;
@@ -80,20 +80,21 @@ impl L1Watcher {
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
         sequencer_state: Arc<Mutex<SequencerState>>,
-    ) -> Result<(), L1WatcherError> {
-        let state = L1WatcherState::new(
-            store,
-            blockchain,
+    ) {
+        match L1WatcherState::new(
+            store.clone(),
+            blockchain.clone(),
             &cfg.eth,
             &cfg.l1_watcher,
             sequencer_state,
-        )?;
-        let mut l1_watcher = L1Watcher::start(state);
-        // Perform the check and suscribe a periodic Watch.
-        l1_watcher
-            .cast(InMessage::Watch)
-            .await
-            .map_err(L1WatcherError::GenServerError)
+        ) {
+            Ok(state) => {
+                let mut l1_watcher = L1Watcher::start(state);
+                // Perform the check and suscribe a periodic Watch.
+                let _ = l1_watcher.cast(InMessage::Watch).await;
+            }
+            Err(error) => error!("L1 Watcher Error: {}", error),
+        };
     }
 }
 

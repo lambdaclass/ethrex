@@ -192,9 +192,8 @@ ethrex Execution client
 Usage: ethrex [OPTIONS] [COMMAND]
 
 Commands:
-  removedb  Remove the database
-  import    Import blocks to the database
-  export    Export blocks in the current chain into a file in rlp encoding
+  removedb            Remove the database
+  import              Import blocks to the database
   compute-state-root  Compute the state root from a genesis file
   help                Print this message or the help of the given subcommand(s)
 
@@ -419,6 +418,7 @@ Most of them are [here](https://github.com/ethpandaops/ethereum-package/blob/mai
 ## ethrex L2 Docs
 
 - [ethrex L2 Docs](./crates/l2/docs/README.md)
+- [ethrex L2 CLI Docs](./cmd/ethrex_l2/README.md)
 
 
 ## 📚 References and acknowledgements

@@ -158,7 +158,6 @@ impl<'a> VM<'a> {
 
             // Return the ExecutionReport if the executed callframe was the first one.
             if self.is_initial_call_frame() {
-                self.handle_state_backup(&result)?;
                 return Ok(result);
             }
 
@@ -183,6 +182,12 @@ impl<'a> VM<'a> {
         let report = self.handle_precompile_result(precompile_result)?;
 
         Ok(report)
+    }
+
+    pub fn restore_state(&mut self, backup: Substate) -> Result<(), VMError> {
+        self.restore_cache_state()?;
+        self.substate = backup;
+        Ok(())
     }
 
     /// True if external transaction is a contract creation

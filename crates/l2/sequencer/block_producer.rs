@@ -17,11 +17,12 @@ use payload_builder::build_payload;
 use tokio::{sync::Mutex, time::sleep};
 use tracing::{debug, error, info};
 
-use crate::{based::sequencer_state::SequencerState, BlockProducerConfig, SequencerConfig};
+use crate::{BlockProducerConfig, SequencerConfig};
 
 use super::{
     errors::{BlockProducerError, SequencerError},
     execution_cache::ExecutionCache,
+    SequencerState,
 };
 
 use ethrex_metrics::metrics;

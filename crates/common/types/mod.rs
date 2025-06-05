@@ -1,6 +1,5 @@
 mod account;
 mod account_update;
-pub mod batch;
 pub mod blobs_bundle;
 mod block;
 mod constants;

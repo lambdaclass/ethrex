@@ -14,5 +14,5 @@ ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 eyre.workspace = true
 keccak-hash.workspace = true
-tokio = { workspace = true, features = ["full"] }
+tokio.workspace = true
 futures = "0.3"

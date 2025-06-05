@@ -109,6 +109,4 @@ pub enum InvalidForkChoice {
     InvalidHead,
     #[error("Previously rejected block.")]
     InvalidAncestor(BlockHash),
-    #[error("Cannot find link between Head and the canonical chain")]
-    UnlinkedHead,
 }

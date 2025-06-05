@@ -1,14 +1,41 @@
-use ethrex_common::types::ForkId;
+use ethrex_common::{types::ForkId, U256};
 use ethrex_storage::Store;
 
-use crate::rlpx::{error::RLPxError, p2p::Capability};
+use crate::rlpx::error::RLPxError;
 
 use super::status::StatusMessage;
+
+pub async fn get_status(storage: &Store, eth_version: u8) -> Result<StatusMessage, RLPxError> {
+    let chain_config = storage.get_chain_config()?;
+    let total_difficulty = U256::from(chain_config.terminal_total_difficulty.unwrap_or_default());
+    let network_id = chain_config.chain_id;
+
+    // These blocks must always be available
+    let genesis_header = storage
+        .get_block_header(0)?
+        .ok_or(RLPxError::NotFound("Genesis Block".to_string()))?;
+    let block_number = storage.get_latest_block_number().await?;
+    let block_header = storage
+        .get_block_header(block_number)?
+        .ok_or(RLPxError::NotFound(format!("Block {block_number}")))?;
+
+    let genesis = genesis_header.hash();
+    let block_hash = block_header.hash();
+    let fork_id = storage.get_fork_id().await?;
+    Ok(StatusMessage {
+        eth_version: eth_version as u32,
+        network_id,
+        total_difficulty,
+        block_hash,
+        genesis,
+        fork_id,
+    })
+}
 
 pub async fn validate_status(
     msg_data: StatusMessage,
     storage: &Store,
-    eth_capability: &Capability,
+    eth_version: u8,
 ) -> Result<(), RLPxError> {
     let chain_config = storage.get_chain_config()?;
 
@@ -29,26 +56,26 @@ pub async fn validate_status(
     );
 
     //Check networkID
-    if msg_data.get_network_id() != chain_config.chain_id {
+    if msg_data.network_id != chain_config.chain_id {
         return Err(RLPxError::HandshakeError(
             "Network Id does not match".to_string(),
         ));
     }
     //Check Protocol Version
-    if msg_data.get_eth_version() != eth_capability.version {
+    if msg_data.eth_version as u8 != eth_version {
         return Err(RLPxError::HandshakeError(
             "Eth protocol version does not match".to_string(),
         ));
     }
     //Check Genesis
-    if msg_data.get_genesis() != genesis_hash {
+    if msg_data.genesis != genesis_hash {
         return Err(RLPxError::HandshakeError(
             "Genesis does not match".to_string(),
         ));
     }
     // Check ForkID
     if !fork_id.is_valid(
-        msg_data.get_fork_id(),
+        msg_data.fork_id,
         latest_block_number,
         latest_block_header.timestamp,
         chain_config,
@@ -63,14 +90,11 @@ pub async fn validate_status(
 #[cfg(test)]
 mod tests {
     use super::validate_status;
-    use crate::rlpx::eth::eth68::status::StatusMessage68;
     use crate::rlpx::eth::status::StatusMessage;
-    use crate::rlpx::p2p::Capability;
     use ethrex_common::{
         types::{ForkId, Genesis},
         H256, U256,
     };
-
     use ethrex_storage::{EngineType, Store};
     use std::{fs::File, io::BufReader};
 
@@ -96,16 +120,16 @@ mod tests {
         let genesis_hash = genesis_header.hash();
         let fork_id = ForkId::new(config, genesis_header, 2707305664, 123);
 
-        let eth = Capability::eth(68);
-        let message = StatusMessage::StatusMessage68(StatusMessage68 {
-            eth_version: eth.version,
+        let eth_version = 68;
+        let message = StatusMessage {
+            eth_version: eth_version as u32,
             network_id: 3503995874084926,
             total_difficulty,
             block_hash: H256::random(),
             genesis: genesis_hash,
             fork_id,
-        });
-        let result = validate_status(message, &storage, &eth).await;
+        };
+        let result = validate_status(message, &storage, eth_version).await;
         assert!(result.is_ok());
     }
 }
