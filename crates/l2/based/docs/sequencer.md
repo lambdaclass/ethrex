@@ -1,5 +1,8 @@
 # ethrex L2 Sequencer
 
+> [!IMPORTANT]
+> This documentation is about the current state of the `based` feature development and not about the final implementation. It is subject to change as the feature evolves and their still could be unmitigated issues.
+
 > [!NOTE]
 > This is an extension of the [ethrex-L2-Sequencer documentation](../../docs/sequencer.md) and is intended to be merged with it in the future.
 

@@ -1,5 +1,8 @@
 # ethrex L2 Contracts
 
+> [!IMPORTANT]
+> This documentation is about the current state of the `based` feature development and not about the final implementation. It is subject to change as the feature evolves and their still could be unmitigated issues.
+
 > [!NOTE]
 > This is an extension of the [ethrex-L2-Contracts documentation](../../docs/contracts.md) and is intended to be merged with it in the future.
 
@@ -48,7 +51,7 @@ The `SequencerRegistry` is a new contract designed to manage the pool of Sequenc
   - `currentBatch`: The next batch to be committed, calculated as `lastCommittedBatch() + 1` from the `OnChainProposer` contract.
   - `nBatchesInTheFuture`: A parameter specifying how many batches ahead to look.
   - `targetBatch`: Calculated as `currentBatch` + `nBatchesInTheFuture`.
-  - `BATCHES_PER_SEQUENCER`: A constant set to 32, representing the number of batches each Sequencer leads before rotation.
+  - `BATCHES_PER_SEQUENCER`: A constant set to 32, representing the number of batches each lead Sequencer gets to commit.
 
   **Logic:**
 
@@ -59,11 +62,11 @@ The `SequencerRegistry` is a new contract designed to manage the pool of Sequenc
   address _leader = sequencers[_id % sequencers.length];
   ```
 
-  **Example:** Assume 3 Sequencers are registered: `[S0, S1, S2]`, and the current batch is 0:
+  **Example:** Assume 3 Sequencers are registered: `[S0, S1, S2]`, and the current committed batch is 0:
 
   - For batches 0–31: `_id = 0 / 32 = 0, 0 % 3 = 0`, lead Sequencer = `S0`.
   - For batches 32–63: `_id = 32 / 32 = 1, 1 % 3 = 1`, lead Sequencer = `S1`.
   - For batches 64–95: `_id = 64 / 32 = 2, 2 % 3 = 2`, lead Sequencer = `S2`.
   - For batches 96–127: `_id = 96 / 32 = 3, 3 % 3 = 0`, lead Sequencer = `S0`.
 
-  This round-robin rotation repeats every 96 batches (32 batches per Sequencer × 3 Sequencers), ensuring equitable distribution of responsibilities.
+  This round-robin rotation repeats every 96 committed batches (32 committed batches per Sequencer × 3 Sequencers), ensuring equitable distribution of responsibilities.
