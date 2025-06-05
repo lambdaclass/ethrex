@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use ethrex_common::tracing::{CallLog, CallTrace, CallTraceFrame, CallType};
+use ethrex_common::types::{BlockHeader, Transaction};
 use ethrex_common::{types::Block, Address, H256, U256};
 use revm::{inspector_handle_register, Evm};
 use revm_inspectors::tracing::{
@@ -8,12 +10,7 @@ use revm_inspectors::tracing::{
 };
 use revm_primitives::{BlockEnv, ExecutionResult as RevmExecutionResult, SpecId, TxEnv};
 
-use crate::{
-    backends::revm::run_evm,
-    helpers::spec_id,
-    tracing::{Call, CallLog, CallTrace, CallType},
-    EvmError,
-};
+use crate::{backends::revm::run_evm, helpers::spec_id, EvmError};
 
 use super::{block_env, db::EvmState, tx_env, REVM};
 
@@ -22,21 +19,14 @@ impl REVM {
     /// Asumes that the received state already contains changes from previous blocks and other
     /// transactions within its block
     pub fn trace_tx_calls(
-        block: &Block,
-        tx_index: usize,
+        block_header: &BlockHeader,
+        tx: &Transaction,
         state: &mut EvmState,
         only_top_call: bool,
         with_log: bool,
     ) -> Result<CallTrace, EvmError> {
-        let spec_id: SpecId = spec_id(&state.chain_config()?, block.header.timestamp);
-        let block_env = block_env(&block.header, spec_id);
-        let tx = block
-            .body
-            .transactions
-            .get(tx_index)
-            .ok_or(EvmError::Custom(
-                "Missing Transaction for Trace".to_string(),
-            ))?;
+        let spec_id: SpecId = spec_id(&state.chain_config()?, block_header.timestamp);
+        let block_env = block_env(block_header, spec_id);
         let tx_env = tx_env(tx, tx.sender());
         // Trace the transaction
         run_evm_with_call_tracer(tx_env, block_env, state, spec_id, only_top_call, with_log)
@@ -118,7 +108,6 @@ fn run_evm_with_call_tracer(
         call_trace,
         &revert_reason_or_error,
         only_top_call,
-        with_log,
     ))
 }
 
@@ -149,7 +138,6 @@ fn map_call_trace(
     revm_trace: CallTraceArena,
     revert_reason_or_error: &String,
     only_top_call: bool,
-    with_log: bool,
 ) -> CallTrace {
     let mut call_trace = CallTrace::new();
     // Idxs of child calls already included in the parent call
@@ -164,7 +152,6 @@ fn map_call_trace(
                 &mut used_idxs,
                 revert_reason_or_error,
                 only_top_call,
-                with_log,
             ));
         }
     }
@@ -177,8 +164,7 @@ fn map_call(
     used_idxs: &mut HashSet<usize>,
     revert_reason_or_error: &String,
     only_top_call: bool,
-    with_log: bool,
-) -> Call {
+) -> CallTraceFrame {
     let mut subcalls = vec![];
     if !only_top_call {
         for child_idx in &revm_call.children {
@@ -189,15 +175,14 @@ fn map_call(
                     used_idxs,
                     revert_reason_or_error,
                     only_top_call,
-                    with_log,
                 ));
                 used_idxs.insert(*child_idx);
             }
         }
     }
     let to = Address::from_slice(revm_call.trace.address.0.as_slice());
-    Call {
-        r#type: map_call_type(revm_call.kind()),
+    CallTraceFrame {
+        call_type: map_call_type(revm_call.kind()),
         from: Address::from_slice(revm_call.trace.caller.0.as_slice()),
         to,
         value: U256(*revm_call.trace.value.as_limbs()),
@@ -214,26 +199,24 @@ fn map_call(
             .is_revert()
             .then(|| revert_reason_or_error.clone()),
         calls: subcalls,
-        logs: with_log.then(|| {
-            revm_call
-                .logs
-                .into_iter()
-                .map(|revm_log| map_log(revm_log, to))
-                .collect()
-        }),
+        logs: revm_call
+            .logs
+            .into_iter()
+            .map(|revm_log| map_log(revm_log, to))
+            .collect(),
     }
 }
 
 fn map_call_type(revm_call_type: CallKind) -> CallType {
     match revm_call_type {
-        CallKind::Call => CallType::Call,
-        CallKind::StaticCall => CallType::StaticCall,
-        CallKind::CallCode => CallType::CallCode,
-        CallKind::DelegateCall => CallType::DelegateCall,
-        CallKind::AuthCall => CallType::Call, //TODO: check this
-        CallKind::Create => CallType::Create,
-        CallKind::Create2 => CallType::Create2,
-        CallKind::EOFCreate => CallType::Create, //TODO: check this
+        CallKind::Call => CallType::CALL,
+        CallKind::StaticCall => CallType::STATICCALL,
+        CallKind::CallCode => CallType::CALLCODE,
+        CallKind::DelegateCall => CallType::DELEGATECALL,
+        CallKind::AuthCall => CallType::CALL, //TODO: check this
+        CallKind::Create => CallType::CREATE,
+        CallKind::Create2 => CallType::CREATE2,
+        CallKind::EOFCreate => CallType::CREATE, //TODO: check this
     }
 }
 

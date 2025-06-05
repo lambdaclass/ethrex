@@ -7,16 +7,17 @@ use crate::{
     errors::{ExecutionReport, OpcodeResult, VMError},
     hooks::hook::Hook,
     precompiles::execute_precompile,
+    tracing::LevmCallTracer,
     TransientStorage,
 };
 use bytes::Bytes;
 use ethrex_common::{
+    tracing::CallType,
     types::{Transaction, TxKind},
     Address, H256, U256,
 };
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    fmt::Debug,
     sync::Arc,
 };
 
@@ -43,10 +44,17 @@ pub struct VM<'a> {
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
+    /// When enabled, it "logs" relevant information during execution
+    pub tracer: LevmCallTracer,
 }
 
 impl<'a> VM<'a> {
-    pub fn new(env: Environment, db: &'a mut GeneralizedDatabase, tx: &Transaction) -> Self {
+    pub fn new(
+        env: Environment,
+        db: &'a mut GeneralizedDatabase,
+        tx: &Transaction,
+        tracer: LevmCallTracer,
+    ) -> Self {
         let hooks = Self::get_hooks(tx);
 
         Self {
@@ -58,6 +66,7 @@ impl<'a> VM<'a> {
             hooks,
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
+            tracer,
         }
     }
 
@@ -84,6 +93,20 @@ impl<'a> VM<'a> {
         );
 
         self.call_frames.push(initial_call_frame);
+
+        let call_type = if self.is_create() {
+            CallType::CREATE
+        } else {
+            CallType::CALL
+        };
+        self.tracer.enter(
+            call_type,
+            self.env.origin,
+            callee,
+            self.tx.value(),
+            self.env.gas_limit,
+            self.tx.data(),
+        );
 
         Ok(())
     }
@@ -216,6 +239,8 @@ impl<'a> VM<'a> {
         for hook in self.hooks.clone() {
             hook.finalize_execution(self, report)?;
         }
+
+        self.tracer.exit_report(report, true)?;
 
         Ok(())
     }

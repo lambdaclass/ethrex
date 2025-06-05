@@ -46,7 +46,10 @@ impl<'a> VM<'a> {
                 memory::load_range(&mut current_call_frame.memory, offset, size)?.to_vec(),
             ),
         };
-        current_call_frame.logs.push(log);
+
+        self.tracer.log(&log)?;
+
+        self.current_call_frame_mut()?.logs.push(log);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

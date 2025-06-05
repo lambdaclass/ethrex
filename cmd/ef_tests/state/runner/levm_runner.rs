@@ -14,6 +14,7 @@ use ethrex_common::{
 use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
+    tracing::LevmCallTracer,
     vm::VM,
     EVMConfig, Environment,
 };
@@ -191,6 +192,7 @@ pub fn prepare_vm_for_tx<'a>(
         },
         db,
         &tx,
+        LevmCallTracer::disabled(),
     ))
 }
 
