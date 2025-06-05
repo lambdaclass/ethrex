@@ -4,8 +4,6 @@ use ethrex_common::types::Log;
 use serde::{Deserialize, Serialize};
 use thiserror;
 
-use crate::db::error::DatabaseError;
-
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize, Display)]
 pub enum VMError {
     /// Errors that break execution, they shouldn't ever happen. Contains subcategory `DatabaseError`.
@@ -167,6 +165,12 @@ pub enum PrecompileError {
     BLS12381G1PointNotInCurve,
     #[error("The G2 point is not in the curve")]
     BLS12381G2PointNotInCurve,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
+pub enum DatabaseError {
+    #[error("{0}")]
+    Custom(String),
 }
 
 #[derive(Debug, Clone)]
