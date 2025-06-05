@@ -1,6 +1,5 @@
 use ethrex_common::types::ChainConfig;
-
-use eyre::Context;
+use eyre::WrapErr;
 
 use crate::{
     cache::{load_cache, write_cache, Cache},
@@ -43,9 +42,7 @@ pub async fn get_blockdata(
         parent_block_header,
         witness,
     };
-
     write_cache(&cache, &file_name).expect("failed to write cache");
-
     Ok(cache)
 }
 

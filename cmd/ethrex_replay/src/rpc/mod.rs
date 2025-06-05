@@ -1,8 +1,6 @@
 use ethrex_common::types::{block_execution_witness::ExecutionWitnessResult, Block};
 use ethrex_rlp::decode::RLPDecode;
-
 use serde::de::DeserializeOwned;
-
 use serde_json::json;
 
 use lazy_static::lazy_static;
@@ -63,8 +61,7 @@ pub async fn get_witness(
 
     let response = CLIENT.post(rpc_url).json(request).send().await?;
     let res = response.json::<serde_json::Value>().await?;
-    let result: Result<ExecutionWitnessResult, eyre::Error> = get_result(res);
-    result
+    get_result(res)
 }
 
 pub async fn get_witness_range(

@@ -282,13 +282,11 @@ impl Trie {
         }
 
         let root = inner(&mut storage, root)?.into();
-
-        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(
-            storage
-                .into_iter()
-                .map(|(node_hash, nodes)| (node_hash, nodes.clone()))
-                .collect::<HashMap<_, _>>(),
-        ))));
+        let nodes = storage
+            .into_iter()
+            .map(|(node_hash, nodes)| (node_hash, nodes.clone()))
+            .collect::<HashMap<_, _>>();
+        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
         trie.root = root;

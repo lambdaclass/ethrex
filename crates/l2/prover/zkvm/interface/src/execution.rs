@@ -6,9 +6,10 @@ use crate::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
 use crate::io::{ProgramInput, ProgramOutput};
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
-use ethrex_common::types::{Block, BlockHeader};
-use ethrex_common::H256;
+use ethrex_common::{
+    types::{block_execution_witness::ExecutionWitnessResult, Block, BlockHeader},
+    H256,
+};
 use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDBError};
 
 #[derive(Debug, thiserror::Error)]
@@ -184,7 +185,7 @@ fn execute_stateless(
             .map_err(StatelessExecutionError::EvmError)?;
 
         // Update db for the next block
-        db.apply_account_updates_from_trie(&account_updates)
+        db.apply_account_updates(&account_updates)
             .map_err(|e| StatelessExecutionError::ApplyAccountUpdates(e.to_string()))?;
 
         validate_gas_used(&receipts, &block.header)

@@ -2,7 +2,6 @@ use crate::{config::ProverConfig, prove, to_calldata};
 use ethrex_l2::{
     sequencer::proof_coordinator::ProofData, utils::prover::proving_systems::ProofCalldata,
 };
-
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},

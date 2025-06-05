@@ -1,6 +1,5 @@
 use crate::sequencer::errors::ProverServerError;
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
-
 use crate::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use crate::utils::prover::save_state::{
     batch_number_has_state_file, write_state, StateFileType, StateType,
@@ -10,14 +9,12 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
-use ethrex_common::types::ChainConfig;
+use ethrex_common::types::{block_execution_witness::ExecutionWitnessResult, ChainConfig};
 use ethrex_common::{
     types::{Block, BlockHeader},
     Address,
 };
 use ethrex_rpc::clients::eth::EthClient;
-
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
@@ -521,9 +518,11 @@ async fn create_prover_input(
 
     let blocks = fetch_blocks(state, block_numbers).await?;
 
-    let Ok(witness) = state.blockchain.generate_witness_for_blocks(&blocks).await else {
-        return Err(ProverServerError::Custom("error".to_string()));
-    };
+    let witness = state
+        .blockchain
+        .generate_witness_for_blocks(&blocks)
+        .await
+        .map_err(ProverServerError::from)?;
 
     // Get the block_header of the parent of the first block
     let parent_hash = blocks

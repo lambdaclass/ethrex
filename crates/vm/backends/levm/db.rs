@@ -1,10 +1,11 @@
-use crate::db::DynVmDatabase;
-use crate::VmDatabase;
 use ethrex_common::types::Account;
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
-use ethrex_levm::db::error::DatabaseError;
 use ethrex_levm::db::Database as LevmDatabase;
+
+use crate::db::DynVmDatabase;
+use crate::VmDatabase;
+use ethrex_levm::db::error::DatabaseError;
 use std::collections::HashMap;
 use std::result::Result;
 use std::sync::{Arc, Mutex};

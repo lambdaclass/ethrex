@@ -2,7 +2,6 @@ use ethrex_common::{
     types::{block_execution_witness::ExecutionWitnessResult, Block, BlockHeader},
     H256,
 };
-
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::{serde_as, DeserializeAs, SerializeAs};
 

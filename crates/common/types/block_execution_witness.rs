@@ -150,7 +150,7 @@ impl ExecutionWitnessResult {
         Ok(())
     }
 
-    pub fn apply_account_updates_from_trie(
+    pub fn apply_account_updates(
         &mut self,
         account_updates: &[AccountUpdate],
     ) -> Result<(), ExecutionWitnessError> {
