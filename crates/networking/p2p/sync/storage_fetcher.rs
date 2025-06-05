@@ -96,14 +96,13 @@ async fn fetch_storage_batch(
     large_storage_sender: Sender<Vec<LargeStorageRequest>>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
-    if let (Some(batch_first), Some(batch_last)) = (batch.first(), batch.last()) {
-        debug!(
-            "Requesting storage ranges for addresses {}..{}",
-            batch_first.0, batch_last.0
-        );
-    } else {
+    let (Some(batch_first), Some(batch_last)) = (batch.first(), batch.last()) else {
         return Err(SyncError::BodiesNotFound);
-    }
+    };
+    debug!(
+        "Requesting storage ranges for addresses {}..{}",
+        batch_first.0, batch_last.0
+    );
 
     let (batch_hahses, batch_roots) = batch.clone().into_iter().unzip();
     if let Some((mut keys, mut values, incomplete)) = peers
@@ -114,33 +113,31 @@ async fn fetch_storage_batch(
         // Handle incomplete ranges
         if incomplete {
             // An incomplete range cannot be empty
-            if let (Some(last_keys), Some(last_values)) = (keys.pop(), values.pop()) {
-                // If only one incomplete range is returned then it must belong to a trie that is too big to fit into one request
-                // We will handle this large trie separately
-                if keys.is_empty() {
-                    debug!("Large storage trie encountered, handling separately");
-                    let (account_hash, storage_root) = batch.remove(0);
-                    if let Some(lk) = last_keys.last() {
-                        let last_key = *lk;
-                        // Store downloaded range
-                        store
-                            .write_snapshot_storage_batch(account_hash, last_keys, last_values)
-                            .await?;
-                        // Delegate the rest of the trie to the large trie fetcher
-                        large_storage_sender
-                            .send(vec![LargeStorageRequest {
-                                account_hash,
-                                storage_root,
-                                last_key,
-                            }])
-                            .await?;
-                        return Ok((batch, false));
-                    } else {
-                        return Err(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree));
-                    }
-                }
-            } else {
+            let (Some(last_keys), Some(last_values)) = (keys.pop(), values.pop()) else {
                 return Err(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree));
+            };
+            // If only one incomplete range is returned then it must belong to a trie that is too big to fit into one request
+            // We will handle this large trie separately
+            if keys.is_empty() {
+                debug!("Large storage trie encountered, handling separately");
+                let (account_hash, storage_root) = batch.remove(0);
+                let Some(lk) = last_keys.last() else {
+                    return Err(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree));
+                };
+                let last_key = *lk;
+                // Store downloaded range
+                store
+                    .write_snapshot_storage_batch(account_hash, last_keys, last_values)
+                    .await?;
+                // Delegate the rest of the trie to the large trie fetcher
+                large_storage_sender
+                    .send(vec![LargeStorageRequest {
+                        account_hash,
+                        storage_root,
+                        last_key,
+                    }])
+                    .await?;
+                return Ok((batch, false));
             }
             // The incomplete range is not the first, we cannot asume it is a large trie, so lets add it back to the queue
         }
@@ -241,23 +238,22 @@ async fn fetch_large_storage(
         .await
     {
         // Update next batch's start
-        if let Some(last_key) = keys.last() {
-            request.last_key = *last_key;
-            // Write storage range to snapshot
-            store
-                .write_snapshot_storage_batch(request.account_hash, keys, values)
-                .await?;
-            if incomplete {
-                Ok((Some(request), false))
-            } else {
-                // Send complete trie to rebuilder
-                storage_trie_rebuilder_sender
-                    .send(vec![(request.account_hash, request.storage_root)])
-                    .await?;
-                Ok((None, false))
-            }
+        let Some(last_key) = keys.last() else {
+            return Err(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree));
+        };
+        request.last_key = *last_key;
+        // Write storage range to snapshot
+        store
+            .write_snapshot_storage_batch(request.account_hash, keys, values)
+            .await?;
+        if incomplete {
+            Ok((Some(request), false))
         } else {
-            Err(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree))
+            // Send complete trie to rebuilder
+            storage_trie_rebuilder_sender
+                .send(vec![(request.account_hash, request.storage_root)])
+                .await?;
+            Ok((None, false))
         }
     } else {
         // Pivot became stale

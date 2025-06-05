@@ -236,18 +236,17 @@ async fn rebuild_storage_trie_in_background(
             if pending_storages.is_empty() {
                 break;
             }
-            if let Some((account_hash, expected_root)) = pending_storages.pop() {
-                let store = store.clone();
-                rebuild_tasks.spawn(rebuild_storage_trie(
-                    account_hash,
-                    expected_root,
-                    store.clone(),
-                ));
-            } else {
+            let Some((account_hash, expected_root)) = pending_storages.pop() else {
                 return Err(SyncError::Store(StoreError::Custom(
                     "Pending storage to rebuils is None".to_string(),
                 )));
-            }
+            };
+            let store = store.clone();
+            rebuild_tasks.spawn(rebuild_storage_trie(
+                account_hash,
+                expected_root,
+                store.clone(),
+            ));
         }
         for res in rebuild_tasks.join_all().await {
             res?;
