@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749153792719,
+  "lastUpdate": 1749155938266,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11155,6 +11155,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 176724025262,
             "range": "± 317093431",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8a84fac24432c8ce95ab6cbebdc3f0a70994e818",
+          "message": "refactor(l2): review l2 clis args (#2744)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nSome of the existing flags in the different L2 CLIs inherited default\nvalues from their previous implementation (toml files). These values\nwere meant to facilitate dev deployment.\n\nAs we're preparing ethrex for a more production-like environment,\nkeeping some options with default becomes kind of an issue because the\nCLI doesn't ask the user for these, leading to incorrect deployments and\nso on.\n\nThe correct approach for this would be for the CLI to require some\nflags, and to update the dev tooling commands (like our makefile) to\npass the default values. This way, day-to-day devs devex is not impacted\n(they still deploy fast and with default values they don't care about),\nand prod teams like the devops team can be sure about which\nconfiguration is required for a prod-like deployment (not even for\nproduction, but also for testnet, you wouldn't want to burn testnet\ntokens in vain).\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Manuel Iñaki Bilbao <manuel.bilbao@lambdaclass.com>\nCo-authored-by: Francisco Xavier Gauna <francisco.gauna@lambdaclass.com>",
+          "timestamp": "2025-06-05T19:53:35Z",
+          "tree_id": "9496d6cde395ec498dc68264ffeb225ab5609238",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8a84fac24432c8ce95ab6cbebdc3f0a70994e818"
+        },
+        "date": 1749155933683,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 174339370051,
+            "range": "± 534841948",
             "unit": "ns/iter"
           }
         ]
