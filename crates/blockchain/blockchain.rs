@@ -262,7 +262,7 @@ impl Blockchain {
                     ))
                 }
             };
-            match ((i as f64 / blocks_len as f64) * 100.0) as u64 {
+            match ((i as f64 * 100.0) / blocks_len as f64) as u64 {
                 20 => {
                     info!("Processed 20% of current batch");
                 }
