@@ -11,7 +11,6 @@ use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_storage::error::StoreError;
-use ethrex_trie::TrieError;
 use ethrex_vm::{EvmError, ProverDBError};
 use tokio::task::JoinError;
 

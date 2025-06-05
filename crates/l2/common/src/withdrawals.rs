@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::sync::LazyLock;
 
 use ethereum_types::{Address, H256};
 use ethrex_common::{
@@ -69,15 +69,14 @@ pub fn get_block_withdrawals(txs: &[Transaction], receipts: &[Receipt]) -> Vec<T
 }
 
 fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> bool {
-    // WithdrawalInitiated(address,address,uint256)
-    let withdrawal_event_selector: H256 =
-        H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2").unwrap();
+    static WITHDRAWAL_EVENT_SELECTOR: LazyLock<H256> =
+        LazyLock::new(|| keccak("WithdrawalInitiated(address,address,uint256)".as_bytes()));
 
     match tx.to() {
         TxKind::Call(to) if to == COMMON_BRIDGE_L2_ADDRESS => receipt.logs.iter().any(|log| {
             log.topics
                 .iter()
-                .any(|topic| *topic == withdrawal_event_selector)
+                .any(|topic| *topic == *WITHDRAWAL_EVENT_SELECTOR)
         }),
         _ => false,
     }

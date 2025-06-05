@@ -16,7 +16,7 @@ use ethrex_l2_common::withdrawals::{get_block_withdrawals, get_withdrawal_hash};
 use ethrex_l2_common::{
     deposits::{compute_deposit_logs_hash, get_block_deposits, DepositError},
     state_diff::{prepare_state_diff, StateDiff, StateDiffError},
-    withdrawals::{compute_withdrawals_merkle_root, get_block_withdrawal_hashes, WithdrawalError},
+    withdrawals::{compute_withdrawals_merkle_root, WithdrawalError},
 };
 use ethrex_trie::Trie;
 use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDB, ProverDBError};
@@ -148,9 +148,10 @@ pub fn stateless_validation_l2(
         final_state_hash,
         state_trie,
         account_updates,
+        last_block_header
     } = execute_stateless(blocks, parent_block_header, db, elasticity_multiplier)?;
 
-    let (withdrawals, deposits) = get_batch_withdrawals_and_deposits(&blocks, &receipts)?;
+    let (withdrawals, deposits) = get_batch_withdrawals_and_deposits(blocks, &receipts)?;
     let (withdrawals_merkle_root, deposit_logs_hash) =
         compute_withdrawals_and_deposits_digests(&withdrawals, &deposits)?;
 
@@ -160,7 +161,7 @@ pub fn stateless_validation_l2(
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
         let state_diff = prepare_state_diff(
-            parent_block_header.clone(),
+            last_block_header,
             db,
             &withdrawals,
             &deposits,
@@ -187,6 +188,7 @@ struct StatelessResult {
     final_state_hash: H256,
     state_trie: Trie,
     account_updates: HashMap<Address, AccountUpdate>,
+    last_block_header: BlockHeader,
 }
 
 fn execute_stateless(
@@ -273,6 +275,7 @@ fn execute_stateless(
         final_state_hash,
         state_trie,
         account_updates: acc_account_updates,
+        last_block_header: parent_header.clone()
     })
 }
 

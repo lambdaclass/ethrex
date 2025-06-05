@@ -15,7 +15,7 @@ use ethrex_l2_common::{
     deposits::{compute_deposit_logs_hash, get_block_deposits},
     state_diff::{prepare_state_diff, StateDiff},
     withdrawals::{
-        compute_withdrawals_merkle_root, get_block_withdrawal_hashes, get_block_withdrawals,
+        compute_withdrawals_merkle_root, get_block_withdrawals,
     },
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
@@ -305,7 +305,7 @@ async fn prepare_batch_from_block(
         }
 
         metrics!(
-            tx_count += txs_and_receipts
+            tx_count += txs
                 .len()
                 .try_into()
                 .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))

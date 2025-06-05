@@ -5,7 +5,7 @@ use ethrex_common::{
     types::{batch::Batch, bytes_from_blob, BlobsBundle, BlockHeader, BYTES_PER_BLOB},
     Address,
 };
-use ethrex_l2_common::StateDiff;
+use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_storage::{EngineType, Store};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::ContextCompat;

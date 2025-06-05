@@ -2,18 +2,14 @@ use std::collections::{BTreeMap, HashMap};
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::{
-    types::{
-        code_hash, AccountInfo, AccountState, AccountUpdate, Block, BlockHeader, BlockNumber,
-        PrivilegedL2Transaction, Receipt, Transaction, TxKind,
-    },
-    H160,
+use ethrex_common::types::{
+    code_hash, AccountInfo, AccountState, AccountUpdate, BlockHeader, PrivilegedL2Transaction,
+    Transaction, TxKind,
 };
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_storage::{error::StoreError, hash_address, Store};
+use ethrex_storage::{error::StoreError, hash_address};
 use ethrex_trie::{Trie, TrieError};
 use ethrex_vm::{EvmError, VmDatabase};
-use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 
 use lazy_static::lazy_static;
