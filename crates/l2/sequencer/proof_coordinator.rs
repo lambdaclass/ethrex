@@ -21,6 +21,7 @@ use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::ProverDB;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -32,7 +33,6 @@ use tokio::{
     sync::TryAcquireError,
 };
 use tracing::{debug, error, info, warn};
-use serde_with::serde_as;
 
 use super::blobs_bundle_cache::BlobsBundleCache;
 
@@ -155,7 +155,7 @@ pub struct ProofCoordinatorState {
     rpc_url: String,
     l1_private_key: SecretKey,
     blobs_bundle_cache: Arc<BlobsBundleCache>,
-    validium: bool
+    validium: bool,
 }
 
 impl ProofCoordinatorState {
@@ -219,7 +219,7 @@ impl ProofCoordinator {
         store: Store,
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
-        blobs_bundle_cache: Arc<BlobsBundleCache>
+        blobs_bundle_cache: Arc<BlobsBundleCache>,
     ) -> Result<(), ProverServerError> {
         let state = ProofCoordinatorState::new(
             &cfg.proof_coordinator,
@@ -586,7 +586,7 @@ async fn create_prover_input(
         #[cfg(feature = "l2")]
         blob_commitment,
         #[cfg(feature = "l2")]
-        blob_proof
+        blob_proof,
     })
 }
 

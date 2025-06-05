@@ -3024,6 +3024,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-dev",
  "ethrex-l2",
+ "ethrex-l2-common",
  "ethrex-metrics",
  "ethrex-p2p",
  "ethrex-rlp",
