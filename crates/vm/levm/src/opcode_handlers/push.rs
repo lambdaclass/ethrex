@@ -5,6 +5,7 @@ use crate::{
     vm::VM,
 };
 use ethrex_common::{types::Fork, U256};
+use ExceptionalHalt::OutOfBounds;
 
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32
@@ -57,11 +58,6 @@ fn read_bytcode_slice(current_call_frame: &CallFrame, n_bytes: usize) -> Result<
 
     Ok(current_call_frame
         .bytecode
-        .get(
-            pc_offset
-                ..pc_offset
-                    .checked_add(n_bytes)
-                    .ok_or(ExceptionalHalt::OutOfBounds)?,
-        )
+        .get(pc_offset..pc_offset.checked_add(n_bytes).ok_or(OutOfBounds)?)
         .unwrap_or_default())
 }
