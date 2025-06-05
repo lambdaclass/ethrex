@@ -170,7 +170,7 @@ impl Blockchain {
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
-        let block_hash = block.header.hash();
+        let block_hash = block.header.parent_hash;
         if block_hash != self.state_trie.read().await.0 {
             let (hash, trie) = &mut *self.state_trie.write().await;
             *hash = block_hash;
