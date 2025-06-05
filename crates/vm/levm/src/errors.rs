@@ -9,10 +9,8 @@ use crate::db::error::DatabaseError;
 //TODO: Rename to VMError afterwards
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize, Display)]
 pub enum EVMError {
-    /// Errors caused by bugs, things that shouldn't ever happen.
+    /// Errors that break execution, they shouldn't ever happen. Contains subcategory `DatabaseError`.
     Internal(#[from] InternalError),
-    /// Unexpected error when accessing the database, used in trait `Database`.
-    Database(#[from] DatabaseError),
     /// Returned when a transaction doesn't pass all validations before executing.
     TxValidation(#[from] TxValidationError),
     /// Errors contemplated by the EVM, they revert and consume all gas of the current context.
@@ -25,7 +23,13 @@ impl EVMError {
     /// These errors are unexpected and indicate critical issues.
     /// They should not cause a transaction to revert silently but instead fail loudly, propagating the error.
     pub fn should_propagate(&self) -> bool {
-        matches!(self, EVMError::Internal(_) | EVMError::Database(_))
+        matches!(self, EVMError::Internal(_))
+    }
+}
+
+impl From<DatabaseError> for EVMError {
+    fn from(err: DatabaseError) -> Self {
+        EVMError::Internal(InternalError::Database(err))
     }
 }
 
@@ -106,15 +110,19 @@ pub enum VMError {
     OutOfBounds,
     #[error("Precompile execution error: {0}")]
     Precompile(#[from] PrecompileError),
-    #[error("Database access error: {0}")]
-    Database(#[from] DatabaseError),
 }
 
 impl VMError {
     /// These errors are unexpected and indicate critical issues.
     /// They should not cause a transaction to revert silently but instead fail loudly, propagating the error.
     pub fn should_propagate(&self) -> bool {
-        matches!(self, VMError::Internal(_)) || matches!(self, VMError::Database(_))
+        matches!(self, VMError::Internal(_))
+    }
+}
+
+impl From<DatabaseError> for VMError {
+    fn from(err: DatabaseError) -> Self {
+        VMError::Internal(InternalError::Database(err))
     }
 }
 
@@ -202,6 +210,9 @@ pub enum InternalError {
     MemorySizeOverflow,
     #[error("Custom error: {0}")]
     Custom(String),
+    /// Unexpected error when accessing the database, used in trait `Database`.
+    #[error("Database access error: {0}")]
+    Database(#[from] DatabaseError),
 }
 
 impl InternalError {

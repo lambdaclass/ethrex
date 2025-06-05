@@ -576,10 +576,10 @@ pub fn tx_calldata(calldata: &Bytes) -> Result<u64, OutOfGasError> {
 
 pub fn tx_creation(code_length: u64, number_of_words: u64) -> Result<u64, OutOfGasError> {
     let mut creation_cost = code_length
-        .checked_mul(200)
+        .checked_mul(CODE_DEPOSIT_COST)
         .ok_or(OutOfGasError::CreationCostIsTooHigh)?;
     creation_cost = creation_cost
-        .checked_add(32000)
+        .checked_add(CREATE_BASE_COST)
         .ok_or(OutOfGasError::CreationCostIsTooHigh)?;
 
     // GInitCodeword * number_of_words rounded up. GinitCodeWord = 2
