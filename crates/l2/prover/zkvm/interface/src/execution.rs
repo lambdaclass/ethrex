@@ -151,7 +151,7 @@ fn execute_stateless(
         return Err(StatelessExecutionError::NoHeadersRequired);
     };
 
-    if !validate_block_hashes(block_headers, db.block_hashes.values().into_iter())? {
+    if !validate_block_hashes(block_headers, db.block_hashes.values())? {
         return Err(StatelessExecutionError::InvalidBlockHashes);
     }
 
@@ -264,7 +264,7 @@ fn validate_block_hashes<'a>(
     }
 
     for db_block_hash in db_block_hashes {
-        if !valid_hashes.contains(&db_block_hash) {
+        if !valid_hashes.contains(db_block_hash) {
             return Ok(false);
         }
     }

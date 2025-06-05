@@ -46,7 +46,7 @@ pub async fn get_blockdata(
         let number: usize = number
             .try_into()
             .wrap_err("failed to convert block number to usize from u64")?;
-        let header = get_block(&rpc_url, number)
+        let header = get_block(rpc_url, number)
             .await
             .wrap_err("failed to fetch block")?
             .header;
@@ -124,7 +124,7 @@ pub async fn get_rangedata(
         let number: usize = number
             .try_into()
             .wrap_err("failed to convert block number to usize from u64")?;
-        let header = get_block(&rpc_url, number)
+        let header = get_block(rpc_url, number)
             .await
             .wrap_err("failed to fetch block")?
             .header;
