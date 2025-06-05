@@ -41,7 +41,6 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
     Message,
 };
-use InternalError::Slicing;
 
 // Secp256r1 curve parameters
 // See https://neuromancer.sk/std/secg/secp256r1
@@ -309,12 +308,12 @@ pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
     let calldata = fill_with_zeros(calldata, 128);
 
     // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
-    let hash = calldata.get(0..32).ok_or(Slicing)?;
+    let hash = calldata.get(0..32).ok_or(InternalError::Slicing)?;
     let Ok(message) = Message::from_digest_slice(hash) else {
         return Ok(Bytes::new());
     };
 
-    let v = U256::from_big_endian(calldata.get(32..64).ok_or(Slicing)?);
+    let v = U256::from_big_endian(calldata.get(32..64).ok_or(InternalError::Slicing)?);
 
     // The Recovery identifier is expected to be 27 or 28, any other value is invalid
     if !(v == U256::from(27) || v == U256::from(28)) {
@@ -328,7 +327,7 @@ pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
     };
 
     // signature is made up of the parameters r and s
-    let sig = calldata.get(64..128).ok_or(Slicing)?;
+    let sig = calldata.get(64..128).ok_or(InternalError::Slicing)?;
     let Ok(signature) = RecoverableSignature::from_compact(sig, recovery_id) else {
         return Ok(Bytes::new());
     };
@@ -345,7 +344,7 @@ pub fn ecrecover(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
 
     // The output is 32 bytes: the initial 12 bytes with 0s, and the remaining 20 with the recovered address
     let mut output = vec![0u8; 12];
-    output.extend_from_slice(public_key.get(13..33).ok_or(Slicing)?);
+    output.extend_from_slice(public_key.get(13..33).ok_or(InternalError::Slicing)?);
 
     Ok(Bytes::from(output.to_vec()))
 }
@@ -502,7 +501,7 @@ pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Result<Bytes, VMError
             .ok_or(InternalError::Underflow)?;
         padded_result
             .get_mut(size_diff..)
-            .ok_or(Slicing)?
+            .ok_or(InternalError::Slicing)?
             .copy_from_slice(result);
 
         Ok(padded_result.into())
@@ -654,8 +653,8 @@ type FirstPointCoordinates = (
 
 /// Parses first point coordinates and makes verification of invalid infinite
 fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordinates, VMError> {
-    let first_point_x = input_data.get(..32).ok_or(Slicing)?;
-    let first_point_y = input_data.get(32..64).ok_or(Slicing)?;
+    let first_point_x = input_data.get(..32).ok_or(InternalError::Slicing)?;
+    let first_point_y = input_data.get(32..64).ok_or(InternalError::Slicing)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
     if (U256::from_big_endian(first_point_x) == U256::zero())
@@ -682,8 +681,8 @@ fn parse_second_point_coordinates(
     ),
     VMError,
 > {
-    let second_point_x_first_part = input_data.get(96..128).ok_or(Slicing)?;
-    let second_point_x_second_part = input_data.get(64..96).ok_or(Slicing)?;
+    let second_point_x_first_part = input_data.get(96..128).ok_or(InternalError::Slicing)?;
+    let second_point_x_second_part = input_data.get(64..96).ok_or(InternalError::Slicing)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
     if (U256::from_big_endian(second_point_x_first_part) == U256::zero())
@@ -692,8 +691,8 @@ fn parse_second_point_coordinates(
         return Err(PrecompileError::DefaultError.into());
     }
 
-    let second_point_y_first_part = input_data.get(160..192).ok_or(Slicing)?;
-    let second_point_y_second_part = input_data.get(128..160).ok_or(Slicing)?;
+    let second_point_y_first_part = input_data.get(160..192).ok_or(InternalError::Slicing)?;
+    let second_point_y_second_part = input_data.get(128..160).ok_or(InternalError::Slicing)?;
 
     // Infinite is defined by (0,0). Any other zero-combination is invalid
     if (U256::from_big_endian(second_point_y_first_part) == U256::zero())
@@ -810,7 +809,9 @@ pub fn ecpairing(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result
             .checked_add(192)
             .ok_or(InternalError::Overflow)?;
 
-        let input_data = calldata.get(input_start..input_end).ok_or(Slicing)?;
+        let input_data = calldata
+            .get(input_start..input_end)
+            .ok_or(InternalError::Slicing)?;
 
         let (first_point_x, first_point_y) = parse_first_point_coordinates(input_data)?;
 
@@ -889,7 +890,7 @@ const R4: u32 = 63;
 /// four words indexed by "a", "b", "c", and "d" in the working vector
 /// v[0..15].  The full modified vector is returned.
 /// Based on https://datatracker.ietf.org/doc/html/rfc7693#section-3.1
-#[allow(clippy::indexing_slicing)]
+#[allow(clippy::indexing_InternalError::Slicing)]
 fn g(v: [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) -> [u64; 16] {
     let mut ret = v;
     ret[a] = v[a].wrapping_add(v[b]).wrapping_add(x);
@@ -905,7 +906,7 @@ fn g(v: [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) -> [u
 }
 
 /// Perform the permutations on the work vector given the rounds to permute and the message block
-#[allow(clippy::indexing_slicing)]
+#[allow(clippy::indexing_InternalError::Slicing)]
 fn word_permutation(rounds_to_permute: usize, v: [u64; 16], m: &[u64; 16]) -> [u64; 16] {
     let mut ret = v;
 
@@ -955,9 +956,10 @@ fn blake2f_compress_f(
 
     // XOR the two halves, put the results in the output slice
     for (i, pos) in output.iter_mut().enumerate() {
-        *pos = h.get(i).ok_or(Slicing)?
-            ^ v.get(i).ok_or(Slicing)?
-            ^ v.get(i.overflowing_add(8).0).ok_or(Slicing)?;
+        *pos = h.get(i).ok_or(InternalError::Slicing)?
+            ^ v.get(i).ok_or(InternalError::Slicing)?
+            ^ v.get(i.overflowing_add(8).0)
+                .ok_or(InternalError::Slicing)?;
     }
 
     Ok(output)
@@ -978,7 +980,7 @@ fn read_bytes_from_offset(calldata: &Bytes, offset: usize, index: usize) -> Resu
     Ok(u64::from_le_bytes(
         calldata
             .get(index_start..index_end)
-            .ok_or(Slicing)?
+            .ok_or(InternalError::Slicing)?
             .try_into()
             .map_err(|_| PrecompileError::ParsingInputError)?,
     ))
@@ -991,7 +993,7 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
     for i in 0..8_usize {
         let data_read = read_bytes_from_offset(calldata, 4, i)?;
 
-        let read_slice = h.get_mut(i).ok_or(Slicing)?;
+        let read_slice = h.get_mut(i).ok_or(InternalError::Slicing)?;
         *read_slice = data_read;
     }
 
@@ -999,7 +1001,7 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
     for i in 0..16_usize {
         let data_read = read_bytes_from_offset(calldata, 68, i)?;
 
-        let read_slice = m.get_mut(i).ok_or(Slicing)?;
+        let read_slice = m.get_mut(i).ok_or(InternalError::Slicing)?;
         *read_slice = data_read;
     }
 
@@ -1007,7 +1009,7 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
     for i in 0..2_usize {
         let data_read = read_bytes_from_offset(calldata, 196, i)?;
 
-        let read_slice = t.get_mut(i).ok_or(Slicing)?;
+        let read_slice = t.get_mut(i).ok_or(InternalError::Slicing)?;
         *read_slice = data_read;
     }
 
@@ -1020,7 +1022,7 @@ pub fn blake2f(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<B
         return Err(PrecompileError::ParsingInputError.into());
     }
 
-    let rounds = U256::from_big_endian(calldata.get(0..4).ok_or(Slicing)?);
+    let rounds = U256::from_big_endian(calldata.get(0..4).ok_or(InternalError::Slicing)?);
 
     let rounds: usize = rounds
         .try_into()
@@ -1032,7 +1034,7 @@ pub fn blake2f(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<B
 
     let (h, m, t) = parse_slice_arguments(calldata)?;
 
-    let f = calldata.get(212).ok_or(Slicing)?;
+    let f = calldata.get(212).ok_or(InternalError::Slicing)?;
     if *f != 0 && *f != 1 {
         return Err(PrecompileError::ParsingInputError.into());
     }
@@ -1222,7 +1224,7 @@ pub fn bls12_g1msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
     let result_bytes = G1Affine::from(result).to_uncompressed();
     let (x_bytes, y_bytes) = result_bytes
         .split_at_checked(FIELD_ELEMENT_WITHOUT_PADDING_LENGTH)
-        .ok_or(Slicing)?;
+        .ok_or(InternalError::Slicing)?;
     output[16..64].copy_from_slice(x_bytes);
     output[80..128].copy_from_slice(y_bytes);
 
@@ -1582,13 +1584,13 @@ fn add_padded_coordinate(
     // https://eips.ethereum.org/EIPS/eip-2537
     let sixteen_zeroes: [u8; 16] = [0_u8; 16];
     result.extend_from_slice(&sixteen_zeroes);
-    result.extend_from_slice(coordinate_raw_bytes.ok_or(Slicing)?);
+    result.extend_from_slice(coordinate_raw_bytes.ok_or(InternalError::Slicing)?);
     Ok(())
 }
 
 fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
     let scalar_bytes: [u8; 32] = scalar_raw_bytes
-        .ok_or(Slicing)?
+        .ok_or(InternalError::Slicing)?
         .try_into()
         .map_err(|_| PrecompileError::ParsingInputError)?;
 
@@ -1600,7 +1602,7 @@ fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
         if let Some(value) = scalar_le.get_mut(j) {
             *value = u64::from_be_bytes(bytes);
         } else {
-            return Err(Slicing.into());
+            return Err(InternalError::Slicing.into());
         }
     }
     scalar_le.reverse();
@@ -1654,8 +1656,8 @@ pub fn p_256_verify(
     };
 
     // Build signature
-    let r: [u8; 32] = r.try_into().map_err(|_| Slicing)?;
-    let s: [u8; 32] = s.try_into().map_err(|_| Slicing)?;
+    let r: [u8; 32] = r.try_into().map_err(|_| InternalError::Slicing)?;
+    let s: [u8; 32] = s.try_into().map_err(|_| InternalError::Slicing)?;
 
     let Ok(signature) = P256Signature::from_scalars(r, s) else {
         return Ok(Bytes::new());
@@ -1695,7 +1697,7 @@ fn validate_p256_parameters(r: &[u8], s: &[u8], x: &[u8], y: &[u8]) -> Result<bo
     let y: Option<P256FieldElement> = P256FieldElement::from_uint(y).into();
 
     let (Some(x), Some(y)) = (x, y) else {
-        return Err(Slicing.into());
+        return Err(InternalError::Slicing.into());
     };
 
     // Curve equation: `y² = x³ + ax + b`
