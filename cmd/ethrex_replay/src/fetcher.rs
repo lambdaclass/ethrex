@@ -1,5 +1,5 @@
 use ethrex_common::types::ChainConfig;
-use ethrex_vm::to_exec_db_from_witness;
+
 use eyre::Context;
 
 use crate::{
@@ -33,19 +33,15 @@ pub async fn get_blockdata(
         .header;
 
     println!("populating rpc db cache");
-    let witness = get_witness(rpc_url, block_number)
+    let mut witness = get_witness(rpc_url, block_number)
         .await
         .wrap_err("Failed to get execution witness")?;
-
-    let db = to_exec_db_from_witness(chain_config, &witness)
-        .wrap_err("Failed to build prover db from execution witness")?;
+    witness.chain_config = chain_config;
 
     let cache = Cache {
         blocks: vec![block],
         parent_block_header,
         witness,
-        chain_config,
-        db,
     };
 
     write_cache(&cache, &file_name).expect("failed to write cache");
@@ -76,19 +72,15 @@ pub async fn get_rangedata(
         .wrap_err("failed to fetch block")?
         .header;
 
-    let witness = get_witness_range(rpc_url, from, to)
+    let mut witness = get_witness_range(rpc_url, from, to)
         .await
         .wrap_err("Failed to get execution witness for range")?;
-
-    let db = to_exec_db_from_witness(chain_config, &witness)
-        .wrap_err("Failed to build prover db from execution witness")?;
+    witness.chain_config = chain_config;
 
     let cache = Cache {
         blocks,
         parent_block_header,
         witness,
-        chain_config,
-        db,
     };
 
     write_cache(&cache, &file_name).expect("failed to write cache");

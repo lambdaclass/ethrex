@@ -38,7 +38,6 @@ where
     let now = std::time::Instant::now();
     let (gas_used, ret) = future.await?;
     let elapsed = now.elapsed().as_secs();
-    println!("Succeeded in {elapsed}, gas_used: {gas_used}");
     if write_to_file {
         write_benchmark_file(gas_used, elapsed as f64);
     }

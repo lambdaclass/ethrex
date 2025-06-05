@@ -6,9 +6,10 @@ use crate::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
 use crate::io::{ProgramInput, ProgramOutput};
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{validate_block, validate_gas_used};
+use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::{Block, BlockHeader};
 use ethrex_common::H256;
-use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDB, ProverDBError};
+use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDBError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StatelessExecutionError {
@@ -38,6 +39,8 @@ pub enum StatelessExecutionError {
     InvalidFinalStateTrie,
     #[error("Missing deposit hash")]
     MissingDepositHash,
+    #[error("Failed to apply account updates {0}")]
+    ApplyAccountUpdates(String),
 }
 
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
@@ -67,7 +70,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
 pub fn stateless_validation_l1(
     blocks: &[Block],
     parent_block_header: &BlockHeader,
-    db: &mut ProverDB,
+    db: &mut ExecutionWitnessResult,
     elasticity_multiplier: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let StatelessResult {
@@ -89,7 +92,7 @@ pub fn stateless_validation_l1(
 pub fn stateless_validation_l2(
     blocks: &[Block],
     parent_block_header: &BlockHeader,
-    db: &mut ProverDB,
+    db: &mut ExecutionWitnessResult,
     elasticity_multiplier: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let StatelessResult {
@@ -144,7 +147,7 @@ struct StatelessResult {
 fn execute_stateless(
     blocks: &[Block],
     parent_block_header: &BlockHeader,
-    db: &mut ProverDB,
+    db: &mut ExecutionWitnessResult,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
     let _ = db.rebuild_tries();
@@ -181,7 +184,8 @@ fn execute_stateless(
             .map_err(StatelessExecutionError::EvmError)?;
 
         // Update db for the next block
-        db.apply_account_updates_from_trie(&account_updates);
+        db.apply_account_updates_from_trie(&account_updates)
+            .map_err(|e| StatelessExecutionError::ApplyAccountUpdates(e.to_string()))?;
 
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;

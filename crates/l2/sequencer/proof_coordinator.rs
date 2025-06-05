@@ -23,9 +23,9 @@ use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use spawned_concurrency::{CallResponse, CastResponse, GenServer};
+use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::{fmt::Debug, net::IpAddr};
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -34,7 +34,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
     pub parent_block_header: BlockHeader,
