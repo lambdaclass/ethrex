@@ -134,6 +134,9 @@ clean-hive-logs: ## 🧹 Clean Hive logs
 view-hive: ## 🛠️ Builds hiveview with the logs from the hive execution
 	cd hive && go build ./cmd/hiveview && ./hiveview --serve --logdir ./workspace/logs
 
+install-cli: ## 🛠️ Installs the ethrex-l2 cli
+	cargo install --path cmd/ethrex_l2/ --force --locked
+
 start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
 	@if [ -z "$$L" ]; then \
 		LEVM="revm"; \

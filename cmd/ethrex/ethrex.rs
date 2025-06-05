@@ -122,6 +122,9 @@ async fn main() -> eyre::Result<()> {
                     store.clone(),
                     tracker.clone(),
                     blockchain.clone(),
+                    false,
+                    #[cfg(feature = "l2")]
+                    StoreRollup::default(),
                 )
                 .await;
             } else {

@@ -1,4 +1,3 @@
-use crate::based::error::{BlockFetcherError, StateUpdaterError};
 use crate::utils::error::UtilsError;
 use crate::utils::prover::errors::SaveStateError;
 use crate::utils::prover::proving_systems::ProverType;
@@ -6,12 +5,12 @@ use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_sdk::merkle_tree::MerkleError;
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_storage::error::StoreError;
 use ethrex_trie::TrieError;
-use ethrex_vm::{EvmError, ProverDBError};
-use spawned_concurrency::GenServerError;
+use ethrex_vm::EvmError;
 use tokio::task::JoinError;
 
 #[derive(Debug, thiserror::Error)]
@@ -50,8 +49,6 @@ pub enum L1WatcherError {
     FailedAccessingStore(#[from] StoreError),
     #[error("{0}")]
     Custom(String),
-    #[error("Spawned GenServer Error")]
-    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -86,8 +83,6 @@ pub enum ProverServerError {
     JsonError(#[from] serde_json::Error),
     #[error("Failed to execute command: {0}")]
     ComandError(std::io::Error),
-    #[error("ProverServer failed failed because of a ProverDB error: {0}")]
-    ProverDBError(#[from] ProverDBError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -104,8 +99,6 @@ pub enum ProofSenderError {
     InternalError(String),
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
-    #[error("Spawned GenServer Error")]
-    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -116,8 +109,6 @@ pub enum BlockProducerError {
     ChainError(#[from] ChainError),
     #[error("Block Producer failed because of a EvmError error: {0}")]
     EvmError(#[from] EvmError),
-    #[error("Block Producer failed because of a ProverDB error: {0}")]
-    ProverDBError(#[from] ProverDBError),
     #[error("Block Producer failed because of a InvalidForkChoice error: {0}")]
     InvalidForkChoice(#[from] InvalidForkChoice),
     #[error("Block Producer failed to produce block: {0}")]
@@ -186,8 +177,6 @@ pub enum CommitterError {
     InternalError(String),
     #[error("Failed to get withdrawals: {0}")]
     FailedToGetWithdrawals(#[from] UtilsError),
-    #[error("Spawned GenServer Error")]
-    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -242,4 +231,42 @@ pub enum ExecutionCacheError {
     Io(#[from] std::io::Error),
     #[error("Failed (de)serializing result: {0}")]
     Bincode(#[from] bincode::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StateUpdaterError {
+    #[error("State Updater failed due to an EthClient error: {0}")]
+    EthClientError(#[from] EthClientError),
+    #[error("State Updater failed when trying to encode the calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("State Updater failed when trying to parse the calldata: {0}")]
+    CalldataParsingError(String),
+    #[error("State Updater failed due to a Store error: {0}")]
+    StoreError(#[from] StoreError),
+    #[error("Failed to apply fork choice for fetched block: {0}")]
+    InvalidForkChoice(#[from] InvalidForkChoice),
+    #[error("Internal Error: {0}")]
+    InternalError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BlockFetcherError {
+    #[error("Block Fetcher failed due to an EthClient error: {0}")]
+    EthClientError(#[from] EthClientError),
+    #[error("Block Fetcher failed due to a Store error: {0}")]
+    StoreError(#[from] StoreError),
+    #[error("Internal Error: {0}")]
+    InternalError(String),
+    #[error("Failed to store fetched block: {0}")]
+    ChainError(#[from] ChainError),
+    #[error("Failed to apply fork choice for fetched block: {0}")]
+    InvalidForkChoice(#[from] InvalidForkChoice),
+    #[error("Failed to push fetched block to execution cache: {0}")]
+    ExecutionCacheError(#[from] ExecutionCacheError),
+    #[error("Failed to RLP decode fetched block: {0}")]
+    RLPDecodeError(#[from] RLPDecodeError),
+    #[error("Block Fetcher failed in a helper function: {0}")]
+    UtilsError(#[from] UtilsError),
+    #[error("Missing bytes from calldata: {0}")]
+    WrongBatchCalldata(String),
 }
