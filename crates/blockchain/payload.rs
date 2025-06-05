@@ -534,7 +534,7 @@ impl Blockchain {
 
         context.payload.header.state_root = context
             .store
-            .apply_account_updates(&mut *self.state_trie.write().await, &account_updates)
+            .apply_account_updates(&mut self.state_trie.write().await.1, &account_updates)
             .await?;
         context.payload.header.transactions_root =
             compute_transactions_root(&context.payload.body.transactions);

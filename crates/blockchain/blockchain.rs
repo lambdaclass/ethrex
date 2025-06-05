@@ -44,7 +44,7 @@ pub struct Blockchain {
     /// This does not reflect whether there is an ongoing sync process
     is_synced: AtomicBool,
 
-    state_trie: RwLock<Trie>,
+    state_trie: RwLock<(H256, Trie)>,
 }
 
 #[derive(Debug, Clone)]
@@ -65,20 +65,23 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
 
-            state_trie: RwLock::new(state_trie),
+            state_trie: RwLock::new((block_header.hash(), state_trie)),
         }
     }
 
     pub async fn default_with_store(store: Store) -> Self {
-        let state_trie = store
+        let (state_hash, state_trie) = store
             .get_latest_block_number()
             .await
             .map(|block_number| {
                 let block_header = store.get_block_header(block_number).unwrap().unwrap();
-                store.open_state_trie(block_header.state_root)
+                (
+                    block_header.hash(),
+                    store.open_state_trie(block_header.state_root),
+                )
             })
             .ok()
-            .unwrap_or_else(Trie::stateless);
+            .unwrap_or_else(|| (H256::default(), Trie::stateless()));
 
         Self {
             evm_engine: EvmEngine::default(),
@@ -86,7 +89,7 @@ impl Blockchain {
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
 
-            state_trie: RwLock::new(state_trie),
+            state_trie: RwLock::new((state_hash, state_trie)),
         }
     }
 
@@ -150,7 +153,7 @@ impl Blockchain {
         // Apply the account updates over the last block's state and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(&mut *self.state_trie.write().await, account_updates)
+            .apply_account_updates(&mut self.state_trie.write().await.1, account_updates)
             .await?;
 
         // Check state root matches the one in block header
@@ -167,6 +170,13 @@ impl Blockchain {
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+        let block_hash = block.header.hash();
+        if block_hash != self.state_trie.read().await.0 {
+            let (hash, trie) = &mut *self.state_trie.write().await;
+            *hash = block_hash;
+            *trie = self.storage.open_state_trie(block_hash);
+        }
+
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();
@@ -300,7 +310,7 @@ impl Blockchain {
         // Apply the account updates over all blocks and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(&mut *self.state_trie.write().await, &account_updates)
+            .apply_account_updates(&mut self.state_trie.write().await.1, &account_updates)
             .await
             .map_err(|e| (e.into(), None))?;
 
