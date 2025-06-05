@@ -4,14 +4,6 @@ use tracing::warn;
 
 use zkvm_interface::io::{ProgramInput, ProgramOutput};
 
-#[cfg(feature = "l2")]
-use ethrex_common::types::blobs_bundle::{blob_from_bytes, kzg_commitment_to_versioned_hash};
-#[cfg(feature = "l2")]
-use ethrex_l2_common::{
-    compute_deposit_logs_hash, compute_withdrawals_merkle_root, get_block_deposits,
-    get_block_withdrawal_hashes,
-};
-
 pub struct ProveOutput(pub ProgramOutput);
 
 pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {

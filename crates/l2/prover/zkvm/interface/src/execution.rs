@@ -286,11 +286,7 @@ fn get_batch_withdrawals_and_deposits(
     for (block, receipts) in blocks.iter().zip(receipts) {
         let txs = &block.body.transactions;
         deposits.extend(get_block_deposits(txs));
-        withdrawals.extend(
-            get_block_withdrawals(txs, receipts)
-                .into_iter()
-                .map(|(_, tx)| tx),
-        );
+        withdrawals.extend(get_block_withdrawals(txs, receipts));
     }
 
     Ok((withdrawals, deposits))

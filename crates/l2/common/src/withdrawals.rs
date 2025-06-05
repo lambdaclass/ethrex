@@ -55,14 +55,16 @@ pub fn get_block_withdrawal_hashes(
         .collect::<Result<Vec<_>, _>>()
 }
 
-pub fn get_block_withdrawals(
-    txs: &[Transaction],
-    receipts: &[Receipt],
-) -> Vec<(H256, Transaction)> {
+pub fn get_block_withdrawals(txs: &[Transaction], receipts: &[Receipt]) -> Vec<Transaction> {
     txs.iter()
         .zip(receipts.iter())
-        .filter(|(tx, receipt)| is_withdrawal_l2(tx, receipt))
-        .map(|(tx, _)| (tx.compute_hash(), tx.clone()))
+        .filter_map(|(tx, receipt)| {
+            if is_withdrawal_l2(tx, receipt) {
+                Some(tx.clone())
+            } else {
+                None
+            }
+        })
         .collect()
 }
 

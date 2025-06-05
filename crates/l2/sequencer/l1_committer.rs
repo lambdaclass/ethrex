@@ -377,7 +377,7 @@ async fn prepare_batch_from_block(
         // Save current blobs_bundle and continue to add more blocks.
         blobs_bundle = bundle;
         _blob_size = latest_blob_size;
-        for (_, tx) in &withdrawals {
+        for tx in &withdrawals {
             let hash =
                 get_withdrawal_hash(tx).ok_or(CommitterError::InvalidWithdrawalTransaction)?;
             withdrawal_hashes.push(hash);
