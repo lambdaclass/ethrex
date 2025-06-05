@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749137176278,
+  "lastUpdate": 1749153792719,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11125,6 +11125,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178085843158,
             "range": "± 410334336",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "90353f91bced28ea10bc89281059af088ae05090",
+          "message": "feat(l1,levm): integrate levm tracer to rpc endpoint (#3036)\n\n**Motivation**\n\n- Use `debug_traceTransaction` endpoint with LEVM as backend.\n\n**Description**\n\n- Implements callTracer for LEVM.\n- I was forced to make refactors in `system.rs` to implement tracing\nwithout it being very messy.\n- I fixed a problem when [handling\noutput](https://github.com/lambdaclass/ethrex/pull/3036/commits/cf728c6e240ca7150fe25b047e130f7002940652)\nthat I realized we had when looking at the result of testing the\nendpoint.\n- For the integration I moved existing structs created for tracing to\n`common` so that we can use them in levm and outside of it. I renamed\nsome of them too.\n- Calltracer Logs are now `Vec<Log>` rather than `Option<Vec<Log>>`\n\n\n**How to Test**\nI personally synced a few blocks with holesky and then made an RPC\nrequest to the node once it had some blocks.\nFor this I initialized an execution and consensus client\n\n\n`sudo mkdir -p ~/secrets`\n`openssl rand -hex 32 | tr -d \"\\n\" | sudo tee ~/secrets/jwt.hex`\nTerminal 1: `cargo run --bin ethrex -- --network holesky\n--authrpc.jwtsecret ~/secrets/jwt.hex`\nTerminal 2: `lighthouse bn --network holesky --execution-endpoint\nhttp://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http\n--checkpoint-sync-url https://checkpoint-sync.holesky.ethpandaops.io`\n\nTerminal 3:\n```bash\ncurl http://localhost:8545 \\\n-X POST \\\n--data '{\n  \"method\": \"debug_traceTransaction\",\n  \"params\": [\n    \"0x6f10ea9cb47fb5b9a45ea13897c7560db3bbe5ec8c29195f3ce3974458ddd637\",\n    {\n      \"tracer\": \"callTracer\",\n      \"tracerConfig\": {\n        \"onlyTopCall\": false,\n        \"withLog\": true\n      }}\n  ],\n  \"id\": 1,\n  \"jsonrpc\": \"2.0\"\n}'\n```\nThis is a transaction hash from block 2054 in holesky so it should work\npretty soon after having started syncing.\nThis is a pretty basic transaction, for a more complex transaction you\ncan try with the transaction hash\n`0xe2f2a01072c3aad9f75e1591341cb1d9ad4b2d96a48e11e4b1289f89c8e4037f`\n(although [this\none](https://holesky.etherscan.io/tx/0xe2f2a01072c3aad9f75e1591341cb1d9ad4b2d96a48e11e4b1289f89c8e4037f)\nis from block 10263). Also you can play with `onlyTopCall` and `withLog`\nparameters, setting them to true if you want to.\n\n\n**Note**\nAfter having compared the tracing result when using REVM and LEVM the\nonly difference that I found was in gasLimit and gasUsed. We are taking\ninto account the intrinsic gas for this while REVM is not.\nI'll leave it like this for now because I don't think it matters that\nmuch, we'll take a deeper look at it when integrating with the block\nexplorer.\n\nCloses #2954\n\n---------\n\nCo-authored-by: fmoletta <fedemoletta@hotmail.com>\nCo-authored-by: fmoletta <99273364+fmoletta@users.noreply.github.com>\nCo-authored-by: SDartayet <44068466+SDartayet@users.noreply.github.com>",
+          "timestamp": "2025-06-05T18:34:39Z",
+          "tree_id": "8d1b35599e9e0371f76aa52991153b3a4bf7bdea",
+          "url": "https://github.com/lambdaclass/ethrex/commit/90353f91bced28ea10bc89281059af088ae05090"
+        },
+        "date": 1749153788014,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 176724025262,
+            "range": "± 317093431",
             "unit": "ns/iter"
           }
         ]
