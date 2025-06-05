@@ -14,9 +14,12 @@ use ethrex_rlp::{
 use k256::PublicKey;
 use serde::Serialize;
 
+pub const DEFAULT_P2P_PROTOCOL_VERSION: u8 = 5;
+
 pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
-pub const SUPPORTED_P2P_CAPABILITIES: [Capability; 1] = [Capability::p2p(5)];
+pub const SUPPORTED_P2P_CAPABILITIES: [Capability; 1] =
+    [Capability::p2p(DEFAULT_P2P_PROTOCOL_VERSION)];
 
 pub const PROTOCOL_P2P_5_LENGTH: u8 = 16;
 pub const PROTOCOL_ETH_68_LENGTH: u8 = 17;
