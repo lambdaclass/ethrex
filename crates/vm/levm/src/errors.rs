@@ -50,12 +50,8 @@ pub enum ExceptionalHalt {
     InvalidContractPrefix,
     #[error("Very Large Number")]
     VeryLargeNumber,
-    #[error("Invalid Transaction")]
-    InvalidTransaction,
     #[error("Invalid Opcode")]
     InvalidOpcode,
-    #[error("Gas price is lower than base fee")]
-    GasPriceIsLowerThanBaseFee,
     #[error("Address Already Occupied")]
     AddressAlreadyOccupied,
     #[error("Contract Output Too Big")]
