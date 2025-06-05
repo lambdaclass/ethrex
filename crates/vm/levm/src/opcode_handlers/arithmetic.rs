@@ -200,9 +200,7 @@ impl<'a> VM<'a> {
 
         let product = multiplicand
             .checked_mul(multiplier)
-            .ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
-            ))?;
+            .ok_or(InternalError::ArithmeticOperationOverflow)?;
         let product_mod: U256 = product
             .checked_rem(modulus.into())
             .ok_or(VMError::Internal(
