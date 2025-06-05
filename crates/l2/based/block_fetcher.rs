@@ -87,17 +87,17 @@ impl BlockFetcher {
         loop {
             if let Err(err) = self.main_logic().await {
                 error!("Block Fetcher Error: {err}");
-            }
+            });
 
             sleep(Duration::from_millis(self.fetch_interval_ms)).await;
         }
     }
 
     pub async fn main_logic(&mut self) -> Result<(), BlockFetcherError> {
-        match *self.sequencer_state.clone().lock().await {
-            SequencerState::Sequencing => Ok(()),
-            SequencerState::Following => self.fetch().await,
+        if let SequencerState::Sequencing = *self.sequencer_state.clone().lock().await {
+            return Ok(());
         }
+        self.fetch().await
     }
 
     async fn fetch(&mut self) -> Result<(), BlockFetcherError> {

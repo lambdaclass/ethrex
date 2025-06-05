@@ -253,10 +253,8 @@ impl GenServer for ProofCoordinator {
         info!("Receiving message");
         match message {
             ProofCordInMessage::Listen { listener } => {
-                let sequencer_state = state.sequencer_state.lock().await.clone();
-                match sequencer_state {
-                    SequencerState::Sequencing => handle_listens(state, listener).await,
-                    SequencerState::Following => {}
+                if let SequencerState::Sequencing = *state.sequencer_state.lock().await {
+                    handle_listens(state, listener).await
                 }
             }
         }

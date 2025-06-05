@@ -124,16 +124,11 @@ impl GenServer for L1Watcher {
     ) -> CastResponse {
         match message {
             Self::InMsg::Watch => {
+                if let SequencerState::Sequencing = *state.sequencer_state.clone().lock().await {
+                    watch(state).await;
+                }
                 let check_interval = random_duration(state.check_interval);
                 send_after(check_interval, tx.clone(), Self::InMsg::Watch);
-                let sequencer_state = state.sequencer_state.lock().await.clone();
-                match sequencer_state {
-                    SequencerState::Sequencing => {
-                        watch(state).await;
-                    }
-                    SequencerState::Following => {}
-                }
-
                 CastResponse::NoReply
             }
         }
@@ -141,17 +136,19 @@ impl GenServer for L1Watcher {
 }
 
 async fn watch(state: &mut L1WatcherState) {
-    if let Ok(logs) = get_logs(state)
+    let Ok(logs) = get_logs(state)
         .await
         .inspect_err(|err| error!("L1 Watcher Error: {err}"))
-    {
-        // We may not have a deposit nor a withdrawal, that means no events -> no logs.
-        if !logs.is_empty() {
-            let _ = process_logs(state, logs)
-                .await
-                .inspect_err(|err| error!("L1 Watcher Error: {}", err));
-        };
-    }
+    else {
+        return;
+    };
+
+    // We may not have a deposit nor a withdrawal, that means no events -> no logs.
+    if !logs.is_empty() {
+        let _ = process_logs(state, logs)
+            .await
+            .inspect_err(|err| error!("L1 Watcher Error: {}", err));
+    };
 }
 
 pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1WatcherError> {

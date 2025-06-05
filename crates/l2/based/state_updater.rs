@@ -58,9 +58,12 @@ impl StateUpdater {
 
     pub async fn run(&self, sequencer_state: Arc<Mutex<SequencerState>>) {
         loop {
-            if let Err(err) = self.main_logic(sequencer_state.clone()).await {
-                error!("State Updater Error: {}", err);
-            }
+            let _ = self
+                .main_logic(sequencer_state.clone())
+                .await
+                .inspect_err(|err| {
+                    error!("State Updater Error: {err}");
+                });
 
             sleep(Duration::from_millis(self.check_interval_ms)).await;
         }
