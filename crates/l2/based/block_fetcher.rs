@@ -94,9 +94,7 @@ impl BlockFetcher {
     }
 
     pub async fn main_logic(&mut self) -> Result<(), BlockFetcherError> {
-        let sequencer_state_clone = self.sequencer_state.clone();
-        let sequencer_state_mutex_guard = sequencer_state_clone.lock().await;
-        match sequencer_state_mutex_guard.deref() {
+        match *self.sequencer_state.clone().lock().await {
             SequencerState::Sequencing => Ok(()),
             SequencerState::Following => self.fetch().await,
         }
