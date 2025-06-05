@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
-    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
+    errors::{ExceptionalHalt, ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     utils::{address_to_word, word_to_address, *},
@@ -38,13 +38,13 @@ impl<'a> VM<'a> {
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_| VMError::VeryLargeNumber)?;
+                .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
             let return_data_start_offset = current_call_frame.stack.pop()?;
             let return_data_size: usize = current_call_frame
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_| VMError::VeryLargeNumber)?;
+                .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
@@ -60,7 +60,7 @@ impl<'a> VM<'a> {
 
         // VALIDATIONS
         if self.current_call_frame()?.is_static && !value.is_zero() {
-            return Err(VMError::OpcodeNotAllowedInStaticContext);
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
         // GAS
@@ -145,13 +145,13 @@ impl<'a> VM<'a> {
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_err| VMError::VeryLargeNumber)?;
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let return_data_start_offset = current_call_frame.stack.pop()?;
             let return_data_size = current_call_frame
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_err| VMError::VeryLargeNumber)?;
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
@@ -232,7 +232,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         if size == 0 {
             return Ok(OpcodeResult::Halt);
@@ -272,13 +272,13 @@ impl<'a> VM<'a> {
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_err| VMError::VeryLargeNumber)?;
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let return_data_start_offset = current_call_frame.stack.pop()?;
             let return_data_size = current_call_frame
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_err| VMError::VeryLargeNumber)?;
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
@@ -369,13 +369,13 @@ impl<'a> VM<'a> {
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_err| VMError::VeryLargeNumber)?;
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let return_data_start_offset = current_call_frame.stack.pop()?;
             let return_data_size = current_call_frame
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_err| VMError::VeryLargeNumber)?;
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
@@ -455,7 +455,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
@@ -484,7 +484,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
         let salt = current_call_frame.stack.pop()?;
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
@@ -518,7 +518,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();
@@ -537,7 +537,7 @@ impl<'a> VM<'a> {
     /// ### INVALID operation
     /// Reverts consuming all gas, no return data.
     pub fn op_invalid(&mut self) -> Result<OpcodeResult, VMError> {
-        Err(VMError::InvalidOpcode)
+        Err(ExceptionalHalt::InvalidOpcode.into())
     }
 
     // SELFDESTRUCT operation
@@ -555,7 +555,7 @@ impl<'a> VM<'a> {
         let (beneficiary, to) = {
             let current_call_frame = self.current_call_frame_mut()?;
             if current_call_frame.is_static {
-                return Err(VMError::OpcodeNotAllowedInStaticContext);
+                return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
             }
             let target_address = word_to_address(current_call_frame.stack.pop()?);
             let to = current_call_frame.to;
@@ -616,13 +616,13 @@ impl<'a> VM<'a> {
         // Validations that can cause out of gas.
         // 1. [EIP-3860] - Cant exceed init code max size
         if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.config.fork >= Fork::Shanghai {
-            return Err(VMError::OutOfGas);
+            return Err(ExceptionalHalt::OutOfGas.into());
         }
 
         let current_call_frame = self.current_call_frame_mut()?;
         // 2. CREATE can't be called in a static context
         if current_call_frame.is_static {
-            return Err(VMError::OpcodeNotAllowedInStaticContext);
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
         // Clear callframe subreturn data

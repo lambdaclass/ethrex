@@ -8,7 +8,7 @@ use crate::db::error::DatabaseError;
 
 //TODO: Rename to VMError afterwards
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize, Display)]
-pub enum EVMError {
+pub enum VMError {
     /// Errors that break execution, they shouldn't ever happen. Contains subcategory `DatabaseError`.
     Internal(#[from] InternalError),
     /// Returned when a transaction doesn't pass all validations before executing.
@@ -19,17 +19,23 @@ pub enum EVMError {
     RevertOpcode,
 }
 
-impl EVMError {
+impl VMError {
     /// These errors are unexpected and indicate critical issues.
     /// They should not cause a transaction to revert silently but instead fail loudly, propagating the error.
     pub fn should_propagate(&self) -> bool {
-        matches!(self, EVMError::Internal(_))
+        matches!(self, VMError::Internal(_))
     }
 }
 
-impl From<DatabaseError> for EVMError {
+impl From<DatabaseError> for VMError {
     fn from(err: DatabaseError) -> Self {
-        EVMError::Internal(InternalError::Database(err))
+        VMError::Internal(InternalError::Database(err))
+    }
+}
+
+impl From<PrecompileError> for VMError {
+    fn from(err: PrecompileError) -> Self {
+        VMError::ExceptionalHalt(ExceptionalHalt::Precompile(err))
     }
 }
 
@@ -63,67 +69,8 @@ pub enum ExceptionalHalt {
     OutOfGas,
     #[error("Precompile execution error: {0}")]
     Precompile(#[from] PrecompileError),
-}
-
-/// Errors that halt the program
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
-pub enum VMError {
-    #[error("Stack Underflow")]
-    StackUnderflow,
-    #[error("Stack Overflow")]
-    StackOverflow,
-    #[error("Invalid Jump")]
-    InvalidJump,
-    #[error("Opcode Not Allowed In Static Context")]
-    OpcodeNotAllowedInStaticContext,
-    #[error("Invalid Contract Prefix")]
-    InvalidContractPrefix,
-    #[error("Very Large Number")]
-    VeryLargeNumber,
-    #[error("Invalid Transaction")]
-    InvalidTransaction,
-    #[error("Revert Opcode")]
-    RevertOpcode,
-    #[error("Invalid Opcode")]
-    InvalidOpcode,
-    #[error("Gas price is lower than base fee")]
-    GasPriceIsLowerThanBaseFee,
-    #[error("Address Already Occupied")]
-    AddressAlreadyOccupied,
-    #[error("Contract Output Too Big")]
-    ContractOutputTooBig,
-    #[error("Balance Overflow")]
-    BalanceOverflow,
-    #[error("Balance Underflow")]
-    BalanceUnderflow,
-    #[error("Gas refunds underflow")]
-    GasRefundsUnderflow,
-    #[error("Gas refunds overflow")]
-    GasRefundsOverflow,
-    #[error("Out Of Gas")]
-    OutOfGas,
-    #[error("Internal error: {0}")]
-    Internal(#[from] InternalError),
-    #[error("Transaction validation error: {0}")]
-    TxValidation(#[from] TxValidationError),
-    #[error("Offset out of bounds")]
-    OutOfBounds,
-    #[error("Precompile execution error: {0}")]
-    Precompile(#[from] PrecompileError),
-}
-
-impl VMError {
-    /// These errors are unexpected and indicate critical issues.
-    /// They should not cause a transaction to revert silently but instead fail loudly, propagating the error.
-    pub fn should_propagate(&self) -> bool {
-        matches!(self, VMError::Internal(_))
-    }
-}
-
-impl From<DatabaseError> for VMError {
-    fn from(err: DatabaseError) -> Self {
-        VMError::Internal(InternalError::Database(err))
-    }
+    #[error("Other, see what to do")] //TODO: REmove this
+    Other,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

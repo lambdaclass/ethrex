@@ -2,7 +2,7 @@ use crate::{
     call_frame::CallFrameBackup,
     constants::*,
     db::{cache, gen_db::GeneralizedDatabase},
-    errors::{InternalError, TxValidationError, VMError},
+    errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
         BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
@@ -35,7 +35,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
-use VMError::OutOfGas;
+use ExceptionalHalt::OutOfGas;
 pub type Storage = HashMap<U256, H256>;
 
 #[cfg(not(feature = "l2"))]
@@ -228,9 +228,9 @@ pub fn get_blob_gas_price(
 pub fn get_n_value(op: Opcode, base_opcode: Opcode) -> Result<usize, VMError> {
     let offset = (usize::from(op))
         .checked_sub(usize::from(base_opcode))
-        .ok_or(VMError::InvalidOpcode)?
+        .ok_or(ExceptionalHalt::InvalidOpcode)?
         .checked_add(1)
-        .ok_or(VMError::InvalidOpcode)?;
+        .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
     Ok(offset)
 }
@@ -238,7 +238,7 @@ pub fn get_n_value(op: Opcode, base_opcode: Opcode) -> Result<usize, VMError> {
 pub fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
     let number_of_topics = (u8::from(op))
         .checked_sub(u8::from(Opcode::LOG0))
-        .ok_or(VMError::InvalidOpcode)?;
+        .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
     Ok(number_of_topics)
 }
@@ -461,7 +461,7 @@ impl<'a> VM<'a> {
 
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
-                .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
+                .map_err(|_| TxValidationError::NonceIsMax)?;
         }
 
         self.substate.refunded_gas = refunded_gas;

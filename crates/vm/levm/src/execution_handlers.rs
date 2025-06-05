@@ -1,6 +1,6 @@
 use crate::{
     constants::*,
-    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
+    errors::{ExceptionalHalt, ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
     utils::*,
@@ -140,7 +140,7 @@ impl<'a> VM<'a> {
             Opcode::INVALID => self.op_invalid(),
             Opcode::SELFDESTRUCT => self.op_selfdestruct(),
 
-            _ => Err(VMError::InvalidOpcode),
+            _ => Err(ExceptionalHalt::InvalidOpcode.into()),
         }
     }
 
@@ -165,18 +165,18 @@ impl<'a> VM<'a> {
             // If the code_length > MAX_CODE_SIZE
             // If current_consumed_gas + code_deposit_cost > gas_limit
             let validate_create = if code_length > MAX_CODE_SIZE {
-                Err(VMError::ContractOutputTooBig)
+                Err(ExceptionalHalt::ContractOutputTooBig)
             } else if contract_code
                 .first()
                 .is_some_and(|val| val == &INVALID_CONTRACT_PREFIX)
             {
-                Err(VMError::InvalidContractPrefix)
+                Err(ExceptionalHalt::InvalidContractPrefix)
             } else if self
                 .current_call_frame_mut()?
                 .increase_consumed_gas(code_deposit_cost)
                 .is_err()
             {
-                Err(VMError::OutOfGas)
+                Err(ExceptionalHalt::OutOfGas)
             } else {
                 Ok(self.current_call_frame()?.to)
             };
@@ -196,7 +196,7 @@ impl<'a> VM<'a> {
                         .refunded_gas;
 
                     return Ok(ExecutionReport {
-                        result: TxResult::Revert(error),
+                        result: TxResult::Revert(error.into()),
                         gas_used: self.current_call_frame()?.gas_used,
                         gas_refunded,
                         output: Bytes::new(),
@@ -253,7 +253,7 @@ impl<'a> VM<'a> {
 
         if new_account.has_code_or_nonce() {
             return Ok(Some(ExecutionReport {
-                result: TxResult::Revert(VMError::AddressAlreadyOccupied),
+                result: TxResult::Revert(ExceptionalHalt::AddressAlreadyOccupied.into()),
                 gas_used: self.env.gas_limit,
                 gas_refunded: 0,
                 logs: vec![],

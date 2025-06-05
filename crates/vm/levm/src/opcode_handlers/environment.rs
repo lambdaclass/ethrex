@@ -1,5 +1,5 @@
 use crate::{
-    errors::{InternalError, OpcodeResult, VMError},
+    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
     utils::word_to_address,
@@ -139,7 +139,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -202,7 +202,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(destination_offset, size)?;
 
@@ -278,7 +278,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let current_memory_size = self.current_call_frame()?.memory.len();
 
         let (_, address_was_cold) = self.db.access_account(&mut self.substate, address)?;
@@ -342,12 +342,12 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let size: usize = current_call_frame
             .stack
             .pop()?
             .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -365,10 +365,10 @@ impl<'a> VM<'a> {
 
         let copy_limit = returndata_offset
             .checked_add(size)
-            .ok_or(VMError::VeryLargeNumber)?;
+            .ok_or(ExceptionalHalt::VeryLargeNumber)?;
 
         if copy_limit > sub_return_data_len {
-            return Err(VMError::OutOfBounds);
+            return Err(ExceptionalHalt::OutOfBounds.into());
         }
 
         // Actually we don't need to fill with zeros for out of bounds bytes, this works but is overkill because of the previous validations.

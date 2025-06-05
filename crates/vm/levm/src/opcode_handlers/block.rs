@@ -1,6 +1,6 @@
 use crate::{
     constants::LAST_AVAILABLE_BLOCK_LIMIT,
-    errors::{InternalError, OpcodeResult, VMError},
+    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost,
     utils::*,
     vm::VM,
@@ -29,7 +29,7 @@ impl<'a> VM<'a> {
 
         let block_number: u64 = block_number
             .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let block_hash = self.db.store.get_block_hash(block_number)?;
         self.current_call_frame_mut()?
@@ -139,7 +139,7 @@ impl<'a> VM<'a> {
     pub fn op_blobhash(&mut self) -> Result<OpcodeResult, VMError> {
         // [EIP-4844] - BLOBHASH is only available from CANCUN
         if self.env.config.fork < Fork::Cancun {
-            return Err(VMError::InvalidOpcode);
+            return Err(ExceptionalHalt::InvalidOpcode.into());
         }
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::BLOBHASH)?;
@@ -169,7 +169,7 @@ impl<'a> VM<'a> {
     pub fn op_blobbasefee(&mut self) -> Result<OpcodeResult, VMError> {
         // [EIP-7516] - BLOBBASEFEE is only available from CANCUN
         if self.env.config.fork < Fork::Cancun {
-            return Err(VMError::InvalidOpcode);
+            return Err(ExceptionalHalt::InvalidOpcode.into());
         }
 
         self.current_call_frame_mut()?

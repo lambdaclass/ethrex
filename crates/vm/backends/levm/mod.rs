@@ -157,7 +157,7 @@ impl LEVM {
         let call_frame_backup = vm
             .call_frames
             .pop()
-            .ok_or(VMError::OutOfBounds)?
+            .ok_or(VMError::Internal(InternalError::CallFrame))?
             .call_frame_backup;
 
         Ok((report_result, call_frame_backup))

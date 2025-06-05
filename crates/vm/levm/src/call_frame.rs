@@ -1,6 +1,6 @@
 use crate::{
     constants::STACK_LIMIT,
-    errors::{InternalError, VMError},
+    errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
     opcodes::Opcode,
     utils::{get_valid_jump_destinations, restore_cache_state},
@@ -21,13 +21,13 @@ pub struct Stack {
 }
 
 impl Stack {
-    pub fn pop(&mut self) -> Result<U256, VMError> {
-        self.stack.pop().ok_or(VMError::StackUnderflow)
+    pub fn pop(&mut self) -> Result<U256, ExceptionalHalt> {
+        self.stack.pop().ok_or(ExceptionalHalt::StackUnderflow)
     }
 
-    pub fn push(&mut self, value: U256) -> Result<(), VMError> {
+    pub fn push(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
         if self.stack.len() >= STACK_LIMIT {
-            return Err(VMError::StackOverflow);
+            return Err(ExceptionalHalt::StackOverflow);
         }
         self.stack.push(value);
         Ok(())
@@ -41,13 +41,13 @@ impl Stack {
         self.stack.is_empty()
     }
 
-    pub fn get(&self, index: usize) -> Result<&U256, VMError> {
-        self.stack.get(index).ok_or(VMError::StackUnderflow)
+    pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
+        self.stack.get(index).ok_or(ExceptionalHalt::StackUnderflow)
     }
 
-    pub fn swap(&mut self, a: usize, b: usize) -> Result<(), VMError> {
+    pub fn swap(&mut self, a: usize, b: usize) -> Result<(), ExceptionalHalt> {
         if a >= self.stack.len() || b >= self.stack.len() {
-            return Err(VMError::StackUnderflow);
+            return Err(ExceptionalHalt::StackUnderflow);
         }
         self.stack.swap(a, b);
         Ok(())
@@ -171,9 +171,12 @@ impl CallFrame {
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
     pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), VMError> {
-        let potential_consumed_gas = self.gas_used.checked_add(gas).ok_or(VMError::OutOfGas)?;
+        let potential_consumed_gas = self
+            .gas_used
+            .checked_add(gas)
+            .ok_or(ExceptionalHalt::OutOfGas)?;
         if potential_consumed_gas > self.gas_limit {
-            return Err(VMError::OutOfGas);
+            return Err(ExceptionalHalt::OutOfGas.into());
         }
 
         self.gas_used = potential_consumed_gas;

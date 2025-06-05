@@ -1,14 +1,14 @@
 use crate::{
     call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_U64},
-    errors::{InternalError, PrecompileError, VMError},
+    errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
     memory,
 };
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
 use ethrex_common::{types::Fork, U256};
 use num_bigint::BigUint;
-use VMError::OutOfGas;
+use ExceptionalHalt::OutOfGas;
 
 // Opcodes cost
 pub const STOP: u64 = 0;
@@ -233,7 +233,7 @@ pub fn exp(exponent: U256) -> Result<u64, VMError> {
 
     let exponent_byte_size: u64 = exponent_byte_size
         .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
+        .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
     let exponent_byte_size_cost = EXP_DYNAMIC_BASE
         .checked_mul(exponent_byte_size)
@@ -241,7 +241,7 @@ pub fn exp(exponent: U256) -> Result<u64, VMError> {
 
     EXP_STATIC
         .checked_add(exponent_byte_size_cost)
-        .ok_or(OutOfGas)
+        .ok_or(OutOfGas.into())
 }
 
 pub fn calldatacopy(
@@ -306,7 +306,7 @@ fn copy_behavior(
 
     let minimum_word_size: u64 = minimum_word_size
         .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
+        .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
@@ -317,7 +317,7 @@ fn copy_behavior(
         .checked_add(minimum_word_size_cost)
         .ok_or(OutOfGas)?
         .checked_add(memory_expansion_cost)
-        .ok_or(OutOfGas)
+        .ok_or(OutOfGas.into())
 }
 
 pub fn keccak256(
@@ -346,7 +346,9 @@ pub fn log(
         .checked_mul(number_of_topics.into())
         .ok_or(OutOfGas)?;
 
-    let size: u64 = size.try_into().map_err(|_| VMError::VeryLargeNumber)?;
+    let size: u64 = size
+        .try_into()
+        .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
     let bytes_cost = LOGN_DYNAMIC_BYTE_BASE.checked_mul(size).ok_or(OutOfGas)?;
 
     topics_cost
@@ -355,7 +357,7 @@ pub fn log(
         .checked_add(bytes_cost)
         .ok_or(OutOfGas)?
         .checked_add(memory_expansion_cost)
-        .ok_or(OutOfGas)
+        .ok_or(OutOfGas.into())
 }
 
 pub fn mload(new_memory_size: usize, current_memory_size: usize) -> Result<u64, VMError> {
@@ -379,7 +381,7 @@ fn mem_expansion_behavior(
 
     static_cost
         .checked_add(memory_expansion_cost)
-        .ok_or(OutOfGas)
+        .ok_or(OutOfGas.into())
 }
 
 pub fn sload(storage_slot_was_cold: bool) -> Result<u64, VMError> {
@@ -389,7 +391,7 @@ pub fn sload(storage_slot_was_cold: bool) -> Result<u64, VMError> {
     } else {
         SLOAD_WARM_DYNAMIC
     };
-    static_gas.checked_add(dynamic_cost).ok_or(OutOfGas)
+    static_gas.checked_add(dynamic_cost).ok_or(OutOfGas.into())
 }
 
 pub fn sstore(
@@ -417,7 +419,9 @@ pub fn sstore(
             .checked_add(SSTORE_COLD_DYNAMIC)
             .ok_or(OutOfGas)?;
     }
-    static_gas.checked_add(base_dynamic_gas).ok_or(OutOfGas)
+    static_gas
+        .checked_add(base_dynamic_gas)
+        .ok_or(OutOfGas.into())
 }
 
 pub fn mcopy(
@@ -435,7 +439,7 @@ pub fn mcopy(
 
     let words_copied: u64 = words_copied
         .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
+        .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
     let copied_words_cost = MCOPY_DYNAMIC_BASE
         .checked_mul(words_copied)
@@ -445,7 +449,7 @@ pub fn mcopy(
         .checked_add(copied_words_cost)
         .ok_or(OutOfGas)?
         .checked_add(memory_expansion_cost)
-        .ok_or(OutOfGas)
+        .ok_or(OutOfGas.into())
 }
 
 pub fn create(
@@ -489,7 +493,7 @@ fn compute_gas_create(
 
     let minimum_word_size: u64 = minimum_word_size
         .try_into()
-        .map_err(|_| VMError::VeryLargeNumber)?;
+        .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
     // [EIP-3860] - Apply extra gas cost of 2 for every 32-byte chunk of initcode
     let init_code_cost = if fork >= Fork::Shanghai {
@@ -541,7 +545,7 @@ pub fn selfdestruct(
 
     SELFDESTRUCT_STATIC
         .checked_add(dynamic_cost)
-        .ok_or(OutOfGas)
+        .ok_or(OutOfGas.into())
 }
 
 pub fn tx_calldata(calldata: &Bytes) -> Result<u64, VMError> {
@@ -570,7 +574,7 @@ pub fn tx_creation(code_length: u64, number_of_words: u64) -> Result<u64, VMErro
 
     // GInitCodeword * number_of_words rounded up. GinitCodeWord = 2
     let words_cost = number_of_words.checked_mul(2).ok_or(OutOfGas)?;
-    creation_cost.checked_add(words_cost).ok_or(OutOfGas)
+    creation_cost.checked_add(words_cost).ok_or(OutOfGas.into())
 }
 
 fn address_access_cost(
@@ -585,7 +589,7 @@ fn address_access_cost(
         warm_dynamic_cost
     };
 
-    static_cost.checked_add(dynamic_cost).ok_or(OutOfGas)
+    static_cost.checked_add(dynamic_cost).ok_or(OutOfGas.into())
 }
 
 pub fn balance(address_was_cold: bool) -> Result<u64, VMError> {
@@ -628,7 +632,7 @@ pub fn extcodecopy(
 
     base_access_cost
         .checked_add(expansion_access_cost)
-        .ok_or(OutOfGas)
+        .ok_or(OutOfGas.into())
 }
 
 pub fn extcodehash(address_was_cold: bool) -> Result<u64, VMError> {
@@ -878,7 +882,7 @@ fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u
     let static_gas = static_cost;
     let dynamic_gas = dynamic_base.checked_mul(data_word_cost).ok_or(OutOfGas)?;
 
-    static_gas.checked_add(dynamic_gas).ok_or(OutOfGas)
+    static_gas.checked_add(dynamic_gas).ok_or(OutOfGas.into())
 }
 
 pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
@@ -887,7 +891,9 @@ pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
     let groups_cost = groups_number
         .checked_mul(ECPAIRING_GROUP_COST)
         .ok_or(OutOfGas)?;
-    groups_cost.checked_add(ECPAIRING_BASE_COST).ok_or(OutOfGas)
+    groups_cost
+        .checked_add(ECPAIRING_BASE_COST)
+        .ok_or(OutOfGas.into())
 }
 
 /// Max message call gas is all but one 64th of the remaining gas in the current context.
@@ -921,11 +927,13 @@ fn calculate_cost_and_gas_limit_call(
     let gas: u64 = gas_from_stack
         .min(max_gas_for_call.into())
         .try_into()
-        .map_err(|_err| VMError::OutOfGas)?;
+        .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 
     Ok((
-        gas.checked_add(call_gas_costs).ok_or(VMError::OutOfGas)?,
-        gas.checked_add(gas_stipend).ok_or(VMError::OutOfGas)?,
+        gas.checked_add(call_gas_costs)
+            .ok_or(ExceptionalHalt::OutOfGas)?,
+        gas.checked_add(gas_stipend)
+            .ok_or(ExceptionalHalt::OutOfGas)?,
     ))
 }
 
@@ -947,21 +955,25 @@ pub fn bls12_msm(k: usize, discount_table: &[u64; 128], mul_cost: u64) -> Result
     };
 
     let gas_cost = u64::try_from(k)
-        .map_err(|_| VMError::VeryLargeNumber)?
+        .map_err(|_| ExceptionalHalt::VeryLargeNumber)?
         .checked_mul(mul_cost)
-        .ok_or(VMError::VeryLargeNumber)?
+        .ok_or(ExceptionalHalt::VeryLargeNumber)?
         .checked_mul(discount)
-        .ok_or(VMError::VeryLargeNumber)?
+        .ok_or(ExceptionalHalt::VeryLargeNumber)?
         / BLS12_381_MSM_MULTIPLIER;
     Ok(gas_cost)
 }
 
 pub fn bls12_pairing_check(k: usize) -> Result<u64, VMError> {
     let gas_cost = u64::try_from(k)
-        .map_err(|_| VMError::VeryLargeNumber)?
+        .map_err(|_| ExceptionalHalt::VeryLargeNumber)?
         .checked_mul(BLS12_PAIRING_CHECK_MUL_COST)
-        .ok_or(VMError::Precompile(PrecompileError::GasConsumedOverflow))?
+        .ok_or(ExceptionalHalt::Precompile(
+            PrecompileError::GasConsumedOverflow,
+        ))?
         .checked_add(BLS12_PAIRING_CHECK_FIXED_COST)
-        .ok_or(VMError::Precompile(PrecompileError::GasConsumedOverflow))?;
+        .ok_or(ExceptionalHalt::Precompile(
+            PrecompileError::GasConsumedOverflow,
+        ))?;
     Ok(gas_cost)
 }
