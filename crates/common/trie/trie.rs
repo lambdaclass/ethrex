@@ -318,10 +318,6 @@ impl Trie {
                 Ok(None)
             }
 
-            fn put(&self, _key: NodeHash, _value: Vec<u8>) -> Result<(), TrieError> {
-                Ok(())
-            }
-
             fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
                 Ok(())
             }
