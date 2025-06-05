@@ -129,14 +129,12 @@ pub async fn get_latest_sent_batch(
     }
 }
 
-pub fn resolve_aligned_network(network: &str) -> Result<Network, SequencerError> {
+pub fn resolve_aligned_network(network: &str) -> Network {
     match network {
-        "devnet" => Ok(Network::Devnet),
-        "holesky" => Ok(Network::Holesky),
-        "holesky-stage" => Ok(Network::HoleskyStage),
-        "mainnet" => Ok(Network::Mainnet),
-        _ => Err(SequencerError::AlignedNetworkError(format!(
-            "Unsupported network: {network}"
-        ))),
+        "devnet" => Network::Devnet,
+        "holesky" => Network::Holesky,
+        "holesky-stage" => Network::HoleskyStage,
+        "mainnet" => Network::Mainnet,
+        _ => Network::Devnet, // TODO: Implement custom networks
     }
 }

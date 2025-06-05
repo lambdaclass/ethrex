@@ -1,7 +1,7 @@
 use super::{
     configs::AlignedConfig,
     errors::SequencerError,
-    utils::{get_latest_sent_batch, random_duration, resolve_aligned_network, send_verify_tx},
+    utils::{get_latest_sent_batch, random_duration, send_verify_tx},
 };
 use crate::{
     sequencer::errors::ProofSenderError,
@@ -54,12 +54,11 @@ impl L1ProofSenderState {
         aligned_cfg: &AlignedConfig,
         rollup_storage: StoreRollup,
         needed_proof_types: Vec<ProverType>,
-    ) -> Result<Self, SequencerError> {
+    ) -> Result<Self, ProofSenderError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
         let l1_chain_id = eth_client.get_chain_id().await?.try_into().map_err(|_| {
             ProofSenderError::InternalError("Failed to convert chain ID to U256".to_owned())
         })?;
-        let network = resolve_aligned_network(&aligned_cfg.network)?;
         let fee_estimate = resolve_fee_estimate(&aligned_cfg.fee_estimate)?;
         let aligned_sp1_elf_path = aligned_cfg.aligned_sp1_elf_path.clone();
 
@@ -73,7 +72,7 @@ impl L1ProofSenderState {
                 proof_send_interval_ms: cfg.proof_send_interval_ms,
                 rollup_storage,
                 l1_chain_id,
-                network,
+                network: aligned_cfg.network.clone(),
                 fee_estimate,
                 aligned_sp1_elf_path,
             });
@@ -88,7 +87,7 @@ impl L1ProofSenderState {
             proof_send_interval_ms: cfg.proof_send_interval_ms,
             rollup_storage,
             l1_chain_id,
-            network,
+            network: aligned_cfg.network.clone(),
             fee_estimate,
             aligned_sp1_elf_path,
         })
