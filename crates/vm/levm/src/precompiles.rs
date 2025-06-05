@@ -264,7 +264,7 @@ pub fn execute_precompile(
         }
         #[cfg(feature = "l2")]
         address if address == P256VERIFY_ADDRESS => p_256_verify(calldata, gas_limit, gas_used)?,
-        _ => return Err(VMError::Internal(InternalError::InvalidPrecompileAddress)),
+        _ => return Err(InternalError::InvalidPrecompileAddress.into()),
     };
 
     Ok(result)
@@ -422,9 +422,7 @@ pub fn modexp(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<By
     let modulus_size =
         usize::try_from(modulus_size).map_err(|_| PrecompileError::ParsingInputError)?;
 
-    let base_limit = base_size
-        .checked_add(96)
-        .ok_or(InternalError::Overflow)?;
+    let base_limit = base_size.checked_add(96).ok_or(InternalError::Overflow)?;
 
     let exponent_limit = exponent_size
         .checked_add(base_limit)
@@ -1485,7 +1483,7 @@ fn parse_g1_point(
         let g1_bytes: [u8; 96] = [x, y]
             .concat()
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
+            .map_err(|_| InternalError::TypeConversion)?;
 
         if unchecked {
             // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
@@ -1537,7 +1535,7 @@ fn parse_g2_point(
         let g2_bytes: [u8; 192] = [x_1, x_0, y_1, y_0]
             .concat()
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
+            .map_err(|_| InternalError::TypeConversion)?;
 
         if unchecked {
             // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
@@ -1573,9 +1571,7 @@ fn add_padded_coordinate(
     // https://eips.ethereum.org/EIPS/eip-2537
     let sixteen_zeroes: [u8; 16] = [0_u8; 16];
     result.extend_from_slice(&sixteen_zeroes);
-    result.extend_from_slice(
-        coordinate_raw_bytes.ok_or(VMError::Internal(InternalError::SlicingError))?,
-    );
+    result.extend_from_slice(coordinate_raw_bytes.ok_or(InternalError::SlicingError)?);
     Ok(())
 }
 
@@ -1593,7 +1589,7 @@ fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
         if let Some(value) = scalar_le.get_mut(j) {
             *value = u64::from_be_bytes(bytes);
         } else {
-            return Err(VMError::Internal(InternalError::SlicingError));
+            return Err(InternalError::SlicingError.into());
         }
     }
     scalar_le.reverse();
@@ -1688,7 +1684,7 @@ fn validate_p256_parameters(r: &[u8], s: &[u8], x: &[u8], y: &[u8]) -> Result<bo
     let y: Option<P256FieldElement> = P256FieldElement::from_uint(y).into();
 
     let (Some(x), Some(y)) = (x, y) else {
-        return Err(VMError::Internal(InternalError::SlicingError));
+        return Err(InternalError::SlicingError.into());
     };
 
     // Curve equation: `y² = x³ + ax + b`

@@ -169,13 +169,13 @@ pub fn refund_sender(
         .env
         .gas_limit
         .checked_sub(actual_gas_used)
-        .ok_or(VMError::Internal(InternalError::UndefinedState(0)))?;
+        .ok_or(InternalError::Underflow)?;
 
     let wei_return_amount = vm
         .env
         .gas_price
         .checked_mul(U256::from(gas_to_return))
-        .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
+        .ok_or(InternalError::Overflow)?;
 
     vm.increase_account_balance(vm.env.origin, wei_return_amount)
 }
@@ -195,7 +195,7 @@ pub fn compute_actual_gas_used(
 ) -> Result<u64, VMError> {
     let exec_gas_consumed = gas_used_without_refunds
         .checked_sub(refunded_gas)
-        .ok_or(VMError::Internal(InternalError::UndefinedState(-2)))?;
+        .ok_or(InternalError::Underflow)?;
 
     if vm.env.config.fork >= Fork::Prague {
         Ok(exec_gas_consumed.max(vm.get_min_gas_used()?))
@@ -242,9 +242,9 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     // floor_cost_by_tokens = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
     let floor_cost_by_tokens = tokens_in_calldata
         .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
-        .ok_or(VMError::Internal(InternalError::GasOverflow))?
+        .ok_or(InternalError::Overflow)?
         .checked_add(TX_BASE_COST)
-        .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+        .ok_or(InternalError::Overflow)?;
 
     let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
     if vm.current_call_frame()?.gas_limit < min_gas_limit {
@@ -321,7 +321,7 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
             .blob_schedule
             .max
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::TypeConversion))?
+            .map_err(|_| InternalError::TypeConversion)?
     {
         return Err(VMError::TxValidation(
             TxValidationError::Type3TxBlobCountExceeded,
@@ -347,7 +347,7 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
 pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     let Some(auth_list) = vm.tx.authorization_list() else {
         // vm.authorization_list should be Some at this point.
-        return Err(VMError::Internal(InternalError::UndefinedState(-1)));
+        return Err(InternalError::Custom("Auth list not found".to_string()).into());
     };
 
     // (16) TYPE_4_TX_PRE_FORK

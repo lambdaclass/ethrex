@@ -66,9 +66,12 @@ pub fn calculate_create_address(
     (sender_address, sender_nonce).encode(&mut encoded);
     let mut hasher = Keccak256::new();
     hasher.update(encoded);
-    Ok(Address::from_slice(hasher.finalize().get(12..).ok_or(
-        VMError::Internal(InternalError::CouldNotComputeCreateAddress),
-    )?))
+    Ok(Address::from_slice(
+        hasher
+            .finalize()
+            .get(12..)
+            .ok_or(InternalError::CouldNotComputeCreateAddress)?,
+    ))
 }
 
 /// Calculates the address of a new contract using the CREATE2 opcode as follows
@@ -95,9 +98,7 @@ pub fn calculate_create2_address(
         )
         .as_bytes()
         .get(12..)
-        .ok_or(VMError::Internal(
-            InternalError::CouldNotComputeCreate2Address,
-        ))?,
+        .ok_or(InternalError::CouldNotComputeCreate2Address)?,
     );
     Ok(generated_address)
 }
@@ -120,20 +121,13 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
             // If current opcode is push, skip as many positions as the size of the push
             let size_to_push = opcode_number
                 .checked_sub(u8::from(Opcode::PUSH1))
-                .ok_or(VMError::Internal(InternalError::Underflow))?;
-            let skip_length = usize::from(
-                size_to_push
-                    .checked_add(1)
-                    .ok_or(VMError::Internal(InternalError::Overflow))?,
-            );
-            pc = pc.checked_add(skip_length).ok_or(VMError::Internal(
-                InternalError::Overflow, // to fail, pc should be at least usize max - 31
-            ))?;
+                .ok_or(InternalError::Underflow)?;
+            let skip_length =
+                usize::from(size_to_push.checked_add(1).ok_or(InternalError::Overflow)?);
+            pc = pc.checked_add(skip_length).ok_or(InternalError::Overflow)?;
         }
 
-        pc = pc.checked_add(1).ok_or(VMError::Internal(
-            InternalError::Overflow, // to fail, code len should be more than usize max
-        ))?;
+        pc = pc.checked_add(1).ok_or(InternalError::Overflow)?;
     }
 
     Ok(valid_jump_destinations)
@@ -157,9 +151,8 @@ pub fn restore_cache_state(
         // This call to `get_account_mut` should never return None, because we are looking up accounts
         // that had their storage modified, which means they should be in the cache. That's why
         // we return an internal error in case we haven't found it.
-        let account = cache::get_account_mut(&mut db.cache, &address).ok_or(VMError::Internal(
-            crate::errors::InternalError::AccountNotFound,
-        ))?;
+        let account = cache::get_account_mut(&mut db.cache, &address)
+            .ok_or(InternalError::AccountNotFound)?;
 
         for (key, value) in storage {
             account.storage.insert(key, value);
@@ -191,7 +184,7 @@ pub fn get_max_blob_gas_price(
     let blobhash_amount: u64 = tx_blob_hashes
         .len()
         .try_into()
-        .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
+        .map_err(|_| InternalError::TypeConversion)?;
 
     let blob_gas_used: u64 = blobhash_amount
         .checked_mul(BLOB_GAS_PER_BLOB)
@@ -213,7 +206,7 @@ pub fn get_blob_gas_price(
     let blobhash_amount: u64 = tx_blob_hashes
         .len()
         .try_into()
-        .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
+        .map_err(|_| InternalError::TypeConversion)?;
 
     let blob_gas_price: u64 = blobhash_amount
         .checked_mul(BLOB_GAS_PER_BLOB)
@@ -224,7 +217,7 @@ pub fn get_blob_gas_price(
     let blob_gas_price: U256 = blob_gas_price.into();
     let blob_fee: U256 = blob_gas_price
         .checked_mul(base_fee_per_blob_gas)
-        .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
+        .ok_or(InternalError::Overflow)?;
 
     Ok(blob_fee)
 }
@@ -261,10 +254,7 @@ pub fn word_to_address(word: U256) -> Address {
 pub fn has_delegation(account: &Account) -> Result<bool, VMError> {
     let mut has_delegation = false;
     if account.has_code() && account.code.len() == EIP7702_DELEGATED_CODE_LEN {
-        let first_3_bytes = &account
-            .code
-            .get(..3)
-            .ok_or(VMError::Internal(InternalError::SlicingError))?;
+        let first_3_bytes = &account.code.get(..3).ok_or(InternalError::SlicingError)?;
 
         if *first_3_bytes == SET_CODE_DELEGATION_BYTES {
             has_delegation = true;
@@ -280,14 +270,14 @@ pub fn get_authorized_address(account: &Account) -> Result<Address, VMError> {
         let address_bytes = &account
             .code
             .get(SET_CODE_DELEGATION_BYTES.len()..)
-            .ok_or(VMError::Internal(InternalError::SlicingError))?;
+            .ok_or(InternalError::SlicingError)?;
         // It shouldn't panic when doing Address::from_slice()
         // because the length is checked inside the has_delegation() function
         let address = Address::from_slice(address_bytes);
         Ok(address)
     } else {
         // if we end up here, it means that the address wasn't previously delegated.
-        Err(VMError::Internal(InternalError::AccountNotDelegated))
+        Err(InternalError::AccountNotDelegated.into())
     }
 }
 
@@ -325,7 +315,7 @@ pub fn eip7702_recover_address(
         auth_tuple
             .y_parity
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::TypeConversion))?,
+            .map_err(|_| InternalError::TypeConversion)?,
     ) else {
         return Ok(None);
     };
@@ -341,19 +331,15 @@ pub fn eip7702_recover_address(
 
     let public_key = authority.serialize_uncompressed();
     let mut hasher = Keccak256::new();
-    hasher.update(
-        public_key
-            .get(1..)
-            .ok_or(VMError::Internal(InternalError::SlicingError))?,
-    );
+    hasher.update(public_key.get(1..).ok_or(InternalError::SlicingError)?);
     let address_hash = hasher.finalize();
 
     // Get the last 20 bytes of the hash -> Address
     let authority_address_bytes: [u8; 20] = address_hash
         .get(12..32)
-        .ok_or(VMError::Internal(InternalError::SlicingError))?
+        .ok_or(InternalError::SlicingError)?
         .try_into()
-        .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
+        .map_err(|_| InternalError::TypeConversion)?;
     Ok(Some(Address::from_slice(&authority_address_bytes)))
 }
 
@@ -451,7 +437,7 @@ impl<'a> VM<'a> {
                 let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
                 refunded_gas = refunded_gas
                     .checked_add(refunded_gas_if_exists)
-                    .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+                    .ok_or(InternalError::Overflow)?;
             }
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
@@ -531,7 +517,7 @@ impl<'a> VM<'a> {
                     .checked_mul(2)
                     .ok_or(OutOfGasError::ConsumedGasOverflow)?
                     .try_into()
-                    .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
+                    .map_err(|_| InternalError::TypeConversion)?;
 
                 intrinsic_gas = intrinsic_gas
                     .checked_add(double_number_of_words)
@@ -564,11 +550,11 @@ impl<'a> VM<'a> {
             Some(list) => list
                 .len()
                 .try_into()
-                .map_err(|_| VMError::Internal(InternalError::TypeConversion))?,
+                .map_err(|_| InternalError::TypeConversion)?,
         };
         let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
             .checked_mul(amount_of_auth_tuples)
-            .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+            .ok_or(InternalError::Overflow)?;
 
         intrinsic_gas = intrinsic_gas
             .checked_add(authorization_list_cost)
@@ -596,11 +582,11 @@ impl<'a> VM<'a> {
         // min_gas_used = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
         let mut min_gas_used: u64 = tokens_in_calldata
             .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
-            .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+            .ok_or(InternalError::Overflow)?;
 
         min_gas_used = min_gas_used
             .checked_add(TX_BASE_COST)
-            .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+            .ok_or(InternalError::Overflow)?;
 
         Ok(min_gas_used)
     }
@@ -633,7 +619,7 @@ impl<'a> VM<'a> {
             spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
             spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
             spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
-            _ => return Err(VMError::Internal(InternalError::InvalidSpecId)),
+            _ => return Err(InternalError::InvalidSpecId.into()),
         };
         for i in 1..=max_precompile_address {
             initial_touched_accounts.insert(Address::from_low_u64_be(i));
@@ -693,7 +679,7 @@ impl<'a> VM<'a> {
                 let sender_nonce = self.db.get_account(self.env.origin)?.info.nonce;
 
                 let created_address = calculate_create_address(self.env.origin, sender_nonce)
-                    .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
+                    .map_err(|_| InternalError::CouldNotComputeCreateAddress)?;
 
                 self.substate.touched_accounts.insert(created_address);
                 self.substate.created_accounts.insert(created_address);

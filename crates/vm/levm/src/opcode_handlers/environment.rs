@@ -96,7 +96,7 @@ impl<'a> VM<'a> {
         };
         let offset: usize = offset
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
+            .map_err(|_| InternalError::TypeConversion)?;
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
@@ -161,7 +161,7 @@ impl<'a> VM<'a> {
 
         let calldata_offset: usize = calldata_offset
             .try_into()
-            .map_err(|_err| VMError::Internal(InternalError::TypeConversion))?;
+            .map_err(|_err| InternalError::TypeConversion)?;
 
         for (i, byte) in current_call_frame
             .calldata
@@ -220,7 +220,7 @@ impl<'a> VM<'a> {
         if code_offset < current_call_frame.bytecode.len().into() {
             let code_offset: usize = code_offset
                 .try_into()
-                .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
+                .map_err(|_| InternalError::TypeConversion)?;
 
             for (i, byte) in current_call_frame
                 .bytecode
@@ -305,7 +305,7 @@ impl<'a> VM<'a> {
         if offset < bytecode.len().into() {
             let offset: usize = offset
                 .try_into()
-                .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
+                .map_err(|_| InternalError::TypeConversion)?;
             for (i, byte) in bytecode.iter().skip(offset).take(size).enumerate() {
                 if let Some(data_byte) = data.get_mut(i) {
                     *data_byte = *byte;

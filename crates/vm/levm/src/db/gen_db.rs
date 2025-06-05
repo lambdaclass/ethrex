@@ -40,9 +40,8 @@ impl GeneralizedDatabase {
             let account = self.get_account_from_database(address)?;
             cache::insert_account(&mut self.cache, address, account);
         }
-        cache::get_account(&self.cache, &address).ok_or(VMError::Internal(
-            InternalError::AccountShouldHaveBeenCached,
-        ))
+        cache::get_account(&self.cache, &address)
+            .ok_or(InternalError::AccountShouldHaveBeenCached.into())
     }
 
     /// **Accesses to an account's information.**
@@ -81,9 +80,10 @@ impl GeneralizedDatabase {
             }
             None => {
                 // If we are fetching the storage of an account it means that we previously fetched the account from database before.
-                return Err(VMError::Internal(InternalError::Custom(
-                    "Account not found in InMemoryDB when fetching storage".to_string(),
-                )));
+                return Err(InternalError::msg(
+                    "Account not found in InMemoryDB when fetching storage",
+                )
+                .into());
             }
         }
         Ok(value)
@@ -115,16 +115,14 @@ impl<'a> VM<'a> {
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, VMError> {
         if cache::is_account_cached(&self.db.cache, &address) {
             self.backup_account_info(address)?;
-            cache::get_account_mut(&mut self.db.cache, &address).ok_or(VMError::Internal(
-                crate::errors::InternalError::AccountNotFound,
-            ))
+            cache::get_account_mut(&mut self.db.cache, &address)
+                .ok_or(InternalError::AccountNotFound.into())
         } else {
             let acc = self.db.get_account_from_database(address)?;
             cache::insert_account(&mut self.db.cache, address, acc);
             self.backup_account_info(address)?;
-            cache::get_account_mut(&mut self.db.cache, &address).ok_or(VMError::Internal(
-                crate::errors::InternalError::AccountNotFound,
-            ))
+            cache::get_account_mut(&mut self.db.cache, &address)
+                .ok_or(InternalError::AccountNotFound.into())
         }
     }
 
@@ -241,9 +239,7 @@ impl<'a> VM<'a> {
             }
         } else {
             // When requesting storage of an account we should've previously requested and cached the account
-            return Err(VMError::Internal(
-                InternalError::AccountShouldHaveBeenCached,
-            ));
+            return Err(InternalError::AccountShouldHaveBeenCached.into());
         }
 
         let value = self.db.get_value_from_database(address, key)?;
@@ -296,9 +292,8 @@ impl<'a> VM<'a> {
             .contains_key(&address);
 
         if is_not_backed_up {
-            let account = cache::get_account(&self.db.cache, &address).ok_or(VMError::Internal(
-                crate::errors::InternalError::AccountNotFound,
-            ))?;
+            let account = cache::get_account(&self.db.cache, &address)
+                .ok_or(InternalError::AccountNotFound)?;
             let info = account.info.clone();
             let code = account.code.clone();
 

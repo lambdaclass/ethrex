@@ -53,9 +53,7 @@ fn read_bytcode_slice(current_call_frame: &CallFrame, n_bytes: usize) -> Result<
         // to read. We only want to read the data _NEXT_ to that
         // bytecode
         .checked_add(1)
-        .ok_or(VMError::Internal(
-            InternalError::Overflow,
-        ))?;
+        .ok_or(InternalError::Overflow)?;
 
     Ok(current_call_frame
         .bytecode

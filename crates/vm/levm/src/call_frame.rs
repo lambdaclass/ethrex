@@ -161,10 +161,7 @@ impl CallFrame {
     }
 
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
-        self.pc = self
-            .pc
-            .checked_add(count)
-            .ok_or(VMError::Internal(InternalError::Overflow))?;
+        self.pc = self.pc.checked_add(count).ok_or(InternalError::Overflow)?;
         Ok(())
     }
 
@@ -195,22 +192,16 @@ impl CallFrame {
 }
 
 impl<'a> VM<'a> {
-    pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, VMError> {
-        self.call_frames.last_mut().ok_or(VMError::Internal(
-            InternalError::CouldNotAccessLastCallframe,
-        ))
+    pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, InternalError> {
+        self.call_frames.last_mut().ok_or(InternalError::Callframe)
     }
 
-    pub fn current_call_frame(&self) -> Result<&CallFrame, VMError> {
-        self.call_frames.last().ok_or(VMError::Internal(
-            InternalError::CouldNotAccessLastCallframe,
-        ))
+    pub fn current_call_frame(&self) -> Result<&CallFrame, InternalError> {
+        self.call_frames.last().ok_or(InternalError::Callframe)
     }
 
-    pub fn pop_call_frame(&mut self) -> Result<CallFrame, VMError> {
-        self.call_frames.pop().ok_or(VMError::Internal(
-            InternalError::CouldNotAccessLastCallframe,
-        ))
+    pub fn pop_call_frame(&mut self) -> Result<CallFrame, InternalError> {
+        self.call_frames.pop().ok_or(InternalError::Callframe)
     }
 
     pub fn is_initial_call_frame(&self) -> bool {

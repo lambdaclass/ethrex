@@ -809,7 +809,7 @@ pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Res
             .checked_mul(numerator)
             .ok_or(InternalError::Overflow)?
             .checked_div(denominator.checked_mul(i).ok_or(InternalError::Overflow)?)
-            .ok_or(VMError::Internal(InternalError::Overflow))?;
+            .ok_or(InternalError::Overflow)?;
 
         i = i.checked_add(U256::one()).ok_or(InternalError::Overflow)?;
     }
@@ -971,17 +971,14 @@ pub fn bls12_msm(k: usize, discount_table: &[u64; 128], mul_cost: u64) -> Result
 
     let discount = if k < discount_table.len() {
         discount_table
-            .get(
-                k.checked_sub(1)
-                    .ok_or(VMError::Internal(InternalError::Underflow))?,
-            )
+            .get(k.checked_sub(1).ok_or(InternalError::Underflow)?)
             .copied()
-            .ok_or(VMError::Internal(InternalError::SlicingError))?
+            .ok_or(InternalError::SlicingError)?
     } else {
         discount_table
             .last()
             .copied()
-            .ok_or(VMError::Internal(InternalError::SlicingError))?
+            .ok_or(InternalError::SlicingError)?
     };
 
     let gas_cost = u64::try_from(k)

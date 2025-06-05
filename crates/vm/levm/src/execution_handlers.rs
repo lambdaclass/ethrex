@@ -154,14 +154,11 @@ impl<'a> VM<'a> {
 
             let code_length_u64: u64 = code_length
                 .try_into()
-                .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
+                .map_err(|_| InternalError::TypeConversion)?;
 
-            let code_deposit_cost: u64 =
-                code_length_u64
-                    .checked_mul(CODE_DEPOSIT_COST)
-                    .ok_or(VMError::Internal(
-                        InternalError::Overflow,
-                    ))?;
+            let code_deposit_cost: u64 = code_length_u64
+                .checked_mul(CODE_DEPOSIT_COST)
+                .ok_or(InternalError::Overflow)?;
 
             // Revert
             // If the first byte of code is 0xef
@@ -195,9 +192,7 @@ impl<'a> VM<'a> {
                     let gas_refunded = self
                         .substate_backups
                         .last()
-                        .ok_or(VMError::Internal(
-                            InternalError::CouldNotAccessLastCallframe,
-                        ))?
+                        .ok_or(InternalError::Callframe)?
                         .refunded_gas;
 
                     return Ok(ExecutionReport {
@@ -238,9 +233,7 @@ impl<'a> VM<'a> {
         let gas_refunded = self
             .substate_backups
             .last()
-            .ok_or(VMError::Internal(
-                InternalError::CouldNotAccessLastCallframe,
-            ))?
+            .ok_or(InternalError::Callframe)?
             .refunded_gas;
         let output = std::mem::take(&mut self.current_call_frame_mut()?.output); // Bytes::new() if error is not RevertOpcode
         let gas_used = self.current_call_frame()?.gas_used;

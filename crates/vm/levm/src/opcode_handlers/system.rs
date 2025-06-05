@@ -805,7 +805,7 @@ impl<'a> VM<'a> {
         let backup = self
             .substate_backups
             .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+            .ok_or(InternalError::Callframe)?;
         if !tx_report.is_success() {
             self.substate = backup;
             self.restore_cache_state()?;

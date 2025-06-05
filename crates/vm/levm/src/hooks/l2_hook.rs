@@ -14,9 +14,7 @@ impl Hook for L2Hook {
     fn prepare_execution(&self, vm: &mut crate::vm::VM<'_>) -> Result<(), crate::errors::VMError> {
         if vm.env.is_privileged {
             let Some(recipient) = self.recipient else {
-                return Err(VMError::Internal(
-                    InternalError::RecipientNotFoundForPrivilegeTransaction,
-                ));
+                return Err(InternalError::RecipientNotFoundForPrivilegeTransaction.into());
             };
             vm.increase_account_balance(recipient, vm.current_call_frame()?.msg_value)?;
             vm.current_call_frame_mut()?.msg_value = U256::from(0);
@@ -172,5 +170,5 @@ pub fn compute_coinbase_fee(vm: &mut VM<'_>, report: &mut ExecutionReport) -> Re
 
     gas_consumed
         .checked_sub(gas_refunded)
-        .ok_or(VMError::Internal(InternalError::UndefinedState(2)))
+        .ok_or(InternalError::Underflow.into())
 }

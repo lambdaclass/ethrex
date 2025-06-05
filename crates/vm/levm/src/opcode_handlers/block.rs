@@ -154,12 +154,12 @@ impl<'a> VM<'a> {
 
         let index: usize = index
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::TypeConversion))?;
+            .map_err(|_| InternalError::TypeConversion)?;
 
         //This should never fail because we check if the index fits above
         let blob_hash = blob_hashes
             .get(index)
-            .ok_or(VMError::Internal(InternalError::BlobHashOutOfRange))?;
+            .ok_or(InternalError::BlobHashOutOfRange)?;
         let hash = U256::from_big_endian(blob_hash.as_bytes());
 
         self.current_call_frame_mut()?.stack.push(hash)?;

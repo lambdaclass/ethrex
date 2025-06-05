@@ -19,7 +19,7 @@ pub fn try_resize(memory: &mut Memory, unchecked_new_size: usize) -> Result<(), 
     if new_size > memory.len() {
         let additional_size = new_size
             .checked_sub(memory.len())
-            .ok_or(VMError::Internal(InternalError::Underflow))?;
+            .ok_or(InternalError::Underflow)?;
         memory
             .try_reserve(additional_size)
             .map_err(|_err| VMError::MemorySizeOverflow)?;

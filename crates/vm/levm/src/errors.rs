@@ -197,7 +197,7 @@ pub enum InternalError {
     #[error("Tried to convert one type to another")]
     TypeConversion,
     #[error("Tried to access last call frame but found none")]
-    CouldNotAccessLastCallframe, // Last callframe before execution is the same as the first, but after execution the last callframe is actually the initial CF
+    Callframe, // Last callframe before execution is the same as the first, but after execution the last callframe is actually the initial CF
     #[error("Tried to access blobhash but was out of range")]
     BlobHashOutOfRange,
     #[error("Failed computing CREATE address")]
@@ -206,8 +206,6 @@ pub enum InternalError {
     CouldNotComputeCreate2Address,
     #[error("Tried to slice non-existing data")]
     SlicingError,
-    #[error("Could not pop callframe")]
-    CouldNotPopCallframe,
     #[error("Account not found")]
     AccountNotFound,
     #[error("Unexpected overflow in gas operation")]
