@@ -14,6 +14,15 @@ lint: ## 🧹 Linter check
 fmt: ## 📄 Runs rustfmt
 	cargo fmt --all
 
+###### EF Tests ######
+download-evm-ef-tests: ## 📥 Download EF Tests
+	cd ../../../cmd/ef_tests/state && \
+	make download-evm-ef-tests flags="$(flags)"
+
+run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
+	cd ../../../cmd/ef_tests/state && \
+	make run-evm-ef-tests flags="$(flags)"
+
 ###### Benchmarks ######
 REPETITIONS := 10000
 REPETITIONS_SLOW := 200

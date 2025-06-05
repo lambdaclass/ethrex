@@ -122,7 +122,11 @@ We'll run flamegraph or Samply over the VM to identify bottlenecks and improve t
 
 ### How to run EF tests 
 
-For running EF state tests go [here](../../../cmd/ef_tests/state/README.md).
+```
+make download-evm-ef-tests run-evm-ef-tests QUIET=true
+```
+
+For more information on running EF state tests go [here](../../../cmd/ef_tests/state/README.md).
 
 For running EF blockchain tests go [here](../../../cmd/ef_tests/blockchain/README.md).
 
