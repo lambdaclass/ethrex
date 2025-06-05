@@ -146,7 +146,7 @@ This command will:
 
 1. Deploy the L1 contracts, including the based contracts `SequencerRegistry`, and a modified `OnChainProposer`.
 2. Deposit funds in the accounts from `../../test_data/private_keys_l1.txt`.
-3. Skip deploying the verifier contracts by specifying `0x00000000000000000000000000000000000000aa` as their address.
+3. Skip deploying the verifier contracts by specifying `0x00000000000000000000000000000000000000aa` as their address. This means that the node will run in "dev mode" and that the proof verification will not be performed. This is useful for local development and testing, but should not be used in production environments.
 
 Optionally, you can define an owner for the `CommonBridge`, `OnChainProposer`, and `SequencerRegistry` contracts by replacing `<ADDRESS>` with the desired address. If left empty, the contracts will be deployed with the default owner address, that is to say, the address of the deployer.
 
@@ -157,6 +157,8 @@ Optionally, you can define an owner for the `CommonBridge`, `OnChainProposer`, a
 
 > [!IMPORTANT]
 > You need to have an L1 running with the contracts deployed to run the L2 node. See the previous steps.
+
+In a console with `ethrex/` (repository root) as the current directory, run the following command to start a based L2 node:
 
 ```bash
 cargo run --release --bin ethrex --features l2 -- l2 init \
@@ -170,7 +172,8 @@ cargo run --release --bin ethrex --features l2 -- l2 init \
   --http.port 1729 \
   --state-updater.sequencer-registry <SEQUENCER_REGISTRY_ADDRESS> \
   --on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
-  --bridge-address <COMMON_BRIDGE_ADDRESS>
+  --bridge-address <COMMON_BRIDGE_ADDRESS> \
+  --based
 ```
 
 After running this command, the node will start syncing with the L1 and will be able to follow the lead Sequencer.
@@ -196,15 +199,19 @@ For nodes to become lead Sequencers they need to register themselves in the `Seq
 To register a node as a Sequencer, you can use the following command using `rex`:
 
 ```bash
-rex send <REGISTRY_CONTRACT> <MIN_COLLATERAL> <REGISTRANT_PRIVATE_KEY> -- "register(address)" <SEQUENCER_ADDRESS>
+rex send <REGISTRY_CONTRACT> 1000000000000000000 <REGISTRANT_PRIVATE_KEY> -- "register(address)" <SEQUENCER_ADDRESS> // registers SEQUENCER_ADDRESS as a Sequencer supplying 1 ETH as collateral (the minimum).
 ```
+
+> [!IMPORTANT]
+> The `SEQUENCER_ADDRESS` must be the address of the node's committer since it is the one that will be posting the batches to the L1.
 
 Once registered, the node will be able to participate in the Sequencer election process and become the lead Sequencer when its turn comes.
 
 > [!NOTE]
 >
-> 1. Replace `<REGISTRY_CONTRACT>`, `<MIN_COLLATERAL>`, `<REGISTRANT_PRIVATE_KEY>`, and `<SEQUENCER_ADDRESS>` with the appropriate values. The `MIN_COLLATERAL` is the minimum collateral required to register as a Sequencer, which can be set in the `SequencerRegistry` contract.
-> 2. If only one Sequencer is registered, it will always be elected as the lead Sequencer. If multiple Sequencers are registered, they will be elected in a Round-Robin fashion (32 batches each as defined in the `SequencerRegistry` contract).
+> 1. Replace `<REGISTRY_CONTRACT>`, `<REGISTRANT_PRIVATE_KEY>`, and `<SEQUENCER_ADDRESS>` with the appropriate values.
+> 2. The registrant is not necessarily related to the sequencer, one could pay the registration for some else.
+> 3. If only one Sequencer is registered, it will always be elected as the lead Sequencer. If multiple Sequencers are registered, they will be elected in a Round-Robin fashion (32 batches each as defined in the `SequencerRegistry` contract).
 
 ## Diff
 
