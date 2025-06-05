@@ -140,7 +140,7 @@ impl<'a> VM<'a> {
             Opcode::INVALID => self.op_invalid(),
             Opcode::SELFDESTRUCT => self.op_selfdestruct(),
 
-            _ => Err(VMError::OpcodeNotFound),
+            _ => Err(VMError::InvalidOpcode),
         }
     }
 

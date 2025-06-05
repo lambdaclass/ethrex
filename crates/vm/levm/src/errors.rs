@@ -16,10 +16,6 @@ pub enum VMError {
     InvalidJump,
     #[error("Opcode Not Allowed In Static Context")]
     OpcodeNotAllowedInStaticContext,
-    #[error("Opcode Not Found")]
-    OpcodeNotFound,
-    #[error("Invalid Bytecode")]
-    InvalidBytecode,
     #[error("Invalid Contract Prefix")]
     InvalidContractPrefix,
     #[error("Very Large Number")]
@@ -30,22 +26,12 @@ pub enum VMError {
     RevertOpcode,
     #[error("Invalid Opcode")]
     InvalidOpcode,
-    #[error("Missing Blob Hashes")]
-    MissingBlobHashes,
-    #[error("Blob Hash Index Out Of Bounds")]
-    BlobHashIndexOutOfBounds,
-    #[error("Sender Account Does Not Exist")]
-    SenderAccountDoesNotExist,
-    #[error("Address Does Not Match An Account")]
-    AddressDoesNotMatchAnAccount,
     #[error("Gas price is lower than base fee")]
     GasPriceIsLowerThanBaseFee,
     #[error("Address Already Occupied")]
     AddressAlreadyOccupied,
     #[error("Contract Output Too Big")]
     ContractOutputTooBig,
-    #[error("Gas limit price product overflow")]
-    GasLimitPriceProductOverflow,
     #[error("Balance Overflow")]
     BalanceOverflow,
     #[error("Balance Underflow")]
@@ -58,10 +44,8 @@ pub enum VMError {
     MemorySizeOverflow,
     #[error("Nonce overflowed")]
     NonceOverflow,
-    // OutOfGas
     #[error("Out Of Gas")]
     OutOfGas(#[from] OutOfGasError),
-    // Internal
     #[error("Internal error: {0}")]
     Internal(#[from] InternalError),
     #[error("Transaction validation error: {0}")]
