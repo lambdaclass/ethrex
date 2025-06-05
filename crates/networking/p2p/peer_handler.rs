@@ -131,7 +131,7 @@ impl PeerHandler {
             .flatten()
             .and_then(|headers| (!headers.is_empty()).then_some(headers))
             {
-                if are_block_headers_chained(&block_headers) {
+                if are_block_headers_chained(&block_headers, &order) {
                     return Some(block_headers);
                 } else {
                     warn!("[SYNCING] Received invalid headers from peer, discarding peer {peer_id} and retrying...");
@@ -765,12 +765,9 @@ impl PeerHandler {
 
 /// Validates the block headers received from a peer by checking that the parent hash of each header
 /// matches the hash of the previous one, i.e. the headers are chained
-fn are_block_headers_chained(block_headers: &[BlockHeader]) -> bool {
-    block_headers
-        .iter()
-        .skip(1) // Skip the first, since we know the current head is valid
-        .zip(block_headers.iter())
-        .all(|(current_header, previous_header)| {
-            current_header.parent_hash == previous_header.hash()
-        })
+fn are_block_headers_chained(block_headers: &[BlockHeader], order: &BlockRequestOrder) -> bool {
+    block_headers.windows(2).all(|headers| match order {
+        BlockRequestOrder::OldToNew => headers[1].parent_hash == headers[0].hash(),
+        BlockRequestOrder::NewToOld => headers[0].parent_hash == headers[1].hash(),
+    })
 }
