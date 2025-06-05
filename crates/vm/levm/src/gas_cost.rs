@@ -497,8 +497,7 @@ fn compute_gas_create(
     let minimum_word_size = (code_size_in_memory
         .checked_add(31)
         .ok_or(OutOfGasError::GasCostOverflow)?)
-    .checked_div(32)
-    .ok_or(OutOfGasError::ArithmeticOperationDividedByZero)?; // '32' will never be zero
+        / 32;
 
     let minimum_word_size: u64 = minimum_word_size
         .try_into()
@@ -863,8 +862,7 @@ pub fn modexp(
     let words = (max_length
         .checked_add(7)
         .ok_or(OutOfGasError::GasCostOverflow)?)
-    .checked_div(8)
-    .ok_or(InternalError::DivisionError)?;
+        / 8;
     let multiplication_complexity = words.checked_pow(2).ok_or(OutOfGasError::GasCostOverflow)?;
 
     let calculate_iteration_count =
@@ -999,8 +997,7 @@ pub fn bls12_msm(k: usize, discount_table: &[u64; 128], mul_cost: u64) -> Result
         .ok_or(VMError::VeryLargeNumber)?
         .checked_mul(discount)
         .ok_or(VMError::VeryLargeNumber)?
-        .checked_div(BLS12_381_MSM_MULTIPLIER)
-        .ok_or(VMError::VeryLargeNumber)?;
+        / BLS12_381_MSM_MULTIPLIER;
     Ok(gas_cost)
 }
 

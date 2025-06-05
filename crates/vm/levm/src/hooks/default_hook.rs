@@ -237,9 +237,7 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     let calldata_cost: u64 = gas_cost::tx_calldata(&calldata).map_err(VMError::OutOfGas)?;
 
     // same as calculated in gas_used()
-    let tokens_in_calldata: u64 = calldata_cost
-        .checked_div(STANDARD_TOKEN_COST)
-        .ok_or(VMError::Internal(InternalError::DivisionError))?;
+    let tokens_in_calldata: u64 = calldata_cost / STANDARD_TOKEN_COST;
 
     // floor_cost_by_tokens = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
     let floor_cost_by_tokens = tokens_in_calldata

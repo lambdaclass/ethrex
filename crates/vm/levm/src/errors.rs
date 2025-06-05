@@ -21,6 +21,14 @@ pub enum EVMError {
     RevertOpcode,
 }
 
+impl EVMError {
+    /// These errors are unexpected and indicate critical issues.
+    /// They should not cause a transaction to revert silently but instead fail loudly, propagating the error.
+    pub fn should_propagate(&self) -> bool {
+        matches!(self, EVMError::Internal(_) | EVMError::Database(_))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum ExceptionalHalt {
     #[error("Stack Underflow")]
@@ -188,8 +196,6 @@ pub enum OutOfGasError {
     ConsumedGasOverflow,
     #[error("Max Gas Limit Exceeded")]
     MaxGasLimitExceeded,
-    #[error("Arithmetic operation divided by zero in gas calculation")]
-    ArithmeticOperationDividedByZero,
     #[error("Memory Expansion Cost Overflow")]
     MemoryExpansionCostOverflow,
 }

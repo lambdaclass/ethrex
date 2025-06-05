@@ -591,10 +591,8 @@ impl<'a> VM<'a> {
         // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
         // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
         // see it in https://eips.ethereum.org/EIPS/eip-7623
-        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata)
-            .map_err(VMError::OutOfGas)?
-            .checked_div(STANDARD_TOKEN_COST)
-            .ok_or(VMError::Internal(InternalError::DivisionError))?;
+        let tokens_in_calldata: u64 =
+            gas_cost::tx_calldata(calldata).map_err(VMError::OutOfGas)? / STANDARD_TOKEN_COST;
 
         // min_gas_used = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
         let mut min_gas_used: u64 = tokens_in_calldata
