@@ -1,11 +1,8 @@
-use std::collections::HashSet;
-use std::sync::Mutex;
 use std::{marker::PhantomData, sync::Arc};
 
 use super::utils::node_hash_to_fixed_size;
-use ethrex_rlp::decode::RLPDecode;
+use ethrex_trie::TrieDB;
 use ethrex_trie::{error::TrieError, NodeHash};
-use ethrex_trie::{Node, TrieDB};
 use libmdbx::orm::{Database, DupSort, Encodable};
 
 /// Libmdbx implementation for the TrieDB trait for a dupsort table with a fixed primary key.
@@ -19,8 +16,6 @@ where
     db: Arc<Database>,
     fixed_key: SK,
     phantom: PhantomData<T>,
-    record_witness: bool,
-    witness: Arc<Mutex<HashSet<Vec<u8>>>>,
 }
 
 impl<T, SK> LibmdbxDupsortTrieDB<T, SK>
@@ -33,8 +28,6 @@ where
             db,
             fixed_key,
             phantom: PhantomData,
-            record_witness: false,
-            witness: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 }
@@ -44,30 +37,10 @@ where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
     SK: Clone + Encodable,
 {
-    fn record_witness(&mut self) {
-        self.record_witness = true;
-    }
-
-    fn witness(&self) -> Result<HashSet<Vec<u8>>, TrieError> {
-        let lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
-        Ok(lock.clone())
-    }
-
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        let value = txn
-            .get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
-            .map_err(TrieError::DbError)?;
-        if !self.record_witness {
-            return Ok(value);
-        }
-        if let Some(value) = value.as_ref() {
-            if let Ok(decoded) = Node::decode(value) {
-                let mut lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
-                lock.insert(decoded.encode_raw());
-            }
-        }
-        Ok(value)
+        txn.get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
+            .map_err(TrieError::DbError)
     }
 
     fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {

@@ -21,7 +21,7 @@ use ethrex_common::types::{
     BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
-use ethrex_common::{Address, H256};
+use ethrex_common::{Address, TrieLogger, H256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{hash_address, hash_key, Store};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -139,14 +139,12 @@ impl Blockchain {
             .ok_or(ChainError::ParentNotFound)?;
 
         // Get state at previous block
-        let mut trie = self
+        let trie = self
             .storage
             .state_trie(first_block_header.parent_hash)
             .map_err(|_| ChainError::ParentNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
-
-        // Record all accessed nodes
-        trie.record_witness();
+        let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
 
         // Store the root node in case the block is empty and the witness does not record any nodes
         let root_node = trie
@@ -192,11 +190,10 @@ impl Blockchain {
                 });
                 // Get storage trie at before updates
                 if !keys.is_empty() {
-                    if let Ok(Some(mut storage_trie)) =
-                        self.storage.storage_trie(parent_hash, *account)
+                    if let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
                     {
-                        // Record accessed nodes
-                        storage_trie.record_witness();
+                        let (storage_trie_witness, storage_trie) =
+                            TrieLogger::open_trie(storage_trie);
                         // Access all the keys
                         for storage_key in keys {
                             let hashed_key = hash_key(storage_key);
@@ -205,7 +202,7 @@ impl Blockchain {
                             })?;
                         }
                         // Store the tries to reuse when applying account updates
-                        used_storage_tries.insert(*account, storage_trie);
+                        used_storage_tries.insert(*account, (storage_trie_witness, storage_trie));
                     }
                 }
             }
@@ -234,10 +231,11 @@ impl Blockchain {
                     used_storage_tries,
                 )
                 .await?;
-            for (address, trie) in storage_tries_after_update {
-                let witness = trie.db().witness().map_err(|_| {
-                    ChainError::Custom("Failed to get witness for storage trie".to_string())
+            for (address, (witness, _storage_trie)) in storage_tries_after_update {
+                let mut witness = witness.lock().map_err(|_| {
+                    ChainError::Custom("Failed to lock storage trie witness".to_string())
                 })?;
+                let witness = std::mem::take(&mut *witness);
                 let witness = witness.into_iter().collect::<Vec<_>>();
                 match encoded_storage_tries.entry(address) {
                     std::collections::hash_map::Entry::Occupied(mut entry) => {
@@ -252,11 +250,11 @@ impl Blockchain {
         }
 
         // Get the witness for the state trie
-        let witnessed_trie = trie
-            .db()
-            .witness()
-            .map_err(|_| ChainError::Custom("Failed to get witness for state trie".to_string()))?;
-        let mut used_trie_nodes = Vec::from_iter(witnessed_trie.into_iter());
+        let mut state_trie_witness = state_trie_witness
+            .lock()
+            .map_err(|_| ChainError::Custom("Failed to lock state trie witness".to_string()))?;
+        let state_trie_witness = std::mem::take(&mut *state_trie_witness);
+        let mut used_trie_nodes = Vec::from_iter(state_trie_witness.into_iter());
         // If the witness is empty at least try to store the root
         if used_trie_nodes.is_empty() {
             if let Some(root) = root_node {
@@ -422,7 +420,7 @@ impl Blockchain {
                     ))
                 }
             };
-
+            info!("Processed block {} out of {}", i, blocks.len());
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();

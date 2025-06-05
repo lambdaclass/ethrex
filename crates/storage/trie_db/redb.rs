@@ -1,40 +1,21 @@
-use std::{
-    collections::HashSet,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
 
-use ethrex_rlp::decode::RLPDecode;
-use ethrex_trie::{Node, NodeHash, TrieDB, TrieError};
+use ethrex_trie::{NodeHash, TrieDB, TrieError};
 use redb::{Database, TableDefinition};
 
 const TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("Trie");
 
 pub struct RedBTrie {
     db: Arc<Database>,
-    record_witness: bool,
-    witness: Arc<Mutex<HashSet<Vec<u8>>>>,
 }
 
 impl RedBTrie {
     pub fn new(db: Arc<Database>) -> Self {
-        Self {
-            db,
-            record_witness: false,
-            witness: Arc::new(Mutex::new(HashSet::new())),
-        }
+        Self { db }
     }
 }
 
 impl TrieDB for RedBTrie {
-    fn record_witness(&mut self) {
-        self.record_witness = true;
-    }
-
-    fn witness(&self) -> Result<HashSet<Vec<u8>>, TrieError> {
-        let lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
-        Ok(lock.clone())
-    }
-
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let read_txn = self
             .db
@@ -43,20 +24,10 @@ impl TrieDB for RedBTrie {
         let table = read_txn
             .open_table(TABLE)
             .map_err(|e| TrieError::DbError(e.into()))?;
-        let value = table
+        Ok(table
             .get(key.as_ref())
             .map_err(|e| TrieError::DbError(e.into()))?
-            .map(|value| value.value().to_vec());
-        if !self.record_witness {
-            return Ok(value);
-        }
-        if let Some(value) = value.as_ref() {
-            if let Ok(decoded) = Node::decode(value) {
-                let mut lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
-                lock.insert(decoded.encode_raw());
-            }
-        }
-        Ok(value)
+            .map(|value| value.value().to_vec()))
     }
 
     fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
