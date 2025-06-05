@@ -20,8 +20,7 @@ use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use spawned_concurrency::{CallResponse, CastResponse, GenServer};
-use std::net::IpAddr;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::{
