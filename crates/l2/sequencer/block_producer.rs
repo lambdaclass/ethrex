@@ -123,7 +123,7 @@ impl GenServer for BlockProducer {
             .inspect_err(|e| error!("Block Producer Error: {e}"));
         send_after(
             Duration::from_millis(state.block_time_ms),
-            tx.clone(),
+            tx,
             Self::InMsg::Produce,
         );
         CastResponse::NoReply
@@ -188,7 +188,7 @@ pub async fn produce_block(state: &BlockProducerState) -> Result<(), BlockProduc
 
     state
         .blockchain
-        .store_block(&block, execution_result.clone(), &account_updates)
+        .store_block(&block, execution_result, &account_updates)
         .await?;
     info!("Stored new block {:x}", block.hash());
     // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
