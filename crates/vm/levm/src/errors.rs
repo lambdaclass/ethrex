@@ -6,7 +6,6 @@ use thiserror;
 
 use crate::db::error::DatabaseError;
 
-//TODO: Rename to VMError afterwards
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize, Display)]
 pub enum VMError {
     /// Errors that break execution, they shouldn't ever happen. Contains subcategory `DatabaseError`.
