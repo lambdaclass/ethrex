@@ -8,12 +8,7 @@ use std::{
 use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
-        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
-        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
-        requests::{compute_requests_hash, EncodedRequests},
-        AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
-        DEFAULT_REQUESTS_HASH,
+        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root, compute_withdrawals_root, requests::{compute_requests_hash, EncodedRequests}, transaction, AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH
     },
     Address, Bloom, Bytes, H256, U256,
 };
@@ -296,6 +291,27 @@ impl Blockchain {
         Ok(context.into())
     }
 
+    pub async fn build_payload_with_transactions(&self, payload: Block, tranactions: &[Transaction]) -> Result<PayloadBuildResult, ChainError> {
+        let mut context = PayloadBuildContext::new(payload, self.evm_engine, &self.storage)?;
+
+        #[cfg(not(feature = "l2"))]
+        self.apply_system_operations(&mut context)?;
+        self.apply_withdrawals(&mut context)?;
+        for tx in tranactions {
+            let head_tx = HeadTransaction {
+                tip: 0,
+                tx: MempoolTransaction::new(tx.clone(), tx.sender())
+            };
+            let receipt = self.apply_transaction(&head_tx, &mut context)?;
+            context.receipts.push(receipt);
+            context.payload.body.transactions.push(head_tx.into());
+        }
+        self.extract_requests(&mut context)?;
+        self.finalize_payload(&mut context).await?;
+
+        Ok(context.into())
+    }
+
     pub fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
         let binding = Vec::new();
         let withdrawals = context
@@ -452,7 +468,7 @@ impl Blockchain {
 
     /// Executes the transaction, updates gas-related context values & return the receipt
     /// The payload build context should have enough remaining gas to cover the transaction's gas_limit
-    fn apply_transaction(
+    pub fn apply_transaction(
         &self,
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,

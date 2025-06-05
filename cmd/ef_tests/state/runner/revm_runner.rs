@@ -86,6 +86,9 @@ pub async fn re_run_failed_ef_test(
                 EFTestRunnerError::VMInitializationFailed(_)
                 | EFTestRunnerError::ExecutionFailedUnexpectedly(_)
                 | EFTestRunnerError::FailedToEnsurePreState(_)
+                | EFTestRunnerError::BlockBuildingFailure(_)
+                | EFTestRunnerError::GasLimitOverflow
+                | EFTestRunnerError::EIP4844ShouldNotBeCreateType
                 | EFTestRunnerError::EIP7702ShouldNotBeCreateType => continue,
                 EFTestRunnerError::VMExecutionMismatch(reason) => return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
                     format!("VM execution mismatch errors should only happen when running with revm. This failed during levm's execution: {reason}"), re_run_report.clone()))),
@@ -104,7 +107,7 @@ pub async fn re_run_failed_ef_test_tx(
     re_run_report: &mut TestReRunReport,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let (mut state, _block_hash, _store) = load_initial_state(test).await;
+    let (mut state, _block_hash, _store) = load_initial_state(test, fork).await;
     let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
     if !test.post.has_vector_for_fork(vector, *fork) {
         return Ok(());
@@ -347,7 +350,7 @@ pub async fn ensure_post_state(
         Some(_expected_exception) => {}
         // We only want to compare account updates when no exception is expected.
         None => {
-            let mut db = load_initial_state_levm(test).await;
+            let mut db = load_initial_state_levm(test, fork).await;
             db.cache = levm_cache;
             let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db)
                 .map_err(|_| {
@@ -376,8 +379,8 @@ pub async fn compare_levm_revm_account_updates(
     levm_account_updates: &[AccountUpdate],
     revm_account_updates: &[AccountUpdate],
 ) -> ComparisonReport {
-    let levm_post_state_root = post_state_root(levm_account_updates, test).await;
-    let revm_post_state_root = post_state_root(revm_account_updates, test).await;
+    let levm_post_state_root = post_state_root(levm_account_updates, test, fork).await;
+    let revm_post_state_root = post_state_root(revm_account_updates, test, fork).await;
     let mut initial_accounts: HashMap<Address, Account> = test
         .pre
         .0
@@ -439,6 +442,9 @@ pub async fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunn
                 Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
                     ef_test_report_fork.register_vm_initialization_failure(reason, *vector);
                 }
+                Err(EFTestRunnerError::BlockBuildingFailure(error)) => {
+                    ef_test_report_fork.register_block_building_failure(error, *vector);
+                }
                 Err(EFTestRunnerError::FailedToEnsurePreState(reason)) => {
                     ef_test_report_fork.register_pre_state_validation_failure(reason, *vector);
                 }
@@ -472,7 +478,9 @@ pub async fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunn
                             .to_owned(),
                     )));
                 }
-                Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => {
+                | Err(EFTestRunnerError::EIP4844ShouldNotBeCreateType)
+                | Err(EFTestRunnerError::GasLimitOverflow)
+                | Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => {
                     return Err(EFTestRunnerError::Internal(InternalError::Custom(
                         "This case should not happen".to_owned(),
                     )));
@@ -489,7 +497,7 @@ pub async fn _run_ef_test_tx_revm(
     test: &EFTest,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let (mut state, _block_hash, _store) = load_initial_state(test).await;
+    let (mut state, _block_hash, _store) = load_initial_state(test, fork).await;
     let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
     let revm_execution_result = revm.transact_commit();
     drop(revm); // Need to drop the state mutable reference.
@@ -529,7 +537,7 @@ pub async fn _ensure_post_state_revm(
                 None => {
                     let revm_account_updates =
                         backends::revm::REVM::get_state_transitions(revm_state);
-                    let pos_state_root = post_state_root(&revm_account_updates, test).await;
+                    let pos_state_root = post_state_root(&revm_account_updates, test, fork).await;
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
                     if expected_post_state_root_hash != pos_state_root {

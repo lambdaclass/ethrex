@@ -18,6 +18,8 @@ pub mod revm_runner;
 
 #[derive(Debug, thiserror::Error, Clone, Serialize, Deserialize)]
 pub enum EFTestRunnerError {
+    #[error("Block building failed: {0}")]
+    BlockBuildingFailure(String),
     #[error("VM initialization failed: {0}")]
     VMInitializationFailed(String),
     #[error("Transaction execution failed when it was not expected to fail: {0}")]
@@ -32,6 +34,10 @@ pub enum EFTestRunnerError {
     ExpectedExceptionDoesNotMatchReceived(String),
     #[error("EIP-7702 should not be a create type")]
     EIP7702ShouldNotBeCreateType,
+    #[error("EIP-4844 should not be a create type")]
+    EIP4844ShouldNotBeCreateType,
+    #[error("Gas limit overflow")]
+    GasLimitOverflow,
     #[error("This is a bug: {0}")]
     Internal(#[from] InternalError),
 }
@@ -44,6 +50,8 @@ pub enum InternalError {
     ReRunInternal(String, TestReRunReport),
     #[error("Main runner failed unexpectedly: {0}")]
     MainRunnerInternal(String),
+    #[error("Stateless runner failed unexpectedly: {0}")]
+    StatelessRunnerInternal(String),
     #[error("{0}")]
     Custom(String),
 }

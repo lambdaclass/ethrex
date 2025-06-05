@@ -1,6 +1,5 @@
 use crate::types::{
-    EFTest, EFTestAccessListItem, EFTestAuthorizationListTuple, EFTestPostValue, EFTests,
-    TransactionExpectedException,
+    EFTest, EFTestAccessListItem, EFTestAuthorizationListTuple, EFTestConfig, EFTestPostValue, EFTests, TransactionExpectedException
 };
 use bytes::Bytes;
 use ethrex_common::{types::Fork, H256, U256};
@@ -380,6 +379,16 @@ impl<'de> Deserialize<'de> for EFTests {
                     }
                 }
             }
+            let config = match test_data.get("config") {
+                Some(data) => {
+                    serde_json::from_value(data.clone()).map_err(|err| {
+                        serde::de::Error::custom(format!(
+                            "error deserializing test \"{test_name}\", \"_info\" field: {err}"
+                        ))
+                    })?
+                },
+                None => Default::default()
+            };
 
             let ef_test = EFTest {
                 name: test_name.to_owned().to_owned(),
@@ -429,6 +438,7 @@ impl<'de> Deserialize<'de> for EFTests {
                     ))
                 })?,
                 transactions,
+                config
             };
             ef_tests.push(ef_test);
         }

@@ -11,8 +11,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    types::{Fork, Genesis, GenesisAccount, TxKind},
-    Address, H256, U256,
+    types::{BlobSchedule, Fork, Genesis, GenesisAccount, TxKind}, Address, H160, H256, U256
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
@@ -29,6 +28,7 @@ pub struct EFTest {
     pub post: EFTestPost,
     pub pre: EFTestPre,
     pub transactions: HashMap<TestVector, EFTestTransaction>,
+    pub config: EFTestConfig
 }
 
 impl From<&EFTest> for Genesis {
@@ -41,11 +41,9 @@ impl From<&EFTest> for Genesis {
                 }
                 alloc
             },
-            coinbase: test.env.current_coinbase,
             difficulty: test.env.current_difficulty,
             gas_limit: test.env.current_gas_limit,
-            mix_hash: test.env.current_random.unwrap_or_default(),
-            timestamp: test.env.current_timestamp.as_u64(),
+            timestamp: 1,
             base_fee_per_gas: test.env.current_base_fee.map(|v| v.as_u64()),
             excess_blob_gas: test.env.current_excess_blob_gas.map(|v| v.as_u64()),
             ..Default::default()
@@ -283,4 +281,11 @@ pub struct EFTestTransaction {
     pub blob_versioned_hashes: Vec<H256>,
     pub access_list: Vec<EFTestAccessListItem>,
     pub authorization_list: Option<Vec<EFTestAuthorizationListTuple>>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EFTestConfig {
+    #[serde(default)]
+    pub blob_schedule: BlobSchedule
 }

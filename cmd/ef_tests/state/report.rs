@@ -489,6 +489,13 @@ impl EFTestReportForkResult {
         );
     }
 
+    pub fn register_block_building_failure(&mut self, reason: String, failed_vector: TestVector) {
+        self.failed_vectors.insert(
+            failed_vector,
+            EFTestRunnerError::BlockBuildingFailure(reason),
+        );
+    }
+
     pub fn register_vm_initialization_failure(
         &mut self,
         reason: String,

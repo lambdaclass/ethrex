@@ -1,15 +1,16 @@
 use crate::{
     report::{EFTestReport, EFTestReportForkResult, TestVector},
     runner::{EFTestRunnerError, InternalError},
-    types::{EFTest, TransactionExpectedException},
-    utils::{self, effective_gas_price},
+    types::{EFTest, EFTestTransaction, TransactionExpectedException},
+    utils::{self, effective_gas_price, load_genesis, load_initial_state_store},
 };
+
 use ethrex_common::{
+    serde_utils::blob::vec,
     types::{
-        tx_fields::*, AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction,
-        TxKind,
+        compute_transactions_root, transaction, tx_fields::*, AccountUpdate, BlobsBundle, Block, BlockBody, BlockHeader, EIP1559Transaction, EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, Fork, Genesis, Signable, Transaction, TxKind, ELASTICITY_MULTIPLIER
     },
-    H256, U256,
+    H256, U256
 };
 use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
@@ -18,8 +19,14 @@ use ethrex_levm::{
     EVMConfig, Environment,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_vm::backends;
+use ethrex_vm::backends::{self, levm::LEVM};
 use keccak_hash::keccak;
+use secp256k1::SecretKey;
+
+use ethrex_blockchain::{
+    payload::{create_payload, BuildPayloadArgs},
+    Blockchain,
+};
 
 pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     // There are some tests that don't have a hash, unwrap will panic
@@ -40,6 +47,9 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
             }
             match run_ef_test_tx(vector, test, fork).await {
                 Ok(_) => continue,
+                Err(EFTestRunnerError::BlockBuildingFailure(reason)) => {
+                    ef_test_report_fork.register_block_building_failure(reason, *vector);
+                }
                 Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
                     ef_test_report_fork.register_vm_initialization_failure(reason, *vector);
                 }
@@ -74,7 +84,9 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                 Err(EFTestRunnerError::Internal(reason)) => {
                     return Err(EFTestRunnerError::Internal(reason));
                 }
-                Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => {
+                | Err(EFTestRunnerError::GasLimitOverflow)
+                | Err(EFTestRunnerError::EIP4844ShouldNotBeCreateType)
+                | Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => {
                     return Err(EFTestRunnerError::Internal(InternalError::Custom(
                         "This case should not happen".to_owned(),
                     )));
@@ -91,81 +103,118 @@ pub async fn run_ef_test_tx(
     test: &EFTest,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let mut db = utils::load_initial_state_levm(test).await;
-    let vm_creation_result = prepare_vm_for_tx(vector, test, fork, &mut db);
-    // For handling edge case in which there's a create in a Type 4 Transaction, that sadly is detected before actual execution of the vm, when building the "Transaction" for creating a new instance of vm.
-    let levm_execution_result = match vm_creation_result {
-        Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => Err(VMError::TxValidation(
-            TxValidationError::Type4TxContractCreation,
-        )),
-        Err(error) => return Err(error),
-        Ok(mut levm) => {
-            ensure_pre_state(&levm, test)?;
-            levm.execute()
-        }
-    };
-
-    ensure_post_state(&levm_execution_result, vector, test, fork, &mut db).await?;
-    Ok(())
-}
-
-pub fn prepare_vm_for_tx<'a>(
-    vector: &TestVector,
-    test: &EFTest,
-    fork: &Fork,
-    db: &'a mut GeneralizedDatabase,
-) -> Result<VM<'a>, EFTestRunnerError> {
     let test_tx = test
         .transactions
         .get(vector)
         .ok_or(EFTestRunnerError::Internal(
             InternalError::FirstRunInternal("Failed to get transaction".to_owned()),
         ))?;
-
-    let access_list = test_tx
-        .access_list
-        .iter()
-        .map(|arg| (arg.address, arg.storage_keys.clone()))
-        .collect();
-
-    // Check if the tx has the authorization_lists field implemented by eip7702.
-    let authorization_list = test_tx.authorization_list.clone().map(|list| {
-        list.iter()
-            .map(|auth_tuple| AuthorizationTuple {
-                chain_id: auth_tuple.chain_id,
-                address: auth_tuple.address,
-                nonce: auth_tuple.nonce,
-                y_parity: auth_tuple.v,
-                r_signature: auth_tuple.r,
-                s_signature: auth_tuple.s,
-            })
-            .collect::<Vec<AuthorizationTuple>>()
-    });
-
-    let blob_schedule = EVMConfig::canonical_values(*fork);
-    let config = EVMConfig::new(*fork, blob_schedule);
-
-    let tx = match authorization_list {
-        Some(list) => Transaction::EIP7702Transaction(EIP7702Transaction {
-            to: match test_tx.to {
-                TxKind::Call(to) => to,
-                TxKind::Create => return Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType),
-            },
-            value: test_tx.value,
-            data: test_tx.data.clone(),
-            access_list,
-            authorization_list: list,
-            ..Default::default()
-        }),
-        None => Transaction::EIP1559Transaction(EIP1559Transaction {
-            to: test_tx.to.clone(),
-            value: test_tx.value,
-            data: test_tx.data.clone(),
-            access_list,
-            ..Default::default()
-        }),
+    let mut db = utils::load_initial_state_levm(test, fork).await;
+    // For handling edge case in which there's a create in a Type 4 Transaction, that sadly is detected before actual execution of the vm, when building the "Transaction" for creating a new instance of vm.
+    let (transaction, levm_execution_result) = match build_transaction(test_tx) {
+        Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => {
+            let err = Err(VMError::TxValidation(
+                TxValidationError::Type4TxContractCreation,
+            ));
+            (None, err)
+        }
+        Err(EFTestRunnerError::EIP4844ShouldNotBeCreateType) => {
+            let err = Err(VMError::TxValidation(
+                TxValidationError::Type3TxContractCreation,
+            ));
+            (None, err)
+        }
+        Err(EFTestRunnerError::GasLimitOverflow) => {
+            let err = Err(VMError::TxValidation(
+                TxValidationError::GasLimitPriceProductOverflow,
+            ));
+            (None, err)
+        }
+        Err(error) => return Err(error),
+        Ok(tx) => {
+            let mut levm = prepare_vm_for_tx(test, &tx, test_tx, fork, &mut db)
+                .map_err(|e| EFTestRunnerError::VMInitializationFailed(e.to_string()))?;
+            ensure_pre_state(&levm, test)?;
+            (Some(tx), levm.execute())
+        }
     };
 
+    ensure_post_state(&levm_execution_result, vector, test, fork, &mut db).await?;
+
+    let Some(transaction) = transaction else {
+        // Might have failed due to Type4 transaction create
+        return Ok(());
+    };
+    if test.post.vector_post_value(vector, *fork).expect_exception.is_some() {
+        // Invalid transactions shouldn't be included in blocks
+        return Ok(());
+    }
+    let genesis = load_genesis(test, fork);
+    let genesis_hash = genesis.get_block().hash();
+
+    let store = load_initial_state_store(&genesis).await;
+    let blockchain = Blockchain::default_with_store(store.clone());
+
+    let blobs_bundle = BlobsBundle::empty();
+    blockchain.mempool.add_blobs_bundle(transaction.compute_hash(), blobs_bundle)
+        .map_err(|e| EFTestRunnerError::BlockBuildingFailure(e.to_string()))?;
+    
+
+    let args = BuildPayloadArgs {
+        parent: genesis_hash,
+        timestamp: test.env.current_timestamp.try_into().unwrap(),
+        fee_recipient: test.env.current_coinbase,
+        random: test.env.current_random.unwrap_or_default(),
+        withdrawals: None,
+        beacon_root: None,
+        version: 0,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
+    };
+
+    let mut block = create_payload(&args, &store)
+        .map_err(|e| EFTestRunnerError::BlockBuildingFailure(e.to_string()))?;
+    block.header.base_fee_per_gas = test.env.current_base_fee.map(|v| v.try_into().unwrap_or_default());
+    block.header.difficulty = test.env.current_difficulty;
+    block.header.gas_limit = test.env.current_gas_limit;
+    block.header.excess_blob_gas = test.env.current_excess_blob_gas.map(|v| v.try_into().unwrap_or_default());
+    
+    let res = blockchain
+        .build_payload_with_transactions(block, &vec![transaction])
+        .await
+        .map_err(|e| EFTestRunnerError::BlockBuildingFailure(e.to_string()))?;
+    let block = res.payload;
+
+    let mut db = utils::load_initial_state_levm(test, fork).await;
+    LEVM::execute_block(&block, &mut db).map_err(|e| {
+        EFTestRunnerError::Internal(InternalError::StatelessRunnerInternal(e.to_string()))
+    })?;
+    let updates = LEVM::get_state_transitions(&mut db).map_err(|e| {
+        EFTestRunnerError::Internal(InternalError::StatelessRunnerInternal(e.to_string()))
+    })?;
+    let new_root = store
+        .apply_account_updates(genesis_hash, &updates)
+        .await
+        .map_err(|e| {
+            EFTestRunnerError::Internal(InternalError::StatelessRunnerInternal(e.to_string()))
+        })?;
+    let expected_root = test.post.vector_post_value(vector, fork.clone()).hash;
+    if new_root != Some(expected_root) {
+        return Err(EFTestRunnerError::Internal(
+            InternalError::StatelessRunnerInternal("Stateful and stateless mismatch".to_string()),
+        ));
+    }
+    Ok(())
+}
+
+pub fn prepare_vm_for_tx<'a>(
+    test: &EFTest,
+    tx: &Transaction,
+    test_tx: &EFTestTransaction,
+    fork: &Fork,
+    db: &'a mut GeneralizedDatabase,
+) -> Result<VM<'a>, EFTestRunnerError> {
+    let blob_schedule = EVMConfig::canonical_values(*fork);
+    let config = EVMConfig::new(*fork, blob_schedule);
     Ok(VM::new(
         Environment {
             origin: test_tx.sender,
@@ -190,8 +239,98 @@ pub fn prepare_vm_for_tx<'a>(
             is_privileged: false,
         },
         db,
-        &tx,
+        tx,
     ))
+}
+
+pub fn build_transaction(
+    test_tx: &EFTestTransaction
+) -> Result<Transaction, EFTestRunnerError> {
+    let access_list = test_tx
+        .access_list
+        .iter()
+        .map(|arg| (arg.address, arg.storage_keys.clone()))
+        .collect();
+
+    // Check if the tx has the authorization_lists field implemented by eip7702.
+    let authorization_list = test_tx.authorization_list.clone().map(|list| {
+        list.iter()
+            .map(|auth_tuple| AuthorizationTuple {
+                chain_id: auth_tuple.chain_id,
+                address: auth_tuple.address,
+                nonce: auth_tuple.nonce,
+                y_parity: auth_tuple.v,
+                r_signature: auth_tuple.r,
+                s_signature: auth_tuple.s,
+            })
+            .collect::<Vec<AuthorizationTuple>>()
+    });
+    
+    let private_key  = SecretKey::from_slice(&test_tx.secret_key.0).map_err(|_| EFTestRunnerError::Internal(InternalError::Custom("failed to decode secret key".to_string())))?;
+    let max_priority_fee_per_gas = test_tx.max_priority_fee_per_gas.unwrap_or_default().try_into().map_err(|_| EFTestRunnerError::Internal(InternalError::Custom("failed to convert max_priority_fee_per_gas".to_string())))?;
+    let max_fee_per_gas = test_tx.max_fee_per_gas.unwrap_or_default().try_into().map_err(|_| EFTestRunnerError::Internal(InternalError::Custom("failed to convert max_fee_per_gas".to_string())))?;
+    let gas_limit = test_tx.gas_limit.try_into().map_err(|_| EFTestRunnerError::Internal(InternalError::Custom("failed to convert gas_limit".to_string())))?;
+    let max_fee_per_blob_gas = test_tx.max_fee_per_blob_gas.unwrap_or_default().try_into().map_err(|_| EFTestRunnerError::Internal(InternalError::Custom("failed to convert max_fee_per_blob_gas".to_string())))?;
+    let gas_price = test_tx.gas_price.unwrap_or_default().try_into().map_err(|_| EFTestRunnerError::GasLimitOverflow)?;
+
+    if test_tx.max_fee_per_gas.is_none() {
+        return Ok(Transaction::EIP2930Transaction(EIP2930Transaction {
+            to: test_tx.to.clone(),
+            value: test_tx.value,
+            data: test_tx.data.clone(),
+            access_list,
+            nonce: test_tx.nonce,
+            gas_limit,
+            gas_price,
+            ..Default::default()
+        }.sign(&private_key)))
+    }
+    if !test_tx.blob_versioned_hashes.is_empty() {
+        return Ok(Transaction::EIP4844Transaction(EIP4844Transaction {
+            to: match test_tx.to {
+                TxKind::Call(to) => to,
+                TxKind::Create => return Err(EFTestRunnerError::EIP4844ShouldNotBeCreateType),
+            },
+            value: test_tx.value,
+            data: test_tx.data.clone(),
+            access_list,
+            nonce: test_tx.nonce,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+            gas: gas_limit,
+            max_fee_per_blob_gas: max_fee_per_blob_gas,
+            blob_versioned_hashes: test_tx.blob_versioned_hashes.clone(),
+            ..Default::default()
+        }.sign(&private_key)))
+    }
+    Ok(match authorization_list {
+        Some(list) => Transaction::EIP7702Transaction(EIP7702Transaction {
+            to: match test_tx.to {
+                TxKind::Call(to) => to,
+                TxKind::Create => return Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType),
+            },
+            value: test_tx.value,
+            data: test_tx.data.clone(),
+            access_list,
+            authorization_list: list,
+            nonce: test_tx.nonce,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+            gas_limit,
+            ..Default::default()
+        }.sign(&private_key)),
+        None => Transaction::EIP1559Transaction(EIP1559Transaction {
+            to: test_tx.to.clone(),
+            value: test_tx.value,
+            data: test_tx.data.clone(),
+            access_list,
+            nonce: test_tx.nonce,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+            gas_limit,
+            ..Default::default()
+        }.sign(&private_key)),
+    })
 }
 
 pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError> {
@@ -348,7 +487,7 @@ pub async fn ensure_post_state(
                     let vector_post_value = test.post.vector_post_value(vector, *fork);
 
                     // 1. Compare the post-state root hash with the expected post-state root hash
-                    if vector_post_value.hash != post_state_root(&levm_account_updates, test).await
+                    if vector_post_value.hash != post_state_root(&levm_account_updates, test, fork).await
                     {
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             execution_report.clone(),
@@ -401,8 +540,8 @@ pub async fn ensure_post_state(
     Ok(())
 }
 
-pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
-    let (_initial_state, block_hash, store) = utils::load_initial_state(test).await;
+pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest, fork: &Fork) -> H256 {
+    let (_initial_state, block_hash, store) = utils::load_initial_state(test, fork).await;
     store
         .apply_account_updates(block_hash, account_updates)
         .await

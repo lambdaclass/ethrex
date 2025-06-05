@@ -344,11 +344,11 @@ impl LEVM {
         // has any code after being deployed. If not, the whole block becomes invalid.
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
         let account = db.get_account(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS)?;
-        if !account.has_code() {
-            return Err(EvmError::SystemContractEmpty(
-                "WITHDRAWAL_REQUEST_PREDEPLOY".to_string(),
-            ));
-        }
+//        if !account.has_code() {
+//            return Err(EvmError::SystemContractEmpty(
+//                "WITHDRAWAL_REQUEST_PREDEPLOY".to_string(),
+//            ));
+//        }
 
         match report.result {
             TxResult::Success => Ok(report),
@@ -375,11 +375,11 @@ impl LEVM {
         // has any code after being deployed. If not, the whole block becomes invalid.
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
         let acc = db.get_account(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS)?;
-        if !acc.has_code() {
+/*        if !acc.has_code() {
             return Err(EvmError::SystemContractEmpty(
                 "CONSOLIDATION_REQUEST_PREDEPLOY".to_string(),
             ));
-        }
+        }*/
 
         match report.result {
             TxResult::Success => Ok(report),
