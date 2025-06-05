@@ -112,19 +112,16 @@ impl Trie {
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: PathRLP) -> Result<Option<ValueRLP>, TrieError> {
-        let value;
-        (self.root, value) = if self.root.is_valid() {
-            // If the trie is not empty, call the root node's removal logic.
-            let (node, value) = self
-                .root
-                .get_node(self.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?
-                .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
-
-            (node.map(Into::into).unwrap_or_default(), value)
-        } else {
-            (NodeRef::default(), None)
-        };
+        if !self.root.is_valid() {
+            return Ok(None);
+        }
+        // If the trie is not empty, call the root node's removal logic.
+        let (node, value) = self
+            .root
+            .get_node(self.db.as_ref())?
+            .ok_or(TrieError::InconsistentTree)?
+            .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
+        self.root = node.map(Into::into).unwrap_or_default();
 
         Ok(value)
     }
