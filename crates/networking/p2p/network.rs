@@ -1,13 +1,9 @@
 use crate::kademlia::{self, KademliaTable};
+use crate::rlpx::connection::server::{RLPxConnBroadcastSender, RLPxConnection};
 use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
-use crate::rlpx::{
-    connection::RLPxConnBroadcastSender, handshake, message::Message as RLPxMessage,
-};
+use crate::rlpx::message::Message as RLPxMessage;
 use crate::types::{Node, NodeRecord};
-use crate::{
-    discv4::server::{DiscoveryError, Discv4Server},
-    rlpx::utils::log_peer_debug,
-};
+use crate::discv4::server::{DiscoveryError, Discv4Server};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{H256, H512};
 use ethrex_storage::Store;
@@ -17,11 +13,11 @@ use k256::{
 };
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
-    net::{TcpListener, TcpSocket, TcpStream},
+    net::{TcpListener, TcpSocket},
     sync::Mutex,
 };
 use tokio_util::task::TaskTracker;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 // Totally arbitrary limit on how
 // many messages the connections can queue,
@@ -133,9 +129,7 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             }
         };
 
-        context
-            .tracker
-            .spawn(handle_peer_as_receiver(context.clone(), peer_addr, stream));
+        RLPxConnection::spawn_as_receiver(context.clone(), peer_addr, stream).await;
     }
 }
 
@@ -143,40 +137,6 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
     let tcp_socket = TcpSocket::new_v4()?;
     tcp_socket.bind(tcp_addr)?;
     tcp_socket.listen(50)
-}
-
-async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
-    let table = context.table.clone();
-    match handshake::as_receiver(context, peer_addr, stream).await {
-        Ok(mut conn) => conn.start(table, true).await,
-        Err(e) => {
-            debug!("Error creating tcp connection with peer at {peer_addr}: {e}")
-        }
-    }
-}
-
-pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
-    let addr = SocketAddr::new(node.ip, node.tcp_port);
-    let stream = match tcp_stream(addr).await {
-        Ok(result) => result,
-        Err(e) => {
-            log_peer_debug(&node, &format!("Error creating tcp connection {e}"));
-            context.table.lock().await.replace_peer(node.node_id());
-            return;
-        }
-    };
-    let table = context.table.clone();
-    match handshake::as_initiator(context, node.clone(), stream).await {
-        Ok(mut conn) => conn.start(table, false).await,
-        Err(e) => {
-            log_peer_debug(&node, &format!("Error creating tcp connection {e}"));
-            table.lock().await.replace_peer(node.node_id());
-        }
-    };
-}
-
-async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, io::Error> {
-    TcpSocket::new_v4()?.connect(addr).await
 }
 
 pub fn public_key_from_signing_key(signer: &SigningKey) -> H512 {

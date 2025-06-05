@@ -10,8 +10,8 @@ use super::{
 };
 use crate::{
     kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
-    network::{handle_peer_as_initiator, P2PContext},
-    rlpx::{connection::MAX_PEERS_TCP_CONNECTIONS, utils::node_id},
+    network::P2PContext,
+    rlpx::{connection::server::RLPxConnection, utils::node_id},
     types::{Endpoint, Node},
 };
 use ethrex_common::H256;
@@ -27,6 +27,7 @@ use tracing::{debug, error};
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
 const PROOF_EXPIRATION_IN_HS: u64 = 12;
+pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
 
 // These interval times are arbitrary numbers, maybe we should read them from a cfg or a cli param
 const REVALIDATION_INTERVAL_IN_SECONDS: u64 = 30;
@@ -224,10 +225,8 @@ impl Discv4Server {
                     return Ok(());
                 }
 
-                let ctx = self.ctx.clone();
-                self.ctx
-                    .tracker
-                    .spawn(async move { handle_peer_as_initiator(ctx, peer.node).await });
+                RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
+
                 Ok(())
             }
             Message::FindNode(msg) => {
@@ -518,11 +517,8 @@ impl Discv4Server {
                 if active_connections >= MAX_PEERS_TCP_CONNECTIONS {
                     return Ok(());
                 }
-                let ctx = self.ctx.clone();
-
-                self.ctx
-                    .tracker
-                    .spawn(async move { handle_peer_as_initiator(ctx, peer.node).await });
+                
+                RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
 
                 Ok(())
             }

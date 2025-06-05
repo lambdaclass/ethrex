@@ -8,7 +8,7 @@ use super::{message::Message, p2p::DisconnectReason};
 
 // TODO improve errors
 #[derive(Debug, Error)]
-pub(crate) enum RLPxError {
+pub enum RLPxError {
     #[error("{0}")]
     HandshakeError(String),
     #[error("No matching capabilities")]

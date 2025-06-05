@@ -7,7 +7,7 @@ use k256::{
 };
 use sha3::{Digest, Keccak256};
 use snap::raw::{max_compress_len, Decoder as SnappyDecoder, Encoder as SnappyEncoder};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 pub fn sha256(data: &[u8]) -> [u8; 32] {
     use k256::sha2::Digest;
@@ -73,7 +73,7 @@ pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
 }
 
 pub(crate) fn log_peer_debug(node: &Node, text: &str) {
-    debug!("[{0}]: {1}", node, text)
+    info!("[{0}]: {1}", node, text)
 }
 
 pub(crate) fn log_peer_error(node: &Node, text: &str) {
