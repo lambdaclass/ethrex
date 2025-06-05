@@ -15,7 +15,6 @@ use aligned_sdk::{
     common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
     verification_layer::{estimate_fee, get_nonce_from_batcher, submit},
 };
-use ethers::signers::{Signer, Wallet};
 use ethrex_common::{Address, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::EthClient;
@@ -25,6 +24,9 @@ use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, Gen
 use spawned_rt::mpsc::Sender;
 use std::collections::HashMap;
 use tracing::{debug, error, info};
+
+// TODO: Remove this import once it's no longer required by the SDK.
+use ethers::signers::{Signer, Wallet};
 
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
@@ -174,7 +176,7 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
     )
     .await
     .map_err(|err| {
-        error!("Failed to get next batch to send: {}", err);
+        error!("Failed to get next batch to send: {err}");
         ProofSenderError::InternalError(err.to_string())
     })?;
 
@@ -245,7 +247,7 @@ async fn send_proof_to_aligned(
     let nonce = get_nonce_from_batcher(state.network.clone(), state.l1_address.0.into())
         .await
         .map_err(|err| {
-            ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {:?}", err))
+            ProofSenderError::AlignedGetNonceError(format!("Failed to get nonce: {err:?}"))
         })?;
 
     let wallet = Wallet::from_bytes(state.l1_private_key.as_ref())

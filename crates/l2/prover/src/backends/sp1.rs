@@ -72,13 +72,12 @@ pub fn prove(
     let setup = &*PROVER_SETUP;
 
     // contains the receipt along with statistics about execution of the guest
-    let proof;
-
-    if aligned_mode {
-        proof = setup.client.prove(&setup.pk, &stdin).compressed().run()?;
+    let proof = if aligned_mode {
+        setup.client.prove(&setup.pk, &stdin).compressed().run()?;
     } else {
-        proof = setup.client.prove(&setup.pk, &stdin).groth16().run()?;
-    }
+        setup.client.prove(&setup.pk, &stdin).groth16().run()?;
+    };
+
     info!("Successfully generated SP1Proof.");
     Ok(ProveOutput::new(proof, setup.vk.clone()))
 }
@@ -94,15 +93,17 @@ pub fn to_batch_proof(
     proof: ProveOutput,
     aligned_mode: bool,
 ) -> Result<BatchProof, Box<dyn std::error::Error>> {
-    if aligned_mode {
-        Ok(BatchProof::ProofBytes(ProofBytes {
+    let batch_proof = if aligned_mode {
+        BatchProof::ProofBytes(ProofBytes {
             proof: bincode::serialize(&proof.proof)?,
             public_values: proof.proof.public_values.to_vec(),
             vk: proof.vk.hash_bytes().into(),
-        }))
+        })
     } else {
-        Ok(BatchProof::ProofCalldata(to_calldata(proof)))
-    }
+        BatchProof::ProofCalldata(to_calldata(proof))
+    };
+
+    Ok(batch_proof)
 }
 
 fn to_calldata(proof: ProveOutput) -> ProofCalldata {
