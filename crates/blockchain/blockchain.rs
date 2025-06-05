@@ -30,7 +30,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
 use tokio::sync::RwLock;
-use tracing::info;
 use vm::StoreVmDatabase;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -59,7 +58,7 @@ impl Blockchain {
     pub async fn new(evm_engine: EvmEngine, store: Store) -> Self {
         let block_number = store.get_latest_block_number().await.unwrap();
         let block_header = store.get_block_header(block_number).unwrap().unwrap();
-        let state_trie = store.open_state_trie(block_header.state_root);
+        let state_trie = store.open_state_trie(block_header.state_root).unwrap();
 
         Self {
             evm_engine,
@@ -72,18 +71,20 @@ impl Blockchain {
     }
 
     pub async fn default_with_store(store: Store) -> Self {
-        let (state_hash, state_trie) = store
-            .get_latest_block_number()
-            .await
-            .map(|block_number| {
+        let (state_hash, state_trie) = match store.get_latest_block_number().await {
+            Ok(block_number) => {
                 let block_header = store.get_block_header(block_number).unwrap().unwrap();
                 (
                     block_header.hash(),
-                    store.open_state_trie(block_header.state_root),
+                    store.open_state_trie(block_header.state_root).unwrap(),
                 )
-            })
-            .ok()
-            .unwrap_or_else(|| (H256::default(), Trie::stateless()));
+            }
+            Err(StoreError::MissingLatestBlockNumber) => (H256::default(), Trie::stateless()),
+            e => {
+                e.unwrap();
+                unreachable!()
+            }
+        };
 
         Self {
             evm_engine: EvmEngine::default(),
@@ -115,7 +116,7 @@ impl Blockchain {
                         return Err(ChainError::ParentNotFound);
                     }
                 },
-            );
+            )?;
         }
 
         // Validate if it can be the new head and find the parent
