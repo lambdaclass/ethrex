@@ -14,7 +14,7 @@ pub enum VMError {
     TxValidation(#[from] TxValidationError),
     /// Errors contemplated by the EVM, they revert and consume all gas of the current context.
     ExceptionalHalt(#[from] ExceptionalHalt),
-    /// Revert Opcode called. Unlike exceptional gas, this doesn't consume all gas of the context.
+    /// Revert Opcode called. It behaves like ExceptionalHalt, except it doesn't consume all gas left.
     RevertOpcode,
 }
 

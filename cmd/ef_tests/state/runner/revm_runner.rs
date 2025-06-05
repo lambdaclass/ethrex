@@ -564,7 +564,7 @@ pub async fn _ensure_post_state_revm(
                     return Err(EFTestRunnerError::ExecutionFailedUnexpectedly(
                         ethrex_levm::errors::VMError::Internal(
                             ethrex_levm::errors::InternalError::Custom(format!(
-                                "Unexpected exception: {err:?}",
+                                "Unexpected eception: {err:?}",
                             )),
                         ),
                         //TODO: Use another kind of error for this.
