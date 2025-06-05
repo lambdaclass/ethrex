@@ -123,7 +123,7 @@ impl GenServer for BlockProducer {
             .inspect_err(|e| error!("Block Producer Error: {e}"));
         send_after(
             Duration::from_millis(state.block_time_ms),
-            tx,
+            tx.clone(),
             Self::InMsg::Produce,
         );
         CastResponse::NoReply
