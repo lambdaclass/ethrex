@@ -1515,10 +1515,7 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
-<<<<<<< HEAD
  "serde_with",
-=======
->>>>>>> main
  "spawned-concurrency",
  "spawned-rt",
  "thiserror 2.0.12",
