@@ -10,7 +10,7 @@ axum.workspace = true
 tower-http = { version = "0.6.2", features = ["cors"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
-tokio = { version = "1", workspace = true, features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
 bytes.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -42,7 +42,6 @@ cfg-if.workspace = true
 
 [dev-dependencies]
 hex-literal = "0.4.1"
-tokio = { version = "1", workspace = true, features = ["full","signal"] }
 
 [lib]
 path = "./lib.rs"
