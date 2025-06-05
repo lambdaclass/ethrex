@@ -73,9 +73,9 @@ pub fn prove(
 
     // contains the receipt along with statistics about execution of the guest
     let proof = if aligned_mode {
-        setup.client.prove(&setup.pk, &stdin).compressed().run()?;
+        setup.client.prove(&setup.pk, &stdin).compressed().run()?
     } else {
-        setup.client.prove(&setup.pk, &stdin).groth16().run()?;
+        setup.client.prove(&setup.pk, &stdin).groth16().run()?
     };
 
     info!("Successfully generated SP1Proof.");
