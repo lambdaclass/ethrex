@@ -10,11 +10,25 @@ use tokio::{sync::Mutex, time::sleep};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    based::{error::StateUpdaterError, sequencer_state::SequencerState},
-    sequencer::errors::SequencerError,
-    utils::parse::hash_to_address,
-    SequencerConfig,
+    based::sequencer_state::SequencerState, sequencer::errors::SequencerError,
+    utils::parse::hash_to_address, SequencerConfig,
 };
+
+#[derive(Debug, thiserror::Error)]
+pub enum StateUpdaterError {
+    #[error("State Updater failed due to an EthClient error: {0}")]
+    EthClientError(#[from] ethrex_rpc::clients::EthClientError),
+    #[error("State Updater failed when trying to encode the calldata: {0}")]
+    CalldataEncodeError(#[from] ethrex_rpc::clients::eth::errors::CalldataEncodeError),
+    #[error("State Updater failed when trying to parse the calldata: {0}")]
+    CalldataParsingError(String),
+    #[error("State Updater failed due to a Store error: {0}")]
+    StoreError(#[from] ethrex_storage::error::StoreError),
+    #[error("Failed to apply fork choice for fetched block: {0}")]
+    InvalidForkChoice(#[from] ethrex_blockchain::error::InvalidForkChoice),
+    #[error("Internal Error: {0}")]
+    InternalError(String),
+}
 
 pub struct StateUpdater {
     on_chain_proposer_address: Address,
