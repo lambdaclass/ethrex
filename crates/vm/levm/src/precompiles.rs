@@ -281,7 +281,7 @@ fn increase_precompile_consumed_gas(
         .ok_or(PrecompileError::GasConsumedOverflow)?;
 
     if *gas_used > gas_limit {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::NotEnoughGas).into());
+        return Err(PrecompileError::NotEnoughGas.into());
     }
 
     Ok(())
@@ -660,7 +660,7 @@ fn parse_first_point_coordinates(input_data: &[u8]) -> Result<FirstPointCoordina
     if (U256::from_big_endian(first_point_x) == U256::zero())
         ^ (U256::from_big_endian(first_point_y) == U256::zero())
     {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::DefaultError).into());
+        return Err(PrecompileError::DefaultError.into());
     }
 
     let first_point_y = BN254FieldElement::from_bytes_be(first_point_y)
@@ -688,7 +688,7 @@ fn parse_second_point_coordinates(
     if (U256::from_big_endian(second_point_x_first_part) == U256::zero())
         ^ (U256::from_big_endian(second_point_x_second_part) == U256::zero())
     {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::DefaultError).into());
+        return Err(PrecompileError::DefaultError.into());
     }
 
     let second_point_y_first_part = input_data
@@ -702,7 +702,7 @@ fn parse_second_point_coordinates(
     if (U256::from_big_endian(second_point_y_first_part) == U256::zero())
         ^ (U256::from_big_endian(second_point_y_second_part) == U256::zero())
     {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::DefaultError).into());
+        return Err(PrecompileError::DefaultError.into());
     }
 
     // Check if the second point belongs to the curve (this happens if it's lower than the prime)
@@ -711,7 +711,7 @@ fn parse_second_point_coordinates(
         || U256::from_big_endian(second_point_y_first_part) >= ALT_BN128_PRIME
         || U256::from_big_endian(second_point_y_second_part) >= ALT_BN128_PRIME
     {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::DefaultError).into());
+        return Err(PrecompileError::DefaultError.into());
     }
 
     let second_point_x_bytes = [second_point_x_first_part, second_point_x_second_part].concat();
@@ -753,12 +753,12 @@ fn handle_pairing_from_coordinates(
                 second_point_y.clone(),
             ) {
                 if !p2.is_in_subgroup() {
-                    Err(ExceptionalHalt::Precompile(PrecompileError::DefaultError).into())
+                    Err(PrecompileError::DefaultError.into())
                 } else {
                     Ok(true)
                 }
             } else {
-                Err(ExceptionalHalt::Precompile(PrecompileError::DefaultError).into())
+                Err(PrecompileError::DefaultError.into())
             }
         }
         (false, true) => {
@@ -766,7 +766,7 @@ fn handle_pairing_from_coordinates(
             if BN254Curve::create_point_from_affine(first_point_x.clone(), first_point_y.clone())
                 .is_err()
             {
-                Err(ExceptionalHalt::Precompile(PrecompileError::DefaultError).into())
+                Err(PrecompileError::DefaultError.into())
             } else {
                 Ok(true)
             }
@@ -780,7 +780,7 @@ fn handle_pairing_from_coordinates(
                 BN254TwistCurve::create_point_from_affine(second_point_x, second_point_y)
                     .map_err(|_| PrecompileError::DefaultError)?;
             if !second_point.is_in_subgroup() {
-                return Err(ExceptionalHalt::Precompile(PrecompileError::DefaultError).into());
+                return Err(PrecompileError::DefaultError.into());
             }
 
             // Get the result of the pairing and affect the mul value with it
@@ -794,7 +794,7 @@ fn handle_pairing_from_coordinates(
 pub fn ecpairing(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
     if calldata.len() % 192 != 0 {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into());
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     let inputs_amount = calldata.len() / 192;
@@ -1023,7 +1023,7 @@ fn parse_slice_arguments(calldata: &Bytes) -> Result<SliceArguments, VMError> {
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
 pub fn blake2f(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
     if calldata.len() != 213 {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into());
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     let rounds = U256::from_big_endian(calldata.get(0..4).ok_or(InternalError::SlicingError)?);
@@ -1040,7 +1040,7 @@ pub fn blake2f(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<B
 
     let f = calldata.get(212).ok_or(InternalError::SlicingError)?;
     if *f != 0 && *f != 1 {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into());
+        return Err(PrecompileError::ParsingInputError.into());
     }
     let f = *f == 1;
 
@@ -1085,7 +1085,7 @@ fn verify_kzg_proof(
         &proof_bytes,
         &settings,
     )
-    .map_err(|_| ExceptionalHalt::Precompile(PrecompileError::EvaluationError).into())
+    .map_err(|_| PrecompileError::EvaluationError.into())
 }
 
 const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
@@ -1104,7 +1104,7 @@ fn point_evaluation(
     gas_used: &mut u64,
 ) -> Result<Bytes, VMError> {
     if calldata.len() != 192 {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into());
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // Consume gas
@@ -1146,12 +1146,12 @@ fn point_evaluation(
 
     // This checks if the commitment is equal to the versioned hash
     if kzg_commitment_to_versioned_hash(&commitment) != H256::from(versioned_hash) {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into());
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // This verifies the proof from a point (x, y) and a commitment
     if !verify_kzg_proof(&commitment, &x, &y, &proof).unwrap_or(false) {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into());
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // The first 32 bytes consist of the number of field elements in the blob, and the
@@ -1164,12 +1164,12 @@ fn point_evaluation(
 pub fn bls12_g1add(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
     // Two inputs of 128 bytes are required
     if calldata.len() != BLS12_381_G1ADD_VALID_INPUT_LENGTH {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into());
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // GAS
     increase_precompile_consumed_gas(gas_limit, BLS12_381_G1ADD_COST, gas_used)
-        .map_err(|_| ExceptionalHalt::Precompile(PrecompileError::NotEnoughGas))?;
+        .map_err(|_| PrecompileError::NotEnoughGas)?;
 
     let first_g1_point = parse_g1_point(calldata.get(0..128), true)?;
     let second_g1_point = parse_g1_point(calldata.get(128..256), true)?;
@@ -1191,7 +1191,7 @@ pub fn bls12_g1add(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
 
 pub fn bls12_g1msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
     if calldata.is_empty() || calldata.len() % BLS12_381_G1_MSM_PAIR_LENGTH != 0 {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into());
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     let k = calldata.len() / BLS12_381_G1_MSM_PAIR_LENGTH;
@@ -1237,12 +1237,12 @@ pub fn bls12_g1msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
 
 pub fn bls12_g2add(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
     if calldata.len() != BLS12_381_G2ADD_VALID_INPUT_LENGTH {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into());
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // GAS
     increase_precompile_consumed_gas(gas_limit, BLS12_381_G2ADD_COST, gas_used)
-        .map_err(|_| ExceptionalHalt::Precompile(PrecompileError::NotEnoughGas))?;
+        .map_err(|_| PrecompileError::NotEnoughGas)?;
 
     let first_g2_point = parse_g2_point(calldata.get(0..256), true)?;
     let second_g2_point = parse_g2_point(calldata.get(256..512), true)?;
@@ -1268,7 +1268,7 @@ pub fn bls12_g2add(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Resu
 
 pub fn bls12_g2msm(calldata: &Bytes, gas_limit: u64, gas_used: &mut u64) -> Result<Bytes, VMError> {
     if calldata.is_empty() || calldata.len() % BLS12_381_G2_MSM_PAIR_LENGTH != 0 {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into());
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     let k = calldata.len() / BLS12_381_G2_MSM_PAIR_LENGTH;
@@ -1317,7 +1317,7 @@ pub fn bls12_pairing_check(
     gas_used: &mut u64,
 ) -> Result<Bytes, VMError> {
     if calldata.is_empty() || calldata.len() % BLS12_381_PAIRING_CHECK_PAIR_LENGTH != 0 {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into());
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // GAS
@@ -1373,7 +1373,7 @@ pub fn bls12_map_fp_to_g1(
     gas_used: &mut u64,
 ) -> Result<Bytes, VMError> {
     if calldata.len() != BLS12_381_FP_VALID_INPUT_LENGTH {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into());
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // GAS
@@ -1410,7 +1410,7 @@ pub fn bls12_map_fp2_tp_g2(
     gas_used: &mut u64,
 ) -> Result<Bytes, VMError> {
     if calldata.len() != BLS12_381_FP2_VALID_INPUT_LENGTH {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into());
+        return Err(PrecompileError::ParsingInputError.into());
     }
 
     // GAS
@@ -1464,7 +1464,7 @@ fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VME
         PrecompileError::ParsingInputError,
     ))?;
     if !matches!(padded_coordinate.get(0..16), Some(prefix) if prefix == sixteen_zeroes) {
-        return Err(ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into());
+        return Err(PrecompileError::ParsingInputError.into());
     }
     let unpadded_coordinate = padded_coordinate
         .get(16..64)
@@ -1473,7 +1473,7 @@ fn parse_coordinate(coordinate_raw_bytes: Option<&[u8]>) -> Result<[u8; 48], VME
         ))?;
     unpadded_coordinate
         .try_into()
-        .map_err(|_| ExceptionalHalt::Precompile(PrecompileError::ParsingInputError).into())
+        .map_err(|_| PrecompileError::ParsingInputError.into())
 }
 
 fn parse_g1_point(
@@ -1514,9 +1514,9 @@ fn parse_g1_point(
 
             G1Projective::from(g1_affine)
         } else {
-            let g1_affine = G1Affine::from_uncompressed(&g1_bytes).into_option().ok_or(
-                ExceptionalHalt::Precompile(PrecompileError::ParsingInputError),
-            )?;
+            let g1_affine = G1Affine::from_uncompressed(&g1_bytes)
+                .into_option()
+                .ok_or(PrecompileError::ParsingInputError)?;
 
             G1Projective::from(g1_affine)
         }
@@ -1570,9 +1570,9 @@ fn parse_g2_point(
 
             G2Projective::from(g2_affine)
         } else {
-            let g2_affine = G2Affine::from_uncompressed(&g2_bytes).into_option().ok_or(
-                ExceptionalHalt::Precompile(PrecompileError::ParsingInputError),
-            )?;
+            let g2_affine = G2Affine::from_uncompressed(&g2_bytes)
+                .into_option()
+                .ok_or(PrecompileError::ParsingInputError)?;
 
             G2Projective::from(g2_affine)
         }
