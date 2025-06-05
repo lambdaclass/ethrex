@@ -3,7 +3,7 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
     errors::{ExecutionReport, OpcodeResult, VMError},
-    hooks::hook::Hook,
+    hooks::hook::{get_hooks, Hook},
     precompiles::execute_precompile,
     tracing::LevmCallTracer,
     TransientStorage,
@@ -54,7 +54,7 @@ impl<'a> VM<'a> {
         tx: &Transaction,
         tracer: LevmCallTracer,
     ) -> Self {
-        let hooks = Self::get_hooks(tx);
+        let hooks = get_hooks(tx);
 
         Self {
             call_frames: vec![],
