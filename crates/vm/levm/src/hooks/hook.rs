@@ -26,10 +26,7 @@ pub fn get_hooks(_tx: &Transaction) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
 
     #[cfg(feature = "l2")]
     {
-        use crate::{
-            call_frame::CallFrameBackup,
-            hooks::{backup_hook::BackupHook, L2Hook},
-        };
+        use crate::hooks::{backup_hook::BackupHook, L2Hook};
         use ethrex_common::types::PrivilegedL2Transaction;
 
         let recipient = match _tx {
@@ -39,11 +36,9 @@ pub fn get_hooks(_tx: &Transaction) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
             _ => None,
         };
 
-        return vec![
+        vec![
             Rc::new(RefCell::new(L2Hook { recipient })),
-            Rc::new(RefCell::new(BackupHook {
-                callframe_backup: CallFrameBackup::default(), // It will be modified in prepare_execution and finalize_execution
-            })),
-        ];
+            Rc::new(RefCell::new(BackupHook::default())),
+        ]
     }
 }

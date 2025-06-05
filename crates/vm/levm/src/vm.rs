@@ -204,7 +204,7 @@ impl<'a> VM<'a> {
     /// Executes without making changes to the cache.
     pub fn stateless_execute(&mut self) -> Result<ExecutionReport, VMError> {
         // Add backup hook to restore state after execution.
-        self.add_hook(Rc::new(RefCell::new(BackupHook::new())));
+        self.add_hook(Rc::new(RefCell::new(BackupHook::default())));
         let report = self.execute()?;
         // Restore cache state to the state before execution.
         self.restore_cache_state()?;
