@@ -39,7 +39,7 @@ impl GeneralizedDatabase {
             let account = self.get_account_from_database(address)?;
             cache::insert_account(&mut self.cache, address, account);
         }
-        cache::get_account(&self.cache, &address).ok_or(InternalError::AccountNotFound.into())
+        cache::get_account(&self.cache, &address).ok_or(InternalError::AccountNotFound)
     }
 
     /// **Accesses to an account's information.**
@@ -83,8 +83,7 @@ impl GeneralizedDatabase {
                 // If we are fetching the storage of an account it means that we previously fetched the account from database before.
                 return Err(InternalError::msg(
                     "Account not found in InMemoryDB when fetching storage",
-                )
-                .into());
+                ));
             }
         }
         Ok(value)
@@ -117,13 +116,13 @@ impl<'a> VM<'a> {
         if cache::is_account_cached(&self.db.cache, &address) {
             self.backup_account_info(address)?;
             cache::get_account_mut(&mut self.db.cache, &address)
-                .ok_or(InternalError::AccountNotFound.into())
+                .ok_or(InternalError::AccountNotFound)
         } else {
             let acc = self.db.get_account_from_database(address)?;
             cache::insert_account(&mut self.db.cache, address, acc);
             self.backup_account_info(address)?;
             cache::get_account_mut(&mut self.db.cache, &address)
-                .ok_or(InternalError::AccountNotFound.into())
+                .ok_or(InternalError::AccountNotFound)
         }
     }
 
@@ -257,7 +256,7 @@ impl<'a> VM<'a> {
             }
         } else {
             // When requesting storage of an account we should've previously requested and cached the account
-            return Err(InternalError::AccountNotFound.into());
+            return Err(InternalError::AccountNotFound);
         }
 
         let value = self.db.get_value_from_database(address, key)?;
