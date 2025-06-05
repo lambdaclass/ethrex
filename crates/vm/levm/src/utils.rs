@@ -33,9 +33,6 @@ use sha3::{Digest, Keccak256};
 use std::collections::{BTreeSet, HashMap, HashSet};
 pub type Storage = HashMap<U256, H256>;
 
-#[cfg(not(feature = "l2"))]
-use crate::hooks::DefaultHook;
-
 // ================== Address related functions ======================
 /// Converts address (H160) to word (U256)
 pub fn address_to_word(address: Address) -> U256 {

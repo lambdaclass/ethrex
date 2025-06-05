@@ -17,31 +17,33 @@ pub trait Hook {
     ) -> Result<(), VMError>;
 }
 
-/// Returns the appropriate VM hooks based on whether the `l2` feature is enabled.
 pub fn get_hooks(_tx: &Transaction) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
     #[cfg(not(feature = "l2"))]
-    let hooks: Vec<Rc<RefCell<dyn Hook>>> = vec![Rc::new(RefCell::new(DefaultHook))];
+    {
+        use crate::hooks::default_hook::DefaultHook;
+        return vec![Rc::new(RefCell::new(DefaultHook))];
+    }
 
     #[cfg(feature = "l2")]
-    let hooks: Vec<Rc<RefCell<dyn Hook>>> = {
-        use crate::{call_frame::CallFrameBackup, hooks::L2Hook};
+    {
+        use crate::{
+            call_frame::CallFrameBackup,
+            hooks::{backup_hook::BackupHook, L2Hook},
+        };
         use ethrex_common::types::PrivilegedL2Transaction;
 
-        let recipient = if let Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
-            recipient,
-            ..
-        }) = _tx
-        {
-            Some(*recipient)
-        } else {
-            None
+        let recipient = match _tx {
+            Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction { recipient, .. }) => {
+                Some(*recipient)
+            }
+            _ => None,
         };
 
-        vec![Rc::new(RefCell::new(L2Hook {
-            recipient,
-            callframe_backup: CallFrameBackup::default(), // It will be modified afterwards.
-        }))]
-    };
-
-    hooks
+        return vec![
+            Rc::new(RefCell::new(L2Hook { recipient })),
+            Rc::new(RefCell::new(BackupHook {
+                callframe_backup: CallFrameBackup::default(), // It will be modified in prepare_execution and finalize_execution
+            })),
+        ];
+    }
 }

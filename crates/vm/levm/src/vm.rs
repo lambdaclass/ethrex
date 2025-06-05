@@ -3,7 +3,10 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
     errors::{ExecutionReport, OpcodeResult, VMError},
-    hooks::hook::{get_hooks, Hook},
+    hooks::{
+        backup_hook::BackupHook,
+        hook::{get_hooks, Hook},
+    },
     precompiles::execute_precompile,
     tracing::LevmCallTracer,
     TransientStorage,
@@ -67,6 +70,10 @@ impl<'a> VM<'a> {
             storage_original_values: HashMap::new(),
             tracer,
         }
+    }
+
+    pub fn add_hook(&mut self, hook: Rc<RefCell<dyn Hook>>) {
+        self.hooks.push(hook);
     }
 
     /// Initializes substate and creates first execution callframe.
@@ -196,10 +203,11 @@ impl<'a> VM<'a> {
 
     /// Executes without making changes to the cache.
     pub fn stateless_execute(&mut self) -> Result<ExecutionReport, VMError> {
-        let cache_backup = self.db.cache.clone();
+        // Add backup hook to restore state after execution.
+        self.add_hook(Rc::new(RefCell::new(BackupHook::new())));
         let report = self.execute()?;
-        // Restore the cache to its original state
-        self.db.cache = cache_backup;
+        // Restore cache state to the state before execution.
+        self.restore_cache_state()?;
         Ok(report)
     }
 
