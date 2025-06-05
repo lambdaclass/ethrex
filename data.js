@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749131945547,
+  "lastUpdate": 1749137176278,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11095,6 +11095,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177210549025,
             "range": "± 366056839",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "deb9dd9139f232f8f189d1d799bdb3e5e99a347f",
+          "message": "fix(l1): `are_block_headers_chained` (GetBlockHeaders validation) (#3049)\n\n**Motivation**\nThe current `are_block_headers_chained` only works when the ordering is\n`OldToNew` but fails if the ordering is `NewToOld`. As both orderings\nare accepted by the request method both should be appropriately\nvalidated.\nThis PR fixes this problem and also refactors the method to iterate\nblock headers in windows of 2 instead of relying on zipping iterators\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Use `BlockRequestOrdering` in `are_block_headers_chained`\n* Simplify code of `are_block_headers_chained`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-05T14:40:23Z",
+          "tree_id": "1cf05a69404cb609aeb4bf776dedc0be9b1dc8d7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/deb9dd9139f232f8f189d1d799bdb3e5e99a347f"
+        },
+        "date": 1749137171539,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178085843158,
+            "range": "± 410334336",
             "unit": "ns/iter"
           }
         ]
