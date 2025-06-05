@@ -23,7 +23,7 @@ use ethrex::l2::L2Options;
 use ethrex_storage_rollup::StoreRollup;
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
-    if let Ok(block_number) = env::var("SYNC-BLOCK-NUM") {
+    if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
         let block_number = block_number
             .parse()
             .expect("Block number provided by environment is not numeric");
@@ -57,7 +57,8 @@ async fn main() -> eyre::Result<()> {
 
     let network = get_network(&opts);
 
-    let store = init_store(&data_dir, &network).await;
+    let genesis = network.get_genesis();
+    let store = init_store(&data_dir, genesis).await;
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
