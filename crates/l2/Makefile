@@ -143,6 +143,7 @@ init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex
 
 BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
 ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
+SEQUENCER_REGISTRY_ADDRESS=$$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat .env | xargs); \
@@ -158,7 +159,8 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--datadir ${ethrex_L2_DEV_LIBMDBX} \
 	--bridge-address ${BRIDGE_ADDRESS} \
 	--on-chain-proposer-address ${ON_CHAIN_PROPOSER_ADDRESS} \
-	--proof-coordinator-listen-ip ${PROOF_COORDINATOR_ADDRESS}
+	--proof-coordinator-listen-ip ${PROOF_COORDINATOR_ADDRESS} \
+	--state-updater.sequencer-registry ${SEQUENCER_REGISTRY_ADDRESS}
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
