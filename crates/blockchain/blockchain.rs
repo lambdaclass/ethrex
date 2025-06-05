@@ -262,7 +262,24 @@ impl Blockchain {
                     ))
                 }
             };
-            info!("Processed block {} out of {}", i, blocks.len());
+            match ((i as f64 / blocks_len as f64) * 100.0) as u64 {
+                20 => {
+                    info!("Processed 20% of current batch");
+                }
+                40 => {
+                    info!("Processed 40% of current batch");
+                }
+                60 => {
+                    info!("Processed 60% of current batch");
+                }
+                80 => {
+                    info!("Processed 80% of current batch");
+                }
+                100 => {
+                    info!("Processed 100% of current batch");
+                }
+                _ => {}
+            }
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
