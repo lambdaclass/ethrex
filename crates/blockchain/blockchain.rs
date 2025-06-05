@@ -229,7 +229,7 @@ impl Blockchain {
             2 * blocks_len / 5,
             3 * blocks_len / 5,
             4 * blocks_len / 5,
-            blocks_len,
+            blocks_len - 1,
         ];
 
         let interval = Instant::now();
@@ -270,9 +270,11 @@ impl Blockchain {
                     ))
                 }
             };
-            if let Some(pos) = progress_marks.iter().position(|val| *val == i) {
-                info!("Processed {}% of current batch", (pos + 1) * 20);
-            }
+            progress_marks
+                .iter()
+                .position(|val| *val == i)
+                .inspect(|pos| info!("Processed {}% of current batch", (pos + 1) * 20));
+
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
