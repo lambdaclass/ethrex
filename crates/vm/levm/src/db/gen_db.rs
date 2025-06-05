@@ -177,7 +177,7 @@ impl<'a> VM<'a> {
             .info
             .nonce
             .checked_add(1)
-            .ok_or(VMError::NonceOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         Ok(account.info.nonce)
     }
 

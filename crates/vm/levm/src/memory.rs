@@ -22,7 +22,7 @@ pub fn try_resize(memory: &mut Memory, unchecked_new_size: usize) -> Result<(), 
             .ok_or(InternalError::Underflow)?;
         memory
             .try_reserve(additional_size)
-            .map_err(|_err| VMError::MemorySizeOverflow)?;
+            .map_err(|_err| InternalError::MemorySizeOverflow)?;
         memory.resize(new_size, 0);
     }
 

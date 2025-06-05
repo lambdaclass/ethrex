@@ -53,10 +53,6 @@ pub enum ExceptionalHalt {
     AddressAlreadyOccupied,
     #[error("Contract Output Too Big")]
     ContractOutputTooBig,
-    #[error("Memory size overflows")]
-    MemorySizeOverflow, //TODO: Check if this should be internal.
-    #[error("Nonce overflowed")]
-    NonceOverflow,
     #[error("Offset out of bounds")]
     OutOfBounds,
     #[error("Out Of Gas")]
@@ -100,10 +96,6 @@ pub enum VMError {
     GasRefundsUnderflow,
     #[error("Gas refunds overflow")]
     GasRefundsOverflow,
-    #[error("Memory size overflows")]
-    MemorySizeOverflow,
-    #[error("Nonce overflowed")]
-    NonceOverflow,
     #[error("Out Of Gas")]
     OutOfGas(#[from] OutOfGasError),
     #[error("Internal error: {0}")]
@@ -206,6 +198,8 @@ pub enum InternalError {
     AccountNotDelegated,
     #[error("No recipient found for privileged transaction")]
     RecipientNotFoundForPrivilegedTransaction,
+    #[error("Memory Size Sverflow")]
+    MemorySizeOverflow,
     #[error("Custom error: {0}")]
     Custom(String),
 }
