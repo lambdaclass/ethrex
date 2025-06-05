@@ -55,6 +55,15 @@ endif
 	cd $(ETHREX_DIR) && git checkout main
 	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(SYNC_BLOCK_NUM)-$(LOGNAME).log
 
+flamegraph: ## Run flamegraph on the currently checked out branch. NETWORK and SYNC_BLOCK_NUM environment variables required (for the network and block to start from respectively). EVM can also be set to select the evm to use. Execution logs are output to log file.
+ifndef SYNC_BLOCK_NUM
+	$(error "Sync block number not set)
+endif
+ifndef NETWORK
+	$(error "Sync network not provided")
+endif
+	make flamegraph-$(NETWORK) >> logs/ethrex-$(NETWORK)-$(EVM)-flamegraph-$(CURRENT_DATETIME)-main-block-$(SYNC_BLOCK_NUM)-$(LOGNAME).log
+
 flamegraph-branch: ## Run flamegraph on custom branch. NETWORK and SYNC_BLOCK_NUM environment variables required (for the network and block to start from respectively). EVM can also be set to select the evm to use. xecution logs are output to log file.
 ifndef SYNC_BLOCK_NUM
 	$(error "Sync block number not set")
