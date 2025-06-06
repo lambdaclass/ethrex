@@ -448,8 +448,13 @@ impl Store {
         self.engine.add_blocks(blocks).await
     }
 
-    pub async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        self.engine.mark_chain_as_canonical(blocks).await
+    pub async fn mark_chain_as_canonical(
+        &self,
+        numbers_and_hashes: &[(BlockNumber, BlockHash)],
+    ) -> Result<(), StoreError> {
+        self.engine
+            .mark_chain_as_canonical(numbers_and_hashes)
+            .await
     }
 
     pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {

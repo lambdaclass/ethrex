@@ -406,15 +406,13 @@ impl StoreEngine for RedBStore {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
-    async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        let key_values = blocks
+    async fn mark_chain_as_canonical(
+        &self,
+        numbers_and_hashes: &[(BlockNumber, BlockHash)],
+    ) -> Result<(), StoreError> {
+        let key_values = numbers_and_hashes
             .iter()
-            .map(|e| {
-                (
-                    e.header.number,
-                    <H256 as Into<BlockHashRLP>>::into(e.hash()),
-                )
-            })
+            .map(|(n, h)| (*n, <H256 as Into<BlockHashRLP>>::into(*h)))
             .collect();
 
         self.write_batch(CANONICAL_BLOCK_HASHES_TABLE, key_values)

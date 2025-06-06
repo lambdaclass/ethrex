@@ -535,14 +535,14 @@ impl FullBlockSyncState {
                 .collect();
             // Copy some values for later
             let blocks_len = block_batch.len();
-            let hashes_and_numbers = block_batch
+            let numbers_and_hashes = block_batch
                 .iter()
                 .map(|b| (b.header.number, b.hash()))
                 .collect::<Vec<_>>();
-            let (last_block_number, last_block_hash) = hashes_and_numbers.last().cloned().unwrap();
+            let (last_block_number, last_block_hash) = numbers_and_hashes.last().cloned().unwrap();
             let (first_block_number, first_block_hash) =
-                hashes_and_numbers.first().cloned().unwrap();
-            // If we found the sync head, run the blocks sequentially to store all the blocks's state
+                numbers_and_hashes.first().cloned().unwrap();
+            // Run the batch
             if let Err((err, batch_failure)) =
                 Syncer::add_blocks(blockchain.clone(), block_batch, sync_head_found).await
             {
@@ -557,11 +557,10 @@ impl FullBlockSyncState {
                 }
                 return Err(err.into());
             }
-
-            // TODO: add method for this
-            for (number, hash) in hashes_and_numbers {
-                self.store.set_canonical_block(number, hash).await?;
-            }
+            // Mark chain as canonical & last block as latest
+            self.store
+                .mark_chain_as_canonical(&numbers_and_hashes)
+                .await?;
             self.store
                 .update_latest_block_number(last_block_number)
                 .await?;

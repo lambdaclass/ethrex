@@ -204,12 +204,14 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
-    async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        let key_values = blocks
+    async fn mark_chain_as_canonical(
+        &self,
+        numbers_and_hashes: &[(BlockNumber, BlockHash)],
+    ) -> Result<(), StoreError> {
+        let key_values = numbers_and_hashes
             .iter()
-            .map(|e| (e.header.number, e.hash().into()))
+            .map(|(n, h)| (*n, (*h).into()))
             .collect();
-
         self.write_batch::<CanonicalBlockHashes>(key_values).await
     }
 
