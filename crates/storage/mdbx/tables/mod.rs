@@ -11,25 +11,18 @@
 //!
 //! TODO(onbjerg): Find appropriate format for this...
 
-
 mod raw;
-use ethrex_common::types::BlockNumber;
+use ethrex_common::{types::{BlockHash, BlockNumber, Index}, H256, U256};
+use ethrex_common::types::Receipt;
 pub use raw::{RawDupSort, RawKey, RawTable, RawValue, TableRawRow};
 
-use crate::mdbx::{
-    /*
-    models::{
-        accounts::BlockNumberAddress,
-        blocks::{HeaderHash, StoredBlockOmmers},
-        storage_sharded_key::StorageShardedKey,
-        AccountBeforeTx, ClientVersion, CompactU256, IntegerList, ShardedKey,
-        StoredBlockBodyIndices, StoredBlockWithdrawals,
-    },
-     */
-    table::{Decode, DupSort, Encode, Table, TableInfo},
+use crate::{
+    error::StoreError,
+    mdbx::table::{Decodable, DupSort, Encodable, Table, TableInfo},
+    rlp::{AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, Rlp, TupleRLP}, store_db::libmdbx::IndexedChunk,
 };
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::fmt::{self, Debug};
 
 /// Enum for the types of tables present in libmdbx.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -296,227 +289,35 @@ macro_rules! tables {
 
 tables! {
     /// Stores the header hashes belonging to the canonical chain.
-    table CanonicalHeaders {
+    table CanonicalBlockHashes {
         type Key = BlockNumber;
-        type Value = HeaderHash;
+        type Value = BlockHashRLP;
     }
 
-    /// Stores the total difficulty from a block header.
-    table HeaderTerminalDifficulties {
-        type Key = BlockNumber;
-        type Value = CompactU256;
-    }
-
-    /// Stores the block number corresponding to a header.
-    table HeaderNumbers {
-        type Key = BlockHash;
+    table BlockNumbers {
+        type Key = BlockHashRLP;
         type Value = BlockNumber;
     }
 
-    /// Stores header bodies.
-    table Headers<H = Header> {
-        type Key = BlockNumber;
-        type Value = H;
+    table Headers {
+        type Key = BlockHashRLP;
+        type Value = BlockHeaderRLP;
     }
 
-    /// Stores block indices that contains indexes of transaction and the count of them.
-    ///
-    /// More information about stored indices can be found in the [`StoredBlockBodyIndices`] struct.
-    table BlockBodyIndices {
-        type Key = BlockNumber;
-        type Value = StoredBlockBodyIndices;
+    table Bodies {
+        type Key = BlockHashRLP;
+        type Value = BlockBodyRLP;
     }
 
-    /// Stores the uncles/ommers of the block.
-    table BlockOmmers<H = Header> {
-        type Key = BlockNumber;
-        type Value = StoredBlockOmmers<H>;
+    table AccountCodes {
+        type Key = AccountCodeHashRLP;
+        type Value = AccountCodeRLP;
     }
 
-    /// Stores the block withdrawals.
-    table BlockWithdrawals {
-        type Key = BlockNumber;
-        type Value = StoredBlockWithdrawals;
-    }
-
-    /// Canonical only Stores the transaction body for canonical transactions.
-    table Transactions<T = TransactionSigned> {
-        type Key = TxNumber;
-        type Value = T;
-    }
-
-    /// Stores the mapping of the transaction hash to the transaction number.
-    table TransactionHashNumbers {
-        type Key = TxHash;
-        type Value = TxNumber;
-    }
-
-    /// Stores the mapping of transaction number to the blocks number.
-    ///
-    /// The key is the highest transaction ID in the block.
-    table TransactionBlocks {
-        type Key = TxNumber;
-        type Value = BlockNumber;
-    }
-
-    /// Canonical only Stores transaction receipts.
-    table Receipts<R = Receipt> {
-        type Key = TxNumber;
-        type Value = R;
-    }
-
-    /// Stores all smart contract bytecodes.
-    /// There will be multiple accounts that have same bytecode
-    /// So we would need to introduce reference counter.
-    /// This will be small optimization on state.
-    table Bytecodes {
-        type Key = B256;
-        type Value = Bytecode;
-    }
-
-    /// Stores the current state of an [`Account`].
-    table PlainAccountState {
-        type Key = Address;
-        type Value = Account;
-    }
-
-    /// Stores the current value of a storage key.
-    table PlainStorageState {
-        type Key = Address;
-        type Value = StorageEntry;
-        type SubKey = B256;
-    }
-
-    /// Stores pointers to block changeset with changes for each account key.
-    ///
-    /// Last shard key of the storage will contain `u64::MAX` `BlockNumber`,
-    /// this would allows us small optimization on db access when change is in plain state.
-    ///
-    /// Imagine having shards as:
-    /// * `Address | 100`
-    /// * `Address | u64::MAX`
-    ///
-    /// What we need to find is number that is one greater than N. Db `seek` function allows us to fetch
-    /// the shard that equal or more than asked. For example:
-    /// * For N=50 we would get first shard.
-    /// * for N=150 we would get second shard.
-    /// * If max block number is 200 and we ask for N=250 we would fetch last shard and know that needed entry is in `AccountPlainState`.
-    /// * If there were no shard we would get `None` entry or entry of different storage key.
-    ///
-    /// Code example can be found in `reth_provider::HistoricalStateProviderRef`
-    table AccountsHistory {
-        type Key = ShardedKey<Address>;
-        type Value = BlockNumberList;
-    }
-
-    /// Stores pointers to block number changeset with changes for each storage key.
-    ///
-    /// Last shard key of the storage will contain `u64::MAX` `BlockNumber`,
-    /// this would allows us small optimization on db access when change is in plain state.
-    ///
-    /// Imagine having shards as:
-    /// * `Address | StorageKey | 100`
-    /// * `Address | StorageKey | u64::MAX`
-    ///
-    /// What we need to find is number that is one greater than N. Db `seek` function allows us to fetch
-    /// the shard that equal or more than asked. For example:
-    /// * For N=50 we would get first shard.
-    /// * for N=150 we would get second shard.
-    /// * If max block number is 200 and we ask for N=250 we would fetch last shard and know that needed entry is in `StoragePlainState`.
-    /// * If there were no shard we would get `None` entry or entry of different storage key.
-    ///
-    /// Code example can be found in `reth_provider::HistoricalStateProviderRef`
-    table StoragesHistory {
-        type Key = StorageShardedKey;
-        type Value = BlockNumberList;
-    }
-
-    /// Stores the state of an account before a certain transaction changed it.
-    /// Change on state can be: account is created, selfdestructed, touched while empty
-    /// or changed balance,nonce.
-    table AccountChangeSets {
-        type Key = BlockNumber;
-        type Value = AccountBeforeTx;
-        type SubKey = Address;
-    }
-
-    /// Stores the state of a storage key before a certain transaction changed it.
-    /// If [`StorageEntry::value`] is zero, this means storage was not existing
-    /// and needs to be removed.
-    table StorageChangeSets {
-        type Key = BlockNumberAddress;
-        type Value = StorageEntry;
-        type SubKey = B256;
-    }
-
-    /// Stores the current state of an [`Account`] indexed with `keccak256Address`
-    /// This table is in preparation for merklization and calculation of state root.
-    /// We are saving whole account data as it is needed for partial update when
-    /// part of storage is changed. Benefit for merklization is that hashed addresses are sorted.
-    table HashedAccounts {
-        type Key = B256;
-        type Value = Account;
-    }
-
-    /// Stores the current storage values indexed with `keccak256Address` and
-    /// hash of storage key `keccak256key`.
-    /// This table is in preparation for merklization and calculation of state root.
-    /// Benefit for merklization is that hashed addresses/keys are sorted.
-    table HashedStorages {
-        type Key = B256;
-        type Value = StorageEntry;
-        type SubKey = B256;
-    }
-
-    /// Stores the current state's Merkle Patricia Tree.
-    table AccountsTrie {
-        type Key = StoredNibbles;
-        type Value = BranchNodeCompact;
-    }
-
-    /// From `HashedAddress` => `NibblesSubKey` => Intermediate value
-    table StoragesTrie {
-        type Key = B256;
-        type Value = StorageTrieEntry;
-        type SubKey = StoredNibblesSubKey;
-    }
-
-    /// Stores the transaction sender for each canonical transaction.
-    /// It is needed to speed up execution stage and allows fetching signer without doing
-    /// transaction signed recovery
-    table TransactionSenders {
-        type Key = TxNumber;
-        type Value = Address;
-    }
-
-    /// Stores the highest synced block number and stage-specific checkpoint of each stage.
-    table StageCheckpoints {
-        type Key = StageId;
-        type Value = StageCheckpoint;
-    }
-
-    /// Stores arbitrary data to keep track of a stage first-sync progress.
-    table StageCheckpointProgresses {
-        type Key = StageId;
-        type Value = Vec<u8>;
-    }
-
-    /// Stores the highest pruned block number and prune mode of each prune segment.
-    table PruneCheckpoints {
-        type Key = PruneSegment;
-        type Value = PruneCheckpoint;
-    }
-
-    /// Stores the history of client versions that have accessed the database with write privileges by unix timestamp in seconds.
-    table VersionHistory {
-        type Key = u64;
-        type Value = ClientVersion;
-    }
-
-    /// Stores generic chain state info, like the last finalized block.
-    table ChainState {
-        type Key = ChainStateKey;
-        type Value = BlockNumber;
+    table Receipts {
+        type Key = TupleRLP<BlockHash, Index>;
+        type Value = IndexedChunk<Receipt>;
+        type SubKey = Index;
     }
 }
 
@@ -529,7 +330,7 @@ pub enum ChainStateKey {
     LastSafeBlockBlock,
 }
 
-impl Encode for ChainStateKey {
+impl Encodable for ChainStateKey {
     type Encoded = [u8; 1];
 
     fn encode(self) -> Self::Encoded {
@@ -540,23 +341,75 @@ impl Encode for ChainStateKey {
     }
 }
 
-impl Decode for ChainStateKey {
-    fn decode(value: &[u8]) -> Result<Self, crate::DatabaseError> {
+impl Decodable for ChainStateKey {
+    fn decode(value: &[u8]) -> Result<Self, StoreError> {
         match value {
             [0] => Ok(Self::LastFinalizedBlock),
             [1] => Ok(Self::LastSafeBlockBlock),
-            _ => Err(crate::DatabaseError::Decode),
+            _ => Err(StoreError::DecodeError),
         }
     }
 }
 
-// Alias types.
+impl Encodable for u64 {
+    type Encoded = [u8; 4];
 
-/// List with transaction numbers.
-pub type BlockNumberList = IntegerList;
+    fn encode(self) -> Self::Encoded {
+        self.to_be_bytes()
+    }
+}
 
-/// Encoded stage id.
-pub type StageId = String;
+impl Decodable for u64 {
+    fn decode(value: &[u8]) -> Result<Self, StoreError> {
+        Ok(u64::from_be_bytes(&value))
+    }
+}
+
+impl Encodable for H256 {
+    type Encoded = [u8; 32];
+
+    fn encode(self) -> Self::Encoded {
+        self.0
+    }
+}
+
+impl Decodable for H256 {
+    fn decode(value: &[u8]) -> Result<Self, StoreError> {
+        Ok(H256::from_slice(value))
+    }
+}
+
+impl Encodable for U256 {
+    type Encoded = [u8; 32];
+
+    fn encode(self) -> Self::Encoded {
+        self.to_big_endian()
+    }
+}
+
+impl Decodable for U256 {
+    fn decode(value: &[u8]) -> Result<Self, StoreError> {
+        Ok(U256::from_big_endian(value))
+    }
+}
+
+impl<T: Debug + Send + Sync> Decodable for Rlp<T> {
+    fn decode(value: &[u8]) -> Result<Self, StoreError> {
+        Ok(Self::from_bytes(value.to_vec()))
+    }
+
+    fn decode_owned(value: Vec<u8>) -> Result<Self, StoreError> {
+        Ok(Self::from_bytes(value))
+    }
+}
+
+impl<T: Debug + Send + Sync> Encodable for Rlp<T> {
+    type Encoded = Vec<u8>;
+
+    fn encode(self) -> Self::Encoded {
+        self.bytes().clone()
+    }
+}
 
 #[cfg(test)]
 mod tests {

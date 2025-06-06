@@ -1,6 +1,6 @@
 use crate::{error::StoreError, mdbx::{
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW},
-    table::{DupSort, Encode, Table},
+    table::{DupSort, Encodable, Table},
 }};
 use std::fmt::Debug;
 
@@ -18,7 +18,7 @@ pub trait DbTx: Debug + Send + Sync {
     /// reference key like `get`.
     fn get_by_encoded_key<T: Table>(
         &self,
-        key: &<T::Key as Encode>::Encoded,
+        key: &<T::Key as Encodable>::Encoded,
     ) -> Result<Option<T::Value>, StoreError>;
     /// Commit for read only transaction will consume and free transaction and allows
     /// freeing of memory pages

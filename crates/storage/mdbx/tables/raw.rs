@@ -1,4 +1,4 @@
-use crate::{error::StoreError, mdbx::table::{Compress, Decode, Decompress, DupSort, Encode, Key, Table, Value}};
+use crate::{error::StoreError, mdbx::table::{Decodable, DupSort, Encodable, Key, Table, Value}};
 use serde::{Deserialize, Serialize};
 
 /// Tuple with `RawKey<T::Key>` and `RawValue<T::Value>`.
@@ -87,7 +87,7 @@ impl AsRef<[u8]> for RawKey<Vec<u8>> {
 }
 
 // Encode
-impl<K: Key> Encode for RawKey<K> {
+impl<K: Key> Encodable for RawKey<K> {
     type Encoded = Vec<u8>;
 
     fn encode(self) -> Self::Encoded {
@@ -96,7 +96,7 @@ impl<K: Key> Encode for RawKey<K> {
 }
 
 // Decode
-impl<K: Key> Decode for RawKey<K> {
+impl<K: Key> Decodable for RawKey<K> {
     fn decode(value: &[u8]) -> Result<Self, StoreError> {
         Ok(Self { key: value.to_vec(), _phantom: std::marker::PhantomData })
     }
@@ -152,32 +152,5 @@ impl<V: Value> From<V> for RawValue<V> {
 impl AsRef<[u8]> for RawValue<Vec<u8>> {
     fn as_ref(&self) -> &[u8] {
         &self.value
-    }
-}
-
-impl<V: Value> Compress for RawValue<V> {
-    type Compressed = Vec<u8>;
-
-    fn uncompressable_ref(&self) -> Option<&[u8]> {
-        // Already compressed
-        Some(&self.value)
-    }
-
-    fn compress(self) -> Self::Compressed {
-        self.value
-    }
-
-    fn compress_to_buf<B: bytes::BufMut + AsMut<[u8]>>(&self, buf: &mut B) {
-        buf.put_slice(self.value.as_slice())
-    }
-}
-
-impl<V: Value> Decompress for RawValue<V> {
-    fn decompress(value: &[u8]) -> Result<Self, StoreError> {
-        Ok(Self { value: value.to_vec(), _phantom: std::marker::PhantomData })
-    }
-
-    fn decompress_owned(value: Vec<u8>) -> Result<Self, StoreError> {
-        Ok(Self { value, _phantom: std::marker::PhantomData })
     }
 }
