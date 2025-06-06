@@ -66,6 +66,18 @@ impl Capability {
             _ => 0,
         }
     }
+
+    pub fn is_p2p(&self) -> bool {
+        self.protocol == "p2p"
+    }
+
+    pub fn is_eth(&self) -> bool {
+        self.protocol == "eth"
+    }
+
+    pub fn is_snap(&self) -> bool {
+        self.protocol == "snap"
+    }
 }
 
 impl RLPEncode for Capability {

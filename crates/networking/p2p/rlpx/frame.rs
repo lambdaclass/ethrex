@@ -75,7 +75,7 @@ impl RLPxCodec {
     }
 
     pub fn set_p2p_protocol(&mut self, cap: &Capability) -> Result<(), RLPxError> {
-        if cap.protocol != "p2p" {
+        if !cap.is_p2p() {
             return Err(RLPxError::InternalError(
                 "The protocol should be p2p".into(),
             ));
@@ -85,9 +85,14 @@ impl RLPxCodec {
     }
 
     pub fn set_eth_protocol(&mut self, cap: &Capability) -> Result<(), RLPxError> {
-        if cap.protocol != "eth" {
+        if !cap.is_eth() {
             return Err(RLPxError::InternalError(
                 "The protocol should be eth".into(),
+            ));
+        }
+        if self.p2p_protocol.is_none() {
+            return Err(RLPxError::InternalError(
+                "p2p protocol should be established first".into(),
             ));
         }
         self.eth_protocol = Some(cap.clone());
@@ -95,9 +100,14 @@ impl RLPxCodec {
     }
 
     pub fn set_snap_protocol(&mut self, cap: &Capability) -> Result<(), RLPxError> {
-        if cap.protocol != "snap" {
+        if !cap.is_snap() {
             return Err(RLPxError::InternalError(
                 "The protocol should be snap".into(),
+            ));
+        }
+        if self.eth_protocol.is_none() {
+            return Err(RLPxError::InternalError(
+                "Eth protocol should be established first".into(),
             ));
         }
         self.snap_protocol = Some(cap.clone());
