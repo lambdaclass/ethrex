@@ -1297,6 +1297,10 @@ impl StoreEngine for RedBStore {
     ) -> Result<Option<U256>, StoreError> {
         todo!()
     }
+
+    fn current_block_hash(&self) -> Result<Option<H256>, StoreError> {
+       todo!()
+    }
 }
 
 impl redb::Value for ChainDataIndex {

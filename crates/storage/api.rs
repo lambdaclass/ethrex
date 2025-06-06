@@ -423,4 +423,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         bh: BlockHash,
         updates: Vec<SnapshotUpdate>,
     ) -> Result<(), StoreError>;
+
+    fn current_block_hash(
+        &self,
+    ) -> Result<Option<H256>, StoreError>;
 }

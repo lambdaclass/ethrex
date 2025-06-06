@@ -719,6 +719,9 @@ impl StoreEngine for Store {
         // FIXME: Properly implement this
         todo!()
     }
+    fn current_block_hash(&self) -> Result<Option<H256>, StoreError> {
+       todo!()
+    }
 }
 
 impl Debug for Store {

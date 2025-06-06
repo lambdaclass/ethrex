@@ -36,7 +36,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 
-const SNAPSHOT_HASH_KEY: u64 = u64::MAX;
+const SNAPSHOT_HASH_KEY: [u8; 8] = u64::MAX.to_be_bytes();
 
 pub struct Store {
     db: Arc<Database>,
@@ -1037,7 +1037,6 @@ impl StoreEngine for Store {
         // FIXME:
         // 1. Move this logic elsewhere
         // 2. See if we can use the write_batch functions
-        // 3. DO NOT HASH ADDRESSES HERE.
         let mut storages_to_update = vec![];
         let mut storages_to_remove = vec![];
         let mut states_to_update = vec![];
@@ -1080,11 +1079,19 @@ impl StoreEngine for Store {
             tx.delete::<StateSnapShot>(account_hash, None).map_err(StoreError::LibmdbxError)?;
         }
 
-        tx.upsert::<CurrentSnapShot>(SNAPSHOT_HASH_KEY.to_be_bytes(), bh.into()).map_err(StoreError::LibmdbxError)?;
+        tx.upsert::<CurrentSnapShot>(SNAPSHOT_HASH_KEY, bh.into()).map_err(StoreError::LibmdbxError)?;
 
         tx.commit().map_err(StoreError::LibmdbxError)?;
 
         Ok(())
+    }
+
+    fn current_block_hash(&self) -> Result<Option<H256>, StoreError> {
+        let Some(res) = self.read_sync::<CurrentSnapShot>(SNAPSHOT_HASH_KEY)? else {
+            return Ok(None)
+        };
+        let decoded = res.to()?;
+        return Ok(Some(decoded))
     }
 }
 
@@ -1411,6 +1418,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(StorageSnapShot),
         table_info!(StorageHealPaths),
         table_info!(InvalidAncestors),
+        table_info!(CurrentSnapShot)
     ]
     .into_iter()
     .collect();
