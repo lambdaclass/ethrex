@@ -18,7 +18,7 @@ use ethrex_vm::{ProverDB, ProverDBError};
 use futures_util::future::join_all;
 use tokio_utils::RateLimiter;
 
-use ethrex_levm::db::error::DatabaseError;
+use ethrex_levm::errors::DatabaseError;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -451,7 +451,7 @@ impl LevmDatabase for RpcDB {
     fn get_account(
         &self,
         address: Address,
-    ) -> Result<ethrex_common::types::Account, ethrex_levm::db::error::DatabaseError> {
+    ) -> Result<ethrex_common::types::Account, ethrex_levm::errors::DatabaseError> {
         let cache = self.cache.lock().unwrap();
         let account = if let Some(account) = cache.get(&address).cloned() {
             account

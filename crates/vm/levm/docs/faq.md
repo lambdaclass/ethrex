@@ -68,7 +68,8 @@ So if you want to access an account that's in the `CacheDB` it will be cheap for
 ## Errors
 
 These are the kinds of errors:
-- `InternalError`: These errors are triggered if there's a bug in the EVM implementation, things that shouldn't ever happen. For example, and overflow in the Program Counter or an underflow when substracting two values and we know for sure the first one is greater than the second. They are propagated and stop execution.
-- `DatabaseError`: Used by our trait `Database`, triggered when there's an error accessing the storage and the cause is usually external to the EVM. A concrete example would be when there's an unexpected error with libmdbx (actual L1 Client's database). Just like Internal Errors, they are propagated and stop execution.
+- `InternalErorr`: These are errors that break execution, they shouldn't ever happen. For example, an underflow when substracting two values and we know for sure the first one is greater than the second.
+  - `DatabaseError`: Subcategory of `InternalError`, this error is only used within the `Database` trait that the LEVM crate exposes. This should be returned when there's an unexpected error when trying to read from the database.
 - `TxValidation`: These are thrown if the transaction doesn't pass the required validations, like the sender having enough value to pay for the transaction gas fees, or that the transaction nonce should match with sender's nonce. These errors **INVALIDATE** the transaction, they shouldn't make any changes to the state.
-- `EVM Error`: Any error that's contemplated in the EVM and is expected to happen, like Out-of-Gas and Stack Overflow. These errors cause the current executing context to **Revert**, most of the times consuming all context gas left (the only exception is `RevertOpcode` error). Any error that's not in the previous categories will be treated as an EVM Error.
+- `ExceptionalHalt`: Any error that's contemplated in the EVM and is expected to happen, like Out-of-Gas and Stack Overflow. These errors cause the current executing context to **Revert** consuming all context gas left. Some examples include a Stack Overflow and when bytecode contains an Invalid Opcode.
+- `RevertOpcode`: Triggered by Revert Opcode, it behaves like an `ExceptionalHalt` except this one doesn't consume the gas left.

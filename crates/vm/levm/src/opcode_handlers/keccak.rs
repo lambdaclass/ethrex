@@ -1,5 +1,5 @@
 use crate::{
-    errors::{OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     memory::{self, calculate_memory_size},
     vm::VM,
@@ -18,7 +18,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(offset, size)?;
 
