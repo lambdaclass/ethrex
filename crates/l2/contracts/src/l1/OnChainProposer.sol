@@ -74,6 +74,9 @@ contract OnChainProposer is
     /// @dev Used only in dev mode.
     address public constant DEV_MODE = address(0xAA);
 
+    /// @notice Unused variable, left here to avoid storage collisions.
+    bool public _VALIDIUM;
+
     address public TDXVERIFIER;
 
     /// @notice The address of the AlignedProofAggregatorService contract.
