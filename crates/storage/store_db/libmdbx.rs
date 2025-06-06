@@ -1080,9 +1080,9 @@ impl StoreEngine for Store {
             tx.delete::<StateSnapShot>(account_hash, None).map_err(StoreError::LibmdbxError)?;
         }
 
-        tx.upsert::<CurrentSnapShot>(SNAPSHOT_HASH_KEY.to_be_bytes(), bh.into());
+        tx.upsert::<CurrentSnapShot>(SNAPSHOT_HASH_KEY.to_be_bytes(), bh.into()).map_err(StoreError::LibmdbxError)?;
 
-        tx.commit();
+        tx.commit().map_err(StoreError::LibmdbxError)?;
 
         Ok(())
     }

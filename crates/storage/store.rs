@@ -394,7 +394,10 @@ impl Store {
                 });
             }
         }
-
+        // FIXME: See what we should do if the snapshot fails, since this is
+        // not fatal, and the trie is updated anyway.
+        let block_hash = state_trie.hash_no_commit();
+        self.engine.set_block_snapshot(block_hash, snapshot_updates)?;
         Ok(state_trie)
     }
 
