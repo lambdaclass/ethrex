@@ -225,7 +225,7 @@ impl PeerHandler {
             let mut res = Vec::new();
             let mut validation_failed = false;
             // Validate Blocks
-            for (header, body) in block_headers[..block_bodies.len()].iter().zip(block_bodies) {
+            for (header, body) in block_headers[..block_bodies.len()].zip(block_bodies) {
                 if let Err(e) = validate_block_body(header, &body) {
                     warn!(
                         "Invalid block body error {e}, discarding peer {peer_id} and retrying..."

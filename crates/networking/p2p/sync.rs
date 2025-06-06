@@ -401,6 +401,251 @@ async fn store_receipts(
     Ok(())
 }
 
+/// Persisted State during the Block Sync phase
+enum BlockSyncState {
+    Full(FullBlockSyncState),
+    Snap(SnapBlockSyncState),
+}
+
+/// Persisted State during the Block Sync phase for SnapSync
+struct SnapBlockSyncState {
+    block_hashes: Vec<H256>,
+    store: Store,
+}
+
+/// Persisted State during the Block Sync phase for FullSync
+struct FullBlockSyncState {
+    current_headers: Vec<BlockHeader>,
+    current_blocks: Vec<Block>,
+    store: Store,
+}
+
+impl BlockSyncState {
+    fn new(sync_mode: &SyncMode, store: Store) -> Self {
+        match sync_mode {
+            SyncMode::Full => BlockSyncState::Full(FullBlockSyncState::new(store)),
+            SyncMode::Snap => BlockSyncState::Snap(SnapBlockSyncState::new(store)),
+        }
+    }
+
+    /// Obtain the current head from where to start or resume block sync
+    async fn get_current_head(&self) -> Result<H256, SyncError> {
+        match self {
+            BlockSyncState::Full(state) => state.get_current_head().await,
+            BlockSyncState::Snap(state) => state.get_current_head().await,
+        }
+    }
+
+    /// Processes the incoming batch of headers from BlockSync
+    /// For FullSync: Request corresponding bodies and execute the full blocks
+    /// For SnapSync: Store headers
+    async fn process_incoming_headers(
+        &mut self,
+        block_headers: Vec<BlockHeader>,
+        sync_head_found: bool,
+        blockchain: Arc<Blockchain>,
+        peers: PeerHandler,
+    ) -> Result<(), SyncError> {
+        match self {
+            BlockSyncState::Full(state) => {
+                state
+                    .process_incoming_headers(block_headers, sync_head_found, blockchain, peers)
+                    .await
+            }
+            BlockSyncState::Snap(state) => state.process_incoming_headers(block_headers).await,
+        }
+    }
+
+    /// Consumes the current state and returns the contained block hashes if the state is a SnapSynd state
+    /// If it is a FullSync state, returns an empty vector
+    pub fn into_snap_block_hashes(self) -> Vec<BlockHash> {
+        match self {
+            BlockSyncState::Full(_) => vec![],
+            BlockSyncState::Snap(state) => state.block_hashes,
+        }
+    }
+
+    /// Converts self into a FullSync state, does nothing is self is already a FullSync state
+    pub async fn into_fullsync(self) -> Result<Self, SyncError> {
+        // Switch from Snap to Full sync and vice versa
+        let state = match self {
+            BlockSyncState::Full(state) => state,
+            BlockSyncState::Snap(state) => state.into_fullsync().await?,
+        };
+        Ok(Self::Full(state))
+    }
+}
+
+impl FullBlockSyncState {
+    fn new(store: Store) -> Self {
+        Self {
+            store,
+            current_headers: Vec::new(),
+            current_blocks: Vec::new(),
+        }
+    }
+
+    /// Obtain the current head from where to start or resume block sync
+    async fn get_current_head(&self) -> Result<H256, SyncError> {
+        self.store
+            .get_latest_canonical_block_hash()
+            .await?
+            .ok_or(SyncError::NoLatestCanonical)
+    }
+
+    /// Saves incoming headers, requests as many block bodies as needed to complete an execution batch and executes it
+    /// An incomplete batch may be executed if the sync_head was already found
+    async fn process_incoming_headers(
+        &mut self,
+        block_headers: Vec<BlockHeader>,
+        sync_head_found: bool,
+        blockchain: Arc<Blockchain>,
+        peers: PeerHandler,
+    ) -> Result<(), SyncError> {
+        self.current_headers.extend(block_headers);
+        if self.current_headers.len() < EXECUTE_BATCH_SIZE && !sync_head_found {
+            // We don't have enough headers to fill up a batch, lets request more
+            return Ok(());
+        }
+        // Fetch full blocks
+        while self.current_blocks.len() < EXECUTE_BATCH_SIZE && !self.current_headers.is_empty() {
+            // Download block bodies
+            let headers = &self.current_headers
+                [..min(MAX_BLOCK_BODIES_TO_REQUEST, self.current_headers.len())];
+            let bodies = peers
+                .request_and_validate_block_bodies(headers)
+                .await
+                .ok_or(SyncError::BodiesNotFound)?;
+            debug!("Obtained: {} block bodies", bodies.len());
+            let blocks = self
+                .current_headers
+                .drain(..bodies.len())
+                .zip(bodies)
+                .map(|(header, body)| Block { header, body });
+            self.current_blocks.extend(blocks);
+        }
+        // Execute full blocks
+        while self.current_blocks.len() >= EXECUTE_BATCH_SIZE
+            || (!self.current_blocks.is_empty() && sync_head_found)
+        {
+            // Now that we have a full batch, we can execute and store the blocks in batch
+            let execution_start = Instant::now();
+            let block_batch: Vec<Block> = self
+                .current_blocks
+                .drain(..min(EXECUTE_BATCH_SIZE, self.current_blocks.len()))
+                .collect();
+            // Copy some values for later
+            let blocks_len = block_batch.len();
+            let hashes_and_numbers = block_batch
+                .iter()
+                .map(|b| (b.header.number, b.hash()))
+                .collect::<Vec<_>>();
+            let (last_block_number, last_block_hash) = hashes_and_numbers.last().cloned().unwrap();
+            let (first_block_number, first_block_hash) =
+                hashes_and_numbers.first().cloned().unwrap();
+            // If we found the sync head, run the blocks sequentially to store all the blocks's state
+            if let Err((err, batch_failure)) =
+                Syncer::add_blocks(blockchain.clone(), block_batch, sync_head_found).await
+            {
+                if let Some(batch_failure) = batch_failure {
+                    warn!("Failed to add block during FullSync: {err}");
+                    self.store
+                        .set_latest_valid_ancestor(
+                            batch_failure.failed_block_hash,
+                            batch_failure.last_valid_hash,
+                        )
+                        .await?;
+                }
+                return Err(err.into());
+            }
+
+            // TODO: add method for this
+            for (number, hash) in hashes_and_numbers {
+                self.store.set_canonical_block(number, hash).await?;
+            }
+            self.store
+                .update_latest_block_number(last_block_number)
+                .await?;
+
+            let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;
+            let blocks_per_second = blocks_len as f64 / execution_time;
+
+            info!(
+                "[SYNCING] Executed & stored {} blocks in {:.3} seconds.\n\
+            Started at block with hash {} (number {}).\n\
+            Finished at block with hash {} (number {}).\n\
+            Blocks per second: {:.3}",
+                blocks_len,
+                execution_time,
+                first_block_hash,
+                first_block_number,
+                last_block_hash,
+                last_block_number,
+                blocks_per_second
+            );
+        }
+        Ok(())
+    }
+}
+
+impl SnapBlockSyncState {
+    fn new(store: Store) -> Self {
+        Self {
+            block_hashes: Vec::new(),
+            store,
+        }
+    }
+
+    /// Obtain the current head from where to start or resume block sync
+    async fn get_current_head(&self) -> Result<H256, SyncError> {
+        if let Some(head) = self.store.get_header_download_checkpoint().await? {
+            Ok(head)
+        } else {
+            self.store
+                .get_latest_canonical_block_hash()
+                .await?
+                .ok_or(SyncError::NoLatestCanonical)
+        }
+    }
+
+    /// Stores incoming headers to the Store and saves their hashes
+    async fn process_incoming_headers(
+        &mut self,
+        block_headers: Vec<BlockHeader>,
+    ) -> Result<(), SyncError> {
+        let block_hashes = block_headers.iter().map(|h| h.hash()).collect::<Vec<_>>();
+        self.store
+            .set_header_download_checkpoint(*block_hashes.last().unwrap())
+            .await?;
+        self.block_hashes.extend_from_slice(&block_hashes);
+        self.store.add_block_headers(block_headers).await?;
+        Ok(())
+    }
+
+    /// Converts self into a FullSync state.
+    /// Clears SnapSync checkpoints from the Store
+    /// In the rare case that block headers were stored in a previous iteration, these will be fetched and saved to the FullSync state for full retrieval and execution
+    async fn into_fullsync(self) -> Result<FullBlockSyncState, SyncError> {
+        // For all collected hashes we must also have the corresponding headers stored
+        // As this switch will only happen when the sync_head is 64 blocks away or less from our latest block
+        // The headers to fetch will be at most 64, and none in the most common case
+        let mut current_headers = Vec::new();
+        for hash in self.block_hashes {
+            let header = self
+                .store
+                .get_block_header_by_hash(hash)?
+                .ok_or(SyncError::CorruptDB)?;
+            current_headers.push(header);
+        }
+        self.store.clear_snap_state().await?;
+        Ok(FullBlockSyncState {
+            current_headers,
+            current_blocks: Vec::new(),
+            store: self.store,
+        })
+    }
+}
+
 impl Syncer {
     // Downloads the latest state trie and all associated storage tries & bytecodes from peers
     // Rebuilds the state trie and all storage tries based on the downloaded data
@@ -555,236 +800,5 @@ enum SyncError {
 impl<T> From<SendError<T>> for SyncError {
     fn from(value: SendError<T>) -> Self {
         Self::Send(value.to_string())
-    }
-}
-
-enum BlockSyncState {
-    Full(FullBlockSyncState),
-    Snap(SnapBlockSyncState),
-}
-
-struct SnapBlockSyncState {
-    // TODO: Do we need all of them??
-    all_block_hashes: Vec<H256>,
-    store: Store,
-}
-struct FullBlockSyncState {
-    current_block_headers: Vec<BlockHeader>,
-    current_blocks: Vec<Block>,
-    store: Store,
-}
-
-impl BlockSyncState {
-    fn new(sync_mode: &SyncMode, store: Store) -> Self {
-        match sync_mode {
-            SyncMode::Full => BlockSyncState::Full(FullBlockSyncState::new(store)),
-            SyncMode::Snap => BlockSyncState::Snap(SnapBlockSyncState::new(store)),
-        }
-    }
-
-    async fn get_current_head(&self) -> Result<H256, SyncError> {
-        match self {
-            BlockSyncState::Full(state) => state.get_current_head().await,
-            BlockSyncState::Snap(state) => state.get_current_head().await,
-        }
-    }
-
-    async fn process_incoming_headers(
-        &mut self,
-        block_headers: Vec<BlockHeader>,
-        sync_head_found: bool,
-        blockchain: Arc<Blockchain>,
-        peers: PeerHandler,
-    ) -> Result<(), SyncError> {
-        match self {
-            BlockSyncState::Full(state) => {
-                state
-                    .process_incoming_headers(block_headers, sync_head_found, blockchain, peers)
-                    .await
-            }
-            BlockSyncState::Snap(state) => state.process_incoming_headers(block_headers).await,
-        }
-    }
-
-    pub fn into_snap_block_hashes(self) -> Vec<BlockHash> {
-        match self {
-            BlockSyncState::Full(_) => vec![],
-            BlockSyncState::Snap(state) => state.all_block_hashes,
-        }
-    }
-
-    pub async fn into_fullsync(self) -> Result<Self, SyncError> {
-        // Switch from Snap to Full sync and vice versa
-        let state = match self {
-            BlockSyncState::Full(state) => state,
-            BlockSyncState::Snap(state) => state.into_fullsync().await?,
-        };
-        Ok(Self::Full(state))
-    }
-}
-
-impl FullBlockSyncState {
-    fn new(store: Store) -> Self {
-        Self {
-            store,
-            current_block_headers: Vec::new(),
-            current_blocks: Vec::new(),
-        }
-    }
-
-    async fn get_current_head(&self) -> Result<H256, SyncError> {
-        self.store
-            .get_latest_canonical_block_hash()
-            .await?
-            .ok_or(SyncError::NoLatestCanonical)
-    }
-
-    async fn process_incoming_headers(
-        &mut self,
-        block_headers: Vec<BlockHeader>,
-        sync_head_found: bool,
-        blockchain: Arc<Blockchain>,
-        peers: PeerHandler,
-    ) -> Result<(), SyncError> {
-        self.current_block_headers.extend(block_headers);
-        if self.current_block_headers.len() < EXECUTE_BATCH_SIZE && !sync_head_found {
-            // We don't have enough headers to fill up a batch, lets request more
-            return Ok(());
-        }
-        // Fetch full blocks
-        while self.current_blocks.len() < EXECUTE_BATCH_SIZE
-            && !self.current_block_headers.is_empty()
-        {
-            // Download block bodies
-            let headers = &self.current_block_headers[..min(
-                MAX_BLOCK_BODIES_TO_REQUEST,
-                self.current_block_headers.len(),
-            )];
-            let bodies = peers
-                .request_and_validate_block_bodies(headers)
-                .await
-                .ok_or(SyncError::BodiesNotFound)?;
-            debug!("Obtained: {} block bodies", bodies.len());
-            let blocks = self
-                .current_block_headers
-                .drain(..bodies.len())
-                .zip(bodies)
-                .map(|(header, body)| Block { header, body });
-            self.current_blocks.extend(blocks);
-        }
-        // Execute full blocks
-        while self.current_blocks.len() >= EXECUTE_BATCH_SIZE
-            || (!self.current_blocks.is_empty() && sync_head_found)
-        {
-            // Now that we have a full batch, we can execute and store the blocks in batch
-            let execution_start = Instant::now();
-            let block_batch: Vec<Block> = self
-                .current_blocks
-                .drain(..min(EXECUTE_BATCH_SIZE, self.current_blocks.len()))
-                .collect();
-            // Copy some values for later
-            let blocks_len = block_batch.len();
-            let hashes_and_numbers = block_batch
-                .iter()
-                .map(|b| (b.header.number, b.hash()))
-                .collect::<Vec<_>>();
-            let (last_block_number, last_block_hash) = hashes_and_numbers.last().cloned().unwrap();
-            let (first_block_number, first_block_hash) =
-                hashes_and_numbers.first().cloned().unwrap();
-            // If we found the sync head, run the blocks sequentially to store all the blocks's state
-            if let Err((err, batch_failure)) =
-                Syncer::add_blocks(blockchain.clone(), block_batch, sync_head_found).await
-            {
-                if let Some(batch_failure) = batch_failure {
-                    warn!("Failed to add block during FullSync: {err}");
-                    self.store
-                        .set_latest_valid_ancestor(
-                            batch_failure.failed_block_hash,
-                            batch_failure.last_valid_hash,
-                        )
-                        .await?;
-                }
-                return Err(err.into());
-            }
-
-            // TODO: add method for this
-            for (number, hash) in hashes_and_numbers {
-                self.store.set_canonical_block(number, hash).await?;
-            }
-            self.store
-                .update_latest_block_number(last_block_number)
-                .await?;
-
-            let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;
-            let blocks_per_second = blocks_len as f64 / execution_time;
-
-            info!(
-                "[SYNCING] Executed & stored {} blocks in {:.3} seconds.\n\
-            Started at block with hash {} (number {}).\n\
-            Finished at block with hash {} (number {}).\n\
-            Blocks per second: {:.3}",
-                blocks_len,
-                execution_time,
-                first_block_hash,
-                first_block_number,
-                last_block_hash,
-                last_block_number,
-                blocks_per_second
-            );
-        }
-        Ok(())
-    }
-}
-
-impl SnapBlockSyncState {
-    fn new(store: Store) -> Self {
-        Self {
-            all_block_hashes: Vec::new(),
-            store,
-        }
-    }
-
-    async fn get_current_head(&self) -> Result<H256, SyncError> {
-        if let Some(head) = self.store.get_header_download_checkpoint().await? {
-            Ok(head)
-        } else {
-            self.store
-                .get_latest_canonical_block_hash()
-                .await?
-                .ok_or(SyncError::NoLatestCanonical)
-        }
-    }
-
-    async fn process_incoming_headers(
-        &mut self,
-        block_headers: Vec<BlockHeader>,
-    ) -> Result<(), SyncError> {
-        let block_hashes = block_headers.iter().map(|h| h.hash()).collect::<Vec<_>>();
-        self.store
-            .set_header_download_checkpoint(*block_hashes.last().unwrap())
-            .await?;
-        self.all_block_hashes.extend_from_slice(&block_hashes);
-        self.store.add_block_headers(block_headers).await?;
-        Ok(())
-    }
-
-    async fn into_fullsync(self) -> Result<FullBlockSyncState, SyncError> {
-        // For all collected hashes we must also have the corresponding headers stored
-        // As this switch will only happen when the sync_head is 64 blocks away or less from our latest block
-        // The headers to fetch will be at most 64, and none in the most common case
-        let mut current_block_headers = Vec::new();
-        for hash in self.all_block_hashes {
-            let header = self
-                .store
-                .get_block_header_by_hash(hash)?
-                .ok_or(SyncError::CorruptDB)?;
-            current_block_headers.push(header);
-        }
-        self.store.clear_snap_state().await?;
-        Ok(FullBlockSyncState {
-            current_block_headers,
-            current_blocks: Vec::new(),
-            store: self.store,
-        })
     }
 }
