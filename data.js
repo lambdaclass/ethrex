@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749236781180,
+  "lastUpdate": 1749242319696,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11365,6 +11365,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180188104802,
             "range": "± 3855095585",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c6fb911ca98b0ca627736e905de794eb7adf85b8",
+          "message": "chore(l2): add aligned git dependencies to nix (#3077)\n\n**Motivation**\n\nNew git-based dependencies were added to support the aligned feature,\nbut weren't added to the nix build.\n\n**Description**\n\nThis happened before the TDX Build CI job so it wasn't caught.",
+          "timestamp": "2025-06-06T19:49:56Z",
+          "tree_id": "77751766123e8912864b0d43c38da3b81c6475e5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c6fb911ca98b0ca627736e905de794eb7adf85b8"
+        },
+        "date": 1749242314232,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177186605309,
+            "range": "± 742123500",
             "unit": "ns/iter"
           }
         ]
