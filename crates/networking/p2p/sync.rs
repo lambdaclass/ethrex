@@ -53,7 +53,16 @@ const MAX_CHANNEL_READS: usize = 200;
 /// Pace at which progress is shown via info tracing
 const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
 /// Amount of blocks to execute in a single batch during FullSync
-const EXECUTE_BATCH_SIZE: usize = 1024;
+const EXECUTE_BATCH_SIZE_CONST: usize = 1024;
+
+#[cfg(feature = "sync-test")]
+lazy_static::lazy_static! {
+    static ref EXECUTE_BATCH_SIZE: usize = std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Block header limit environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_CONST);
+}
+#[cfg(not(feature = "sync-test"))]
+lazy_static::lazy_static! {
+    static ref EXECUTE_BATCH_SIZE: usize = EXECUTE_BATCH_SIZE_CONST;
+}
 
 lazy_static::lazy_static! {
     // Size of each state trie segment
@@ -500,12 +509,12 @@ impl FullBlockSyncState {
         peers: PeerHandler,
     ) -> Result<(), SyncError> {
         self.current_headers.extend(block_headers);
-        if self.current_headers.len() < EXECUTE_BATCH_SIZE && !sync_head_found {
+        if self.current_headers.len() < *EXECUTE_BATCH_SIZE && !sync_head_found {
             // We don't have enough headers to fill up a batch, lets request more
             return Ok(());
         }
         // If we have enough headers to fill execution batches, request the matching bodies
-        while self.current_headers.len() >= EXECUTE_BATCH_SIZE
+        while self.current_headers.len() >= *EXECUTE_BATCH_SIZE
             || !self.current_headers.is_empty() && sync_head_found
         {
             // Download block bodies
@@ -524,14 +533,14 @@ impl FullBlockSyncState {
             self.current_blocks.extend(blocks);
         }
         // Execute full blocks
-        while self.current_blocks.len() >= EXECUTE_BATCH_SIZE
+        while self.current_blocks.len() >= *EXECUTE_BATCH_SIZE
             || (!self.current_blocks.is_empty() && sync_head_found)
         {
             // Now that we have a full batch, we can execute and store the blocks in batch
             let execution_start = Instant::now();
             let block_batch: Vec<Block> = self
                 .current_blocks
-                .drain(..min(EXECUTE_BATCH_SIZE, self.current_blocks.len()))
+                .drain(..min(*EXECUTE_BATCH_SIZE, self.current_blocks.len()))
                 .collect();
             // Copy some values for later
             let blocks_len = block_batch.len();
