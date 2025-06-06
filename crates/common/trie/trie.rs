@@ -165,6 +165,8 @@ impl Trie {
         Ok(())
     }
 
+    /// Computes the nodes that would be added if updating the trie.
+    /// Nodes are given with their hash pre-calculated.
     pub fn commit_without_storing(&mut self) -> Vec<(NodeHash, Vec<u8>)> {
         let mut acc = Vec::new();
         if self.root.is_valid() {
