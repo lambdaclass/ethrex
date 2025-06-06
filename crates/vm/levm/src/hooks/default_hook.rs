@@ -27,7 +27,7 @@ impl Hook for DefaultHook {
     /// - It adds value to receiver balance.
     /// - It calculates and adds intrinsic gas to the 'gas used' of callframe and environment.
     ///   See 'docs' for more information about validations.
-    fn prepare_execution(&self, vm: &mut VM<'_>) -> Result<(), VMError> {
+    fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
         let (sender_balance, sender_nonce) = {
             let sender_account = vm.db.get_account(sender_address)?;
@@ -122,7 +122,7 @@ impl Hook for DefaultHook {
     /// 3. Pay coinbase fee
     /// 4. Destruct addresses in selfdestruct set.
     fn finalize_execution(
-        &self,
+        &mut self,
         vm: &mut VM<'_>,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {

@@ -114,6 +114,13 @@ impl CallFrameBackup {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
     }
+
+    pub fn extend(&mut self, other: CallFrameBackup) {
+        self.original_account_storage_slots
+            .extend(other.original_account_storage_slots);
+        self.original_accounts_info
+            .extend(other.original_accounts_info);
+    }
 }
 
 impl CallFrame {

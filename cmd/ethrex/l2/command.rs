@@ -21,6 +21,7 @@ use ethrex_rpc::{
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+use ethrex_vm::EvmEngine;
 use eyre::OptionExt;
 use itertools::Itertools;
 use keccak_hash::keccak;
@@ -85,6 +86,10 @@ impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             Command::Init { opts } => {
+                if opts.node_opts.evm == EvmEngine::REVM {
+                    panic!("L2 Doesn't support REVM, use LEVM instead.");
+                }
+
                 let data_dir = set_datadir(&opts.node_opts.datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
