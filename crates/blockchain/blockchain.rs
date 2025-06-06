@@ -178,7 +178,9 @@ impl Blockchain {
             // Access all the accounts needed for withdrawals
             if let Some(withdrawals) = block.body.withdrawals.as_ref() {
                 for withdrawal in withdrawals {
-                    let _ = trie.get(&hash_address(&withdrawal.address));
+                    let _ = trie.get(&hash_address(&withdrawal.address)).map_err(|_e| {
+                        ChainError::Custom("Failed to access account from trie".to_string())
+                    });
                 }
             }
             // Access all the accounts from the initial trie
