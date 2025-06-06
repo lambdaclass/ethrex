@@ -458,7 +458,7 @@ contract OnChainProposer is
                 blobVersionedHash,
             "OnChainProposer: blob versioned hash public input does not match with committed hash"
         );
-        bytes32 lastBlockHash = bytes32(publicData[128:160]);
+        bytes32 lastBlockHash = bytes32(publicData[160:192]);
         require(
             batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
             "OnChainProposer: last block hash public inputs don't match with last block hash"
