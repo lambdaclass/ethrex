@@ -126,6 +126,8 @@ contract OnChainProposer is
             "OnChainProposer: alignedProofAggregator is the contract address"
         );
 
+        ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
+
         // Set the PicoGroth16Verifier address
         require(
             PICOVERIFIER == address(0),
