@@ -692,7 +692,6 @@ impl FullBlockSyncState {
             if let Err((err, batch_failure)) =
                 Syncer::add_blocks(blockchain.clone(), block_batch, sync_head_found).await
             {
-                dbg!("Added blocks: Oh no!");
                 if let Some(batch_failure) = batch_failure {
                     warn!("Failed to add block during FullSync: {err}");
                     self.store
@@ -704,7 +703,6 @@ impl FullBlockSyncState {
                 }
                 return Err(err.into());
             }
-            dbg!("Added blocks");
 
             self.store
                 .update_latest_block_number(last_block_number)
