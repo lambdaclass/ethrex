@@ -1,0 +1,11 @@
+name: ping-large
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - klaus-test
+jobs:
+  hello:
+    runs-on: larger_runners
+    steps:
+      - run: echo "large runner picked me!"
