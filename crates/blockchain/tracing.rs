@@ -50,6 +50,7 @@ impl Blockchain {
 
     /// Outputs the call trace for each transaction in the block along with the transaction's hash
     /// May need to re-execute blocks in order to rebuild the transaction's prestate, up to the amount given by `reexec`
+    /// Returns transaction call traces from oldest to newest
     pub async fn trace_block_calls(
         &self,
         // We receive the block instead of its hash/number to support multiple potential endpoints

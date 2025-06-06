@@ -174,8 +174,9 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     )
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                // We need to show transactions from newest to oldest
                 let block_trace: BlockTrace<CallTrace> =
-                    call_traces.into_iter().map(Into::into).collect();
+                    call_traces.into_iter().rev().map(Into::into).collect();
                 Ok(serde_json::to_value(block_trace)?)
             }
         }
