@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{validate_block_body, AccountState, Block, BlockBody, BlockHeader, Receipt},
+    types::{validate_block_body, AccountState, BlockBody, BlockHeader, Receipt},
     H256, U256,
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -206,17 +206,15 @@ impl PeerHandler {
     }
 
     /// Requests block bodies from any suitable peer given their block headers and validates them
-    /// Consumes as many headers as corresponding bodies returned by peers and returns the full blocks
-    /// Returns None if:
+    /// Returns the requested block bodies or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     /// - The block bodies are invalid given the block headers
     pub async fn request_and_validate_block_bodies<'a>(
         &self,
-        block_hashes: &mut Vec<H256>,
-        block_headers: &mut Vec<BlockHeader>,
-    ) -> Option<Vec<Block>> {
-        let original_headers = block_headers.clone();
+        block_headers: &Vec<BlockHeader>,
+    ) -> Option<Vec<BlockBody>> {
+        let block_hashes: Vec<H256> = block_headers.iter().map(|h| h.hash()).collect();
 
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let Some((block_bodies, peer_id)) =
@@ -224,28 +222,20 @@ impl PeerHandler {
             else {
                 continue; // Retry on empty response
             };
-
-            let mut blocks: Vec<Block> = vec![];
-            let block_bodies_len = block_bodies.len();
-
-            // Push blocks
-            for (header, body) in block_headers.drain(..block_bodies_len).zip(block_bodies) {
-                let block = Block::new(header, body);
-                blocks.push(block);
+            let mut res = Vec::new();
+            // Validate Blocks
+            for (header, body) in block_headers[..block_bodies.len()].iter().zip(block_bodies) {
+                if let Err(e) = validate_block_body(header, &body) {
+                    warn!(
+                        "Invalid block body error {e}, discarding peer {peer_id} and retrying..."
+                    );
+                    self.remove_peer(peer_id).await;
+                    continue; // Retry on validation failure
+                }
+                res.push(body);
             }
 
-            // Validate blocks
-            if let Some(e) = blocks
-                .iter()
-                .find_map(|block| validate_block_body(block).err())
-            {
-                warn!("Invalid block body error {e}, discarding peer {peer_id} and retrying...");
-                self.remove_peer(peer_id).await;
-                *block_headers = original_headers.clone();
-                continue; // Retry on validation failure
-            }
-
-            return Some(blocks);
+            return Some(res);
         }
         None
     }

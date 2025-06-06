@@ -34,7 +34,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use trie_rebuild::TrieRebuilder;
 
-use crate::peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX};
+use crate::peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
@@ -653,19 +653,24 @@ impl FullBlockSyncState {
             && !self.current_block_headers.is_empty()
         {
             // Download block bodies
-            let mut current_hashes = self
+            let headers: Vec<BlockHeader> = self
                 .current_block_headers
-                .iter()
-                .map(|h| h.hash())
-                .collect();
-            let blocks = peers
-                .request_and_validate_block_bodies(
-                    &mut current_hashes,
-                    &mut self.current_block_headers,
+                .drain(
+                    ..min(
+                        self.current_block_headers.len(),
+                        MAX_BLOCK_BODIES_TO_REQUEST,
+                    ),
                 )
+                .collect();
+            let bodies = peers
+                .request_and_validate_block_bodies(&headers)
                 .await
                 .ok_or(SyncError::BodiesNotFound)?;
-            dbg!("Obtained: {} blocks", blocks.len());
+            debug!("Obtained: {} block bodies", bodies.len());
+            let blocks = headers
+                .into_iter()
+                .zip(bodies)
+                .map(|(header, body)| Block { header, body });
             self.current_blocks.extend(blocks);
         }
         // Execute full blocks
