@@ -52,6 +52,7 @@ const MAX_CHANNEL_MESSAGES: usize = 500;
 const MAX_CHANNEL_READS: usize = 200;
 /// Pace at which progress is shown via info tracing
 const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
+/// Amount of blocks to execute in a single batch during FullSync
 const EXECUTE_BATCH_SIZE: usize = 1024;
 
 lazy_static::lazy_static! {
@@ -320,6 +321,9 @@ impl Syncer {
         Ok(())
     }
 
+    /// Executes the given blocks and stores them
+    /// If sync_head_found is true, they will be executed one by one
+    /// If sync_head_found is false, they will be executed in a single batch
     async fn add_blocks(
         blockchain: Arc<Blockchain>,
         blocks: Vec<Block>,
@@ -653,28 +657,23 @@ impl FullBlockSyncState {
             && !self.current_block_headers.is_empty()
         {
             // Download block bodies
-            let headers: Vec<BlockHeader> = self
-                .current_block_headers
-                .drain(
-                    ..min(
-                        self.current_block_headers.len(),
-                        MAX_BLOCK_BODIES_TO_REQUEST,
-                    ),
-                )
-                .collect();
+            let headers = &self.current_block_headers[..min(
+                MAX_BLOCK_BODIES_TO_REQUEST,
+                self.current_block_headers.len(),
+            )];
             let bodies = peers
-                .request_and_validate_block_bodies(&headers)
+                .request_and_validate_block_bodies(headers)
                 .await
                 .ok_or(SyncError::BodiesNotFound)?;
-            debug!("Obtained: {} block bodies", bodies.len());
-            let blocks = headers
-                .into_iter()
+            info!("Obtained: {} block bodies", bodies.len());
+            let blocks = self
+                .current_block_headers
+                .drain(..bodies.len())
                 .zip(bodies)
                 .map(|(header, body)| Block { header, body });
             self.current_blocks.extend(blocks);
         }
         // Execute full blocks
-        info!("Block batch ready to execute/store");
         while self.current_blocks.len() >= EXECUTE_BATCH_SIZE
             || (!self.current_blocks.is_empty() && sync_head_found)
         {
@@ -714,8 +713,8 @@ impl FullBlockSyncState {
                 self.store.set_canonical_block(number, hash).await?;
             }
             self.store
-            .update_latest_block_number(last_block_number)
-            .await?;
+                .update_latest_block_number(last_block_number)
+                .await?;
 
             let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;
             let blocks_per_second = blocks_len as f64 / execution_time;

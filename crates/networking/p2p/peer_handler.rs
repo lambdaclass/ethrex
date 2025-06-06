@@ -212,7 +212,7 @@ impl PeerHandler {
     /// - The block bodies are invalid given the block headers
     pub async fn request_and_validate_block_bodies<'a>(
         &self,
-        block_headers: &Vec<BlockHeader>,
+        block_headers: &[BlockHeader],
     ) -> Option<Vec<BlockBody>> {
         let block_hashes: Vec<H256> = block_headers.iter().map(|h| h.hash()).collect();
 
