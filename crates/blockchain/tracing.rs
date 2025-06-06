@@ -3,9 +3,9 @@ use std::{
     time::Duration,
 };
 
-use ethrex_common::{types::Block, H256};
+use ethrex_common::{tracing::CallTrace, types::Block, H256};
 use ethrex_storage::Store;
-use ethrex_vm::{tracing::CallTrace, Evm, EvmEngine, EvmError};
+use ethrex_vm::{Evm, EvmError};
 
 use crate::{error::ChainError, vm::StoreVmDatabase, Blockchain};
 
@@ -20,11 +20,6 @@ impl Blockchain {
         only_top_call: bool,
         with_log: bool,
     ) -> Result<CallTrace, ChainError> {
-        if matches!(self.evm_engine, EvmEngine::LEVM) {
-            return Err(ChainError::Custom(
-                "Tracing not supported on LEVM".to_string(),
-            ));
-        }
         // Fetch the transaction's location and the block it is contained in
         let Some((_, block_hash, tx_index)) =
             self.storage.get_transaction_location(tx_hash).await?
@@ -60,11 +55,6 @@ impl Blockchain {
         only_top_call: bool,
         with_log: bool,
     ) -> Result<Vec<(H256, CallTrace)>, ChainError> {
-        if matches!(self.evm_engine, EvmEngine::LEVM) {
-            return Err(ChainError::Custom(
-                "Tracing not supported on LEVM".to_string(),
-            ));
-        }
         // Obtain the block's parent state
         let mut vm = self
             .rebuild_parent_state(block.header.parent_hash, reexec)
