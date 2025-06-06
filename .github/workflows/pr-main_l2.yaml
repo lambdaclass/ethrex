@@ -75,7 +75,9 @@ jobs:
 
   integration-test:
     name: Integration Test - ${{ matrix.name }}
-    runs-on: ethrex_larger_runners
+    runs-on:
+      labels: larger_runners
+      group: larger_runners
     strategy:
       matrix:
         include:
