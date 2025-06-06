@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749246254594,
+  "lastUpdate": 1749251017495,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11425,6 +11425,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177406016342,
             "range": "± 496350427",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "df351b205ba9654b244075f0ae1921377cb3ad43",
+          "message": "feat(l1): rpc endpoint `debug_TraceBlockByNumber` with support for `callTracer` (#2971)\n\nBased on #2919 (BEWARE BEFORE MERGING)\n**Motivation**\nSupport Geth-like rpc endpoint `debug_TraceBlockByNumber` with support\nfor `callTracer`\n\n**Description**\n* Add all necessary methods, functions and structs in order to\nsuccessfully fulfill a `debug_traceBlock` rpc request.\n* (Misc) Add `Store` method `get_block_by_number`\n\n**Limitations**\n* Only the `callTracer` is currenlty supported for the endpoint\n* The endpoint will not work (it will return an error) if the evm\nbackend is LEVM\n\n**Counter-Spec**\n* When not specifying a tracer, the `callTracer` will be used by default\ninstead of an equivalent of Geth's default one, as it is the only one we\nhave yet.\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2872\n\n---------\n\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>\nCo-authored-by: JereSalo <jeresalo17@gmail.com>",
+          "timestamp": "2025-06-06T22:15:01Z",
+          "tree_id": "d95cfc1230bac4ed2e4b58dfae8db3a806bbc73f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/df351b205ba9654b244075f0ae1921377cb3ad43"
+        },
+        "date": 1749251012600,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177021940791,
+            "range": "± 410981343",
             "unit": "ns/iter"
           }
         ]
