@@ -1,3 +1,4 @@
+use aligned_sdk::common::types::Network;
 use ethrex_common::{Address, U256};
 use secp256k1::SecretKey;
 use std::net::IpAddr;
@@ -10,6 +11,7 @@ pub struct SequencerConfig {
     pub l1_watcher: L1WatcherConfig,
     pub proof_coordinator: ProofCoordinatorConfig,
     pub based: BasedConfig,
+    pub aligned: AlignedConfig,
 }
 
 // TODO: Move to blockchain/dev
@@ -76,4 +78,14 @@ pub struct StateUpdaterConfig {
 pub struct BlockFetcherConfig {
     pub fetch_interval_ms: u64,
     pub fetch_block_step: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct AlignedConfig {
+    pub aligned_mode: bool,
+    pub aligned_verifier_interval_ms: u64,
+    pub beacon_url: String,
+    pub network: Network,
+    pub fee_estimate: String,
+    pub aligned_sp1_elf_path: String,
 }

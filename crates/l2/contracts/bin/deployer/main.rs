@@ -28,9 +28,10 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,bytes32,address)";
+    "initialize(bool,address,address,address,address,address,address,bytes32,bytes32,address)";
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,bytes32,address[])";
+    "initialize(bool,address,address,address,address,address,address,bytes32,bytes32,address[])";
+
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
@@ -45,6 +46,7 @@ pub struct ContractAddresses {
     pub risc0_verifier_address: Address,
     pub tdx_verifier_address: Address,
     pub sequencer_registry_address: Address,
+    pub aligned_aggregator_address: Address,
 }
 
 #[tokio::main]
@@ -73,7 +75,11 @@ async fn main() -> Result<(), DeployerError> {
     initialize_contracts(contract_addresses, &eth_client, &opts).await?;
 
     if opts.deposit_rich {
-        make_deposits(contract_addresses.bridge_address, &eth_client, &opts).await?;
+        let _ = make_deposits(contract_addresses.bridge_address, &eth_client, &opts)
+            .await
+            .inspect_err(|err| {
+                warn!("Failed to make deposits: {err}");
+            });
     }
 
     write_contract_addresses_to_env(contract_addresses, opts.env_file_path)?;
@@ -345,6 +351,7 @@ async fn deploy_contracts(
         risc0_verifier_address,
         tdx_verifier_address,
         sequencer_registry_address: sequencer_registry_deployment.proxy_address,
+        aligned_aggregator_address: opts.aligned_aggregator_address,
     })
 }
 
@@ -419,6 +426,7 @@ async fn initialize_contracts(
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.pico_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
+            Value::Address(contract_addresses.aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Address(contract_addresses.sequencer_registry_address),
@@ -467,6 +475,7 @@ async fn initialize_contracts(
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.pico_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
+            Value::Address(contract_addresses.aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Array(vec![
@@ -710,6 +719,11 @@ fn write_contract_addresses_to_env(
         writer,
         "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={:#x}",
         contract_addresses.risc0_verifier_address
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS={:#x}",
+        contract_addresses.aligned_aggregator_address
     )?;
     writeln!(
         writer,
