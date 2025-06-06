@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749251017495,
+  "lastUpdate": 1749253595751,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11455,6 +11455,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177021940791,
             "range": "± 410981343",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ec800381a156b5606be0d5ceab35191c4a09fadb",
+          "message": "fix(l2): fix committer migration (#3066)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWhen building a batch, it's not necessary to get the whole previous\nbatch, but only the last block.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nWith this changes a migration from previous version won't break as this\ntable already existed before\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: Klaus Lungwitz <klaus.lungwitz@lambdaclass.com>",
+          "timestamp": "2025-06-06T22:57:26Z",
+          "tree_id": "7af0b8120874afa93b4f5710a7dfb5280ce637ff",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ec800381a156b5606be0d5ceab35191c4a09fadb"
+        },
+        "date": 1749253590892,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177729748614,
+            "range": "± 568635871",
             "unit": "ns/iter"
           }
         ]
