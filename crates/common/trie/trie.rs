@@ -1,5 +1,6 @@
 pub mod db;
 pub mod error;
+pub mod logger;
 mod nibbles;
 mod node;
 mod node_hash;
@@ -14,6 +15,7 @@ use sha3::{Digest, Keccak256};
 use std::collections::{HashMap, HashSet};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
+pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
 pub use self::verify_range::verify_range;
 pub use self::{
@@ -48,6 +50,12 @@ pub type NodeRLP = Vec<u8>;
 pub struct Trie {
     db: Box<dyn TrieDB>,
     root: NodeRef,
+}
+
+impl Default for Trie {
+    fn default() -> Self {
+        Self::new_temp()
+    }
 }
 
 impl Trie {
@@ -377,7 +385,10 @@ impl Trie {
         }
     }
 
-    #[cfg(test)]
+    pub fn root_node(&self) -> Result<Option<Node>, TrieError> {
+        self.root.get_node(self.db.as_ref())
+    }
+
     /// Creates a new Trie based on a temporary InMemory DB
     fn new_temp() -> Self {
         use std::collections::HashMap;
