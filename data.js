@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749224743906,
+  "lastUpdate": 1749228092830,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11305,6 +11305,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177600827028,
             "range": "± 1003678524",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5a1aa0f02d7e00664cd0d08e8f417fca619b8857",
+          "message": "fix(l2): move down `TDXVERIFIER` in contract (#3073)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWe set the `2dc43bd` commit as the base commit for future updates, so we\nhave to keep upgrade compatibility from them. `TDXVERIFIER` introduction\nbroke that compatibility.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nMove the variable down to keep previous compatibility\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-06-06T15:53:24Z",
+          "tree_id": "7e9b07d48069c49dabaf5050ec30fb9b227b5ab0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5a1aa0f02d7e00664cd0d08e8f417fca619b8857"
+        },
+        "date": 1749228088593,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178625266294,
+            "range": "± 477205997",
             "unit": "ns/iter"
           }
         ]
