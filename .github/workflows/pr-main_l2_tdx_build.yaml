@@ -1,0 +1,34 @@
+name: L2 TDX build
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "**.nix"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".github/workflows/pr-main_l2_tdx_build.yaml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build_tdx:
+    # "Test" is a required check, don't change the name
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Build image
+        run: |
+          sudo sysctl kernel.unprivileged_userns_apparmor_policy=0
+          sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
+          cd crates/l2/tee/quote-gen
+          make image.raw
