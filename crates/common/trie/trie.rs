@@ -394,7 +394,11 @@ impl Trie {
     }
 
     pub fn root_node(&self) -> Result<Option<Node>, TrieError> {
-        self.root.get_node(self.db.as_ref())
+        if self.root.compute_hash().finalize() == *EMPTY_TRIE_HASH {
+            self.root.get_node(self.db.as_ref())
+        } else {
+            Ok(None)
+        }
     }
 
     /// Creates a new Trie based on a temporary InMemory DB

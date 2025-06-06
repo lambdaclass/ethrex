@@ -29,6 +29,9 @@ test-levm: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests with LEVM
 test-revm: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests with REVM
 	cargo test --release
 
+test-stateless: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests with LEVM with stateless execution
+	cargo test --release --features levm,stateless
+
 test: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests with both VMs
 	$(MAKE) test-levm
 	$(MAKE) test-revm

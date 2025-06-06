@@ -2780,6 +2780,7 @@ dependencies = [
  "datatest-stable",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-prover",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",
@@ -2788,6 +2789,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "zkvm_interface",
 ]
 
 [[package]]
