@@ -1,12 +1,12 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Index, Receipt, Transaction,
+    payload::PayloadBundle, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+    BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
 use std::{collections::HashMap, fmt::Debug, panic::RefUnwindSafe};
 
-use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
+use crate::{error::StoreError, store::{SnapshotUpdate, STATE_TRIE_SEGMENTS}};
 use ethrex_trie::{Nibbles, Trie};
 
 // We need async_trait because the stabilized feature lacks support for object safety
@@ -418,7 +418,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError>;
 
-    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError>;
-
-    fn get_storage_snapshot(&self, account_hash: H256, storage_hash: H256) -> Result<Option<U256>, StoreError>;
+    fn set_block_snapshot(
+        &self,
+        bh: BlockHash,
+        updates: Vec<SnapshotUpdate>,
+    ) -> Result<(), StoreError>;
 }

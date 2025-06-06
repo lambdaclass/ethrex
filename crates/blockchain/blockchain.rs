@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::info;
+use ::tracing::{info, error};
 use constants::MAX_INITCODE_SIZE;
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -143,7 +143,13 @@ impl Blockchain {
         self.storage
             .add_receipts(block.hash(), execution_result.receipts)
             .await
-            .map_err(ChainError::StoreError)
+            .map_err(ChainError::StoreError)?;
+
+        // if let Err(error) = self.storage.add_block_snapshot(block.clone(), account_updates.clone().to_vec()) {
+        //     error!("FAILED TO ADD SNAPSHOT FOR BLOCK {}: {error}", block.header.hash());
+        // }
+
+        return Ok(());
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {

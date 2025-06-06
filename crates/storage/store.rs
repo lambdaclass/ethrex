@@ -13,6 +13,7 @@ use ethrex_common::types::{
     BlockHash, BlockHeader, BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index,
     Receipt, Transaction, EMPTY_TRIE_HASH,
 };
+use ethrex_common::H160;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Trie};
@@ -30,6 +31,17 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
+}
+
+pub enum SnapshotUpdate {
+    Set {
+        update: AccountUpdate,
+        state: AccountState,
+        hashed_address: H256
+    },
+    Remove {
+        hashed_address: H256,
+    },
 }
 
 #[allow(dead_code)]
@@ -333,11 +345,15 @@ impl Store {
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
     ) -> Result<Trie, StoreError> {
+        let mut snapshot_updates = Vec::with_capacity(account_updates.len());
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
             if update.removed {
                 // Remove account from trie
-                state_trie.remove(hashed_address)?;
+                state_trie.remove(hashed_address.clone())?;
+                snapshot_updates.push(SnapshotUpdate::Remove {
+                    hashed_address: H256::from_slice(&hashed_address),
+                });
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
@@ -370,7 +386,12 @@ impl Store {
                     }
                     account_state.storage_root = storage_trie.hash()?;
                 }
-                state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+                state_trie.insert(hashed_address.clone(), account_state.encode_to_vec())?;
+                snapshot_updates.push(SnapshotUpdate::Set {
+                    update: update.clone(),
+                    state: account_state.clone(),
+                    hashed_address: H256::from_slice(&hashed_address)
+                });
             }
         }
 
@@ -1141,6 +1162,14 @@ impl Store {
             .get_canonical_block_hash_sync(block_number)?
             .is_some_and(|h| h == block_hash))
     }
+
+    pub fn set_block_snapshot(
+        &self,
+        block: Block,
+        updates: Vec<SnapshotUpdate>,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
 }
 
 pub struct AncestorIterator {
@@ -1170,7 +1199,7 @@ pub fn hash_address(address: &Address) -> Vec<u8> {
         .finalize()
         .to_vec()
 }
-fn hash_address_fixed(address: &Address) -> H256 {
+pub fn hash_address_fixed(address: &Address) -> H256 {
     H256(
         Keccak256::new_with_prefix(address.to_fixed_bytes())
             .finalize()

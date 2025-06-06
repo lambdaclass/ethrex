@@ -1290,7 +1290,11 @@ impl StoreEngine for RedBStore {
         todo!()
     }
 
-    fn get_storage_snapshot(&self, account_hash: H256, storage_hash: H256) -> Result<Option<U256>, StoreError> {
+    fn get_storage_snapshot(
+        &self,
+        account_hash: H256,
+        storage_hash: H256,
+    ) -> Result<Option<U256>, StoreError> {
         todo!()
     }
 }

@@ -1,20 +1,23 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
+use crate::hash_address;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
     BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP,
     TriePathsRLP, TupleRLP,
 };
-use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::store::{hash_address_fixed, SnapshotUpdate, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
+use ethrex_common::types::{compute_storage_root, AccountInfo, AccountUpdate};
 use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt, Transaction,
 };
+use ethrex_common::H160;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
@@ -31,6 +34,9 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
+
+
+const SNAPSHOT_HASH_KEY: u64 = u64::MAX;
 
 pub struct Store {
     db: Arc<Database>,
@@ -1023,12 +1029,62 @@ impl StoreEngine for Store {
             .await
     }
 
-    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError> {
-        todo!()
-    }
+    fn set_block_snapshot(
+        &self,
+        bh: BlockHash,
+        updates: Vec<SnapshotUpdate>,
+    ) -> Result<(), StoreError> {
+        // FIXME:
+        // 1. Move this logic elsewhere
+        // 2. See if we can use the write_batch functions
+        // 3. DO NOT HASH ADDRESSES HERE.
+        let mut storages_to_update = vec![];
+        let mut storages_to_remove = vec![];
+        let mut states_to_update = vec![];
+        let mut states_to_remove: Vec<Rlp<H256>> = vec![];
+        for update in updates {
+            match update {
+                SnapshotUpdate::Remove { hashed_address } => {
+                    // FIXME Maybe avoid duplicating this if turns out
+                    // to be the same raw type.
+                    let encoded_key: AccountHashRLP = hashed_address.into();
+                    states_to_remove.push(encoded_key.clone());
+                    storages_to_remove.push(encoded_key);
+                }
+                SnapshotUpdate::Set { update, state, hashed_address} =>  {
+                   let encoded_hashed_address: AccountHashRLP = hashed_address.into();
+                   for (k, v) in update.added_storage {
+                       let encoded_key: AccountStorageKeyBytes = k.into();
+                       let encoded_value: AccountStorageValueBytes = v.into();
+                       storages_to_update.push((encoded_hashed_address.clone(), encoded_key, encoded_value));
+                   }
+                    let encoded_state: AccountStateRLP = state.into();
+                    states_to_update.push((encoded_hashed_address, encoded_state))
+                }
+            }
+        }
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        for (account_hash, storage_key, storage_value) in storages_to_update {
+            tx.upsert::<StorageSnapShot>(account_hash, (storage_key, storage_value)).map_err(StoreError::LibmdbxError)?;
+        }
+        for account_hash in storages_to_remove {
+           tx.delete::<StorageSnapShot>(account_hash, None).map_err(StoreError::LibmdbxError)?;
+        }
+        for (account_hash, state) in states_to_update {
+            tx.upsert::<StateSnapShot>(account_hash, state).map_err(StoreError::LibmdbxError)?;
+        }
+        for account_hash in states_to_remove {
+            tx.delete::<StateSnapShot>(account_hash, None).map_err(StoreError::LibmdbxError)?;
+        }
 
-    fn get_storage_snapshot(&self, account_hash: H256, storage_hash: H256) -> Result<Option<U256>, StoreError> {
-        todo!()
+        tx.upsert::<CurrentSnapShot>(SNAPSHOT_HASH_KEY.to_be_bytes(), bh.into());
+
+        tx.commit();
+
+        Ok(())
     }
 }
 
@@ -1226,6 +1282,11 @@ table!(
     ( StateSnapShot ) AccountHashRLP => AccountStateRLP
 );
 
+table!(
+    /// Stores the hash for the current snapshot
+    ( CurrentSnapShot ) [u8; 8] => BlockHashRLP
+);
+
 dupsort!(
     /// Storage Snapshot used by an ongoing sync process
     ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
@@ -1239,6 +1300,11 @@ table!(
 table!(
     /// Stores invalid ancestors
     ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
+);
+
+table!(
+    /// Stores which block hash corresponds to the current snapshot
+    (BlockSnapshotHash) [u8; 8] => BlockHashRLP
 );
 
 // Storage values are stored as bytes instead of using their rlp encoding

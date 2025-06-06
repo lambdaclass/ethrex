@@ -1,13 +1,13 @@
 use crate::{
     api::StoreEngine,
     error::StoreError,
-    store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
+    store::{SnapshotUpdate, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Index, Receipt,
+    payload::PayloadBundle, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+    BlockNumber, ChainConfig, Index, Receipt,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
@@ -711,11 +711,12 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError> {
-        todo!()
-    }
-
-    fn get_storage_snapshot(&self, account_hash: H256, storage_hash: H256) -> Result<Option<U256>, StoreError> {
+    fn set_block_snapshot(
+        &self,
+        bh: BlockHash,
+        updates: Vec<SnapshotUpdate>,
+    ) -> Result<(), StoreError> {
+        // FIXME: Properly implement this
         todo!()
     }
 }
