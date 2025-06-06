@@ -334,13 +334,13 @@ impl StoreEngine for Store {
             let total_size_delta = total_size_after - total_size_before;
             let entries_delta = entries_after - entries_before;
             let depth_delta = depth_after - depth_before;
-            let total_time = (commit_end - total_start).as_secs();
-            let commit_time = (commit_end - commit_start).as_secs();
-            let write_receipts_time = (write_receipts_end - write_receipts_start).as_secs();
-            let write_blocks_time = (write_blocks_end - write_blocks_start).as_secs();
-            let write_state_trie_time = (write_state_trie_end - write_state_trie_start).as_secs();
+            let total_time = (commit_end - total_start).as_millis();
+            let commit_time = (commit_end - commit_start).as_millis();
+            let write_receipts_time = (write_receipts_end - write_receipts_start).as_millis();
+            let write_blocks_time = (write_blocks_end - write_blocks_start).as_millis();
+            let write_state_trie_time = (write_state_trie_end - write_state_trie_start).as_millis();
             let write_storage_tries_time =
-                (write_storage_tries_end - write_storage_tries_start).as_secs();
+                (write_storage_tries_end - write_storage_tries_start).as_millis();
             let num_blocks = num_blocks;
             let num_receipts = num_receipts;
             let num_account_updates = num_account_updates;
