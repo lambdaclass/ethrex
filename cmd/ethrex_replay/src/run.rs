@@ -7,14 +7,9 @@ use std::sync::Arc;
 use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(cache: Cache) -> eyre::Result<()> {
-    let Cache {
-        blocks,
-        parent_block_header,
-        db,
-    } = cache;
+    let Cache { blocks, db } = cache;
     let input = ProgramInput {
         blocks,
-        parent_block_header,
         db,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
     };
@@ -23,15 +18,10 @@ pub async fn exec(cache: Cache) -> eyre::Result<()> {
 }
 
 pub async fn prove(cache: Cache) -> eyre::Result<String> {
-    let Cache {
-        blocks,
-        parent_block_header,
-        db,
-    } = cache;
+    let Cache { blocks, db } = cache;
     let out = ethrex_prover_lib::prove(
         ProgramInput {
             blocks,
-            parent_block_header,
             db,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
         },

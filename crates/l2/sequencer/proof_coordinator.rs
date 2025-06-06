@@ -10,10 +10,7 @@ use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use bytes::Bytes;
-use ethrex_common::{
-    types::{Block, BlockHeader},
-    Address,
-};
+use ethrex_common::{types::Block, Address};
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -34,12 +31,12 @@ use tracing::{debug, error, info, warn};
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
-    pub parent_block_header: BlockHeader,
     pub db: ProverDB,
     pub elasticity_multiplier: u64,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
+#[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize)]
 pub enum ProofData {
     /// 1.
@@ -526,26 +523,11 @@ async fn create_prover_input(
     // Create prover_db
     let db = to_prover_db(&state.store.clone(), &blocks).await?;
 
-    // Get the block_header of the parent of the first block
-    let parent_hash = blocks
-        .first()
-        .ok_or_else(|| {
-            ProverServerError::Custom("No blocks found for the given batch number".to_string())
-        })?
-        .header
-        .parent_hash;
-
-    let parent_block_header = state
-        .store
-        .get_block_header_by_hash(parent_hash)?
-        .ok_or(ProverServerError::StorageDataIsNone)?;
-
     debug!("Created prover input for batch {batch_number}");
 
     Ok(ProverInputData {
         db,
         blocks,
-        parent_block_header,
         elasticity_multiplier: state.elasticity_multiplier,
     })
 }

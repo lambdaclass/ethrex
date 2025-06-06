@@ -371,13 +371,29 @@ impl RpcDB {
             .clone()
             .map(|(address, account)| (*address, account.storage.clone()))
             .collect();
-        let block_hashes = self
+
+        let mut block_headers = HashMap::new();
+        let oldest_required_block_number = self
             .block_hashes
             .lock()
             .unwrap()
-            .iter()
-            .map(|(num, hash)| (*num, *hash))
-            .collect();
+            .keys()
+            .min()
+            .cloned()
+            .unwrap_or(block.header.number - 1);
+        // from oldest required to parent:
+        for number in oldest_required_block_number..block.header.number {
+            let handle = tokio::runtime::Handle::current();
+            let number_usize: usize = number.try_into().map_err(|_| {
+                ProverDBError::Custom("failed to convert block number into usize".to_string())
+            })?;
+            let header = tokio::task::block_in_place(|| {
+                handle.block_on(get_block(&self.rpc_url, number_usize))
+            })
+            .map_err(|err| ProverDBError::Store(err.to_string()))?
+            .header;
+            block_headers.insert(number, header);
+        }
 
         let state_root = initial_account_proofs
             .clone()
@@ -414,7 +430,7 @@ impl RpcDB {
             accounts,
             code,
             storage,
-            block_hashes,
+            block_headers,
             chain_config,
             state_proofs,
             storage_proofs,

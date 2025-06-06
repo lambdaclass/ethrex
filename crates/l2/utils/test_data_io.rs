@@ -79,10 +79,6 @@ pub async fn generate_program_input(
         rt.block_on(blockchain.add_block(&block))?;
     }
 
-    let parent_hash = block.header.parent_hash;
-    let parent_block_header = store
-        .get_block_header_by_hash(block.header.parent_hash)?
-        .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
     let elasticity_multiplier = ELASTICITY_MULTIPLIER;
     let blocks = vec![block];
     let db = to_prover_db(&store, &blocks).await?;
@@ -90,7 +86,6 @@ pub async fn generate_program_input(
     Ok(ProgramInput {
         db,
         blocks,
-        parent_block_header,
         elasticity_multiplier,
     })
 }
