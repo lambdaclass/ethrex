@@ -20,7 +20,6 @@ use rand::rngs::OsRng;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
-    future::IntoFuture,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
