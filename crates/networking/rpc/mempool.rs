@@ -23,10 +23,16 @@ pub async fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
     // Group transactions by sender and nonce and map them to rpc transactions
     let mut mempool_content = MempoolContentEntry::new();
     for tx in transactions {
-        let sender_entry = mempool_content.entry(tx.sender()).or_default();
+        let sender_entry = mempool_content
+            .entry(tx.sender().map_err(|error| {
+                RpcErr::Internal(format!("Failed to recover address with error: {error}"))
+            })?)
+            .or_default();
         sender_entry.insert(
             tx.nonce(),
-            RpcTransaction::build(tx, None, H256::zero(), None),
+            RpcTransaction::build(tx, None, H256::zero(), None).map_err(|_| {
+                RpcErr::Internal("Failed to recover address with error".to_string())
+            })?,
         );
     }
     let response = MempoolContent {

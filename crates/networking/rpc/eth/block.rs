@@ -79,7 +79,7 @@ impl RpcHandler for GetBlockByNumberRequest {
             _ => return Ok(Value::Null),
         };
         let hash = header.hash();
-        let block = RpcBlock::build(header, body, hash, self.hydrated);
+        let block = RpcBlock::build(header, body, hash, self.hydrated)?;
 
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -113,7 +113,7 @@ impl RpcHandler for GetBlockByHashRequest {
             _ => return Ok(Value::Null),
         };
         let hash = header.hash();
-        let block = RpcBlock::build(header, body, hash, self.hydrated);
+        let block = RpcBlock::build(header, body, hash, self.hydrated)?;
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -365,7 +365,7 @@ pub async fn get_all_block_rpc_receipts(
         };
         let gas_used = receipt.cumulative_gas_used - last_cumulative_gas_used;
         let tx_info =
-            RpcReceiptTxInfo::from_transaction(tx.clone(), index, gas_used, blob_base_fee);
+            RpcReceiptTxInfo::from_transaction(tx.clone(), index, gas_used, blob_base_fee)?;
         let receipt = RpcReceipt::new(
             receipt.clone(),
             tx_info,

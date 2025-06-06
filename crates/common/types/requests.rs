@@ -22,7 +22,8 @@ const CONSOLIDATION_TYPE: u8 = 0x02;
 
 lazy_static! {
     static ref DEPOSIT_TOPIC: H256 =
-        H256::from_str("649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5").unwrap();
+        H256::from_str("649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5")
+            .expect("Failed to decode hex from string");
 }
 
 #[derive(Clone, Debug)]

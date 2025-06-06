@@ -60,7 +60,7 @@ pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<Acc
         LEVM::prepare_block(block, &mut db)?;
     }
 
-    for (tx, tx_sender) in block.body.get_transactions_with_sender() {
+    for (tx, tx_sender) in block.body.get_transactions_with_sender()? {
         let mut vm = Evm::new(EvmEngine::LEVM, prover_db.clone());
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;

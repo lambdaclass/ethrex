@@ -20,7 +20,7 @@ use lazy_static::lazy_static;
 
 lazy_static! {
     // Keccak256(""), represents the code hash for an account without code
-    pub static ref EMPTY_KECCACK_HASH: H256 = H256::from_slice(&hex::decode("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470").unwrap());
+    pub static ref EMPTY_KECCACK_HASH: H256 = H256::from_slice(&hex::decode("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470").expect("Failed to decode hex from string"));
     // Hash value for an empty trie, equal to keccak(RLP_NULL)
     pub static ref EMPTY_TRIE_HASH: H256 = H256::from_slice(
             Keccak256::new()

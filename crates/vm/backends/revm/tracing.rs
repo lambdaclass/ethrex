@@ -27,7 +27,12 @@ impl REVM {
     ) -> Result<CallTrace, EvmError> {
         let spec_id: SpecId = spec_id(&state.chain_config()?, block_header.timestamp);
         let block_env = block_env(block_header, spec_id);
-        let tx_env = tx_env(tx, tx.sender());
+        let tx_env = tx_env(
+            tx,
+            tx.sender().map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?,
+        );
         // Trace the transaction
         run_evm_with_call_tracer(tx_env, block_env, state, spec_id, only_top_call, with_log)
     }
@@ -57,6 +62,9 @@ impl REVM {
         for (index, (tx, sender)) in block
             .body
             .get_transactions_with_sender()
+            .map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?
             .into_iter()
             .enumerate()
         {
