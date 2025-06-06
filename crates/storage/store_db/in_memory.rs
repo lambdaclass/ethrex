@@ -1,6 +1,7 @@
 use crate::{
     api::StoreEngine,
     error::StoreError,
+    query_plan::{QueryPlan, QueryPlanVec},
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
 };
 use bytes::Bytes;
@@ -88,6 +89,14 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    async fn store_changes(&self, _query_plan: QueryPlan) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    async fn store_changes_batch(&self, _query_plan: QueryPlanVec) -> Result<(), StoreError> {
+        todo!()
+    }
+
     fn get_block_header(&self, block_number: u64) -> Result<Option<BlockHeader>, StoreError> {
         let store = self.inner()?;
         if let Some(hash) = store.canonical_hashes.get(&block_number) {

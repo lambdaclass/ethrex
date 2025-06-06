@@ -115,6 +115,7 @@ impl Trie {
         if !self.root.is_valid() {
             return Ok(None);
         }
+
         // If the trie is not empty, call the root node's removal logic.
         let (node, value) = self
             .root
@@ -144,6 +145,12 @@ impl Trie {
         }
     }
 
+    pub fn hash_prepare_batch(&mut self) -> (H256, Vec<(NodeHash, Vec<u8>)>) {
+        let query_plan = self.commit_vec_aka_state_diff();
+        let ret_hash = self.hash_no_commit();
+        (ret_hash, query_plan)
+    }
+
     /// Compute the hash of the root node and flush any changes into the database.
     ///
     /// This method will also compute the hash of all internal nodes indirectly. It will not clear
@@ -152,10 +159,19 @@ impl Trie {
         if self.root.is_valid() {
             let mut acc = Vec::new();
             self.root.commit(&mut acc);
-            self.db.put_batch(acc)?;
+            self.db.put_batch(acc)?; // we'll try to avoid calling this for every commit
         }
 
         Ok(())
+    }
+
+    pub fn commit_vec_aka_state_diff(&mut self) -> Vec<(NodeHash, Vec<u8>)> {
+        let mut acc = Vec::new();
+        if self.root.is_valid() {
+            self.root.commit(&mut acc);
+        }
+
+        acc
     }
 
     /// Obtain a merkle proof for the given path.
