@@ -1,5 +1,3 @@
-use std::fmt::Debug;
-
 use crate::{
     call_frame::CallFrameBackup,
     errors::{ExecutionReport, VMError},
@@ -11,14 +9,6 @@ use crate::{
 pub struct BackupHook {
     /// We need to store this because we clear the backup after `prepare_execution` hook is executed
     pub pre_execution_backup: CallFrameBackup,
-}
-
-impl Debug for BackupHook {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BackupHook")
-            .field("callframe_backup", &self.pre_execution_backup)
-            .finish()
-    }
 }
 
 impl Hook for BackupHook {

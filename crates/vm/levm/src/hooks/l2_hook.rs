@@ -1,5 +1,3 @@
-use std::fmt::Debug;
-
 use crate::{
     errors::{ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{default_hook, hook::Hook},
@@ -12,19 +10,8 @@ pub struct L2Hook {
     pub recipient: Option<Address>,
 }
 
-impl Debug for L2Hook {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("L2Hook")
-            .field("recipient", &self.recipient)
-            .finish()
-    }
-}
-
 impl Hook for L2Hook {
-    fn prepare_execution(
-        &mut self,
-        vm: &mut crate::vm::VM<'_>,
-    ) -> Result<(), crate::errors::VMError> {
+    fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
         if vm.env.is_privileged {
             let Some(recipient) = self.recipient else {
                 return Err(VMError::Internal(

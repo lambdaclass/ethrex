@@ -207,7 +207,7 @@ impl<'a> VM<'a> {
         // Add backup hook to restore state after execution.
         self.add_hook(BackupHook::default());
         let report = self.execute()?;
-        // Restore cache state to the state before execution.
+        // Restore cache to the state before execution.
         self.db.undo_last_transaction()?;
         Ok(report)
     }
