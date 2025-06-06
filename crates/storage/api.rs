@@ -1,8 +1,7 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Index, Receipt, Transaction,
+    payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction
 };
 use std::{collections::HashMap, fmt::Debug, panic::RefUnwindSafe};
 
@@ -427,4 +426,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn current_block_hash(
         &self,
     ) -> Result<Option<H256>, StoreError>;
+
+    fn state_snapshot_for_account(&self, hashed_address: &H256) -> Result<Option<AccountInfo>, StoreError>;
 }

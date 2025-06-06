@@ -534,20 +534,21 @@ impl Blockchain {
         &self,
         context: &mut PayloadBuildContext,
     ) -> Result<(), ChainError> {
-        let account_updates = context.vm.get_state_transitions()?;
+        todo!()
+        // let account_updates = context.vm.get_state_transitions()?;
 
-        context.payload.header.state_root = context
-            .store
-            .apply_account_updates(context.parent_hash(), &account_updates)
-            .await?
-            .unwrap_or_default();
-        context.payload.header.transactions_root =
-            compute_transactions_root(&context.payload.body.transactions);
-        context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
-        context.payload.header.requests_hash = context.requests_hash;
-        context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
-        context.account_updates = account_updates;
-        Ok(())
+        // context.payload.header.state_root = context
+        //     .store
+        //     .apply_account_updates(context.parent_hash(), &account_updates)
+        //     .await?
+        //     .unwrap_or_default();
+        // context.payload.header.transactions_root =
+        //     compute_transactions_root(&context.payload.body.transactions);
+        // context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
+        // context.payload.header.requests_hash = context.requests_hash;
+        // context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
+        // context.account_updates = account_updates;
+        // Ok(())
     }
 }
 

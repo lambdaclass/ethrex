@@ -6,8 +6,7 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Index, Receipt,
+    payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
@@ -721,6 +720,9 @@ impl StoreEngine for Store {
     }
     fn current_block_hash(&self) -> Result<Option<H256>, StoreError> {
        todo!()
+    }
+    fn state_snapshot_for_account(&self, account_hash: &H256) -> Result<Option<AccountInfo>, StoreError> {
+        todo!()
     }
 }
 

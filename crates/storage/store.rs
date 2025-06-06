@@ -33,6 +33,7 @@ pub struct Store {
     engine: Arc<dyn StoreEngine>,
 }
 
+#[derive(Debug)]
 pub enum SnapshotUpdate {
     Set {
         update: AccountUpdate,
@@ -100,11 +101,22 @@ impl Store {
         }
     }
 
+    fn state_snapshot_for_account(&self, account_hash: &H256) -> Result<Option<AccountInfo>, StoreError> {
+        self.engine.state_snapshot_for_account(account_hash)
+    }
+
     pub fn get_account_info_by_hash(
         &self,
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
+        // FIXME: Cache this value
+        if let Some(current_snapshot) = self.current_block_hash()? {
+            if block_hash == current_snapshot {
+                // FIXME: See if we can avoid hashing here.
+                return self.state_snapshot_for_account(&hash_address_fixed(&address))
+            }
+        }
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -327,15 +339,16 @@ impl Store {
     /// and returns the new state root after the updates have been applied.
     pub async fn apply_account_updates(
         &self,
-        block_hash: BlockHash,
+        block_header: BlockHeader,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<H256>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(state_trie) = self.state_trie(block_header.parent_hash)? else {
             return Ok(None);
         };
-
+        // FIXME: Properly name this
+        let this_block_hash = block_header.hash();
         let mut state_trie = self
-            .apply_account_updates_from_trie(state_trie, account_updates)
+            .apply_account_updates_from_trie(state_trie, account_updates, &this_block_hash)
             .await?;
         Ok(Some(state_trie.hash()?))
     }
@@ -344,6 +357,7 @@ impl Store {
         &self,
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
+        block_hash: &H256
     ) -> Result<Trie, StoreError> {
         let mut snapshot_updates = Vec::with_capacity(account_updates.len());
         for update in account_updates.iter() {
@@ -396,8 +410,8 @@ impl Store {
         }
         // FIXME: See what we should do if the snapshot fails, since this is
         // not fatal, and the trie is updated anyway.
-        let block_hash = state_trie.hash_no_commit();
-        self.engine.set_block_snapshot(block_hash, snapshot_updates)?;
+        self.engine.set_block_snapshot(*block_hash, snapshot_updates)?;
+        println!("BLOCK SNAPSHOT CREATED FOR: {block_hash}");
         Ok(state_trie)
     }
 
@@ -405,21 +419,27 @@ impl Store {
     pub async fn setup_genesis_state_trie(
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
-    ) -> Result<H256, StoreError> {
+        // FIXME: THIS IS AWFUL, see how can we build the snapshot update
+        // without messing with this function.
+    ) -> Result<(H256, Vec<SnapshotUpdate>), StoreError> {
         let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH)?;
+        let mut genesis_snapshot_data = vec![];
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
             let code_hash = code_hash(&account.code);
-            self.add_account_code(code_hash, account.code).await?;
+            self.add_account_code(code_hash, account.code.clone()).await?;
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie = self
                 .engine
                 .open_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH)?;
+            let mut snapshot_storage = HashMap::new();
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
-                    storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                    storage_trie.insert(hashed_key.clone(), storage_value.encode_to_vec())?;
+                    // FIXME: DO NOT UNWRAP HERE
+                    snapshot_storage.insert(H256(hashed_key.try_into().unwrap()), storage_value);
                 }
             }
             let storage_root = storage_trie.hash()?;
@@ -430,9 +450,21 @@ impl Store {
                 storage_root,
                 code_hash,
             };
+
+            let account_update = AccountUpdate {
+                address: address.clone(),
+                removed: false,
+                info: None,
+                code: Some(account.code.clone()),
+                added_storage: snapshot_storage.clone()
+            };
+
+            genesis_snapshot_data.push(SnapshotUpdate::Set { update: account_update, state: account_state.clone(), hashed_address: H256(hashed_address.clone().try_into().unwrap()) });
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        genesis_state_trie.hash().map_err(StoreError::Trie)
+        // FIXME: Write snapshot AFTER state trie hash
+        let genesis_state_trie_hash = genesis_state_trie.hash().map_err(StoreError::Trie)?;
+        Ok((genesis_state_trie_hash, genesis_snapshot_data))
     }
 
     pub async fn add_receipt(
@@ -498,7 +530,7 @@ impl Store {
         }
         // Store genesis accounts
         // TODO: Should we use this root instead of computing it before the block hash check?
-        let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
+        let (genesis_state_root, genesis_snapshot_data) = self.setup_genesis_state_trie(genesis.alloc).await?;
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
 
         // Store genesis block
@@ -506,7 +538,6 @@ impl Store {
             "Storing genesis block with number {} and hash {}",
             genesis_block_number, genesis_hash
         );
-
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
             .await?;
@@ -516,7 +547,8 @@ impl Store {
             .await?;
 
         // Set chain config
-        self.set_chain_config(&genesis.config).await
+        self.set_chain_config(&genesis.config).await?;
+        self.engine.set_block_snapshot(genesis_hash, genesis_snapshot_data)
     }
 
     pub async fn get_transaction_by_hash(
@@ -1172,6 +1204,9 @@ impl Store {
         updates: Vec<SnapshotUpdate>,
     ) -> Result<(), StoreError> {
         todo!()
+    }
+    fn current_block_hash(&self) ->Result<Option<H256>, StoreError> {
+        self.engine.current_block_hash()
     }
 }
 

@@ -86,6 +86,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
+        println!("{}", block.header.parent_hash);
         let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
         let mut vm = Evm::new(self.evm_engine, vm_db);
         let execution_result = vm.execute_block(block)?;
@@ -129,7 +130,7 @@ impl Blockchain {
         // Apply the account updates over the last block's state and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(block.header.parent_hash, account_updates)
+            .apply_account_updates(block.header.clone(), account_updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
@@ -286,7 +287,7 @@ impl Blockchain {
         // Apply the account updates over all blocks and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(first_block_header.parent_hash, &account_updates)
+            .apply_account_updates(first_block_header.clone(), &account_updates)
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
