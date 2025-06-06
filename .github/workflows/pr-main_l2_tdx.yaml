@@ -27,8 +27,8 @@ jobs:
 
       - name: Build image
         run: |
-          sysctl kernel.unprivileged_userns_apparmor_policy=0
-          sysctl kernel.apparmor_restrict_unprivileged_userns=0
+          sudo sysctl kernel.unprivileged_userns_apparmor_policy=0
+          sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
           cd crates/l2/tee/quote-gen
           make image.raw
 
