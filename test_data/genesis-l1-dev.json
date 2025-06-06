@@ -1245,6 +1245,12 @@
       "storage": {},
       "balance": "0x33b2e3c9fd0803ce8000000",
       "nonce": "0x0"
+    },
+    "0x4417092B70a3E5f10Dc504d0947DD256B965fc62": {
+      "code": "0x",
+      "storage": {},
+      "balance": "0x33b2e3c9fd0803ce8000000",
+      "nonce": "0x0"
     }
   }
 }

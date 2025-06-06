@@ -67,7 +67,9 @@ impl Store {
             withdrawal_hashes: Vec::new(),
             blobs_bundle: BlobsBundle::empty(),
         })
-        .await
+        .await?;
+        // Sets the lastest sent batch proof to 0
+        self.set_lastest_sent_batch_proof(0).await
     }
 
     /// Stores the block numbers by a given batch_number
@@ -275,5 +277,15 @@ impl Store {
     /// Returns whether the batch with the given number is present.
     pub async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
         self.engine.contains_batch(batch_number).await
+    }
+
+    /// Returns the lastest sent batch proof
+    pub async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
+        self.engine.get_lastest_sent_batch_proof().await
+    }
+
+    /// Sets the lastest sent batch proof
+    pub async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.engine.set_lastest_sent_batch_proof(batch_number).await
     }
 }
