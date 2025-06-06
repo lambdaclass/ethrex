@@ -665,7 +665,7 @@ impl FullBlockSyncState {
                 .request_and_validate_block_bodies(headers)
                 .await
                 .ok_or(SyncError::BodiesNotFound)?;
-            info!("Obtained: {} block bodies", bodies.len());
+            debug!("Obtained: {} block bodies", bodies.len());
             let blocks = self
                 .current_block_headers
                 .drain(..bodies.len())
