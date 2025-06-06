@@ -62,6 +62,8 @@ pub struct ProgramOutput {
     #[cfg(feature = "l2")]
     /// blob commitment versioned hash
     pub blob_versioned_hash: H256,
+    /// hash of the last block in a batch
+    pub last_block_hash: H256,
 }
 
 impl ProgramOutput {
@@ -75,9 +77,8 @@ impl ProgramOutput {
             self.deposit_logs_hash.to_fixed_bytes(),
             #[cfg(feature = "l2")]
             self.blob_versioned_hash.to_fixed_bytes(),
-        ]
+            self.last_block_hash.to_fixed_bytes(),
         .concat()
-    }
 }
 
 /// Used with [serde_with] to encode a fields into JSON before serializing its bytes. This is

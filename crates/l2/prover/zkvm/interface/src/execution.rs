@@ -114,6 +114,7 @@ pub fn stateless_validation_l1(
     let StatelessResult {
         initial_state_hash,
         final_state_hash,
+        last_block_hash,
         ..
     } = execute_stateless(blocks, parent_block_header, db, elasticity_multiplier)?;
     Ok(ProgramOutput {
@@ -125,6 +126,7 @@ pub fn stateless_validation_l1(
         deposit_logs_hash: H256::zero(),
         #[cfg(feature = "l2")]
         blob_versioned_hash: H256::zero(),
+        last_block_hash,
     })
 }
 
@@ -143,6 +145,7 @@ pub fn stateless_validation_l2(
         final_state_hash,
         account_updates,
         last_block_header,
+        last_block_hash,
     } = execute_stateless(blocks, parent_block_header, db, elasticity_multiplier)?;
 
     let (withdrawals, deposits) = get_batch_withdrawals_and_deposits(blocks, &receipts)?;
@@ -172,6 +175,7 @@ pub fn stateless_validation_l2(
         withdrawals_merkle_root,
         deposit_logs_hash,
         blob_versioned_hash,
+        last_block_hash,
     })
 }
 
@@ -181,6 +185,7 @@ struct StatelessResult {
     final_state_hash: H256,
     account_updates: HashMap<Address, AccountUpdate>,
     last_block_header: BlockHeader,
+    last_block_hash: H256,
 }
 
 fn execute_stateless(
@@ -256,6 +261,7 @@ fn execute_stateless(
         .last()
         .ok_or(StatelessExecutionError::EmptyBatchError)?;
     let last_block_state_root = last_block.header.state_root;
+    let last_block_hash = last_block.header.hash();
     let final_state_hash = state_trie.hash_no_commit();
     if final_state_hash != last_block_state_root {
         return Err(StatelessExecutionError::InvalidFinalStateTrie);
@@ -266,6 +272,7 @@ fn execute_stateless(
         final_state_hash,
         account_updates: acc_account_updates,
         last_block_header: parent_header.clone(),
+        last_block_hash,
     })
 }
 

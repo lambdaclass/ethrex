@@ -42,6 +42,15 @@ pub struct ProverClientOptions {
         help_heading = "Prover client options"
     )]
     pub log_level: Level,
+    #[arg(
+        long,
+        default_value_t = false,
+        value_name = "BOOLEAN",
+        env = "PROVER_CLIENT_ALIGNED",
+        help = "Activate aligned proving system",
+        help_heading = "Prover client options"
+    )]
+    pub aligned: bool,
 }
 
 impl From<ProverClientOptions> for ProverConfig {
@@ -50,6 +59,7 @@ impl From<ProverClientOptions> for ProverConfig {
             http_addr: config.http_addr,
             http_port: config.http_port,
             proving_time_ms: config.proving_time_ms,
+            aligned_mode: config.aligned,
         }
     }
 }
@@ -61,6 +71,7 @@ impl Default for ProverClientOptions {
             http_port: 3900,
             proving_time_ms: 5000,
             log_level: Level::INFO,
+            aligned: false,
         }
     }
 }

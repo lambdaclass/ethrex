@@ -16,6 +16,8 @@ hex.workspace = true
 thiserror.workspace = true
 clap.workspace = true
 kzg-rs = "0.2.6"
+cfg-if.workspace = true
+bincode = "1.3.3"
 
 # ethrex
 ethrex-common.workspace = true

@@ -2,6 +2,7 @@ use crate::{cli::Options as NodeOptions, utils};
 use clap::Parser;
 use ethrex_common::Address;
 use ethrex_l2::{
+    sequencer::{configs::AlignedConfig, utils::resolve_aligned_network},
     BlockProducerConfig, CommitterConfig, EthConfig, L1WatcherConfig, ProofCoordinatorConfig,
     SequencerConfig,
 };
@@ -58,6 +59,7 @@ pub struct SequencerOptions {
     pub proof_coordinator_opts: ProofCoordinatorOptions,
     #[command(flatten)]
     pub l2_opts: L2Options,
+    pub aligned_opts: AlignedOptions,
 }
 
 impl From<SequencerOptions> for SequencerConfig {
@@ -107,6 +109,16 @@ impl From<SequencerOptions> for SequencerConfig {
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
                 dev_mode: opts.proof_coordinator_opts.dev_mode,
                 validium: opts.l2_opts.validium,
+            },
+            aligned: AlignedConfig {
+                aligned_mode: opts.aligned_opts.aligned,
+                aligned_verifier_interval_ms: opts.aligned_opts.aligned_verifier_interval_ms,
+                beacon_url: opts.aligned_opts.beacon_url.unwrap_or_default(),
+                network: resolve_aligned_network(
+                    &opts.aligned_opts.aligned_network.unwrap_or_default(),
+                ),
+                fee_estimate: opts.aligned_opts.fee_estimate,
+                aligned_sp1_elf_path: opts.aligned_opts.aligned_sp1_elf_path.unwrap_or_default(),
             },
         }
     }
@@ -391,4 +403,79 @@ pub struct L2Options {
         long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
     )]
     pub validium: bool,
+}
+
+#[derive(Parser)]
+pub struct AlignedOptions {
+    #[arg(
+        long,
+        action = clap::ArgAction::SetTrue,
+        default_value = "false",
+        value_name = "ALIGNED_MODE",
+        env = "ETHREX_ALIGNED_MODE",
+        help_heading = "Aligned options"
+    )]
+    pub aligned: bool,
+    #[arg(
+        long,
+        default_value = "5000",
+        value_name = "ETHREX_ALIGNED_VERIFIER_INTERVAL_MS",
+        env = "ETHREX_ALIGNED_VERIFIER_INTERVAL_MS",
+        help_heading = "Aligned options"
+    )]
+    pub aligned_verifier_interval_ms: u64,
+    #[arg(
+        long = "aligned.beacon-url",
+        value_name = "BEACON_URL",
+        required_if_eq("aligned", "true"),
+        env = "ETHREX_ALIGNED_BEACON_URL",
+        help = "Beacon url to use.",
+        help_heading = "Aligned options"
+    )]
+    pub beacon_url: Option<String>,
+    #[arg(
+        long,
+        value_name = "ETHREX_ALIGNED_NETWORK",
+        env = "ETHREX_ALIGNED_NETWORK",
+        required_if_eq("aligned", "true"),
+        default_value = "devnet",
+        help = "L1 network name for Aligned sdk",
+        help_heading = "Aligned options"
+    )]
+    pub aligned_network: Option<String>,
+
+    #[arg(
+        long = "aligned.fee-estimate",
+        default_value = "instant",
+        value_name = "FEE_ESTIMATE",
+        env = "ETHREX_ALIGNED_FEE_ESTIMATE",
+        help = "Fee estimate for Aligned sdk",
+        help_heading = "Aligned options"
+    )]
+    pub fee_estimate: String,
+    #[arg(
+        long,
+        value_name = "ETHREX_ALIGNED_SP1_ELF_PATH",
+        required_if_eq("aligned", "true"),
+        env = "ETHREX_ALIGNED_SP1_ELF_PATH",
+        help_heading = "Aligned options",
+        help = "Path to the SP1 elf. This is used for proof verification."
+    )]
+    pub aligned_sp1_elf_path: Option<String>,
+}
+
+impl Default for AlignedOptions {
+    fn default() -> Self {
+        Self {
+            aligned: false,
+            aligned_verifier_interval_ms: 5000,
+            beacon_url: Some("http://127.0.0.1:58801".to_string()),
+            aligned_network: Some("devnet".to_string()),
+            fee_estimate: "instant".to_string(),
+            aligned_sp1_elf_path: Some(format!(
+                "{}/../../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
+                env!("CARGO_MANIFEST_DIR")
+            )),
+        }
+    }
 }
