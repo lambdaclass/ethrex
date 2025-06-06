@@ -1,8 +1,9 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Signature};
 use keccak_hash::keccak;
-use reqwest::{Client, Url};
 use secp256k1::{Message, PublicKey, SecretKey, SECP256K1};
+#[cfg(feature = "websign")]
+use websigner::{web3sign, WebsignError};
 
 #[derive(Clone, Debug)]
 pub enum Signer {
@@ -68,48 +69,39 @@ impl LocalSigner {
 
 #[derive(Clone, Debug)]
 pub struct RemoteSigner {
-    pub url: Url,
+    pub url: String,
     pub public_key: PublicKey,
     pub address: Address,
-    pub client: Client,
 }
 
 impl RemoteSigner {
-    pub fn new(url: Url, public_key: PublicKey) -> Self {
+    pub fn new(url: String, public_key: PublicKey) -> Self {
         let address = Address::from(keccak(&public_key.serialize_uncompressed()[1..]));
         Self {
             url,
             public_key,
             address,
-            client: Client::new(),
         }
     }
 
+    #[allow(unused_variables)]
     pub async fn sign(&self, data: Bytes) -> Result<Signature, SignerError> {
-        let url = format!(
-            "{}api/v1/eth1/sign/{}",
-            self.url,
-            hex::encode(&self.public_key.serialize_uncompressed()[1..])
-        );
-        let body = format!("{{\"data\": \"0x{}\"}}", hex::encode(data.clone()));
-
-        self.client
-            .post(url)
-            .body(body)
-            .header("content-type", "application/json")
-            .send()
-            .await?
-            .text()
-            .await?
-            .parse::<Signature>()
-            .map_err(|e| SignerError::ParseError(e.to_string()))
+        #[cfg(feature = "websign")]
+        return web3sign(data, self.url.clone(), self.public_key)
+            .await
+            .map_err(SignerError::WebsignError);
+        #[cfg(not(feature = "websign"))]
+        Err(SignerError::MissingWebsignError())
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum SignerError {
+    #[cfg(feature = "websign")]
     #[error("Failed with a reqwest error: {0}")]
-    ReqwestError(#[from] reqwest::Error),
+    WebsignError(#[from] WebsignError),
+    #[error("Tried to websign transaction without the websign flag.")]
+    MissingWebsignError(),
     #[error("Failed to parse value: {0}")]
     ParseError(String),
     #[error("Tried to sign Privileged L2 transaction")]

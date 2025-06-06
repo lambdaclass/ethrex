@@ -3144,7 +3144,6 @@ dependencies = [
  "lazy_static",
  "once_cell",
  "rayon",
- "reqwest",
  "secp256k1",
  "serde",
  "serde_json",
@@ -3152,6 +3151,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tinyvec",
  "tracing",
+ "websigner",
 ]
 
 [[package]]
@@ -10907,6 +10907,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2210b291f7ea53617fbafcc4939f10914214ec15aace5ba62293a668f322c5c9"
 dependencies = [
  "rustls-pki-types",
+]
+
+[[package]]
+name = "websigner"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "ethereum-types",
+ "hex",
+ "reqwest",
+ "rustc-hex",
+ "secp256k1",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
