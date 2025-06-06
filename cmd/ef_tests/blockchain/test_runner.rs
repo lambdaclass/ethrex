@@ -265,5 +265,7 @@ async fn re_run_stateless(
 
     if let Err(e) = ethrex_prover_lib::execute(program_input) {
         assert!(test_should_fail, "Expected test to succeed failed with {e}")
+    } else {
+        assert!(!test_should_fail, "Expected test to fail succeeded")
     }
 }
