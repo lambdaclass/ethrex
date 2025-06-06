@@ -709,13 +709,13 @@ impl FullBlockSyncState {
                 return Err(err.into());
             }
 
-            self.store
-                .update_latest_block_number(last_block_number)
-                .await?;
             // TODO: add method for this
             for (number, hash) in hashes_and_numbers {
                 self.store.set_canonical_block(number, hash).await?;
             }
+            self.store
+            .update_latest_block_number(last_block_number)
+            .await?;
 
             let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;
             let blocks_per_second = blocks_len as f64 / execution_time;
