@@ -230,8 +230,7 @@ impl Syncer {
             let mut sync_head_found = false;
             if let Some(index) = block_hashes.iter().position(|&hash| hash == sync_head) {
                 sync_head_found = true;
-                //block_hashes.drain(index+1..);
-                block_hashes = block_hashes.iter().take(index + 1).cloned().collect();
+                block_hashes.drain(index..);
             }
 
             // Update current fetch head
