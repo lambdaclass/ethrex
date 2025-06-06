@@ -187,7 +187,9 @@ pub async fn start_api(
         .route("/", post(handle_http_request))
         .layer(cors)
         .with_state(service_context.clone());
-    let http_listener = TcpListener::bind(http_addr).await.unwrap();
+    let http_listener = TcpListener::bind(http_addr)
+        .await
+        .expect("TCP conection failed");
     let http_server = axum::serve(http_listener, http_router)
         .with_graceful_shutdown(shutdown_signal())
         .into_future();
@@ -204,7 +206,9 @@ pub async fn start_api(
         let authrpc_router = Router::new()
             .route("/", post(authrpc_handler))
             .with_state(service_context);
-        let authrpc_listener = TcpListener::bind(authrpc_addr).await.unwrap();
+        let authrpc_listener = TcpListener::bind(authrpc_addr)
+            .await
+            .expect("TCP conection failed");
         let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
             .with_graceful_shutdown(shutdown_signal())
             .into_future();
@@ -236,7 +240,7 @@ async fn handle_http_request(
                 let res = map_http_requests(&req, service_context.clone()).await;
                 responses.push(rpc_response(req.id, res));
             }
-            serde_json::to_value(responses).unwrap()
+            serde_json::to_value(responses).expect("Failed to convert rpc responses to json")
         }
         Err(_) => rpc_response(
             RpcRequestId::String("".to_string()),
@@ -455,7 +459,7 @@ where
             error: error.into(),
         }),
     }
-    .unwrap()
+    .expect("Failed to convert rpc response to json")
 }
 
 #[cfg(test)]
