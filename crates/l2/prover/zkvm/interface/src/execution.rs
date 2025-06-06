@@ -198,6 +198,7 @@ fn execute_stateless(
             .map_err(StatelessExecutionError::GasValidationError)?;
         validate_receipts_root(&block.header, &receipts)
             .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
+        // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (withdrawals, deposits and consolidations)
         validate_requests_hash(&block.header, &db.chain_config, &result.requests)
             .map_err(StatelessExecutionError::RequestsRootValidationError)?;
         parent_header = &block.header;
