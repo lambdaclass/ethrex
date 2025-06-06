@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749223738607,
+  "lastUpdate": 1749224743906,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11275,6 +11275,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 187151792439,
             "range": "± 3548153521",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9e1f26f6f9bc1652a4941a1211989165223d070d",
+          "message": "ci(l2): fix tdx nix image building add ci to prevent regressions (#3065)\n\n**Motivation**\n\nImage building is failing because nix cant find the hash for spawned\n\n**Description**\n\n- adds the current sha256 hash for spawned\n\n**How to test**\n- Buy a tdx compatible intel cpu\n- `cd crates/l2/tee/`\n- `make run` should fail in main but succeed in this branch",
+          "timestamp": "2025-06-06T14:56:19Z",
+          "tree_id": "acbe3aaa4710c5cd182c7c213061fb262a8a778f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9e1f26f6f9bc1652a4941a1211989165223d070d"
+        },
+        "date": 1749224738027,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177600827028,
+            "range": "± 1003678524",
             "unit": "ns/iter"
           }
         ]
