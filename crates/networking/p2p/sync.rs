@@ -187,61 +187,59 @@ impl Syncer {
                 return Ok(());
             };
 
-            let mut block_hashes: Vec<BlockHash> =
-                block_headers.iter().map(|header| header.hash()).collect();
-
-            let first_block_header = match block_headers.first() {
-                Some(header) => header.clone(),
-                None => continue,
-            };
-            let last_block_header = match block_headers.last() {
-                Some(header) => header.clone(),
+            let (first_block_hash, first_block_number, first_block_parent_hash) =
+                match block_headers.first() {
+                    Some(header) => (header.hash(), header.number, header.parent_hash),
+                    None => continue,
+                };
+            let (last_block_hash, last_block_number) = match block_headers.last() {
+                Some(header) => (header.hash(), header.number),
                 None => continue,
             };
             // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
             // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
-            if first_block_header == last_block_header
-                && first_block_header.hash() == current_head
+            if first_block_hash == last_block_hash
+                && first_block_hash == current_head
                 && current_head != sync_head
             {
                 // There is no path to the sync head this goes back until it find a common ancerstor
                 warn!("Sync failed to find target block header, going back to the previous parent");
-                current_head = first_block_header.parent_hash;
+                current_head = first_block_parent_hash;
                 continue;
             }
 
             debug!(
                 "Received {} block headers| First Number: {} Last Number: {}",
                 block_headers.len(),
-                first_block_header.number,
-                last_block_header.number
+                first_block_number,
+                last_block_number
             );
 
             // If we have a pending block from new_payload request
             // attach it to the end if it matches the parent_hash of the latest received header
             if let Some(ref block) = pending_block {
-                if block.header.parent_hash == last_block_header.hash() {
-                    block_hashes.push(block.hash());
+                if block.header.parent_hash == last_block_hash {
                     block_headers.push(block.header.clone());
                 }
             }
 
             // Filter out everything after the sync_head
             let mut sync_head_found = false;
-            if let Some(index) = block_hashes.iter().position(|&hash| hash == sync_head) {
+            if let Some(index) = block_headers
+                .iter()
+                .position(|header| header.hash() == sync_head)
+            {
                 sync_head_found = true;
-                block_hashes.drain(index..);
+                block_headers.drain(index..);
             }
 
             // Update current fetch head
-            current_head = last_block_header.hash();
+            current_head = last_block_hash;
 
             // If the sync head is less than 64 blocks away from our current head switch to full-sync
             if sync_mode == SyncMode::Snap && sync_head_found {
                 let latest_block_number = store.get_latest_block_number().await?;
-                if last_block_header.number.saturating_sub(latest_block_number)
-                    < MIN_FULL_BLOCKS as u64
-                {
+                if last_block_number.saturating_sub(latest_block_number) < MIN_FULL_BLOCKS as u64 {
                     // Too few blocks for a snap sync, switching to full sync
                     sync_mode = SyncMode::Full;
                     self.snap_enabled.store(false, Ordering::Relaxed);
