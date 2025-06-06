@@ -8,7 +8,7 @@ on:
       - "**.nix"
       - "**/Cargo.toml"
       - "**/Cargo.lock"
-      - ".github/workflows/build-image.yml"
+      - ".github/workflows/pr-main_l2_tdx_build.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
