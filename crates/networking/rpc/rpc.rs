@@ -140,7 +140,7 @@ pub async fn start_api(
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")] sponsor_pk: SecretKey,
     #[cfg(feature = "l2")] rollup_store: StoreRollup,
-) {
+) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
@@ -189,7 +189,7 @@ pub async fn start_api(
         .with_state(service_context.clone());
     let http_listener = TcpListener::bind(http_addr)
         .await
-        .expect("TCP conection failed");
+        .map_err(|error| RpcErr::Internal(error.to_string()))?;
     let http_server = axum::serve(http_listener, http_router)
         .with_graceful_shutdown(shutdown_signal())
         .into_future();
@@ -208,7 +208,7 @@ pub async fn start_api(
             .with_state(service_context);
         let authrpc_listener = TcpListener::bind(authrpc_addr)
             .await
-            .expect("TCP conection failed");
+            .map_err(|error| RpcErr::Internal(error.to_string()))?;
         let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
             .with_graceful_shutdown(shutdown_signal())
             .into_future();
@@ -217,6 +217,7 @@ pub async fn start_api(
         let _ = tokio::try_join!(authrpc_server, http_server)
             .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
     }
+    Ok(())
 }
 
 async fn shutdown_signal() {
