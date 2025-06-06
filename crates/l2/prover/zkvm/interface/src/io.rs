@@ -78,7 +78,9 @@ impl ProgramOutput {
             #[cfg(feature = "l2")]
             self.blob_versioned_hash.to_fixed_bytes(),
             self.last_block_hash.to_fixed_bytes(),
+        ]
         .concat()
+    }
 }
 
 /// Used with [serde_with] to encode a fields into JSON before serializing its bytes. This is

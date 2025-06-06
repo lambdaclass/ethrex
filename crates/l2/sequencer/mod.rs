@@ -1,9 +1,9 @@
 pub mod blobs_bundle_cache;
 use std::sync::Arc;
 
+use crate::utils::prover::proving_systems::ProverType;
 use crate::SequencerConfig;
 use blobs_bundle_cache::BlobsBundleCache;
-use crate::{utils::prover::proving_systems::ProverType, SequencerConfig};
 use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;

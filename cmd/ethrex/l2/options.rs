@@ -59,6 +59,7 @@ pub struct SequencerOptions {
     pub proof_coordinator_opts: ProofCoordinatorOptions,
     #[command(flatten)]
     pub l2_opts: L2Options,
+    #[command(flatten)]
     pub aligned_opts: AlignedOptions,
 }
 
