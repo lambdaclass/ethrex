@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
+websigner = { path = "../websigner", optional = true }
 
 tracing.workspace = true
 tinyvec = "1.6.0"
@@ -27,7 +28,6 @@ bytes.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
 rayon = "1.5"
-reqwest.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
@@ -36,6 +36,7 @@ hex-literal.workspace = true
 [features]
 default = []
 c-kzg = ["dep:c-kzg"]
+websign = ["dep:websigner"]
 
 [lib]
 path = "./common.rs"
