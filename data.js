@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749228092830,
+  "lastUpdate": 1749236781180,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11335,6 +11335,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178625266294,
             "range": "± 477205997",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7f32732fa98cda1bf4bfe205e78103542c01930e",
+          "message": "fix(l1): some dependency issues related to tokio (#3053)\n\n**Motivation**\nFixes dependency issues that popped up when building/running tests for\ncrates separately\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Include \"codec\" feature for `tokio-util` on  `ethrex-p2p`\n* Import `tokio` with \"full\" features on `ethrex-storage` dev dependency\n* * Import `tokio` with \"full\" features on `ethrex-blockchain` dev\ndependency\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-06T18:16:23Z",
+          "tree_id": "782f6dde1704dfb79185c496f17c33fc1945a0f0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7f32732fa98cda1bf4bfe205e78103542c01930e"
+        },
+        "date": 1749236775805,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180188104802,
+            "range": "± 3855095585",
             "unit": "ns/iter"
           }
         ]
