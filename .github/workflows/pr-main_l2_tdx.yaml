@@ -15,6 +15,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build_tdx:
+    name: Build nix TDX image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Build image
+        run: |
+          cd crates/l2/tee/quote-gen
+          make image.raw
+
   test:
     # "Test" is a required check, don't change the name
     name: Test
