@@ -10,6 +10,7 @@ use ethrex_rpc::clients::EngineClientError;
 use ethrex_storage::error::StoreError;
 use ethrex_trie::TrieError;
 use ethrex_vm::{EvmError, ProverDBError};
+use spawned_concurrency::GenServerError;
 use tokio::task::JoinError;
 
 #[derive(Debug, thiserror::Error)]
@@ -24,10 +25,16 @@ pub enum SequencerError {
     CommitterError(#[from] CommitterError),
     #[error("Failed to start ProofSender: {0}")]
     ProofSenderError(#[from] ProofSenderError),
+    #[error("Failed to start ProofVerifier: {0}")]
+    ProofVerifierError(#[from] ProofVerifierError),
     #[error("Failed to start MetricsGatherer: {0}")]
     MetricsGathererError(#[from] MetricsGathererError),
     #[error("Sequencer error: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("Failed to access Store: {0}")]
+    FailedAccessingStore(#[from] StoreError),
+    #[error("Failed to resolve network")]
+    AlignedNetworkError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -44,6 +51,8 @@ pub enum L1WatcherError {
     FailedAccessingStore(#[from] StoreError),
     #[error("{0}")]
     Custom(String),
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -96,6 +105,32 @@ pub enum ProofSenderError {
     InternalError(String),
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
+    #[error("Proof Sender failed because of a store error: {0}")]
+    StoreError(#[from] StoreError),
+    #[error("Proof Sender failed to estimate Aligned fee: {0}")]
+    AlignedFeeEstimateError(String),
+    #[error("Proof Sender failed to get nonce from batcher: {0}")]
+    AlignedGetNonceError(String),
+    #[error("Proof Sender failed to submit proof: {0}")]
+    AlignedSubmitProofError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProofVerifierError {
+    #[error("Failed because of an EthClient error: {0}")]
+    EthClientError(#[from] EthClientError),
+    #[error("Unexpected Error: {0}")]
+    InternalError(String),
+    #[error("ProofVerifier failed to parse beacon url")]
+    ParseBeaconUrl(String),
+    #[error("ProofVerifier decoding error: {0}")]
+    DecodingError(String),
+    #[error("Failed with a SaveStateError: {0}")]
+    SaveStateError(#[from] SaveStateError),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -176,6 +211,8 @@ pub enum CommitterError {
     InternalError(String),
     #[error("Failed to get withdrawals: {0}")]
     FailedToGetWithdrawals(#[from] UtilsError),
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]

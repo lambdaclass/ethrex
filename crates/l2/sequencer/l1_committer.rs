@@ -39,7 +39,8 @@ use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils:
 use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
 use spawned_rt::mpsc::Sender;
 
-const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str =
+    "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes32)";
 
 #[derive(Clone)]
 pub struct CommitterState {
@@ -115,8 +116,10 @@ impl L1Committer {
             execution_cache.clone(),
         )?;
         let mut l1_committer = L1Committer::start(state);
-        let _ = l1_committer.cast(InMessage::Commit).await;
-        Ok(())
+        l1_committer
+            .cast(InMessage::Commit)
+            .await
+            .map_err(CommitterError::GenServerError)
     }
 }
 
@@ -563,12 +566,15 @@ async fn send_commitment(
 
     let withdrawal_logs_merkle_root = get_withdrawals_merkle_root(batch.withdrawal_hashes.clone())?;
 
+    let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
+
     let calldata_values = vec![
         Value::Uint(U256::from(batch.number)),
         Value::FixedBytes(batch.state_root.0.to_vec().into()),
         Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
         Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
         Value::FixedBytes(batch.deposit_logs_hash.0.to_vec().into()),
+        Value::FixedBytes(last_block_hash.0.to_vec().into()),
     ];
 
     let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;
@@ -647,6 +653,18 @@ async fn send_commitment(
     info!("Commitment sent: {commit_tx_hash:#x}");
 
     Ok(commit_tx_hash)
+}
+
+fn get_last_block_hash(
+    store: &Store,
+    last_block_number: BlockNumber,
+) -> Result<H256, CommitterError> {
+    store
+        .get_block_header(last_block_number)?
+        .map(|header| header.hash())
+        .ok_or(CommitterError::InternalError(
+            "Failed to get last block hash from storage".to_owned(),
+        ))
 }
 
 /// Estimates the gas price for blob transactions based on the current state of the blockchain.
