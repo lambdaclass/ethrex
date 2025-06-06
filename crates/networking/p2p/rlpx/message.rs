@@ -229,10 +229,10 @@ impl Message {
                         69 => Ok(Message::Receipts(Receipts::decode(data)?)),
                         _ => Err(RLPDecodeError::IncompatibleProtocol),
                     },
-
-                    BlockRangeUpdate::CODE => {
-                        Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
-                    }
+                    BlockRangeUpdate::CODE => match eth_capability.version {
+                        69 => Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?)),
+                        _ => Err(RLPDecodeError::IncompatibleProtocol),
+                    },
                     _ => Err(RLPDecodeError::MalformedData),
                 };
             } else {
@@ -314,7 +314,16 @@ impl Message {
                     Err(RLPEncodeError::IncompatibleProtocol)
                 }
             }
-            Message::BlockRangeUpdate(msg) => msg.encode(buf),
+            Message::BlockRangeUpdate(msg) => {
+                if let Some(eth_capability) = eth_capability {
+                    match eth_capability.version {
+                        69 => msg.encode(buf),
+                        _ => Err(RLPEncodeError::IncompatibleProtocol),
+                    }
+                } else {
+                    Err(RLPEncodeError::IncompatibleProtocol)
+                }
+            }
             Message::GetAccountRange(msg) => msg.encode(buf),
             Message::AccountRange(msg) => msg.encode(buf),
             Message::GetStorageRanges(msg) => msg.encode(buf),
