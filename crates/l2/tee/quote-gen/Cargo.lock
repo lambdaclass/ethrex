@@ -1436,6 +1436,7 @@ dependencies = [
  "k256",
  "sha3",
  "thiserror 2.0.12",
+ "tokio",
  "tracing",
 ]
 
@@ -1568,6 +1569,7 @@ dependencies = [
  "bytes",
  "concat-kdf",
  "ctr",
+ "ethereum-types",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-rlp",
@@ -1612,6 +1614,7 @@ dependencies = [
  "bytes",
  "cfg-if",
  "envy",
+ "ethereum-types",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-p2p",
@@ -1724,7 +1727,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-levm",
  "ethrex-rlp",
- "ethrex-storage",
  "ethrex-trie",
  "hex",
  "lazy_static",
@@ -1732,6 +1734,7 @@ dependencies = [
  "revm-inspectors",
  "revm-primitives",
  "serde",
+ "sha3",
  "thiserror 2.0.12",
  "tracing",
 ]

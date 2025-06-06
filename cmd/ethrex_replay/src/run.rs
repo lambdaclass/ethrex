@@ -10,7 +10,8 @@ pub async fn exec(cache: Cache) -> eyre::Result<()> {
     let Cache {
         blocks,
         parent_block_header,
-        db,
+        witness: db,
+        ..
     } = cache;
     let input = ProgramInput {
         blocks,
@@ -26,7 +27,8 @@ pub async fn prove(cache: Cache) -> eyre::Result<String> {
     let Cache {
         blocks,
         parent_block_header,
-        db,
+        witness: db,
+        ..
     } = cache;
     let out = ethrex_prover_lib::prove(ProgramInput {
         blocks,
@@ -47,7 +49,8 @@ pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<Acc
         .first()
         .ok_or(eyre::Error::msg("missing block data"))?;
     let mut remaining_gas = block.header.gas_limit;
-    let mut prover_db = cache.db;
+    let mut prover_db = cache.witness;
+    prover_db.rebuild_tries()?;
 
     // GeneralizedDatabase::new explicitly requires an Arc
     // TODO: refactor GeneralizedDatabase and/or Database to avoid this
@@ -61,7 +64,7 @@ pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<Acc
         let mut vm = Evm::new(EvmEngine::LEVM, prover_db.clone());
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
-        prover_db.apply_account_updates(&account_updates);
+        prover_db.apply_account_updates(&account_updates)?;
         if format!("0x{:x}", tx.compute_hash()) == tx_id {
             return Ok((receipt, account_updates));
         }

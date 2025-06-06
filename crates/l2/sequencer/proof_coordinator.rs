@@ -1,6 +1,5 @@
 use crate::sequencer::errors::ProverServerError;
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
-use crate::utils::prover::db::to_prover_db;
 use crate::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use crate::utils::prover::save_state::{
     batch_number_has_state_file, write_state, StateFileType, StateType,
@@ -9,6 +8,8 @@ use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use bytes::Bytes;
+use ethrex_blockchain::Blockchain;
+use ethrex_common::types::{block_execution_witness::ExecutionWitnessResult, ChainConfig};
 use ethrex_common::{
     types::{Block, BlockHeader},
     Address,
@@ -16,12 +17,11 @@ use ethrex_common::{
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::ProverDB;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use spawned_concurrency::{CallResponse, CastResponse, GenServer};
-use std::net::SocketAddr;
-use std::{fmt::Debug, net::IpAddr};
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -30,11 +30,12 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
     pub parent_block_header: BlockHeader,
-    pub db: ProverDB,
+    pub chain_config: ChainConfig,
+    pub db: ExecutionWitnessResult,
     pub elasticity_multiplier: u64,
 }
 
@@ -139,6 +140,7 @@ pub struct ProofCoordinatorState {
     rollup_store: StoreRollup,
     rpc_url: String,
     l1_private_key: SecretKey,
+    blockchain: Arc<Blockchain>,
 }
 
 impl ProofCoordinatorState {
@@ -149,6 +151,7 @@ impl ProofCoordinatorState {
         proposer_config: &BlockProducerConfig,
         store: Store,
         rollup_store: StoreRollup,
+        blockchain: Arc<Blockchain>,
     ) -> Result<Self, ProverServerError> {
         let eth_client = EthClient::new_with_config(
             eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
@@ -179,6 +182,7 @@ impl ProofCoordinatorState {
             rollup_store,
             rpc_url,
             l1_private_key: config.l1_private_key,
+            blockchain,
         })
     }
 }
@@ -199,6 +203,7 @@ impl ProofCoordinator {
         store: Store,
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
+        blockchain: Arc<Blockchain>,
     ) -> Result<(), ProverServerError> {
         let state = ProofCoordinatorState::new(
             &cfg.proof_coordinator,
@@ -207,6 +212,7 @@ impl ProofCoordinator {
             &cfg.block_producer,
             store,
             rollup_store,
+            blockchain,
         )
         .await?;
         let listener = TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?;
@@ -511,8 +517,11 @@ async fn create_prover_input(
 
     let blocks = fetch_blocks(state, block_numbers).await?;
 
-    // Create prover_db
-    let db = to_prover_db(&state.store.clone(), &blocks).await?;
+    let witness = state
+        .blockchain
+        .generate_witness_for_blocks(&blocks)
+        .await
+        .map_err(ProverServerError::from)?;
 
     // Get the block_header of the parent of the first block
     let parent_hash = blocks
@@ -530,11 +539,17 @@ async fn create_prover_input(
 
     debug!("Created prover input for batch {batch_number}");
 
+    let chain_config = state
+        .store
+        .get_chain_config()
+        .map_err(|_| ProverServerError::InternalError("Failed to get chain config".to_string()))?;
+
     Ok(ProverInputData {
-        db,
+        db: witness,
         blocks,
         parent_block_header,
         elasticity_multiplier: state.elasticity_multiplier,
+        chain_config,
     })
 }
 

@@ -3457,6 +3457,7 @@ dependencies = [
  "revm-inspectors",
  "revm-primitives 15.2.0",
  "serde",
+ "sha3",
  "thiserror 2.0.12",
  "tracing",
 ]

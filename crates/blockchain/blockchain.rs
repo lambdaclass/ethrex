@@ -27,7 +27,7 @@ use ethrex_storage::{hash_address, hash_key, Store};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
 use mempool::Mempool;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{ops::Div, time::Instant};
@@ -153,7 +153,7 @@ impl Blockchain {
 
         let mut encoded_storage_tries: HashMap<ethrex_common::H160, Vec<Vec<u8>>> = HashMap::new();
         let mut block_hashes = HashMap::new();
-        let mut codes = HashSet::new();
+        let mut codes = HashMap::new();
 
         for block in blocks {
             let parent_hash = block.header.parent_hash;
@@ -219,7 +219,7 @@ impl Blockchain {
                 let code = lock
                     .get_account_code(*code_hash)
                     .map_err(|_e| ChainError::Custom("Failed to get account code".to_string()))?;
-                codes.insert(code);
+                codes.insert(*code_hash, code);
             }
 
             // Apply account updates to the trie recording all the necessary nodes to do so
@@ -261,20 +261,18 @@ impl Blockchain {
                 used_trie_nodes.push(root.encode_raw());
             }
         }
-        // Collect required block headers for BLOCKHASH opcode
-        let mut block_headers = Vec::new();
-        for (_block_number, block_hash) in block_hashes {
-            if let Ok(Some(block_header)) = self.storage.get_block_header_by_hash(block_hash) {
-                block_headers.push(block_header);
-            }
-        }
+
+        let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
 
         Ok(ExecutionWitnessResult {
-            state: used_trie_nodes,
-            codes: codes.into_iter().collect::<Vec<_>>(),
-            storage_tries: encoded_storage_tries,
-            block_headers,
+            state_trie_nodes: Some(used_trie_nodes),
+            storage_trie_nodes: Some(encoded_storage_tries),
+            codes,
+            state_trie: None,
+            storage_tries: None,
+            block_hashes,
             parent_block_header,
+            chain_config,
         })
     }
 
