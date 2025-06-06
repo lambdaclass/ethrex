@@ -28,12 +28,15 @@ pub async fn prove(cache: Cache) -> eyre::Result<String> {
         block_headers,
         db,
     } = cache;
-    let out = ethrex_prover_lib::prove(ProgramInput {
-        blocks,
-        block_headers,
-        db,
-        elasticity_multiplier: ELASTICITY_MULTIPLIER,
-    })
+    let out = ethrex_prover_lib::prove(
+        ProgramInput {
+            blocks,
+            block_headers,
+            db,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        },
+        false,
+    )
     .map_err(|e| eyre::Error::msg(e.to_string()))?;
     #[cfg(feature = "sp1")]
     return Ok(format!("{out:#?}"));
