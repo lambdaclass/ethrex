@@ -55,7 +55,7 @@ where
         remote_state.public_key,
     );
     let mut codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
-    codec.set_p2p_protocol(&Capability::p2p(DEFAULT_P2P_PROTOCOL_VERSION));
+    codec.set_p2p_protocol(&Capability::p2p(DEFAULT_P2P_PROTOCOL_VERSION))?;
     log_peer_debug(&node, "Completed handshake as receiver!");
     Ok(RLPxConnection::new(
         context.signer,
@@ -84,7 +84,7 @@ where
     let hashed_nonces: [u8; 32] =
         Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
     let mut codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
-    codec.set_p2p_protocol(&Capability::p2p(DEFAULT_P2P_PROTOCOL_VERSION));
+    codec.set_p2p_protocol(&Capability::p2p(DEFAULT_P2P_PROTOCOL_VERSION))?;
     log_peer_debug(&node, "Completed handshake as initiator!");
     Ok(RLPxConnection::new(
         context.signer,

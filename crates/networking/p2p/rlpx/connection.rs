@@ -318,7 +318,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
                 self.framed
                     .codec_mut()
-                    .set_eth_protocol(&Capability::eth(negotiated_eth_version));
+                    .set_eth_protocol(&Capability::eth(negotiated_eth_version))?;
 
                 if negotiated_snap_version != 0 {
                     debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
@@ -326,7 +326,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         Some(Capability::snap(negotiated_snap_version));
                     self.framed
                         .codec_mut()
-                        .set_snap_protocol(&Capability::snap(negotiated_snap_version));
+                        .set_snap_protocol(&Capability::snap(negotiated_snap_version))?;
                 }
 
                 self.node.version = Some(hello_message.client_id);
