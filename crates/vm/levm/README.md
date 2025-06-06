@@ -120,11 +120,15 @@ We'll run flamegraph or Samply over the VM to identify bottlenecks and improve t
 **Paris**: 2886/2886 (100.00%)
 
 
-### How to run EF tests locally
+### How to run EF tests 
 
 ```
 make download-evm-ef-tests run-evm-ef-tests QUIET=true
 ```
+
+For more information on running EF state tests go [here](../../../cmd/ef_tests/state/README.md).
+
+For running EF blockchain tests go [here](../../../cmd/ef_tests/blockchain/README.md).
 
 ## Benchmarks
 
@@ -201,9 +205,15 @@ make run-hive-debug-levm
 
 ## Performance metrics
 
+To run either flamegraph or samply on the EF tests you have to download the tests first:
+
+```Shell
+make download-state-tests
+```
+
 ### To run Flamegraph on the Ethereum Foundation tests
 
-First install Flamegraph
+First install Flamegraph 
 
 ```Shell
 cargo install flamegraph
