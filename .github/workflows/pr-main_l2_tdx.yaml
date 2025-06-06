@@ -15,23 +15,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build_tdx:
-    name: Build nix TDX image
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Set up Nix
-        uses: cachix/install-nix-action@v31
-
-      - name: Build image
-        run: |
-          sudo sysctl kernel.unprivileged_userns_apparmor_policy=0
-          sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
-          cd crates/l2/tee/quote-gen
-          make image.raw
-
   test:
     # "Test" is a required check, don't change the name
     name: Test
