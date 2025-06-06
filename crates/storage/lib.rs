@@ -2,6 +2,8 @@ mod api;
 
 #[cfg(any(feature = "libmdbx", feature = "redb"))]
 mod rlp;
+#[cfg(feature = "libmdbx")]
+pub mod mdbx;
 mod store;
 mod store_db;
 mod trie_db;
