@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749219181281,
+  "lastUpdate": 1749223738607,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11245,6 +11245,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177460212384,
             "range": "± 228647947",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6142e4496a09021107efd359d7ae8fc4463c7bba",
+          "message": "chore(l1): move tests runner commands to state tests folder (#2758)\n\n**Motivation**\n\nTaking everything related with running the state tests in the levm crate\ninto the state test folder.\n\n**Description**\n\nThis pr adds all state test runner commands into the state test folder\nmakefile. It also updates the README with two more examples, but it\ndoesn't drop the original commands set to tests the levm crate as\ncommented on issue #2710.\n\nCloses #2710\n\n---------\n\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-06-06T14:38:51Z",
+          "tree_id": "9b9e5a225bbd44d3595d57bc1bcf531c44d7da2b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6142e4496a09021107efd359d7ae8fc4463c7bba"
+        },
+        "date": 1749223733485,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 187151792439,
+            "range": "± 3548153521",
             "unit": "ns/iter"
           }
         ]
