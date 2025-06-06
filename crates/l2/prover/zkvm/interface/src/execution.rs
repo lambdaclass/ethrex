@@ -9,7 +9,7 @@ use crate::{
 };
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::types::{AccountUpdate, Block, BlockHash, BlockHeader};
+use ethrex_common::types::{AccountUpdate, Block};
 use ethrex_common::{Address, H256};
 use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDB, ProverDBError};
 use std::collections::HashMap;
@@ -17,7 +17,7 @@ use std::collections::HashMap;
 #[derive(Debug, thiserror::Error)]
 pub enum StatelessExecutionError {
     #[error("ProverDB error: {0}")]
-    ProverDBError(ProverDBError),
+    ProverDBError(#[from] ProverDBError),
     #[error("Trie error: {0}")]
     TrieError(crate::trie::Error),
     #[error("Block validation error: {0}")]
@@ -46,27 +46,27 @@ pub enum StatelessExecutionError {
     NoHeadersRequired,
     #[error("Unreachable code reached: {0}")]
     Unreachable(String),
-    #[error("At least one block hash is invalid or is not in the validated set")]
-    InvalidBlockHashes,
+    #[error("Invalid hash of block {0} (it's not the parent hash of its successor)")]
+    InvalidBlockHash(u64),
+    #[error("Invalid parent block header")]
+    InvalidParentBlockHeader,
 }
 
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
     let ProgramInput {
         blocks,
-        block_headers,
         mut db,
         elasticity_multiplier,
     } = input;
     if cfg!(feature = "l2") {
         #[cfg(feature = "l2")]
-        return stateless_validation_l2(&blocks, &block_headers, &mut db, elasticity_multiplier);
+        return stateless_validation_l2(&blocks, &mut db, elasticity_multiplier);
     }
-    stateless_validation_l1(&blocks, &block_headers, &mut db, elasticity_multiplier)
+    stateless_validation_l1(&blocks, &mut db, elasticity_multiplier)
 }
 
 pub fn stateless_validation_l1(
     blocks: &[Block],
-    block_headers: &[BlockHeader],
     db: &mut ProverDB,
     elasticity_multiplier: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
@@ -75,7 +75,7 @@ pub fn stateless_validation_l1(
         final_state_hash,
         last_block_hash,
         ..
-    } = execute_stateless(blocks, block_headers, db, elasticity_multiplier)?;
+    } = execute_stateless(blocks, db, elasticity_multiplier)?;
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
@@ -90,7 +90,6 @@ pub fn stateless_validation_l1(
 #[cfg(feature = "l2")]
 pub fn stateless_validation_l2(
     blocks: &[Block],
-    block_headers: &[BlockHeader],
     db: &mut ProverDB,
     elasticity_multiplier: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
@@ -99,7 +98,7 @@ pub fn stateless_validation_l2(
         initial_state_hash,
         final_state_hash,
         last_block_hash,
-    } = execute_stateless(blocks, block_headers, db, elasticity_multiplier)?;
+    } = execute_stateless(blocks, db, elasticity_multiplier)?;
 
     let mut withdrawals = vec![];
     let mut deposits_hashes = vec![];
@@ -148,16 +147,24 @@ struct StatelessResult {
 
 fn execute_stateless(
     blocks: &[Block],
-    block_headers: &[BlockHeader],
     db: &mut ProverDB,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
-    let Some(parent_block_header) = block_headers.last() else {
-        return Err(StatelessExecutionError::NoHeadersRequired);
-    };
+    // Validate block hashes, except parent block hash (latest block hash)
+    if let Some(invalid_block_header) = db.get_first_invalid_block_hash()? {
+        return Err(StatelessExecutionError::InvalidBlockHash(
+            invalid_block_header,
+        ));
+    }
 
-    if !validate_block_hashes(block_headers, db.block_hashes.values())? {
-        return Err(StatelessExecutionError::InvalidBlockHashes);
+    // Validate parent block header
+    let parent_block_header = db.get_last_block_header()?;
+    let first_block_header = &blocks
+        .first()
+        .ok_or(StatelessExecutionError::EmptyBatchError)?
+        .header;
+    if parent_block_header.hash() != first_block_header.parent_hash {
+        return Err(StatelessExecutionError::InvalidParentBlockHeader);
     }
 
     // Tries used for validating initial state root
@@ -174,15 +181,15 @@ fn execute_stateless(
         return Err(StatelessExecutionError::InvalidDatabase);
     };
 
-    let mut parent_header = parent_block_header;
+    // Execute blocks
+    let mut parent_block_header = parent_block_header;
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
     let mut acc_receipts = Vec::new();
-
     for block in blocks {
         // Validate the block
         validate_block(
             block,
-            parent_header,
+            parent_block_header,
             &db.chain_config,
             elasticity_multiplier,
         )
@@ -213,7 +220,7 @@ fn execute_stateless(
 
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
-        parent_header = &block.header;
+        parent_block_header = &block.header;
         acc_receipts.push(receipts);
     }
 
@@ -239,42 +246,4 @@ fn execute_stateless(
         final_state_hash,
         last_block_hash,
     })
-}
-
-fn validate_block_hashes<'a>(
-    block_headers: &[BlockHeader],
-    db_block_hashes: impl IntoIterator<Item = &'a BlockHash>,
-) -> Result<bool, StatelessExecutionError> {
-    // TODO: a simpler way would be to store block headers instead of block hashes in
-    // the proverdb, fill remaining headers (because required hashes may not form a chain)
-    // and just execute the windowing validation.
-
-    // Enforces there's at least one block header, so windows() call doesn't panic.
-    if block_headers.is_empty() {
-        return Err(StatelessExecutionError::NoHeadersRequired);
-    };
-
-    // Validate block hashes. The batch's parent hash is checked in the first validate_block() call.
-    let mut valid_hashes = Vec::new();
-    for window in block_headers.windows(2) {
-        let (Some(header), Some(next_header)) = (&window.first(), &window.get(1)) else {
-            // windows() returns an empty iterator in this case.
-            return Err(StatelessExecutionError::Unreachable(
-                "block header window len is < 2".to_string(),
-            ));
-        };
-        let current_hash = header.hash();
-        if next_header.parent_hash != current_hash {
-            return Ok(false);
-        }
-        valid_hashes.push(current_hash);
-    }
-
-    for db_block_hash in db_block_hashes {
-        if !valid_hashes.contains(db_block_hash) {
-            return Ok(false);
-        }
-    }
-
-    Ok(true)
 }

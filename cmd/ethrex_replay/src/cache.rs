@@ -3,7 +3,7 @@ use std::{
     io::{BufReader, BufWriter},
 };
 
-use ethrex_common::types::{Block, BlockHeader};
+use ethrex_common::types::Block;
 use ethrex_vm::ProverDB;
 
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct Cache {
     pub blocks: Vec<Block>,
-    pub block_headers: Vec<BlockHeader>,
     pub db: ProverDB,
 }
 

@@ -10,10 +10,7 @@ use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use bytes::Bytes;
-use ethrex_common::{
-    types::{Block, BlockHeader},
-    Address,
-};
+use ethrex_common::{types::Block, Address};
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -34,7 +31,6 @@ use tracing::{debug, error, info, warn};
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
-    pub block_headers: Vec<BlockHeader>,
     pub db: ProverDB,
     pub elasticity_multiplier: u64,
 }
@@ -522,38 +518,16 @@ async fn create_prover_input(
         )));
     };
 
-    let first_block_number_in_batch = *block_numbers
-        .first()
-        .ok_or(ProverServerError::InternalError("empty batch".to_string()))?;
-
     let blocks = fetch_blocks(state, block_numbers).await?;
 
     // Create prover_db
     let db = to_prover_db(&state.store.clone(), &blocks).await?;
-
-    let mut block_headers = Vec::new();
-    let oldest_required_block_number =
-        *db.block_hashes
-            .keys()
-            .min()
-            .ok_or(ProverServerError::InternalError(
-                "no block hashes required (should at least contain parent hash)".to_string(),
-            ))?;
-    // from oldest required to parent:
-    for number in oldest_required_block_number..first_block_number_in_batch {
-        let header = state
-            .store
-            .get_block_header(number)?
-            .ok_or(ProverServerError::StorageDataIsNone)?;
-        block_headers.push(header);
-    }
 
     debug!("Created prover input for batch {batch_number}");
 
     Ok(ProverInputData {
         db,
         blocks,
-        block_headers,
         elasticity_multiplier: state.elasticity_multiplier,
     })
 }

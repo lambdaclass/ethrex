@@ -5,7 +5,7 @@ use crate::cache::{load_cache, load_cache_batch, write_cache, write_cache_batch,
 use crate::rpc::{db::RpcDB, get_block, get_latest_block_number};
 use ethrex_common::types::ChainConfig;
 use ethrex_common::{Address, H256};
-use eyre::{ContextCompat, WrapErr};
+use eyre::WrapErr;
 
 pub async fn or_latest(maybe_number: Option<usize>, rpc_url: &str) -> eyre::Result<usize> {
     Ok(match maybe_number {
@@ -35,27 +35,8 @@ pub async fn get_blockdata(
         .to_exec_db(&block)
         .wrap_err("failed to build execution db")?;
 
-    let mut block_headers = Vec::new();
-    let oldest_required_block_number = db
-        .block_hashes
-        .keys()
-        .min()
-        .wrap_err("no block hashes required (should at least contain parent hash)")?;
-    // from oldest required to parent:
-    for number in *oldest_required_block_number..block.header.number {
-        let number: usize = number
-            .try_into()
-            .wrap_err("failed to convert block number to usize from u64")?;
-        let header = get_block(rpc_url, number)
-            .await
-            .wrap_err("failed to fetch block")?
-            .header;
-        block_headers.push(header);
-    }
-
     let cache = Cache {
         blocks: vec![block],
-        block_headers,
         db,
     };
     write_cache(&cache).expect("failed to write cache");
@@ -94,10 +75,6 @@ pub async fn get_rangedata(
         .collect();
     rpc_db.load_accounts(&to_fetch).await?;
     let mut proverdb = rpc_db.to_exec_db(first_block)?;
-    proverdb.block_hashes = blocks
-        .iter()
-        .flat_map(|cache| cache.db.block_hashes.clone())
-        .collect();
     for block_data in blocks.iter() {
         proverdb
             .state_proofs
@@ -113,27 +90,8 @@ pub async fn get_rangedata(
         dedup_proofs(&mut proofs.1);
     }
 
-    let mut block_headers = Vec::new();
-    let oldest_required_block_number = proverdb
-        .block_hashes
-        .keys()
-        .min()
-        .wrap_err("no block hashes required (should at least contain parent hash)")?;
-    // from oldest required to parent:
-    for number in *oldest_required_block_number..first_block.header.number {
-        let number: usize = number
-            .try_into()
-            .wrap_err("failed to convert block number to usize from u64")?;
-        let header = get_block(rpc_url, number)
-            .await
-            .wrap_err("failed to fetch block")?
-            .header;
-        block_headers.push(header);
-    }
-
     let cache = Cache {
         blocks: blocks.iter().map(|cache| cache.blocks[0].clone()).collect(),
-        block_headers,
         db: proverdb,
     };
     write_cache_batch(&cache)?;

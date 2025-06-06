@@ -1,7 +1,4 @@
-use ethrex_common::{
-    types::{Block, BlockHeader},
-    H256,
-};
+use ethrex_common::{types::Block, H256};
 use ethrex_vm::ProverDB;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::{serde_as, DeserializeAs, SerializeAs};
@@ -13,10 +10,7 @@ pub struct ProgramInput {
     /// blocks to execute
     #[serde_as(as = "SerdeJSON")]
     pub blocks: Vec<Block>,
-    /// headers of previous blocks
-    #[serde_as(as = "SerdeJSON")]
-    pub block_headers: Vec<BlockHeader>,
-    /// database containing only the data necessary to execute
+    /// database containing all data necessary to execute
     pub db: ProverDB,
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,

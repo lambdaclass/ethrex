@@ -69,7 +69,6 @@ pub async fn generate_program_input(
         .get(block_number)
         .ok_or(ProverInputError::InvalidBlockNumber(block_number))?
         .clone();
-    let block_number = block.header.number;
 
     // create store
     let store = Store::new("memory", EngineType::InMemory)?;
@@ -84,31 +83,9 @@ pub async fn generate_program_input(
     let blocks = vec![block];
     let db = to_prover_db(&store, &blocks).await?;
 
-    let mut block_headers = Vec::new();
-    let oldest_required_block_number =
-        db.block_hashes
-            .keys()
-            .min()
-            .ok_or(ProverInputError::InternalError(
-                "no block hashes required (should at least contain parent hash)".to_string(),
-            ))?;
-    // from oldest required to parent:
-    for number in *oldest_required_block_number..block_number {
-        let number_usize = number.try_into().map_err(|_| {
-            ProverInputError::InternalError(
-                "failed to convert block number from u64 to usize".to_string(),
-            )
-        })?;
-        let header = store
-            .get_block_header(number)?
-            .ok_or(ProverInputError::InvalidBlockNumber(number_usize))?;
-        block_headers.push(header);
-    }
-
     Ok(ProgramInput {
         db,
         blocks,
-        block_headers,
         elasticity_multiplier,
     })
 }

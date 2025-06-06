@@ -93,7 +93,6 @@ impl Prover {
             batch_number,
             input: ProgramInput {
                 blocks: input.blocks,
-                block_headers: input.block_headers,
                 db: input.db,
                 elasticity_multiplier: input.elasticity_multiplier,
             },
