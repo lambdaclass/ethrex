@@ -8,7 +8,7 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::info;
-use constants::MAX_INITCODE_SIZE;
+use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
@@ -28,6 +28,7 @@ use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
+
 use vm::StoreVmDatabase;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -49,7 +50,6 @@ pub struct BatchBlockProcessingFailure {
     pub last_valid_hash: H256,
     pub failed_block_hash: H256,
 }
-
 impl Blockchain {
     pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
         Self {
@@ -402,6 +402,7 @@ impl Blockchain {
         sender: Address,
     ) -> Result<(), MempoolError> {
         // TODO: Add validations here
+        let nonce = tx.nonce();
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
             return Ok(());
@@ -421,6 +422,10 @@ impl Blockchain {
             && tx.is_contract_creation()
             && tx.data().len() > MAX_INITCODE_SIZE
         {
+            return Err(MempoolError::TxMaxInitCodeSizeError);
+        }
+
+        if !tx.is_contract_creation() && tx.data().len() >= MAX_TRANSACTION_DATA_SIZE {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
 
@@ -450,7 +455,7 @@ impl Blockchain {
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if tx.nonce() < sender_acc_info.nonce {
+            if nonce < sender_acc_info.nonce || nonce == u64::MAX {
                 return Err(MempoolError::InvalidNonce);
             }
 
@@ -464,6 +469,11 @@ impl Blockchain {
         } else {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
+        }
+
+        // Check the nonce of pendings TXs in the mempool from the same sender
+        if self.mempool.contains_sender_nonce(sender, nonce)? {
+            return Err(MempoolError::InvalidNonce);
         }
 
         if let Some(chain_id) = tx.chain_id() {
