@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, fmt::Debug, rc::Rc};
 
 use ethrex_common::types::Transaction;
 
@@ -7,7 +7,7 @@ use crate::{
     vm::VM,
 };
 
-pub trait Hook {
+pub trait Hook: Debug {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), VMError>;
 
     fn finalize_execution(

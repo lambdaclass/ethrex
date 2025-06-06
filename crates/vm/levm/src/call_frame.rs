@@ -116,20 +116,10 @@ impl CallFrameBackup {
     }
 
     pub fn extend(&mut self, other: CallFrameBackup) {
-        for (address, account) in &other.original_accounts_info {
-            self.original_accounts_info
-                .entry(*address)
-                .or_insert_with(|| account.clone());
-        }
-        for (address, storage) in &other.original_account_storage_slots {
-            let entry = self
-                .original_account_storage_slots
-                .entry(*address)
-                .or_default();
-            for (slot, value) in storage {
-                entry.entry(*slot).or_insert(*value);
-            }
-        }
+        self.original_account_storage_slots
+            .extend(other.original_account_storage_slots);
+        self.original_accounts_info
+            .extend(other.original_accounts_info);
     }
 }
 

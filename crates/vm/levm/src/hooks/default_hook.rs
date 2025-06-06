@@ -12,11 +12,17 @@ use ethrex_common::{
     Address, U256,
 };
 
-use std::cmp::max;
+use std::{cmp::max, fmt::Debug};
 
 pub const MAX_REFUND_QUOTIENT: u64 = 5;
 
 pub struct DefaultHook;
+
+impl Debug for DefaultHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DefaultHook").finish()
+    }
+}
 
 impl Hook for DefaultHook {
     /// ## Description

@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use crate::{
     call_frame::CallFrameBackup,
     errors::{ExecutionReport, VMError},
@@ -8,6 +10,14 @@ use crate::{
 #[derive(Default)]
 pub struct BackupHook {
     pub callframe_backup: CallFrameBackup,
+}
+
+impl Debug for BackupHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BackupHook")
+            .field("callframe_backup", &self.callframe_backup)
+            .finish()
+    }
 }
 
 impl Hook for BackupHook {

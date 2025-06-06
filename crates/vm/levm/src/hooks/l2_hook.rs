@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use crate::{
     errors::{ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{default_hook, hook::Hook},
@@ -8,6 +10,14 @@ use ethrex_common::{types::Fork, Address, U256};
 
 pub struct L2Hook {
     pub recipient: Option<Address>,
+}
+
+impl Debug for L2Hook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("L2Hook")
+            .field("recipient", &self.recipient)
+            .finish()
+    }
 }
 
 impl Hook for L2Hook {
