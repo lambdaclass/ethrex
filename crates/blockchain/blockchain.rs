@@ -21,8 +21,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
 use ethrex_common::{Address, H256};
-use ethrex_storage::query_plan::QueryPlanVec;
-use ethrex_storage::{error::StoreError, query_plan::QueryPlan, Store};
+use ethrex_storage::{error::StoreError, DBUpdateBatch, Store};
 use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use mempool::Mempool;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -119,14 +118,14 @@ impl Blockchain {
         Ok(execution_result)
     }
 
-    async fn store_block_with_query_plan(
+    async fn store_block_in_bulk(
         &self,
         block: &Block,
         execution_result: BlockExecutionResult,
         account_updates: &[AccountUpdate],
     ) -> Result<(), ChainError> {
         // Apply the account updates over the last block's state and compute the new state root
-        let (new_state_root, state_query_plan, accounts_query_plan) = self
+        let (new_state_root, state_updates, accounts_updates) = self
             .storage
             .apply_account_updates_batch(block.header.parent_hash, account_updates)
             .await?
@@ -135,13 +134,14 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
 
-        let query_plan = QueryPlan {
-            account_updates: (state_query_plan, accounts_query_plan),
-            block: block.clone(),
-            receipts: (block.hash(), execution_result.receipts),
+        let update_batch = DBUpdateBatch {
+            account_updates: state_updates,
+            storage_updates: accounts_updates,
+            blocks: vec![block.clone()],
+            receipts: vec![(block.hash(), execution_result.receipts)],
         };
 
-        query_plan.apply_to_store(self.storage.clone()).await?;
+        update_batch.apply_to_store(self.storage.clone()).await?;
 
         Ok(())
     }
@@ -176,7 +176,7 @@ impl Blockchain {
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();
-        let result = self.store_block_with_query_plan(block, res, &updates).await;
+        let result = self.store_block_in_bulk(block, res, &updates).await;
         let stored = Instant::now();
         Self::print_add_block_logs(block, since, executed, stored);
         result
@@ -296,7 +296,7 @@ impl Blockchain {
             .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
 
         // Apply the account updates over all blocks and compute the new state root
-        let (new_state_root, state_query_plan, accounts_query_plan) = self
+        let (new_state_root, state_updates, accounts_updates) = self
             .storage
             .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
             .await
@@ -306,14 +306,15 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
-        let query_plan = QueryPlanVec {
-            account_updates: (state_query_plan, accounts_query_plan),
-            block: blocks,
+        let update_batch = DBUpdateBatch {
+            account_updates: state_updates,
+            storage_updates: accounts_updates,
+            blocks,
             receipts: all_receipts,
         };
 
         self.storage
-            .store_changes_batch(query_plan)
+            .store_changes(update_batch)
             .await
             .map_err(|e| (e.into(), None))?;
 

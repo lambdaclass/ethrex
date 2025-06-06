@@ -1,6 +1,5 @@
 mod api;
 
-pub mod query_plan;
 #[cfg(any(feature = "libmdbx", feature = "redb"))]
 mod rlp;
 mod store;
@@ -10,5 +9,6 @@ mod utils;
 
 pub mod error;
 pub use store::{
-    hash_address, hash_key, EngineType, Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS,
+    hash_address, hash_key, DBUpdateBatch, EngineType, Store, MAX_SNAPSHOT_READS,
+    STATE_TRIE_SEGMENTS,
 };

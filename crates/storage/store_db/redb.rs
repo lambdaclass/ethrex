@@ -26,7 +26,9 @@ use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
 
+use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::SnapStateIndex;
+use crate::DBUpdateBatch;
 use crate::{api::StoreEngine, utils::ChainDataIndex};
 
 const STATE_TRIE_NODES_TABLE: TableDefinition<&[u8], &[u8]> =
@@ -303,6 +305,77 @@ impl RedBStore {
 
 #[async_trait::async_trait]
 impl StoreEngine for RedBStore {
+    async fn store_changes_batch(&self, update_batch: DBUpdateBatch) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let write_txn = db.begin_write()?;
+            {
+                // store account updates
+                let mut state_trie_store = write_txn.open_table(STATE_TRIE_NODES_TABLE)?;
+                for (node_hash, node_data) in update_batch.account_updates {
+                    state_trie_store.insert(node_hash.as_ref(), &*node_data)?;
+                }
+
+                let mut addr_store = write_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
+                for (hashed_address, nodes) in update_batch.storage_updates {
+                    for (node_hash, node_data) in nodes {
+                        addr_store.insert(
+                            (hashed_address.0, node_hash_to_fixed_size(node_hash)),
+                            &*node_data,
+                        )?;
+                    }
+                }
+
+                let mut transaction_table = write_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
+                let mut bodies = write_txn.open_table(BLOCK_BODIES_TABLE)?;
+                let mut headers = write_txn.open_table(HEADERS_TABLE)?;
+                let mut block_numbers = write_txn.open_table(BLOCK_NUMBERS_TABLE)?;
+
+                for block in update_batch.blocks {
+                    // store block
+                    let number = block.header.number;
+                    let hash = <H256 as Into<BlockHashRLP>>::into(block.hash());
+
+                    for (index, transaction) in block.body.transactions.iter().enumerate() {
+                        transaction_table.insert(
+                            <H256 as Into<TransactionHashRLP>>::into(transaction.compute_hash()),
+                            <(u64, BlockHash, u64) as Into<Rlp<(BlockNumber, BlockHash, Index)>>>::into(
+                                (number, block.hash(), index as u64),
+                            ),
+                        )?;
+                    }
+                    bodies.insert(
+                        hash.clone(),
+                        <BlockBody as Into<BlockBodyRLP>>::into(block.body),
+                    )?;
+                    headers.insert(
+                        hash.clone(),
+                        <BlockHeader as Into<BlockHeaderRLP>>::into(block.header),
+                    )?;
+                    block_numbers.insert(hash, number)?;
+                }
+
+                let mut receipts_table = write_txn.open_table(RECEIPTS_TABLE)?;
+                for (block_hash, receipts) in update_batch.receipts {
+                    for (index, receipt) in receipts.into_iter().enumerate() {
+                        receipts_table.insert(
+                            <(BlockHash, u64) as Into<TupleRLP<BlockHash, Index>>>::into((
+                                block_hash,
+                                index as u64,
+                            )),
+                            <Receipt as Into<ReceiptRLP>>::into(receipt),
+                        )?;
+                    }
+                }
+            }
+
+            write_txn.commit()?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
     async fn add_block_header(
         &self,
         block_hash: BlockHash,

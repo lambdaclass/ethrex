@@ -1,6 +1,5 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
-use crate::query_plan::{QueryPlan, QueryPlanVec};
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
@@ -43,13 +42,25 @@ pub enum EngineType {
     RedB,
 }
 
-impl Store {
-    pub async fn store_changes(&self, query_plan: QueryPlan) -> Result<(), StoreError> {
-        self.engine.store_changes(query_plan).await
-    }
+type StorageNode = (NodeHash, Vec<u8>);
 
-    pub async fn store_changes_batch(&self, query_plan: QueryPlanVec) -> Result<(), StoreError> {
-        self.engine.store_changes_batch(query_plan).await
+pub struct DBUpdateBatch {
+    pub account_updates: Vec<(NodeHash, Vec<u8>)>,
+    pub storage_updates: Vec<(H256, Vec<StorageNode>)>,
+    pub blocks: Vec<Block>,
+    pub receipts: Vec<(H256, Vec<Receipt>)>,
+}
+
+impl DBUpdateBatch {
+    pub async fn apply_to_store(self, store: Store) -> Result<(), StoreError> {
+        store.store_changes(self).await?;
+        Ok(())
+    }
+}
+
+impl Store {
+    pub async fn store_changes(&self, update_batch: DBUpdateBatch) -> Result<(), StoreError> {
+        self.engine.store_changes_batch(update_batch).await
     }
 
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
@@ -330,7 +341,7 @@ impl Store {
         Option<(
             H256,
             Vec<(NodeHash, Vec<u8>)>,
-            Vec<(Vec<u8>, Vec<(NodeHash, Vec<u8>)>)>,
+            Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
         )>,
         StoreError,
     > {
@@ -338,11 +349,11 @@ impl Store {
             return Ok(None);
         };
 
-        let (state_trie_hash, state_query_plan, query_plan) = self
+        let (state_trie_hash, state_updates, storage_updates) = self
             .apply_account_updates_from_trie_batch(state_trie, account_updates)
             .await?;
 
-        Ok(Some((state_trie_hash, state_query_plan, query_plan)))
+        Ok(Some((state_trie_hash, state_updates, storage_updates)))
     }
 
     pub async fn apply_account_updates_from_trie_batch(
@@ -353,7 +364,7 @@ impl Store {
         (
             H256,
             Vec<(NodeHash, Vec<u8>)>,
-            Vec<(Vec<u8>, Vec<(NodeHash, Vec<u8>)>)>,
+            Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
         ),
         StoreError,
     > {
@@ -394,15 +405,15 @@ impl Store {
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
                 }
-                let (storage_hash, storage_query_plan) = storage_trie.hash_prepare_batch();
+                let (storage_hash, storage_updates) = storage_trie.hash_prepare_batch();
                 account_state.storage_root = storage_hash;
-                ret_vec_account.push((hashed_address.clone(), storage_query_plan));
+                ret_vec_account.push((H256::from_slice(&hashed_address), storage_updates));
             }
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        let (state_hash, state_query_plan) = state_trie.hash_prepare_batch();
+        let (state_hash, state_updates) = state_trie.hash_prepare_batch();
 
-        Ok((state_hash, state_query_plan, ret_vec_account))
+        Ok((state_hash, state_updates, ret_vec_account))
     }
 
     /// Applies account updates based on the block's latest storage state

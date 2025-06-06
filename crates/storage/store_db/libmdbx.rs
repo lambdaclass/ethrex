@@ -1,6 +1,5 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
-use crate::query_plan::{QueryPlan, QueryPlanVec};
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
     BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP,
@@ -11,6 +10,7 @@ use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
+use crate::DBUpdateBatch;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
@@ -127,103 +127,28 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn store_changes(&self, query_plan: QueryPlan) -> Result<(), StoreError> {
+    async fn store_changes_batch(&self, update_batch: DBUpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
             // store account updates
-            for (node_hash, node_data) in query_plan.account_updates.0 {
-                tx.upsert::<StateTrieNodes>(node_hash.into(), node_data)
+            for (node_hash, node_data) in update_batch.account_updates {
+                tx.upsert::<StateTrieNodes>(node_hash, node_data)
                     .map_err(StoreError::LibmdbxError)?;
             }
 
-            for (hashed_address, nodes) in query_plan.account_updates.1 {
+            for (hashed_address, nodes) in update_batch.storage_updates {
                 for (node_hash, node_data) in nodes {
-                    let key_1: [u8; 32] = H256::from_slice(&hashed_address).into();
+                    let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
                     tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
                         .map_err(StoreError::LibmdbxError)?;
                 }
             }
-
-            // store block
-            let number = query_plan.block.header.number;
-            let hash = query_plan.block.hash();
-
-            for (index, transaction) in query_plan.block.body.transactions.iter().enumerate() {
-                tx.upsert::<TransactionLocations>(
-                    transaction.compute_hash().into(),
-                    (number, hash, index as u64).into(),
-                )
-                .map_err(StoreError::LibmdbxError)?;
-            }
-
-            tx.upsert::<Bodies>(
-                hash.into(),
-                BlockBodyRLP::from_bytes(query_plan.block.body.encode_to_vec()),
-            )
-            .map_err(StoreError::LibmdbxError)?;
-
-            tx.upsert::<Headers>(
-                hash.into(),
-                BlockHeaderRLP::from_bytes(query_plan.block.header.encode_to_vec()),
-            )
-            .map_err(StoreError::LibmdbxError)?;
-
-            tx.upsert::<BlockNumbers>(hash.into(), number)
-                .map_err(StoreError::LibmdbxError)?;
-
-            // store receipts
-            let mut key_values = vec![];
-            let block_hash = query_plan.receipts.0;
-            for (index, receipt) in query_plan.receipts.1.clone().into_iter().enumerate() {
-                let key = (block_hash, index as u64).into();
-                let receipt_rlp = receipt.encode_to_vec();
-                let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
-                    continue;
-                };
-
-                key_values.append(&mut entries);
-            }
-
-            let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-            for (key, value) in key_values {
-                cursor
-                    .upsert(key, value)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-
-            tx.commit().map_err(StoreError::LibmdbxError)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
-    }
-
-    async fn store_changes_batch(&self, query_plan: QueryPlanVec) -> Result<(), StoreError> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-
-            // store account updates
-            for (node_hash, node_data) in query_plan.account_updates.0 {
-                tx.upsert::<StateTrieNodes>(node_hash.into(), node_data)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-
-            for (hashed_address, nodes) in query_plan.account_updates.1 {
-                for (node_hash, node_data) in nodes {
-                    let key_1: [u8; 32] = H256::from_slice(&hashed_address).into();
-                    let key_2 = node_hash_to_fixed_size(node_hash);
-
-                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
-                        .map_err(StoreError::LibmdbxError)?;
-                }
-            }
-
-            // store block one by one
-            for block in query_plan.block.into_iter() {
+            for block in update_batch.blocks {
+                // store block
                 let number = block.header.number;
                 let hash = block.hash();
 
@@ -234,6 +159,7 @@ impl StoreEngine for Store {
                     )
                     .map_err(StoreError::LibmdbxError)?;
                 }
+
                 tx.upsert::<Bodies>(
                     hash.into(),
                     BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
@@ -249,13 +175,10 @@ impl StoreEngine for Store {
                 tx.upsert::<BlockNumbers>(hash.into(), number)
                     .map_err(StoreError::LibmdbxError)?;
             }
-
-            // store receipts
-            let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-            for receipt in query_plan.receipts {
+            for (block_hash, receipts) in update_batch.receipts {
+                // store receipts
                 let mut key_values = vec![];
-                let block_hash = receipt.0;
-                for (index, receipt) in receipt.1.clone().into_iter().enumerate() {
+                for (index, receipt) in receipts.into_iter().enumerate() {
                     let key = (block_hash, index as u64).into();
                     let receipt_rlp = receipt.encode_to_vec();
                     let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp)
@@ -265,7 +188,7 @@ impl StoreEngine for Store {
 
                     key_values.append(&mut entries);
                 }
-
+                let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
                 for (key, value) in key_values {
                     cursor
                         .upsert(key, value)

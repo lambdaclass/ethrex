@@ -146,9 +146,9 @@ impl Trie {
     }
 
     pub fn hash_prepare_batch(&mut self) -> (H256, Vec<(NodeHash, Vec<u8>)>) {
-        let query_plan = self.commit_vec_aka_state_diff();
+        let updates = self.commit_vec_aka_state_diff();
         let ret_hash = self.hash_no_commit();
-        (ret_hash, query_plan)
+        (ret_hash, updates)
     }
 
     /// Compute the hash of the root node and flush any changes into the database.
