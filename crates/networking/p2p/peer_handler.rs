@@ -35,7 +35,7 @@ pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
-// Ask as much as 128 block bodies per request
+// Ask as many as 128 block bodies per request
 // this magic number is not part of the protocol and is taken from geth, see:
 // https://github.com/ethereum/go-ethereum/blob/2585776aabbd4ae9b00050403b42afb0cee968ec/eth/downloader/downloader.go#L42-L43
 //
