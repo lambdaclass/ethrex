@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749155938266,
+  "lastUpdate": 1749169027904,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11185,6 +11185,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 174339370051,
             "range": "± 534841948",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b7be96122f39417ce5c39351c6b2300c17ce0d3f",
+          "message": "chore(l1): add total gas used to execution metrics when syncing (#3067)\n\n**Motivation**\n\nLooking at execution metrics while syncing I found myself wanting to see\nnot just total transactions of the batch, but also total gas. The total\nnumber of transactions can be misleading since they could be a small\nnumber of very heavy txs, or they could just be a small number of\ntransfers, and that changes a great deal about what is being executed.\nTotal gas is a better proxy to how heavy a batch is.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-05T23:30:55Z",
+          "tree_id": "b6d723e749c079353ccbee6c8d2543e5a1b4d0a9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b7be96122f39417ce5c39351c6b2300c17ce0d3f"
+        },
+        "date": 1749169022743,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 175970617954,
+            "range": "± 259850075",
             "unit": "ns/iter"
           }
         ]
