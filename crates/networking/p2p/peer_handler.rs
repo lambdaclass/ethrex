@@ -223,16 +223,21 @@ impl PeerHandler {
                 continue; // Retry on empty response
             };
             let mut res = Vec::new();
+            let mut validation_failed = false;
             // Validate Blocks
             for (header, body) in block_headers[..block_bodies.len()].iter().zip(block_bodies) {
                 if let Err(e) = validate_block_body(header, &body) {
                     warn!(
                         "Invalid block body error {e}, discarding peer {peer_id} and retrying..."
                     );
+                    validation_failed = true;
                     self.remove_peer(peer_id).await;
-                    continue; // Retry on validation failure
+                    break;
                 }
                 res.push(body);
+            }
+            if validation_failed {
+                continue; // Retry on validation failure
             }
 
             return Some(res);
