@@ -230,7 +230,7 @@ impl Syncer {
                 .position(|header| header.hash() == sync_head)
             {
                 sync_head_found = true;
-                block_headers.drain(index..);
+                block_headers.drain(index + 1..);
             }
 
             // Update current fetch head
@@ -248,7 +248,6 @@ impl Syncer {
             }
 
             // Discard the first header as we already have it
-            block_hashes.remove(0);
             block_headers.remove(0);
 
             block_sync_state
@@ -505,8 +504,10 @@ impl FullBlockSyncState {
             // We don't have enough headers to fill up a batch, lets request more
             return Ok(());
         }
-        // Fetch full blocks
-        while self.current_blocks.len() < EXECUTE_BATCH_SIZE && !self.current_headers.is_empty() {
+        // If we have enough headers to fill execution batches, request the matching bodies
+        while self.current_headers.len() >= EXECUTE_BATCH_SIZE
+            || !self.current_headers.is_empty() && sync_head_found
+        {
             // Download block bodies
             let headers = &self.current_headers
                 [..min(MAX_BLOCK_BODIES_TO_REQUEST, self.current_headers.len())];
