@@ -70,13 +70,13 @@ pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<Acc
     let mut remaining_gas = block.header.gas_limit;
     let mut prover_db = cache.db;
 
-    // GeneralizedDatabase::new explicitly requires an Arc
-    // TODO: refactor GeneralizedDatabase and/or Database to avoid this
-    {
+    let changes = {
         let store: Arc<DynVmDatabase> = Arc::new(Box::new(prover_db.clone()));
         let mut db = GeneralizedDatabase::new(store.clone(), CacheDB::new());
         LEVM::prepare_block(block, &mut db)?;
-    }
+        LEVM::get_state_transitions(&mut db)?
+    };
+    prover_db.apply_account_updates(&changes);
 
     for (tx, tx_sender) in block.body.get_transactions_with_sender() {
         let mut vm = Evm::new(EvmEngine::LEVM, prover_db.clone());

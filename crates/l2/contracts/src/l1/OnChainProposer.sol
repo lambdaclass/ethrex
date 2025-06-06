@@ -65,7 +65,6 @@ contract OnChainProposer is
     address public PICOVERIFIER;
     address public R0VERIFIER;
     address public SP1VERIFIER;
-    address public TDXVERIFIER;
 
     bytes32 public SP1_VERIFICATION_KEY;
 
@@ -74,6 +73,8 @@ contract OnChainProposer is
     /// the verification process will not happen.
     /// @dev Used only in dev mode.
     address public constant DEV_MODE = address(0xAA);
+
+    address public TDXVERIFIER;
 
     /// @notice The address of the AlignedProofAggregatorService contract.
     /// @dev This address is set during contract initialization and is used to verify aligned proofs.
