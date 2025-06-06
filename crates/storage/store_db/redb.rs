@@ -28,7 +28,7 @@ use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition,
 
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::SnapStateIndex;
-use crate::DBUpdateBatch;
+use crate::UpdateBatch;
 use crate::{api::StoreEngine, utils::ChainDataIndex};
 
 const STATE_TRIE_NODES_TABLE: TableDefinition<&[u8], &[u8]> =
@@ -305,7 +305,7 @@ impl RedBStore {
 
 #[async_trait::async_trait]
 impl StoreEngine for RedBStore {
-    async fn store_changes_batch(&self, update_batch: DBUpdateBatch) -> Result<(), StoreError> {
+    async fn store_changes_batch(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let write_txn = db.begin_write()?;

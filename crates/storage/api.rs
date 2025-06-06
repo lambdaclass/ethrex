@@ -6,7 +6,7 @@ use ethrex_common::types::{
 };
 use std::{collections::HashMap, fmt::Debug, panic::RefUnwindSafe};
 
-use crate::DBUpdateBatch;
+use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
@@ -15,7 +15,7 @@ use ethrex_trie::{Nibbles, Trie};
 #[async_trait::async_trait]
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Store changes in a batch from a vec of blocks
-    async fn store_changes_batch(&self, update_batch: DBUpdateBatch) -> Result<(), StoreError>;
+    async fn store_changes_batch(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError>;

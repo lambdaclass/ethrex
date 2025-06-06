@@ -10,7 +10,7 @@ use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
-use crate::DBUpdateBatch;
+use crate::UpdateBatch;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
@@ -127,7 +127,7 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn store_changes_batch(&self, update_batch: DBUpdateBatch) -> Result<(), StoreError> {
+    async fn store_changes_batch(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;

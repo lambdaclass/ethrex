@@ -15,7 +15,7 @@ use ethrex_common::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, NodeHash, Trie};
+use ethrex_trie::{Nibbles, NodeHash, Trie, TrieNode};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
@@ -42,10 +42,7 @@ pub enum EngineType {
     RedB,
 }
 
-/// The hash of a trie node and it's encoded contents
-type TrieNode = (NodeHash, Vec<u8>);
-
-pub struct DBUpdateBatch {
+pub struct UpdateBatch {
     /// Nodes to be added to the state trie
     pub account_updates: Vec<TrieNode>,
     /// Storage tries updated and their new nodes
@@ -56,7 +53,7 @@ pub struct DBUpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
 }
 
-impl DBUpdateBatch {
+impl UpdateBatch {
     pub async fn apply_to_store(self, store: Store) -> Result<(), StoreError> {
         store.store_changes(self).await?;
         Ok(())
@@ -64,7 +61,7 @@ impl DBUpdateBatch {
 }
 
 impl Store {
-    pub async fn store_changes(&self, update_batch: DBUpdateBatch) -> Result<(), StoreError> {
+    pub async fn store_changes(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.engine.store_changes_batch(update_batch).await
     }
 

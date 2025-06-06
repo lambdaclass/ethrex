@@ -21,7 +21,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
 use ethrex_common::{Address, H256};
-use ethrex_storage::{error::StoreError, DBUpdateBatch, Store};
+use ethrex_storage::{error::StoreError, Store, UpdateBatch};
 use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use mempool::Mempool;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -134,7 +134,7 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
 
-        let update_batch = DBUpdateBatch {
+        let update_batch = UpdateBatch {
             account_updates: state_updates,
             storage_updates: accounts_updates,
             blocks: vec![block.clone()],
@@ -306,7 +306,7 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
-        let update_batch = DBUpdateBatch {
+        let update_batch = UpdateBatch {
             account_updates: state_updates,
             storage_updates: accounts_updates,
             blocks,

@@ -2,7 +2,7 @@ use crate::{
     api::StoreEngine,
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
-    DBUpdateBatch,
+    UpdateBatch,
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -89,7 +89,7 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn store_changes_batch(&self, update_batch: DBUpdateBatch) -> Result<(), StoreError> {
+    async fn store_changes_batch(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut store = self.inner()?;
         {
             // store account updates
