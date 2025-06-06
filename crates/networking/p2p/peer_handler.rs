@@ -29,7 +29,7 @@ use crate::{
     snap::encodable_to_proof,
 };
 use tracing::{debug, info, warn};
-pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
@@ -134,7 +134,7 @@ impl PeerHandler {
                 if are_block_headers_chained(&block_headers, &order) {
                     return Some(block_headers);
                 } else {
-                    warn!("Received invalid headers from peer, discarding peer {peer_id} and retrying...");
+                    warn!("[SYNCING] Received invalid headers from peer, discarding peer {peer_id} and retrying...");
                     self.remove_peer(peer_id).await;
                 }
             }
@@ -174,7 +174,7 @@ impl PeerHandler {
                     }
                     // Ignore replies that don't match the expected id (such as late responses)
                     Some(_) => continue,
-                    None => return None, // Retry request
+                    None => return None,
                 }
             }
         })
@@ -187,6 +187,9 @@ impl PeerHandler {
         }) {
             return Some((block_bodies, peer_id));
         }
+
+        warn!("[SYNCING] Didn't receive block bodies from peer, discarding peer {peer_id}...");
+        self.remove_peer(peer_id).await;
         None
     }
 
@@ -247,7 +250,7 @@ impl PeerHandler {
                 .iter()
                 .find_map(|block| validate_block_body(block).err())
             {
-                warn!("Invalid block body error {e}, discarding peer {peer_id} and retrying...");
+                warn!("[SYNCING] Invalid block body error {e}, discarding peer {peer_id} and retrying...");
                 self.remove_peer(peer_id).await;
                 continue; // Retry on validation failure
             }

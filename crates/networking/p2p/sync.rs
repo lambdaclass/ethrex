@@ -288,7 +288,6 @@ impl Syncer {
                         .download_and_run_blocks(
                             &block_hashes,
                             &block_headers,
-                            sync_head,
                             sync_head_found,
                             store.clone(),
                         )
@@ -366,7 +365,6 @@ impl Syncer {
         &mut self,
         block_hashes: &[BlockHash],
         block_headers: &[BlockHeader],
-        sync_head: BlockHash,
         sync_head_found: bool,
         store: Store,
     ) -> Result<Option<H256>, SyncError> {
@@ -460,12 +458,8 @@ impl Syncer {
                     .set_latest_valid_ancestor(failed_block_hash, last_valid_hash)
                     .await?;
 
-                // TODO(#2127): Just marking the failing ancestor and the sync head is enough
-                // to fix the Missing Ancestors hive test, we want to look at a more robust
-                // solution in the future if needed.
-                store
-                    .set_latest_valid_ancestor(sync_head, last_valid_hash)
-                    .await?;
+                // TODO(#2127): Just marking the failing ancestor is enough for the the Missing Ancestors hive test,
+                // we want to look at a more robust solution in the future if needed.
             }
 
             return Err(error.into());
