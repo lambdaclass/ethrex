@@ -324,6 +324,16 @@ impl StoreEngine for Store {
             let last_txn_id_after = db_info_end.last_txnid();
             let num_readers_after = db_info_end.num_readers();
             let freelists_after = db_freelist_end;
+            let leaf_pages_delta = leaf_pages_after - leaf_pages_before;
+            let branch_pages_delta = branch_pages_after - branch_pages_before;
+            let overflow_pages_delta = overflow_pages_after - overflow_pages_before;
+            let last_page_num_delta = last_page_num_after - last_page_num_before;
+            let last_txn_id_delta = last_txn_id_after - last_txn_id_before;
+            let num_readers_delta = num_readers_after - num_readers_before;
+            let freelists_delta = freelists_after - freelists_before;
+            let total_size_delta = total_size_after - total_size_before;
+            let entries_delta = entries_after - entries_before;
+            let depth_delta = depth_after - depth_before;
             let total_time = (commit_end - total_start).as_secs();
             let commit_time = (commit_end - commit_start).as_secs();
             let write_receipts_time = (write_receipts_end - write_receipts_start).as_secs();
@@ -334,7 +344,7 @@ impl StoreEngine for Store {
             let num_blocks = num_blocks;
             let num_receipts = num_receipts;
             let num_account_updates = num_account_updates;
-            ::tracing::debug!(
+            ::tracing::warn!(
                 total_size_before,
                 entries_before,
                 depth_before,
@@ -355,6 +365,16 @@ impl StoreEngine for Store {
                 last_txn_id_after,
                 num_readers_after,
                 freelists_after,
+                total_size_delta,
+                entries_delta,
+                depth_delta,
+                leaf_pages_delta,
+                branch_pages_delta,
+                overflow_pages_delta,
+                last_page_num_delta,
+                last_txn_id_delta,
+                num_readers_delta,
+                freelists_delta,
                 total_time,
                 commit_time,
                 write_receipts_time,
