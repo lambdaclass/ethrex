@@ -53,15 +53,15 @@ const MAX_CHANNEL_READS: usize = 200;
 /// Pace at which progress is shown via info tracing
 const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
 /// Amount of blocks to execute in a single batch during FullSync
-const EXECUTE_BATCH_SIZE_CONST: usize = 1024;
+const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
-    static ref EXECUTE_BATCH_SIZE: usize = std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Block header limit environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_CONST);
+    static ref EXECUTE_BATCH_SIZE: usize = std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT);
 }
 #[cfg(not(feature = "sync-test"))]
 lazy_static::lazy_static! {
-    static ref EXECUTE_BATCH_SIZE: usize = EXECUTE_BATCH_SIZE_CONST;
+    static ref EXECUTE_BATCH_SIZE: usize = EXECUTE_BATCH_SIZE_DEFAULT;
 }
 
 lazy_static::lazy_static! {
