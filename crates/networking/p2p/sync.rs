@@ -174,15 +174,12 @@ impl Syncer {
             Err(e) => return Err(e.into()),
         };
 
-        // TODO(#2126): To avoid modifying the current_head while backtracking we use a separate search_head
-        let mut search_head = current_head;
-
         loop {
-            debug!("Requesting Block Headers from {search_head}");
+            debug!("Requesting Block Headers from {current_head}");
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(search_head, BlockRequestOrder::OldToNew)
+                .request_block_headers(current_head, BlockRequestOrder::OldToNew)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -203,12 +200,12 @@ impl Syncer {
             // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
             // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
             if first_block_header == last_block_header
-                && first_block_header.hash() == search_head
-                && search_head != sync_head
+                && first_block_header.hash() == current_head
+                && current_head != sync_head
             {
                 // There is no path to the sync head this goes back until it find a common ancerstor
                 warn!("Sync failed to find target block header, going back to the previous parent");
-                search_head = first_block_header.parent_hash;
+                current_head = first_block_header.parent_hash;
                 continue;
             }
 
@@ -237,8 +234,7 @@ impl Syncer {
             }
 
             // Update current fetch head
-            search_head = last_block_header.hash();
-            current_head = search_head;
+            current_head = last_block_header.hash();
 
             // If the sync head is less than 64 blocks away from our current head switch to full-sync
             if sync_mode == SyncMode::Snap && sync_head_found {
@@ -767,9 +763,7 @@ impl SnapBlockSyncState {
             .set_header_download_checkpoint(*block_hashes.last().unwrap())
             .await?;
         self.all_block_hashes.extend_from_slice(&block_hashes);
-        self.store
-            .add_block_headers(block_headers)
-            .await?;
+        self.store.add_block_headers(block_headers).await?;
         Ok(())
     }
 

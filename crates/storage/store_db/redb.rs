@@ -316,10 +316,7 @@ impl StoreEngine for RedBStore {
         .await
     }
 
-    async fn add_block_headers(
-        &self,
-        block_headers: Vec<BlockHeader>,
-    ) -> Result<(), StoreError> {
+    async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
         let key_values = block_headers
             .into_iter()
             .map(|header| {
