@@ -318,15 +318,13 @@ impl StoreEngine for RedBStore {
 
     async fn add_block_headers(
         &self,
-        block_hashes: Vec<BlockHash>,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        let key_values = block_hashes
+        let key_values = block_headers
             .into_iter()
-            .zip(block_headers)
-            .map(|(hash, header)| {
+            .map(|header| {
                 (
-                    <H256 as Into<BlockHashRLP>>::into(hash),
+                    <H256 as Into<BlockHashRLP>>::into(header.hash()),
                     <BlockHeader as Into<BlockHeaderRLP>>::into(header),
                 )
             })

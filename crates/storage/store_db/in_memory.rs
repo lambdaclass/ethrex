@@ -157,12 +157,11 @@ impl StoreEngine for Store {
 
     async fn add_block_headers(
         &self,
-        block_hashes: Vec<BlockHash>,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
         self.inner()?
             .headers
-            .extend(block_hashes.into_iter().zip(block_headers));
+            .extend(block_headers.into_iter().map(|header| (header.hash(), header)));
         Ok(())
     }
 

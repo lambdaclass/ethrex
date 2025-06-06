@@ -238,7 +238,7 @@ impl Syncer {
 
             // Update current fetch head
             search_head = last_block_header.hash();
-            current_head = current_head;
+            current_head = search_head;
 
             // If the sync head is less than 64 blocks away from our current head switch to full-sync
             if sync_mode == SyncMode::Snap && sync_head_found {
@@ -675,7 +675,7 @@ impl FullBlockSyncState {
         // Execute full blocks
         info!("Block batch ready to execute/store");
         while self.current_blocks.len() >= EXECUTE_BATCH_SIZE
-            || (self.current_blocks.len() > 0 && sync_head_found)
+            || (!self.current_blocks.is_empty() && sync_head_found)
         {
             // Now that we have a full batch, we can execute and store the blocks in batch
             let execution_start = Instant::now();
@@ -768,7 +768,7 @@ impl SnapBlockSyncState {
             .await?;
         self.all_block_hashes.extend_from_slice(&block_hashes);
         self.store
-            .add_block_headers(block_hashes, block_headers)
+            .add_block_headers(block_headers)
             .await?;
         Ok(())
     }
