@@ -44,8 +44,7 @@ pub fn ecdh_xchng(
 pub fn kdf(secret: &[u8], output: &mut [u8]) -> Result<(), RLPDecodeError> {
     // We don't use the `other_info` field
     concat_kdf::derive_key_into::<k256::sha2::Sha256>(secret, &[], output)
-        .map_err(|_| RLPDecodeError::InvalidLength)?;
-    Ok(())
+        .map_err(|_| RLPDecodeError::InvalidLength)
 }
 
 /// Cpmputes the node_id from a public key (aka computes the Keccak256 hash of the given public key)

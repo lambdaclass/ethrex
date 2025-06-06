@@ -76,9 +76,7 @@ pub(crate) async fn storage_healer(
             // Fill batch
             let mut batch_size = 0;
             while batch_size < NODE_BATCH_SIZE && !pending_paths.is_empty() {
-                let Some((key, val)) = pending_paths.pop_first() else {
-                    return Err(SyncError::CorruptPath);
-                };
+                let (key, val) = pending_paths.pop_first().ok_or(SyncError::CorruptPath)?;
                 batch_size += val.len();
                 next_batch.insert(key, val);
             }

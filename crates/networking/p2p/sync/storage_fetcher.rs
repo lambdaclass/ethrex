@@ -96,9 +96,8 @@ async fn fetch_storage_batch(
     large_storage_sender: Sender<Vec<LargeStorageRequest>>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
-    let (Some(batch_first), Some(batch_last)) = (batch.first(), batch.last()) else {
-        return Err(SyncError::BodiesNotFound);
-    };
+    let batch_first = batch.first().ok_or(SyncError::BodiesNotFound)?;
+    let batch_last = batch.last().ok_or(SyncError::BodiesNotFound)?;
     debug!(
         "Requesting storage ranges for addresses {}..{}",
         batch_first.0, batch_last.0
@@ -113,17 +112,20 @@ async fn fetch_storage_batch(
         // Handle incomplete ranges
         if incomplete {
             // An incomplete range cannot be empty
-            let (Some(last_keys), Some(last_values)) = (keys.pop(), values.pop()) else {
-                return Err(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree));
-            };
+            let last_keys = keys
+                .pop()
+                .ok_or(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree))?;
+            let last_values = values
+                .pop()
+                .ok_or(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree))?;
             // If only one incomplete range is returned then it must belong to a trie that is too big to fit into one request
             // We will handle this large trie separately
             if keys.is_empty() {
                 debug!("Large storage trie encountered, handling separately");
                 let (account_hash, storage_root) = batch.remove(0);
-                let Some(lk) = last_keys.last() else {
-                    return Err(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree));
-                };
+                let lk = last_keys
+                    .last()
+                    .ok_or(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree))?;
                 let last_key = *lk;
                 // Store downloaded range
                 store
@@ -238,9 +240,9 @@ async fn fetch_large_storage(
         .await
     {
         // Update next batch's start
-        let Some(last_key) = keys.last() else {
-            return Err(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree));
-        };
+        let last_key = keys
+            .last()
+            .ok_or(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree))?;
         request.last_key = *last_key;
         // Write storage range to snapshot
         store

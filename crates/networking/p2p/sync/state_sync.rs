@@ -148,9 +148,9 @@ async fn state_sync_segment(
                 accounts.len()
             );
             // Update starting hash for next batch
-            let Some(last_account_hash) = account_hashes.last() else {
-                return Err(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree));
-            };
+            let last_account_hash = account_hashes
+                .last()
+                .ok_or(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree))?;
             start_account_hash = *last_account_hash;
 
             // Fetch Account Storage & Bytecode

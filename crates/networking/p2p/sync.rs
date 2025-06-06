@@ -615,10 +615,12 @@ impl Syncer {
                     .any(|(ch, end)| ch < end)
             })
         {
-            let Some(trie_rebuilder) = self.trie_rebuilder.as_ref() else {
-                return Err(SyncError::Trie(TrieError::InconsistentTree));
-            };
-            let storage_trie_rebuilder_sender = trie_rebuilder.storage_rebuilder_sender.clone();
+            let storage_trie_rebuilder_sender = self
+                .trie_rebuilder
+                .as_ref()
+                .ok_or(SyncError::Trie(TrieError::InconsistentTree))?
+                .storage_rebuilder_sender
+                .clone();
 
             let stale_pivot = state_sync(
                 state_root,
@@ -638,9 +640,10 @@ impl Syncer {
         // Wait for the trie rebuilder to finish
         info!("Waiting for the trie rebuild to finish");
         let rebuild_start = Instant::now();
-        let Some(rebuilder) = self.trie_rebuilder.take() else {
-            return Err(SyncError::Trie(TrieError::InconsistentTree));
-        };
+        let rebuilder = self
+            .trie_rebuilder
+            .take()
+            .ok_or(SyncError::Trie(TrieError::InconsistentTree))?;
         rebuilder.complete().await?;
 
         info!(
