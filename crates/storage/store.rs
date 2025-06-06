@@ -42,12 +42,17 @@ pub enum EngineType {
     RedB,
 }
 
-type StorageNode = (NodeHash, Vec<u8>);
+/// The hash of a trie node and it's encoded contents
+type TrieNode = (NodeHash, Vec<u8>);
 
 pub struct DBUpdateBatch {
-    pub account_updates: Vec<(NodeHash, Vec<u8>)>,
-    pub storage_updates: Vec<(H256, Vec<StorageNode>)>,
+    /// Nodes to be added to the state trie
+    pub account_updates: Vec<TrieNode>,
+    /// Storage tries updated and their new nodes
+    pub storage_updates: Vec<(H256, Vec<TrieNode>)>,
+    /// Blocks to be added
     pub blocks: Vec<Block>,
+    /// Receipts added per block
     pub receipts: Vec<(H256, Vec<Receipt>)>,
 }
 
