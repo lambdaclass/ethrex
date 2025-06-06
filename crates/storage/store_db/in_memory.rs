@@ -47,6 +47,7 @@ struct StoreInner {
     state_snapshot: BTreeMap<H256, AccountState>,
     // Stores Storage trie leafs from the last downloaded tries
     storage_snapshot: HashMap<H256, BTreeMap<H256, U256>>,
+    // Snapshot (diff layers)
 }
 
 #[derive(Default, Debug)]
@@ -89,6 +90,14 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    fn write_snapshot_account_batch_blocking(
+        &self,
+        account_hashes: Vec<H256>,
+        account_states: Vec<AccountState>,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
+
     async fn store_changes(&self, _query_plan: QueryPlan) -> Result<(), StoreError> {
         todo!()
     }
@@ -620,6 +629,15 @@ impl StoreEngine for Store {
         storage_keys: Vec<Vec<H256>>,
         storage_values: Vec<Vec<U256>>,
     ) -> Result<(), StoreError> {
+        self.write_snapshot_storage_batches_blocking(account_hashes, storage_keys, storage_values)
+    }
+
+    fn write_snapshot_storage_batches_blocking(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
         for (account_hash, (storage_keys, storage_values)) in account_hashes
             .into_iter()
             .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
@@ -718,6 +736,23 @@ impl StoreEngine for Store {
             .invalid_ancestors
             .insert(bad_block, latest_valid);
         Ok(())
+    }
+
+    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError> {
+        Ok(self.inner()?.state_snapshot.get(&account_hash).cloned())
+    }
+
+    fn get_storage_snapshot(
+        &self,
+        account_hash: H256,
+        storage_hash: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        Ok(self
+            .inner()?
+            .storage_snapshot
+            .get(&account_hash)
+            .and_then(|x| x.get(&storage_hash))
+            .cloned())
     }
 }
 
