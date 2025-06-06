@@ -146,7 +146,7 @@ impl Trie {
     }
 
     pub fn hash_prepare_batch(&mut self) -> (H256, Vec<(NodeHash, Vec<u8>)>) {
-        let updates = self.commit_vec_aka_state_diff();
+        let updates = self.commit_without_storing();
         let ret_hash = self.hash_no_commit();
         (ret_hash, updates)
     }
@@ -165,7 +165,7 @@ impl Trie {
         Ok(())
     }
 
-    pub fn commit_vec_aka_state_diff(&mut self) -> Vec<(NodeHash, Vec<u8>)> {
+    pub fn commit_without_storing(&mut self) -> Vec<(NodeHash, Vec<u8>)> {
         let mut acc = Vec::new();
         if self.root.is_valid() {
             self.root.commit(&mut acc);
