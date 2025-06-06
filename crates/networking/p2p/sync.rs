@@ -133,13 +133,9 @@ impl Syncer {
     /// If the sync fails, no error will be returned but a warning will be emitted
     /// [WARNING] Sync is done optimistically, so headers and bodies may be stored even if their data has not been fully synced if the sync is aborted halfway
     /// [WARNING] Sync is currenlty simplified and will not download bodies + receipts previous to the pivot during snap sync
-    pub async fn start_sync(&mut self, current_head: H256, sync_head: H256, store: Store) {
-        info!(
-            "Syncing from current head {:?} to sync_head {:?}",
-            current_head, sync_head
-        );
+    pub async fn start_sync(&mut self, sync_head: H256, store: Store) {
         let start_time = Instant::now();
-        match self.sync_cycle(current_head, sync_head, store).await {
+        match self.sync_cycle(sync_head, store).await {
             Ok(()) => {
                 info!(
                     "Sync cycle finished, time elapsed: {} secs",
@@ -156,7 +152,6 @@ impl Syncer {
     /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
     async fn sync_cycle(
         &mut self,
-        mut current_head: H256,
         sync_head: H256,
         store: Store,
     ) -> Result<(), SyncError> {
@@ -173,13 +168,11 @@ impl Syncer {
         // Check if we have some blocks downloaded from a previous sync attempt
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
-        if matches!(sync_mode, SyncMode::Snap) {
-            if let Some(last_header) = store.get_header_download_checkpoint().await? {
-                // Set latest downloaded header as current head for header fetching
-                current_head = last_header;
-            }
-        }
-
+        let mut current_head = block_sync_state.get_current_head().await?;
+        info!(
+            "Syncing from current head {:?} to sync_head {:?}",
+            current_head, sync_head
+        );
         let pending_block = match store.get_pending_block(sync_head).await {
             Ok(res) => res,
             Err(e) => return Err(e.into()),
@@ -256,9 +249,6 @@ impl Syncer {
                 );
                 search_head = last_block_hash;
                 current_head = last_block_hash;
-                if sync_mode == SyncMode::Snap {
-                    store.set_header_download_checkpoint(current_head).await?;
-                }
             }
 
             // If the sync head is less than 64 blocks away from our current head switch to full-sync
@@ -571,6 +561,8 @@ enum SyncError {
     CorruptDB,
     #[error("No bodies were found for the given headers")]
     BodiesNotFound,
+    #[error("Failed to fetch latest canonical block, unable to sync")]
+    NoLatestCanonical
 }
 
 impl<T> From<SendError<T>> for SyncError {
@@ -602,6 +594,14 @@ impl BlockSyncState {
             SyncMode::Snap => BlockSyncState::Snap(SnapBlockSyncState::new(store)),
         }
     }
+
+    async fn get_current_head(&self) -> Result<H256, SyncError> {
+        match self {
+            BlockSyncState::Full(state) => state.get_current_head().await,
+            BlockSyncState::Snap(state) => state.get_current_head().await,
+        }
+    }
+
     async fn process_incoming_headers(
         &mut self,
         block_headers: Vec<BlockHeader>,
@@ -610,13 +610,13 @@ impl BlockSyncState {
         peers: PeerHandler,
     ) -> Result<(), SyncError> {
         match self {
-            BlockSyncState::Full(full_block_sync_state) => {
-                full_block_sync_state
+            BlockSyncState::Full(state) => {
+                state
                     .process_incoming_headers(block_headers, sync_head_found, blockchain, peers)
                     .await
             }
-            BlockSyncState::Snap(snap_block_sync_state) => {
-                snap_block_sync_state
+            BlockSyncState::Snap(state) => {
+                state
                     .process_incoming_headers(block_headers)
                     .await
             }
@@ -626,17 +626,17 @@ impl BlockSyncState {
     pub fn into_snap_block_hashes(self) -> Vec<BlockHash> {
         match self {
             BlockSyncState::Full(_) => vec![],
-            BlockSyncState::Snap(snap_block_sync_state) => snap_block_sync_state.all_block_hashes,
+            BlockSyncState::Snap(state) => state.all_block_hashes,
         }
     }
 
     pub fn into_fullsync(self) -> Result<Self, SyncError> {
         // Switch from Snap to Full sync and vice versa
-        let full_block_sync_state = match self {
-            BlockSyncState::Full(full_block_sync_state) => full_block_sync_state,
-            BlockSyncState::Snap(snap_block_sync_state) => snap_block_sync_state.into_fullsync()?,
+        let state = match self {
+            BlockSyncState::Full(state) => state,
+            BlockSyncState::Snap(state) => state.into_fullsync()?,
         };
-        Ok(Self::Full(full_block_sync_state))
+        Ok(Self::Full(state))
     }
 }
 
@@ -647,6 +647,10 @@ impl FullBlockSyncState {
             current_block_headers: Vec::new(),
             current_blocks: Vec::new(),
         }
+    }
+
+    async fn get_current_head(&self) -> Result<H256, SyncError> {
+        self.store.get_latest_canonical_block_hash().await?.ok_or(SyncError::NoLatestCanonical)
     }
 
     async fn process_incoming_headers(
@@ -756,11 +760,20 @@ impl SnapBlockSyncState {
         }
     }
 
+    async fn get_current_head(&self) -> Result<H256, SyncError> {
+        if let Some(head) = self.store.get_header_download_checkpoint().await? {
+            Ok(head)
+        } else {
+            self.store.get_latest_canonical_block_hash().await?.ok_or(SyncError::NoLatestCanonical)
+        }
+    }
+
     async fn process_incoming_headers(
         &mut self,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), SyncError> {
         let block_hashes = block_headers.iter().map(|h| h.hash()).collect::<Vec<_>>();
+        self.store.set_header_download_checkpoint(*block_hashes.last().unwrap()).await?;
         self.all_block_hashes.extend_from_slice(&block_hashes);
         self.store
             .add_block_headers(block_hashes, block_headers)

@@ -114,11 +114,6 @@ impl SyncManager {
         let sync_head = self.last_fcu_head.clone();
 
         tokio::spawn(async move {
-            let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
-                error!("Failed to fetch latest canonical block, unable to sync");
-                return;
-            };
-
             // If we can't get hold of the syncer, then it means that there is an active sync in process
             let Ok(mut syncer) = syncer.try_lock() else {
                 return;
@@ -140,7 +135,7 @@ impl SyncManager {
                 }
                 // Start the sync cycle
                 syncer
-                    .start_sync(current_head, sync_head, store.clone())
+                    .start_sync(sync_head, store.clone())
                     .await;
                 // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)
                 if store
