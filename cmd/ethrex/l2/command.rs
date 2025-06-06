@@ -94,7 +94,7 @@ impl Command {
                 let store = init_store(&data_dir, genesis).await;
                 let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-                let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
+                let blockchain = init_blockchain(opts.node_opts.evm, store.clone()).await;
 
                 let signer = get_signer(&data_dir);
 
@@ -332,8 +332,8 @@ impl Command {
 
                             // Apply all account updates to trie
                             let account_updates = state_diff.to_account_updates(&new_trie)?;
-                            new_trie = store
-                                .apply_account_updates_from_trie(new_trie, &account_updates)
+                            store
+                                .apply_account_updates_from_trie(&mut new_trie, &account_updates)
                                 .await
                                 .expect("Error applying account updates");
 

@@ -11,7 +11,10 @@ mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::nibbles::Nibbles;
@@ -293,7 +296,7 @@ impl Trie {
 
     /// Creates a new stateless trie. This trie won't be able to store any nodes so all data will be lost after calculating the hash
     /// Only use it for proof verification or computing a hash from an iterator
-    pub(crate) fn stateless() -> Trie {
+    pub fn stateless() -> Trie {
         // We will only be using the trie's cache so we don't need a working DB
         struct NullTrieDB;
 
@@ -388,6 +391,14 @@ impl Trie {
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
         Trie::new(Box::new(db))
+    }
+}
+
+impl fmt::Debug for Trie {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Trie")
+            .field("root", &self.root)
+            .finish_non_exhaustive()
     }
 }
 

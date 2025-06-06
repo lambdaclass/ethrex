@@ -1214,6 +1214,7 @@ dependencies = [
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
+ "ethrex-trie",
  "ethrex-vm",
  "k256",
  "sha3",
