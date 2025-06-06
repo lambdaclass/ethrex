@@ -134,15 +134,10 @@ impl StoreEngine for Store {
             .await
     }
 
-    async fn add_block_headers(
-        &self,
-        block_hashes: Vec<BlockHash>,
-        block_headers: Vec<BlockHeader>,
-    ) -> Result<(), StoreError> {
-        let hashes_and_headers = block_hashes
+    async fn add_block_headers(&self, block_headers: Vec<BlockHeader>) -> Result<(), StoreError> {
+        let hashes_and_headers = block_headers
             .into_iter()
-            .zip(block_headers)
-            .map(|(hash, header)| (hash.into(), header.into()))
+            .map(|header| (header.hash().into(), header.into()))
             .collect();
         self.write_batch::<Headers>(hashes_and_headers).await
     }

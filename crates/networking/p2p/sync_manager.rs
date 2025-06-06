@@ -134,9 +134,7 @@ impl SyncManager {
                     continue;
                 }
                 // Start the sync cycle
-                syncer
-                    .start_sync(sync_head, store.clone())
-                    .await;
+                syncer.start_sync(sync_head, store.clone()).await;
                 // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)
                 if store
                     .get_header_download_checkpoint()

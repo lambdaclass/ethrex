@@ -150,11 +150,7 @@ impl Syncer {
     }
 
     /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
-    async fn sync_cycle(
-        &mut self,
-        sync_head: H256,
-        store: Store,
-    ) -> Result<(), SyncError> {
+    async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         let mut sync_mode = if self.snap_enabled.load(Ordering::Relaxed) {
             SyncMode::Snap
@@ -240,16 +236,9 @@ impl Syncer {
                 block_hashes = block_hashes.iter().take(index + 1).cloned().collect();
             }
 
-            // Update current fetch head if needed
-            let last_block_hash = last_block_header.hash();
-            if !sync_head_found {
-                debug!(
-                    "Syncing head not found, updated current_head {:?}",
-                    last_block_hash
-                );
-                search_head = last_block_hash;
-                current_head = last_block_hash;
-            }
+            // Update current fetch head
+            search_head = last_block_header.hash();
+            current_head = current_head;
 
             // If the sync head is less than 64 blocks away from our current head switch to full-sync
             if sync_mode == SyncMode::Snap && sync_head_found {
@@ -258,10 +247,9 @@ impl Syncer {
                     < MIN_FULL_BLOCKS as u64
                 {
                     // Too few blocks for a snap sync, switching to full sync
-                    store.clear_snap_state().await?;
                     sync_mode = SyncMode::Full;
                     self.snap_enabled.store(false, Ordering::Relaxed);
-                    block_sync_state = block_sync_state.into_fullsync()?;
+                    block_sync_state = block_sync_state.into_fullsync().await?;
                 }
             }
 
@@ -562,7 +550,7 @@ enum SyncError {
     #[error("No bodies were found for the given headers")]
     BodiesNotFound,
     #[error("Failed to fetch latest canonical block, unable to sync")]
-    NoLatestCanonical
+    NoLatestCanonical,
 }
 
 impl<T> From<SendError<T>> for SyncError {
@@ -615,11 +603,7 @@ impl BlockSyncState {
                     .process_incoming_headers(block_headers, sync_head_found, blockchain, peers)
                     .await
             }
-            BlockSyncState::Snap(state) => {
-                state
-                    .process_incoming_headers(block_headers)
-                    .await
-            }
+            BlockSyncState::Snap(state) => state.process_incoming_headers(block_headers).await,
         }
     }
 
@@ -630,11 +614,11 @@ impl BlockSyncState {
         }
     }
 
-    pub fn into_fullsync(self) -> Result<Self, SyncError> {
+    pub async fn into_fullsync(self) -> Result<Self, SyncError> {
         // Switch from Snap to Full sync and vice versa
         let state = match self {
             BlockSyncState::Full(state) => state,
-            BlockSyncState::Snap(state) => state.into_fullsync()?,
+            BlockSyncState::Snap(state) => state.into_fullsync().await?,
         };
         Ok(Self::Full(state))
     }
@@ -650,7 +634,10 @@ impl FullBlockSyncState {
     }
 
     async fn get_current_head(&self) -> Result<H256, SyncError> {
-        self.store.get_latest_canonical_block_hash().await?.ok_or(SyncError::NoLatestCanonical)
+        self.store
+            .get_latest_canonical_block_hash()
+            .await?
+            .ok_or(SyncError::NoLatestCanonical)
     }
 
     async fn process_incoming_headers(
@@ -764,7 +751,10 @@ impl SnapBlockSyncState {
         if let Some(head) = self.store.get_header_download_checkpoint().await? {
             Ok(head)
         } else {
-            self.store.get_latest_canonical_block_hash().await?.ok_or(SyncError::NoLatestCanonical)
+            self.store
+                .get_latest_canonical_block_hash()
+                .await?
+                .ok_or(SyncError::NoLatestCanonical)
         }
     }
 
@@ -773,7 +763,9 @@ impl SnapBlockSyncState {
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), SyncError> {
         let block_hashes = block_headers.iter().map(|h| h.hash()).collect::<Vec<_>>();
-        self.store.set_header_download_checkpoint(*block_hashes.last().unwrap()).await?;
+        self.store
+            .set_header_download_checkpoint(*block_hashes.last().unwrap())
+            .await?;
         self.all_block_hashes.extend_from_slice(&block_hashes);
         self.store
             .add_block_headers(block_hashes, block_headers)
@@ -781,7 +773,7 @@ impl SnapBlockSyncState {
         Ok(())
     }
 
-    fn into_fullsync(self) -> Result<FullBlockSyncState, SyncError> {
+    async fn into_fullsync(self) -> Result<FullBlockSyncState, SyncError> {
         // For all collected hashes we must also have the corresponding headers stored
         // As this switch will only happen when the sync_head is 64 blocks away or less from our latest block
         // The headers to fetch will be at most 64, and none in the most common case
@@ -793,6 +785,7 @@ impl SnapBlockSyncState {
                 .ok_or(SyncError::CorruptDB)?;
             current_block_headers.push(header);
         }
+        self.store.clear_snap_state().await?;
         Ok(FullBlockSyncState {
             current_block_headers,
             current_blocks: Vec::new(),

@@ -118,12 +118,9 @@ impl Store {
 
     pub async fn add_block_headers(
         &self,
-        block_hashes: Vec<BlockHash>,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        self.engine
-            .add_block_headers(block_hashes, block_headers)
-            .await
+        self.engine.add_block_headers(block_headers).await
     }
 
     pub fn get_block_header(
