@@ -144,6 +144,8 @@ pub fn stateless_validation_l2(
     blob_commitment: Commitment,
     blob_proof: Proof,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
+    let initial_db = db.clone();
+
     let StatelessResult {
         receipts,
         initial_state_hash,
@@ -164,7 +166,7 @@ pub fn stateless_validation_l2(
     let blob_versioned_hash = if !validium {
         let state_diff = prepare_state_diff(
             last_block_header,
-            db,
+            &initial_db,
             &withdrawals,
             &deposits,
             account_updates.values().cloned().collect(),

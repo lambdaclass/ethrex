@@ -347,11 +347,11 @@ async fn prepare_batch_from_block(
 
         let parent_block_hash = state
             .store
-            .get_block_header(last_added_block_number)?
+            .get_block_header(first_block_of_batch)?
             .ok_or(CommitterError::FailedToGetInformationFromStorage(
                 "Failed to get_block_header() of the last added block".to_owned(),
             ))?
-            .hash();
+            .parent_hash;
         let parent_db = StoreVmDatabase::new(state.store.clone(), parent_block_hash);
 
         let result = if !state.validium {
