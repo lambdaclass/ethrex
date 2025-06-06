@@ -205,8 +205,9 @@ impl PeerHandler {
         None
     }
 
-    /// Requests block bodies from any suitable peer given their block hashes and validates them
-    /// Returns the full block or None if:
+    /// Requests block bodies from any suitable peer given their block headers and validates them
+    /// Consumes as many headers as corresponding bodies returned by peers and returns the full blocks
+    /// Returns None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     /// - The block bodies are invalid given the block headers
@@ -215,13 +216,9 @@ impl PeerHandler {
         block_hashes: &mut Vec<H256>,
         block_headers: &mut Vec<BlockHeader>,
     ) -> Option<Vec<Block>> {
-        let original_hashes = block_hashes.clone();
         let original_headers = block_headers.clone();
 
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            *block_hashes = original_hashes.clone();
-            *block_headers = original_headers.clone();
-
             let Some((block_bodies, peer_id)) =
                 self.request_block_bodies_inner(block_hashes.clone()).await
             else {
@@ -244,6 +241,7 @@ impl PeerHandler {
             {
                 warn!("Invalid block body error {e}, discarding peer {peer_id} and retrying...");
                 self.remove_peer(peer_id).await;
+                *block_headers = original_headers.clone();
                 continue; // Retry on validation failure
             }
 
