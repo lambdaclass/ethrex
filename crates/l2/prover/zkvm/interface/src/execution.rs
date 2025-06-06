@@ -5,7 +5,9 @@ use crate::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
 
 use crate::io::{ProgramInput, ProgramOutput};
 use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::{validate_block, validate_gas_used};
+use ethrex_blockchain::{
+    validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
+};
 use ethrex_common::{
     types::{block_execution_witness::ExecutionWitnessResult, Block, BlockHeader},
     H256,
@@ -22,6 +24,10 @@ pub enum StatelessExecutionError {
     BlockValidationError(ChainError),
     #[error("Gas validation error: {0}")]
     GasValidationError(ChainError),
+    #[error("Withdrawals validation error: {0}")]
+    RequestsRootValidationError(ChainError),
+    #[error("Receipts validation error: {0}")]
+    ReceiptsRootValidationError(ChainError),
     #[error("EVM error: {0}")]
     EvmError(EvmError),
     #[cfg(feature = "l2")]
@@ -190,6 +196,10 @@ fn execute_stateless(
 
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
+        validate_receipts_root(&block.header, &receipts)
+            .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
+        validate_requests_hash(&block.header, &db.chain_config, &result.requests)
+            .map_err(StatelessExecutionError::RequestsRootValidationError)?;
         parent_header = &block.header;
         acc_receipts.push(receipts);
     }
