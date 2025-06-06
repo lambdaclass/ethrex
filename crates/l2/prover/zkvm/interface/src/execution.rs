@@ -4,23 +4,27 @@ use crate::{
 };
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{validate_block, validate_gas_used};
-#[cfg(feature = "l2")]
-use ethrex_common::types::BlobsBundleError;
-use ethrex_common::types::{
-    blob_from_bytes, kzg_commitment_to_versioned_hash, AccountUpdate, Block, BlockHeader,
-    Commitment, PrivilegedL2Transaction, Proof, Receipt, Transaction,
-};
+use ethrex_common::types::{AccountUpdate, Block, BlockHeader, Proof, Receipt, Transaction};
 use ethrex_common::{Address, H256};
-use ethrex_l2_common::withdrawals::{get_block_withdrawals, get_withdrawal_hash};
+use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDB, ProverDBError};
+use std::collections::HashMap;
+
+#[cfg(feature = "l2")]
+use ethrex_common::types::{
+    blob_from_bytes, kzg_commitment_to_versioned_hash, BlobsBundleError, Commitment,
+    PrivilegedL2Transaction,
+};
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
     deposits::{compute_deposit_logs_hash, get_block_deposits, DepositError},
     state_diff::{prepare_state_diff, StateDiff, StateDiffError},
-    withdrawals::{compute_withdrawals_merkle_root, WithdrawalError},
+    withdrawals::{
+        compute_withdrawals_merkle_root, get_block_withdrawals, get_withdrawal_hash,
+        WithdrawalError,
+    },
 };
-use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDB, ProverDBError};
+#[cfg(feature = "l2")]
 use kzg_rs::{get_kzg_settings, Blob, Bytes48, KzgProof};
-use std::collections::HashMap;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StatelessExecutionError {
@@ -69,6 +73,7 @@ pub enum StatelessExecutionError {
     Internal(String),
 }
 
+#[cfg(feature = "l2")]
 impl From<kzg_rs::KzgError> for StatelessExecutionError {
     fn from(value: kzg_rs::KzgError) -> Self {
         StatelessExecutionError::KzgError(value)

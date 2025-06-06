@@ -1,10 +1,13 @@
 use ethrex_common::{
-    types::{blobs_bundle, Block, BlockHeader},
+    types::{Block, BlockHeader},
     H256,
 };
 use ethrex_vm::ProverDB;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::{serde_as, DeserializeAs, SerializeAs};
+
+#[cfg(feature = "l2")]
+use ethrex_common::types::blobs_bundle;
 
 /// Private input variables passed into the zkVM execution program.
 #[serde_as]
