@@ -1,0 +1,10 @@
+[package]
+name = "ethrex-mdbx-sys"
+description = "Raw bindings for libmdbx (fork)"
+version.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+
+[build-dependencies]
+cc = "1.2.26"
+bindgen = { version = "0.71.1", features = ["runtime"] }

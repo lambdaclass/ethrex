@@ -60,7 +60,11 @@ async-trait = "0.1.88"
 ethereum-types = { version = "0.15.1", features = ["serialize"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
-libmdbx = { version = "=0.5.3", features = ["orm"] }
+
+# libmdbx = { version = "=0.5.3", features = ["orm"] }
+libmdbx = { package = "ethrex-libmdbx", path = "./crates/storage/libmdbx-rs" }
+mdbx-sys = { package = "ethrex-mdbx-sys", path = "./crates/storage/libmdbx-rs/mdbx-sys" }
+
 bytes = { version = "1.6.0", features = ["serde"] }
 tokio = { version = "1.41.1"}
 thiserror = "2.0.9"
