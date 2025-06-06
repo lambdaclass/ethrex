@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749242319696,
+  "lastUpdate": 1749246254594,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11395,6 +11395,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177186605309,
             "range": "± 742123500",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1545a6144acfdf0be1286421e1df036244dc3ce3",
+          "message": "feat(core): block composition charts (#3013)\n\n## Motivation\n\nWe might want to know the common operations happening in a block.\n\n## Description\n\nThis implements three plots:\n- Common operations (swap, transfer, etc using a handmade list of\nselectors)\n  - Weighted by call count\n  - Weighted by gas limit\n- Common destination addresses\n\n## Screenshots\n\n### Top 10 selectors\n![Top 10\nselectors](https://github.com/user-attachments/assets/5ae7d11f-f626-40e8-8ba0-52f6b1721492)\n---\n### Top 10 selectors, weighted by gas\n![Top 10 selectors, weighted by\ngas](https://github.com/user-attachments/assets/76131f1c-5c59-4b77-a6e7-92e44522a6e1)\n---\n### Top 10 destinations\n![Top 10\ndestinations](https://github.com/user-attachments/assets/0dbbbe37-84b2-4715-9665-add80bd0f215)\n\n\nGenerated using `cargo run -- block-composition 22567200 22567210\n--rpc-url mainnet_rpc`\n\nCloses #2913",
+          "timestamp": "2025-06-06T20:54:11Z",
+          "tree_id": "bf8ac500e6ea59098b66427661d0be15c1e1a735",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1545a6144acfdf0be1286421e1df036244dc3ce3"
+        },
+        "date": 1749246249086,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177406016342,
+            "range": "± 496350427",
             "unit": "ns/iter"
           }
         ]
