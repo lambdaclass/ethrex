@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
 use vm::StoreVmDatabase;
 
-#[cfg(feature = "l2")]
+#[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
