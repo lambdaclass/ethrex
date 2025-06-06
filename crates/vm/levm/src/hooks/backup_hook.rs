@@ -9,13 +9,14 @@ use crate::{
 
 #[derive(Default)]
 pub struct BackupHook {
-    pub callframe_backup: CallFrameBackup,
+    /// We need to store this because we clear the backup after `prepare_execution` hook is executed
+    pub pre_execution_backup: CallFrameBackup,
 }
 
 impl Debug for BackupHook {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BackupHook")
-            .field("callframe_backup", &self.callframe_backup)
+            .field("callframe_backup", &self.pre_execution_backup)
             .finish()
     }
 }
@@ -23,7 +24,7 @@ impl Debug for BackupHook {
 impl Hook for BackupHook {
     fn prepare_execution(&mut self, vm: &mut crate::vm::VM<'_>) -> Result<(), VMError> {
         // Here we need to backup the callframe for undoing transaction changes if we want to.
-        self.callframe_backup = vm.current_call_frame()?.call_frame_backup.clone();
+        self.pre_execution_backup = vm.current_call_frame()?.call_frame_backup.clone();
         Ok(())
     }
 
@@ -34,9 +35,11 @@ impl Hook for BackupHook {
     ) -> Result<(), VMError> {
         // We want to restore to the initial state, this includes saving the changes made by the prepare execution
         // and the changes made by the execution itself.
-        let execution_backup = &mut vm.current_call_frame_mut()?.call_frame_backup;
-        let pre_execution_backup = std::mem::take(&mut self.callframe_backup);
+        let mut execution_backup = vm.current_call_frame()?.call_frame_backup.clone();
+        let pre_execution_backup = std::mem::take(&mut self.pre_execution_backup);
         execution_backup.extend(pre_execution_backup);
+        vm.db.tx_backup = Some(execution_backup);
+
         Ok(())
     }
 }

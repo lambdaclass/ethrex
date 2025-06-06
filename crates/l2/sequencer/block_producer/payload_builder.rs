@@ -4,12 +4,12 @@ use std::sync::Arc;
 use ethrex_blockchain::{
     constants::TX_GAS_COST,
     error::ChainError,
-    payload::{HeadTransaction, PayloadBuildContext, PayloadBuildResult},
+    payload::{apply_plain_transaction, HeadTransaction, PayloadBuildContext, PayloadBuildResult},
     Blockchain,
 };
 use ethrex_common::{
     types::{Block, Receipt, Transaction, SAFE_BYTES_PER_BLOB},
-    Address, U256,
+    Address,
 };
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
@@ -18,7 +18,7 @@ use ethrex_metrics::{
     metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX},
 };
 use ethrex_storage::Store;
-use ethrex_vm::{backends::CallFrameBackup, Evm, EvmError};
+use ethrex_vm::{Evm, EvmError};
 use std::ops::Div;
 use tokio::time::Instant;
 use tracing::{debug, error};
@@ -182,13 +182,13 @@ pub async fn fill_transactions(
         }
 
         // Execute tx
-        let (receipt, transaction_backup) = match apply_transaction_l2(&head_tx, context) {
-            Ok((receipt, transaction_backup)) => {
+        let receipt = match apply_transaction_l2(&head_tx, context) {
+            Ok(receipt) => {
                 metrics!(METRICS_TX.inc_tx_with_status_and_type(
                     MetricsTxStatus::Succeeded,
                     MetricsTxType(head_tx.tx_type())
                 ));
-                (receipt, transaction_backup)
+                receipt
             }
             // Ignore following txs from sender
             Err(e) => {
@@ -202,7 +202,7 @@ pub async fn fill_transactions(
             }
         };
 
-        let account_diffs_in_tx = get_account_diffs_in_tx(&transaction_backup, context)?;
+        let account_diffs_in_tx = get_account_diffs_in_tx(context)?;
         let merged_diffs = merge_diffs(&account_diffs, account_diffs_in_tx);
 
         let (tx_size_without_accounts, new_accounts_diff_size) = calculate_tx_diff_size(
@@ -222,8 +222,8 @@ pub async fn fill_transactions(
             );
             txs.pop();
 
-            // This transaction is too big, we need to restore the state
-            context.vm.restore_cache_state(transaction_backup)?;
+            // This transaction state change is too big, we need to undo it.
+            context.vm.undo_last_tx()?;
 
             continue;
         }
@@ -249,34 +249,19 @@ pub async fn fill_transactions(
 fn apply_transaction_l2(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
-) -> Result<(Receipt, CallFrameBackup), ChainError> {
+) -> Result<Receipt, ChainError> {
     match **head {
         Transaction::EIP4844Transaction(_) => Err(ChainError::InvalidTransaction(
             "Blob transactions not supported in the L2".to_string(),
         )),
-        _ => apply_plain_transaction_l2(head, context),
+        _ => apply_plain_transaction(head, context),
     }
-}
-
-fn apply_plain_transaction_l2(
-    head: &HeadTransaction,
-    context: &mut PayloadBuildContext,
-) -> Result<(Receipt, CallFrameBackup), ChainError> {
-    let (report, gas_used, transaction_backup) = context.vm.execute_tx_l2(
-        &head.tx,
-        &context.payload.header,
-        &mut context.remaining_gas,
-        head.tx.sender(),
-    )?;
-    context.block_value += U256::from(gas_used) * head.tip;
-    Ok((report, transaction_backup))
 }
 
 /// Returns the state diffs introduced by the transaction by comparing the call frame backup
 /// (which holds the state before executing the transaction) with the current state of the cache
 /// (which contains all the writes performed by the transaction).
 fn get_account_diffs_in_tx(
-    call_frame_backup: &CallFrameBackup,
     context: &PayloadBuildContext,
 ) -> Result<HashMap<Address, AccountStateDiff>, BlockProducerError> {
     let mut modified_accounts = HashMap::new();
@@ -287,8 +272,11 @@ fn get_account_diffs_in_tx(
             )))
         }
         Evm::LEVM { db } => {
+            let transaction_backup = db.get_tx_backup().map_err(|e| {
+                BlockProducerError::FailedToGetDataFrom(format!("TransactionBackup: {e}"))
+            })?;
             // First we add the account info
-            for (address, original_account) in call_frame_backup.original_accounts_info.iter() {
+            for (address, original_account) in transaction_backup.original_accounts_info.iter() {
                 let new_account =
                     db.cache
                         .get(address)
@@ -325,7 +313,7 @@ fn get_account_diffs_in_tx(
 
             // Then if there is any storage change, we add it to the account state diff
             for (address, original_storage_slots) in
-                call_frame_backup.original_account_storage_slots.iter()
+                transaction_backup.original_account_storage_slots.iter()
             {
                 let account_info =
                     db.cache

@@ -58,6 +58,7 @@ impl<'a> VM<'a> {
         tracer: LevmCallTracer,
     ) -> Self {
         let hooks = get_hooks(tx);
+        db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
         Self {
             call_frames: vec![],
@@ -72,8 +73,8 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub fn add_hook(&mut self, hook: Rc<RefCell<dyn Hook>>) {
-        self.hooks.push(hook);
+    fn add_hook(&mut self, hook: impl Hook + 'static) {
+        self.hooks.push(Rc::new(RefCell::new(hook)));
     }
 
     /// Initializes substate and creates first execution callframe.
@@ -204,10 +205,10 @@ impl<'a> VM<'a> {
     /// Executes without making changes to the cache.
     pub fn stateless_execute(&mut self) -> Result<ExecutionReport, VMError> {
         // Add backup hook to restore state after execution.
-        self.add_hook(Rc::new(RefCell::new(BackupHook::default())));
+        self.add_hook(BackupHook::default());
         let report = self.execute()?;
         // Restore cache state to the state before execution.
-        self.restore_cache_state()?;
+        self.db.undo_last_transaction()?;
         Ok(report)
     }
 
