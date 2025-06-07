@@ -1,3 +1,5 @@
+use crate::rlpx::p2p::Capability;
+
 use super::{
     connection::{Aes256Ctr64BE, LocalState, RemoteState},
     error::RLPxError,
@@ -25,6 +27,9 @@ pub(crate) struct RLPxCodec {
     pub(crate) egress_mac: Keccak256,
     pub(crate) ingress_aes: Aes256Ctr64BE,
     pub(crate) egress_aes: Aes256Ctr64BE,
+    pub(crate) p2p_protocol: Option<Capability>,
+    pub(crate) eth_protocol: Option<Capability>,
+    pub(crate) snap_protocol: Option<Capability>,
 }
 
 impl RLPxCodec {
@@ -63,7 +68,50 @@ impl RLPxCodec {
             egress_mac,
             ingress_aes,
             egress_aes,
+            p2p_protocol: None,
+            eth_protocol: None,
+            snap_protocol: None,
         }
+    }
+
+    pub fn set_p2p_protocol(&mut self, cap: &Capability) -> Result<(), RLPxError> {
+        if !cap.is_p2p() {
+            return Err(RLPxError::InternalError(
+                "The protocol should be p2p".into(),
+            ));
+        }
+        self.p2p_protocol = Some(cap.clone());
+        Ok(())
+    }
+
+    pub fn set_eth_protocol(&mut self, cap: &Capability) -> Result<(), RLPxError> {
+        if !cap.is_eth() {
+            return Err(RLPxError::InternalError(
+                "The protocol should be eth".into(),
+            ));
+        }
+        if self.p2p_protocol.is_none() {
+            return Err(RLPxError::InternalError(
+                "p2p protocol should be established first".into(),
+            ));
+        }
+        self.eth_protocol = Some(cap.clone());
+        Ok(())
+    }
+
+    pub fn set_snap_protocol(&mut self, cap: &Capability) -> Result<(), RLPxError> {
+        if !cap.is_snap() {
+            return Err(RLPxError::InternalError(
+                "The protocol should be snap".into(),
+            ));
+        }
+        if self.eth_protocol.is_none() {
+            return Err(RLPxError::InternalError(
+                "Eth protocol should be established first".into(),
+            ));
+        }
+        self.snap_protocol = Some(cap.clone());
+        Ok(())
     }
 }
 
@@ -189,7 +237,13 @@ impl Decoder for RLPxCodec {
         let (frame_data, _padding) = frame_ciphertext.split_at(frame_size);
 
         let (msg_id, msg_data): (u8, _) = RLPDecode::decode_unfinished(frame_data)?;
-        Ok(Some(rlpx::Message::decode(msg_id, msg_data)?))
+        Ok(Some(rlpx::Message::decode(
+            msg_id,
+            msg_data,
+            &self.p2p_protocol,
+            &self.eth_protocol,
+            &self.snap_protocol,
+        )?))
     }
 
     fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -221,7 +275,12 @@ impl Encoder<rlpx::Message> for RLPxCodec {
 
     fn encode(&mut self, message: rlpx::Message, buffer: &mut BytesMut) -> Result<(), Self::Error> {
         let mut frame_data = vec![];
-        message.encode(&mut frame_data)?;
+        message.encode(
+            &mut frame_data,
+            &self.p2p_protocol,
+            &self.eth_protocol,
+            &self.snap_protocol,
+        )?;
 
         let mac_aes_cipher = Aes256Enc::new_from_slice(&self.mac_key.0)?;
 

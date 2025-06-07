@@ -316,11 +316,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 }
                 debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
                 self.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
+                self.framed
+                    .codec_mut()
+                    .set_eth_protocol(&Capability::eth(negotiated_eth_version))?;
 
                 if negotiated_snap_version != 0 {
                     debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
                     self.negotiated_snap_capability =
                         Some(Capability::snap(negotiated_snap_version));
+                    self.framed
+                        .codec_mut()
+                        .set_snap_protocol(&Capability::snap(negotiated_snap_version))?;
                 }
 
                 self.node.version = Some(hello_message.client_id);
@@ -538,14 +544,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::BlockBodies(response)).await?;
             }
             Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
-                if let Some(eth) = &self.negotiated_eth_capability {
-                    let mut receipts = Vec::new();
-                    for hash in block_hashes.iter() {
-                        receipts.push(self.storage.get_receipts_for_block(hash)?);
-                    }
-                    let response = Receipts::new(id, receipts, eth)?;
-                    self.send(Message::Receipts(response)).await?;
+                let mut receipts = Vec::new();
+                for hash in block_hashes.iter() {
+                    receipts.push(self.storage.get_receipts_for_block(hash)?);
                 }
+                let response = Receipts::new(id, receipts);
+                self.send(Message::Receipts(response)).await?;
             }
             Message::BlockRangeUpdate(update) => {
                 if update.earliest_block > update.lastest_block {
