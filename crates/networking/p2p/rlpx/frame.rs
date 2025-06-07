@@ -32,9 +32,9 @@ impl RLPxCodec {
         local_state: &LocalState,
         remote_state: &RemoteState,
         hashed_nonces: [u8; 32],
-    ) -> Self {
+    ) -> Result<Self, RLPxError> {
         let ephemeral_key_secret =
-            ecdh_xchng(&local_state.ephemeral_key, &remote_state.ephemeral_key);
+            ecdh_xchng(&local_state.ephemeral_key, &remote_state.ephemeral_key)?;
 
         // shared-secret = keccak256(ephemeral-key || keccak256(nonce || initiator-nonce))
         let shared_secret =
@@ -57,13 +57,13 @@ impl RLPxCodec {
 
         let ingress_aes = <Aes256Ctr64BE as KeyIvInit>::new(&aes_key.0.into(), &[0; 16].into());
         let egress_aes = ingress_aes.clone();
-        Self {
+        Ok(Self {
             mac_key,
             ingress_mac,
             egress_mac,
             ingress_aes,
             egress_aes,
-        }
+        })
     }
 }
 

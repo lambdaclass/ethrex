@@ -14,28 +14,37 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     k256::sha2::Sha256::digest(data).into()
 }
 
-pub fn sha256_hmac(key: &[u8], inputs: &[&[u8]], size_data: &[u8]) -> [u8; 32] {
+pub fn sha256_hmac(
+    key: &[u8],
+    inputs: &[&[u8]],
+    size_data: &[u8],
+) -> Result<[u8; 32], RLPDecodeError> {
     use hmac::Mac;
     use k256::sha2::Sha256;
 
-    let mut hasher = hmac::Hmac::<Sha256>::new_from_slice(key).unwrap();
+    let mut hasher =
+        hmac::Hmac::<Sha256>::new_from_slice(key).map_err(|_| RLPDecodeError::InvalidLength)?;
     for input in inputs {
         hasher.update(input);
     }
     hasher.update(size_data);
-    hasher.finalize().into_bytes().into()
+    Ok(hasher.finalize().into_bytes().into())
 }
 
-pub fn ecdh_xchng(secret_key: &SecretKey, public_key: &PublicKey) -> [u8; 32] {
+pub fn ecdh_xchng(
+    secret_key: &SecretKey,
+    public_key: &PublicKey,
+) -> Result<[u8; 32], RLPDecodeError> {
     k256::ecdh::diffie_hellman(secret_key.to_nonzero_scalar(), public_key.as_affine())
         .raw_secret_bytes()[..32]
         .try_into()
-        .unwrap()
+        .map_err(|_| RLPDecodeError::InvalidLength)
 }
 
-pub fn kdf(secret: &[u8], output: &mut [u8]) {
+pub fn kdf(secret: &[u8], output: &mut [u8]) -> Result<(), RLPDecodeError> {
     // We don't use the `other_info` field
-    concat_kdf::derive_key_into::<k256::sha2::Sha256>(secret, &[], output).unwrap();
+    concat_kdf::derive_key_into::<k256::sha2::Sha256>(secret, &[], output)
+        .map_err(|_| RLPDecodeError::InvalidLength)
 }
 
 /// Cpmputes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
