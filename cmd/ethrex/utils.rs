@@ -10,7 +10,6 @@ use ethrex_p2p::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_vm::EvmEngine;
 use hex::FromHexError;
-#[cfg(feature = "l2")]
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -134,7 +133,6 @@ pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) 
     };
 }
 
-#[allow(dead_code)]
 pub fn read_node_config_file(file_path: PathBuf) -> Result<NodeConfigFile, String> {
     match std::fs::File::open(file_path) {
         Ok(file) => {
@@ -144,7 +142,6 @@ pub fn read_node_config_file(file_path: PathBuf) -> Result<NodeConfigFile, Strin
     }
 }
 
-#[cfg(feature = "l2")]
 pub fn parse_private_key(s: &str) -> eyre::Result<SecretKey> {
     Ok(SecretKey::from_slice(&parse_hex(s)?)?)
 }
