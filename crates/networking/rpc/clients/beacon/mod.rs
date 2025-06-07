@@ -44,16 +44,18 @@ impl BeaconClient {
         T: serde::de::DeserializeOwned,
     {
         println!("Sending request: {endpoint}");
-        let response = self
-            .client
-            .get(self.url.clone().join(endpoint).unwrap())
-            .header("content-type", "application/json")
-            .header("accept", "application/json")
-            .send()
-            .await?
-            .json::<BeaconResponse>()
-            .await
-            .map_err(BeaconClientError::from)?;
+        let response =
+            self.client
+                .get(self.url.clone().join(endpoint).map_err(|_| {
+                    BeaconClientError::Custom("Failed to set url endpoint".to_string())
+                })?)
+                .header("content-type", "application/json")
+                .header("accept", "application/json")
+                .send()
+                .await?
+                .json::<BeaconResponse>()
+                .await
+                .map_err(BeaconClientError::from)?;
 
         match response {
             BeaconResponse::Success(res) => {

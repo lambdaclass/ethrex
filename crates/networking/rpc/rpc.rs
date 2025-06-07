@@ -140,7 +140,7 @@ pub async fn start_api(
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")] sponsor_pk: SecretKey,
     #[cfg(feature = "l2")] rollup_store: StoreRollup,
-) {
+) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
@@ -187,7 +187,9 @@ pub async fn start_api(
         .route("/", post(handle_http_request))
         .layer(cors)
         .with_state(service_context.clone());
-    let http_listener = TcpListener::bind(http_addr).await.unwrap();
+    let http_listener = TcpListener::bind(http_addr)
+        .await
+        .map_err(|error| RpcErr::Internal(error.to_string()))?;
     let http_server = axum::serve(http_listener, http_router)
         .with_graceful_shutdown(shutdown_signal())
         .into_future();
@@ -204,7 +206,9 @@ pub async fn start_api(
         let authrpc_router = Router::new()
             .route("/", post(authrpc_handler))
             .with_state(service_context);
-        let authrpc_listener = TcpListener::bind(authrpc_addr).await.unwrap();
+        let authrpc_listener = TcpListener::bind(authrpc_addr)
+            .await
+            .map_err(|error| RpcErr::Internal(error.to_string()))?;
         let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
             .with_graceful_shutdown(shutdown_signal())
             .into_future();
@@ -213,6 +217,7 @@ pub async fn start_api(
         let _ = tokio::try_join!(authrpc_server, http_server)
             .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
     }
+    Ok(())
 }
 
 async fn shutdown_signal() {
@@ -236,7 +241,7 @@ async fn handle_http_request(
                 let res = map_http_requests(&req, service_context.clone()).await;
                 responses.push(rpc_response(req.id, res));
             }
-            serde_json::to_value(responses).unwrap()
+            serde_json::to_value(responses).expect("Failed to convert rpc responses to json")
         }
         Err(_) => rpc_response(
             RpcRequestId::String("".to_string()),
@@ -456,7 +461,7 @@ where
             error: error.into(),
         }),
     }
-    .unwrap()
+    .expect("Failed to convert rpc response to json")
 }
 
 #[cfg(test)]

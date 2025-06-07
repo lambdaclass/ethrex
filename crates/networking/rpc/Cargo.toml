@@ -48,3 +48,6 @@ path = "./lib.rs"
 
 [features]
 l2 = ["ethrex-storage-rollup"]
+
+[lints.clippy] 
+unwrap_used = "deny" 

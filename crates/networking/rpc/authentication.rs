@@ -46,7 +46,7 @@ pub fn validate_jwt_authentication(token: &str, secret: &Bytes) -> Result<(), Au
     validation.set_required_spec_claims(&["iat"]);
     match decode::<Claims>(token, &decoding_key, &validation) {
         Ok(token_data) => {
-            if invalid_issued_at_claim(token_data) {
+            if invalid_issued_at_claim(token_data)? {
                 Err(AuthenticationError::InvalidIssuedAtClaim)
             } else {
                 Ok(())
@@ -57,10 +57,10 @@ pub fn validate_jwt_authentication(token: &str, secret: &Bytes) -> Result<(), Au
 }
 
 /// Checks that the "iat" timestamp in the claim is less than 60 seconds from now
-fn invalid_issued_at_claim(token_data: TokenData<Claims>) -> bool {
+fn invalid_issued_at_claim(token_data: TokenData<Claims>) -> Result<bool, AuthenticationError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .map_err(|_| AuthenticationError::InvalidIssuedAtClaim)?
         .as_secs() as usize;
-    (now as isize - token_data.claims.iat as isize).abs() > 60
+    Ok((now as isize - token_data.claims.iat as isize).abs() > 60)
 }
