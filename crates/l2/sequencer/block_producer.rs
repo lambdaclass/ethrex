@@ -14,10 +14,10 @@ use ethrex_storage::Store;
 use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
 use payload_builder::build_payload;
-use tokio::time::sleep;
+use tokio::{sync::Mutex, time::sleep};
 use tracing::{debug, error, info};
 
-use crate::{BlockProducerConfig, SequencerConfig};
+use crate::{based::sequencer_state::SequencerState, BlockProducerConfig, SequencerConfig};
 
 use super::{
     errors::{BlockProducerError, SequencerError},
@@ -39,10 +39,11 @@ pub async fn start_block_producer(
     blockchain: Arc<Blockchain>,
     execution_cache: Arc<ExecutionCache>,
     cfg: SequencerConfig,
+    sequencer_state: Arc<Mutex<SequencerState>>,
 ) -> Result<(), SequencerError> {
     let proposer = BlockProducer::new_from_config(&cfg.block_producer);
     proposer
-        .run(store.clone(), blockchain, execution_cache)
+        .run(store.clone(), blockchain, execution_cache, sequencer_state)
         .await;
     Ok(())
 }
@@ -66,10 +67,16 @@ impl BlockProducer {
         store: Store,
         blockchain: Arc<Blockchain>,
         execution_cache: Arc<ExecutionCache>,
+        sequencer_state: Arc<Mutex<SequencerState>>,
     ) {
         loop {
             let _ = self
-                .main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
+                .main_logic(
+                    store.clone(),
+                    blockchain.clone(),
+                    execution_cache.clone(),
+                    sequencer_state.clone(),
+                )
                 .await
                 .inspect_err(|e| error!("Block Producer Error: {e}"));
 
@@ -78,6 +85,19 @@ impl BlockProducer {
     }
 
     pub async fn main_logic(
+        &self,
+        store: Store,
+        blockchain: Arc<Blockchain>,
+        execution_cache: Arc<ExecutionCache>,
+        sequencer_state: Arc<Mutex<SequencerState>>,
+    ) -> Result<(), BlockProducerError> {
+        if let SequencerState::Following = *sequencer_state.lock().await {
+            return Ok(());
+        }
+        self.produce(store, blockchain, execution_cache).await
+    }
+
+    pub async fn produce(
         &self,
         store: Store,
         blockchain: Arc<Blockchain>,

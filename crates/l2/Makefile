@@ -1,4 +1,4 @@
-.PHONY: help init down clean restart cli init-local-l1 init-l1 down-local-l1 \
+.PHONY: help init down clean restart cli update-cli-contracts init-local-l1 init-l1 down-local-l1 \
 		restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 \
 		init-l2-no-metrics down-l2 restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test \
 		init-testnet deploy-l1-testnet restart-testnet
@@ -28,6 +28,21 @@ restart: restart-local-l1 deploy-l1 purge_prover_state restart-l2 ## 🔄 Restar
 restart-testnet:
 	down-l2 down-metrics rm-db-l2 update-system-contracts deploy-l1-testnet init-l2
 
+# CLI
+cli: ## 🛠️ Installs the L2 Lambda ethrex CLI
+	cd ${ethrex_PATH}/cmd/ethrex_l2 && \
+	cargo install --path . --force
+
+update-cli-contracts: ## 📜 Update the CLI's config contracts
+	@if [ -z "$$C" ]; then \
+		echo "Error: CONFIG_NAME (C) is missing.\nPlease provide it as an argument:\nmake update-cli-contracts C=<config_name>."; \
+		exit 1; \
+	fi && \
+	CB=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' .env | cut -d= -f2) && \
+	ethrex_l2 config edit --common-bridge $$CB $$C && \
+	OP=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' .env | cut -d= -f2) && \
+	ethrex_l2 config edit --on-chain-proposer $$OP $$C
+
 # Variables
 
 ethrex_PATH=$(shell pwd)/../..
@@ -43,6 +58,7 @@ L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
 
 ethrex_L2_DEV_LIBMDBX?=dev_ethrex_l2
+ethrex_L2_2_DEV_LIBMDBX?=dev_ethrex_l2_2
 ethrex_L1_DEV_LIBMDBX=dev_ethrex_l1
 L1_PORT=8545
 L2_PORT=1729
@@ -109,6 +125,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
 	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
+	--sequencer-registry-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--deposit-rich \
 	--private-keys-file-path ../../test_data/private_keys_l1.txt \
 	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
@@ -129,6 +146,7 @@ init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex
 
 DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
 DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
+DEFAULT_SEQUENCER_REGISTRY_ADDRESS=$$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat .env | xargs); \
@@ -148,7 +166,8 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
 	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
 	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS}
+	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS} \
+	--state-updater.sequencer-registry ${DEFAULT_SEQUENCER_REGISTRY_ADDRESS}
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d

@@ -274,6 +274,25 @@ pub struct DeployerOptions {
         help = "Path to the SP1 verification key. This is used for proof verification."
     )]
     pub sp1_vk_path: String,
+    #[arg(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS",
+        action = ArgAction::SetTrue,
+        help_heading = "Deployer options",
+        help = "If set to true, it will deploy the SequencerRegistry contract."
+    )]
+    pub deploy_based_contracts: bool,
+    #[arg(
+        long,
+        value_name = "ADDRESS",
+        env = "ETHREX_SEQUENCER_REGISTRY_OWNER",
+        required_if_eq("deploy_based_contracts", "true"),
+        help_heading = "Deployer options",
+        help = "Address of the owner of the SequencerRegistry contract, who can upgrade the contract."
+    )]
+    pub sequencer_registry_owner: Address,
 }
 
 impl Default for DeployerOptions {
@@ -352,6 +371,12 @@ impl Default for DeployerOptions {
                 "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
                 env!("CARGO_MANIFEST_DIR")
             ),
+            deploy_based_contracts: false,
+            // 0x03d0a0aee676cc45bf7032649e0871927c947c8e
+            sequencer_registry_owner: H160([
+                0x03, 0xd0, 0xa0, 0xae, 0xe6, 0x76, 0xcc, 0x45, 0xbf, 0x70, 0x32, 0x64, 0x9e, 0x08,
+                0x71, 0x92, 0x7c, 0x94, 0x7c, 0x8e,
+            ]),
         }
     }
 }

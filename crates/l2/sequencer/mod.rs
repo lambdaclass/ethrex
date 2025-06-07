@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use crate::{utils::prover::proving_systems::ProverType, SequencerConfig};
+use crate::{
+    based::{block_fetcher, sequencer_state::SequencerState, state_updater},
+    utils::prover::proving_systems::ProverType,
+    SequencerConfig,
+};
 use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -10,12 +14,12 @@ use l1_committer::L1Committer;
 use l1_proof_sender::L1ProofSender;
 use l1_watcher::L1Watcher;
 use proof_coordinator::ProofCoordinator;
-use tokio::task::JoinSet;
+use tokio::{sync::Mutex, task::JoinSet};
 use tracing::{error, info};
 use utils::get_needed_proof_types;
 
 pub mod block_producer;
-mod l1_committer;
+pub mod l1_committer;
 pub mod l1_proof_sender;
 pub mod l1_proof_verifier;
 mod l1_watcher;
@@ -38,7 +42,15 @@ pub async fn start_l2(
     cfg: SequencerConfig,
     #[cfg(feature = "metrics")] l2_url: String,
 ) {
-    info!("Starting Proposer");
+    let initial_state = if cfg.based.based {
+        SequencerState::default()
+    } else {
+        SequencerState::Sequencing
+    };
+
+    info!("Starting Sequencer in {initial_state} mode");
+
+    let shared_state = Arc::new(Mutex::new(initial_state));
 
     let execution_cache = Arc::new(ExecutionCache::default());
 
@@ -57,16 +69,22 @@ pub async fn start_l2(
         return;
     }
 
-    let _ = L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone())
-        .await
-        .inspect_err(|err| {
-            error!("Error starting Watcher: {err}");
-        });
+    let _ = L1Watcher::spawn(
+        store.clone(),
+        blockchain.clone(),
+        cfg.clone(),
+        shared_state.clone(),
+    )
+    .await
+    .inspect_err(|err| {
+        error!("Error starting Watcher: {err}");
+    });
     let _ = L1Committer::spawn(
         store.clone(),
         rollup_store.clone(),
         execution_cache.clone(),
         cfg.clone(),
+        shared_state.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -85,6 +103,7 @@ pub async fn start_l2(
 
     let _ = L1ProofSender::spawn(
         cfg.clone(),
+        shared_state.clone(),
         rollup_store.clone(),
         needed_proof_types.clone(),
     )
@@ -100,10 +119,27 @@ pub async fn start_l2(
     }
     task_set.spawn(start_block_producer(
         store.clone(),
-        blockchain,
-        execution_cache,
+        blockchain.clone(),
+        execution_cache.clone(),
         cfg.clone(),
+        shared_state.clone(),
     ));
+    if cfg.based.based {
+        task_set.spawn(state_updater::start_state_updater(
+            cfg.clone(),
+            shared_state.clone(),
+            store.clone(),
+            rollup_store.clone(),
+        ));
+
+        task_set.spawn(block_fetcher::start_block_fetcher(
+            store.clone(),
+            blockchain,
+            shared_state.clone(),
+            rollup_store.clone(),
+            cfg.clone(),
+        ));
+    }
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
 
