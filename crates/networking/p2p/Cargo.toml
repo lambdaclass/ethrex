@@ -22,6 +22,7 @@ thiserror.workspace = true
 lazy_static.workspace = true
 snap.workspace = true
 serde.workspace = true
+secp256k1.workspace = true
 
 tokio-stream = "0.1.17"
 futures = "0.3.31"

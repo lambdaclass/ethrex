@@ -27,7 +27,7 @@ use crate::{
 use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
 use ethrex_common::{
     types::{Block, MempoolTransaction, Transaction},
-    H256, H512,
+    Address, H256, H512,
 };
 use ethrex_storage::Store;
 #[cfg(feature = "l2")]
@@ -35,6 +35,9 @@ use ethrex_storage_rollup::StoreRollup;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
+use secp256k1::Message as SignedMessage;
+use secp256k1::{ecdsa::RecoveryId, SecretKey as SigningKeySecp256k1};
+use sha3::{Digest, Keccak256};
 use std::{collections::HashSet, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -106,6 +109,7 @@ pub(crate) struct RLPxConnection<S> {
     #[cfg(feature = "l2")]
     store_rollup: StoreRollup,
     based: bool,
+    secret_key: Option<SigningKeySecp256k1>,
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
@@ -121,6 +125,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         connection_broadcast: RLPxConnBroadcastSender,
         #[cfg(feature = "l2")] store_rollup: StoreRollup,
         based: bool,
+        secret_key: Option<SigningKeySecp256k1>,
     ) -> Self {
         Self {
             signer,
@@ -142,6 +147,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             #[cfg(feature = "l2")]
             store_rollup,
             based,
+            secret_key,
         }
     }
 
@@ -390,7 +396,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     self.send(message).await?;
                 }
                 // This is not ideal, but using the receiver without
-                // this function call, causes the loop to take ownwership
+                // this function call, causes the loop to take ownership
                 // of the variable and the compiler will complain about it,
                 // with this function, we avoid that.
                 // If the broadcaster is Some (i.e. we're connected to a peer that supports an eth protocol),
@@ -485,9 +491,34 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     header: new_block_header,
                     body: new_block_body,
                 };
+                let Some(secret_key) = self.secret_key else {
+                    return Err(RLPxError::InternalError(
+                        "Secret key is not set for based connection".to_string(),
+                    ));
+                };
 
-                self.send(Message::NewBlock(NewBlockMessage { block: new_block }))
-                    .await?;
+                let (recovery_id, signature) = secp256k1::SECP256K1
+                    .sign_ecdsa_recoverable(
+                        &SignedMessage::from_digest(new_block.hash().to_fixed_bytes()),
+                        &secret_key,
+                    )
+                    .serialize_compact();
+                let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+                // let a = secp256k1::SECP256K1
+                //     .recover_ecdsa(
+                //         &SignedMessage::from_digest(new_block.hash().to_fixed_bytes()),
+                //         &signature,
+                //     )
+                //     .unwrap();
+                // let hash = Keccak256::new_with_prefix(&a.serialize_uncompressed()[1..]).finalize();
+                // let address = Address::from_slice(&hash[12..]);
+
+                self.send(Message::NewBlock(NewBlockMessage {
+                    block: new_block,
+                    signature,
+                    recovery_id,
+                }))
+                .await?;
             }
             self.latest_broadcasted_block = latest_block_number;
         }
@@ -641,6 +672,28 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     );
                     return Ok(());
                 }
+                let block_hash = req.block.hash();
+
+                let recovery_id: i32 = i32::from_be_bytes(req.recovery_id);
+                let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
+                    &req.signature,
+                    RecoveryId::from_i32(recovery_id).unwrap(), // cannot fail
+                )
+                .unwrap();
+
+                // Recover public key
+                let public = secp256k1::SECP256K1
+                    .recover_ecdsa(
+                        &SignedMessage::from_digest(block_hash.to_fixed_bytes()),
+                        &signature,
+                    )
+                    .unwrap();
+                // Hash public key to obtain address
+                let hash =
+                    Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
+                let recovered_lead_sequencer = Address::from_slice(&hash[12..]);
+                dbg!(recovered_lead_sequencer);
+
                 let _ = self
                     .blockchain
                     .add_block(&req.block)
@@ -649,7 +702,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         log_peer_warn(&self.node, &format!("Error adding new block: {e}"));
                     });
 
-                let block_hash = req.block.hash();
                 apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
                     .await
                     .map_err(|e| RLPxError::BadRequest(format!("Error adding new block: {e}")))?;

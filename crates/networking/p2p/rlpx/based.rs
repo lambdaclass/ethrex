@@ -13,6 +13,8 @@ use super::{
 #[derive(Debug, Clone)]
 pub struct NewBlockMessage {
     pub block: Block,
+    pub signature: [u8; 64],
+    pub recovery_id: [u8; 4],
 }
 
 impl RLPxMessage for NewBlockMessage {
@@ -22,6 +24,8 @@ impl RLPxMessage for NewBlockMessage {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.block)
+            .encode_field(&self.signature)
+            .encode_field(&self.recovery_id)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
@@ -31,8 +35,15 @@ impl RLPxMessage for NewBlockMessage {
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
-        let (block, _) = decoder.decode_field("block")?;
-        Ok(NewBlockMessage { block })
+        let (block, decoder) = decoder.decode_field("block")?;
+        let (signature, decoder) = decoder.decode_field("signature")?;
+        let (recovery_id, decoder) = decoder.decode_field("recovery_id")?;
+        decoder.finish()?;
+        Ok(NewBlockMessage {
+            block,
+            signature,
+            recovery_id,
+        })
     }
 }
 

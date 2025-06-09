@@ -223,7 +223,7 @@ impl GetPooledTransactions {
                 })
             }
             Transaction::EIP7702Transaction(itx) => P2PTransaction::EIP7702Transaction(itx),
-            Transaction::PrivilegedL2Transaction(itx) => {
+            Transaction::PrivilegedL2Transaction(_) => {
                 return Err(StoreError::Custom(
                     "Privileged Transactions are not supported in P2P".to_string(),
                 ));

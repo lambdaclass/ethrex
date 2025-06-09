@@ -125,6 +125,7 @@ async fn main() -> eyre::Result<()> {
                     false,
                     #[cfg(feature = "l2")]
                     StoreRollup::default(),
+                    None,
                 )
                 .await;
             } else {

@@ -220,7 +220,8 @@ init-based-node-2: ## 🚀 Initializes a second L2 Lambda ethrex Client for test
 		--based \
 		--p2p.enabled \
 		--p2p.port 30304 \
-		--discovery.port 30304
+		--discovery.port 30304 \
+		--bootnodes enode://42c2f3197afbc722b22311f67b5d91e227588ea7d0bbe80a4158cd9f25c1d2e3234a2f5b53bd2822e9876e7d2366af31e1d1480fa403d5edae0a089ddfe156e7@10.0.10.14:30303
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d

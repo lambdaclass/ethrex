@@ -3233,6 +3233,7 @@ dependencies = [
  "k256",
  "lazy_static",
  "rand 0.8.5",
+ "secp256k1",
  "serde",
  "serde_json",
  "sha3",

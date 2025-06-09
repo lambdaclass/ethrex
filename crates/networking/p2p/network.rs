@@ -17,6 +17,7 @@ use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
 };
+use secp256k1::SecretKey;
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpSocket, TcpStream},
@@ -54,6 +55,7 @@ pub struct P2PContext {
     pub based: bool,
     #[cfg(feature = "l2")]
     pub store_rollup: StoreRollup,
+    pub secret_key: Option<SecretKey>,
 }
 
 impl P2PContext {
@@ -69,6 +71,7 @@ impl P2PContext {
         client_version: String,
         based: bool,
         #[cfg(feature = "l2")] store_rollup: StoreRollup,
+        secret_key: Option<SecretKey>,
     ) -> Self {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
@@ -88,6 +91,7 @@ impl P2PContext {
             based,
             #[cfg(feature = "l2")]
             store_rollup,
+            secret_key,
         }
     }
 

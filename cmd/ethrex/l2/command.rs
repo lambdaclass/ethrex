@@ -128,6 +128,7 @@ impl Command {
                         l2_sequencer_cfg.based.based,
                         #[cfg(feature = "l2")]
                         rollup_store.clone(),
+                        Some(l2_sequencer_cfg.l1_committer.l1_private_key),
                     )
                     .await;
                 } else {
