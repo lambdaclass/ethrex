@@ -259,15 +259,16 @@ impl Syncer {
 
             // Discard the first header as we already have it
             block_headers.remove(0);
-
-            block_sync_state
-                .process_incoming_headers(
-                    block_headers,
-                    sync_head_found,
-                    self.blockchain.clone(),
-                    self.peers.clone(),
-                )
-                .await?;
+            if !block_headers.is_empty() {
+                block_sync_state
+                    .process_incoming_headers(
+                        block_headers,
+                        sync_head_found,
+                        self.blockchain.clone(),
+                        self.peers.clone(),
+                    )
+                    .await?;
+            }
 
             if sync_head_found {
                 break;
