@@ -19,7 +19,9 @@ use tracing::{debug, error, info};
 
 use crate::{
     based::sequencer_state::SequencerState,
-    sequencer::{errors::SequencerError, l1_committer::generate_blobs_bundle},
+    sequencer::{
+        errors::SequencerError, l1_committer::generate_blobs_bundle, utils::node_is_up_to_date,
+    },
     utils::helpers::is_withdrawal_l2,
     SequencerConfig,
 };
@@ -125,7 +127,13 @@ impl BlockFetcher {
     }
 
     async fn fetch(&mut self) -> Result<(), BlockFetcherError> {
-        while !self.node_is_up_to_date().await? {
+        while !node_is_up_to_date::<BlockFetcherError>(
+            &self.eth_client,
+            self.on_chain_proposer_address,
+            &self.rollup_store,
+        )
+        .await?
+        {
             info!("Node is not up to date. Syncing via L1");
 
             let last_l2_block_number_known = self.store.get_latest_block_number().await?;
@@ -176,25 +184,11 @@ impl BlockFetcher {
 
                 self.seal_batch(&batch, batch_number).await?;
             }
-
-            sleep(Duration::from_millis(self.fetch_interval_ms)).await;
         }
 
         info!("Node is up to date");
 
         Ok(())
-    }
-
-    async fn node_is_up_to_date(&self) -> Result<bool, BlockFetcherError> {
-        let last_committed_batch_number = self
-            .eth_client
-            .get_last_committed_batch(self.on_chain_proposer_address)
-            .await?;
-
-        self.rollup_store
-            .contains_batch(&last_committed_batch_number)
-            .await
-            .map_err(BlockFetcherError::StoreError)
     }
 
     /// Fetch logs from the L1 chain for the BatchCommitted event.

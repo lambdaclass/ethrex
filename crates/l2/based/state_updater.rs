@@ -10,8 +10,10 @@ use tokio::{sync::Mutex, time::sleep};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    based::sequencer_state::SequencerState, sequencer::errors::SequencerError,
-    utils::parse::hash_to_address, SequencerConfig,
+    based::sequencer_state::SequencerState,
+    sequencer::{errors::SequencerError, utils::node_is_up_to_date},
+    utils::parse::hash_to_address,
+    SequencerConfig,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -105,7 +107,12 @@ impl StateUpdater {
                 })?,
         );
 
-        let node_is_up_to_date = self.node_is_up_to_date().await?;
+        let node_is_up_to_date = node_is_up_to_date::<StateUpdaterError>(
+            &self.eth_client,
+            self.on_chain_proposer_address,
+            &self.rollup_store,
+        )
+        .await?;
 
         let new_state = if lead_sequencer == self.sequencer_address {
             if node_is_up_to_date {
@@ -135,18 +142,6 @@ impl StateUpdater {
         *current_state = new_state;
 
         Ok(())
-    }
-
-    async fn node_is_up_to_date(&self) -> Result<bool, StateUpdaterError> {
-        let last_committed_batch_number = self
-            .eth_client
-            .get_last_committed_batch(self.on_chain_proposer_address)
-            .await?;
-
-        self.rollup_store
-            .contains_batch(&last_committed_batch_number)
-            .await
-            .map_err(StateUpdaterError::StoreError)
     }
 
     /// Reverts state to the last committed batch if known.
