@@ -1255,14 +1255,7 @@ impl Transaction {
     }
 
     pub fn is_privileged(&self) -> bool {
-        match &self {
-            Transaction::LegacyTransaction(_) => false,
-            Transaction::EIP2930Transaction(_) => false,
-            Transaction::EIP1559Transaction(_) => false,
-            Transaction::EIP4844Transaction(_) => false,
-            Transaction::EIP7702Transaction(_) => false,
-            Transaction::PrivilegedL2Transaction(_) => true,
-        }
+        matches!(self, Transaction::PrivilegedL2Transaction(_))
     }
 
     pub fn max_fee_per_gas(&self) -> Option<u64> {
