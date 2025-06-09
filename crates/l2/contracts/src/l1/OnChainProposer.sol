@@ -74,8 +74,9 @@ contract OnChainProposer is
     /// @dev Used only in dev mode.
     address public constant DEV_MODE = address(0xAA);
 
-    /// @notice Unused variable, left here to avoid storage collisions.
-    bool public _VALIDIUM;
+    /// @notice Indicates whether the contract operates in validium mode.Add commentMore actions
+    /// @dev This value is immutable and can only be set during contract deployment.
+    bool public VALIDIUM;
 
     address public TDXVERIFIER;
 
@@ -99,6 +100,7 @@ contract OnChainProposer is
     /// @param r0verifier the address of the risc0 groth16 verifier.
     /// @param sp1verifier the address of the sp1 groth16 verifier.
     function initialize(
+        bool _validium,
         address owner,
         address r0verifier,
         address sp1verifier,
@@ -109,6 +111,8 @@ contract OnChainProposer is
         bytes32 genesisStateRoot,
         address[] calldata sequencerAddresses
     ) public initializer {
+        VALIDIUM = _validium;
+
         // Set the AlignedProofAggregator address
         require(
             ALIGNEDPROOFAGGREGATOR == address(0),
