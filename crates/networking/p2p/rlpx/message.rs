@@ -177,9 +177,9 @@ impl Message {
         eth_capability: &Option<Capability>,
         snap_capability: &Option<Capability>,
     ) -> Result<Message, RLPDecodeError> {
-        let Some(p2p_capability) = p2p_capability else {
-            return Err(RLPDecodeError::IncompatibleProtocol);
-        };
+        let p2p_capability = p2p_capability
+            .as_ref()
+            .ok_or(RLPDecodeError::IncompatibleProtocol)?;
 
         // P2P protocol
         if msg_id < p2p_capability.length() {
@@ -304,24 +304,22 @@ impl Message {
             Message::PooledTransactions(msg) => msg.encode(buf),
             Message::GetReceipts(msg) => msg.encode(buf),
             Message::Receipts(msg) => {
-                if let Some(eth_capability) = eth_capability {
-                    match eth_capability.version {
-                        68 => msg.encode68(buf),
-                        69 => msg.encode(buf),
-                        _ => Err(RLPEncodeError::IncompatibleProtocol),
-                    }
-                } else {
-                    Err(RLPEncodeError::IncompatibleProtocol)
+                let eth_capability = eth_capability
+                    .as_ref()
+                    .ok_or(RLPEncodeError::IncompatibleProtocol)?;
+                match eth_capability.version {
+                    68 => msg.encode68(buf),
+                    69 => msg.encode(buf),
+                    _ => Err(RLPEncodeError::IncompatibleProtocol),
                 }
             }
             Message::BlockRangeUpdate(msg) => {
-                if let Some(eth_capability) = eth_capability {
-                    match eth_capability.version {
-                        69 => msg.encode(buf),
-                        _ => Err(RLPEncodeError::IncompatibleProtocol),
-                    }
-                } else {
-                    Err(RLPEncodeError::IncompatibleProtocol)
+                let eth_capability = eth_capability
+                    .as_ref()
+                    .ok_or(RLPEncodeError::IncompatibleProtocol)?;
+                match eth_capability.version {
+                    69 => msg.encode(buf),
+                    _ => Err(RLPEncodeError::IncompatibleProtocol),
                 }
             }
             Message::GetAccountRange(msg) => msg.encode(buf),
