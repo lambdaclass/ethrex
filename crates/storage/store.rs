@@ -55,8 +55,7 @@ pub struct UpdateBatch {
 
 impl UpdateBatch {
     pub async fn apply_to_store(self, store: Store) -> Result<(), StoreError> {
-        store.store_changes(self).await?;
-        Ok(())
+        store.store_changes(self).await
     }
 }
 
