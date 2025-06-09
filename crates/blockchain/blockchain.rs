@@ -35,6 +35,7 @@ use vm::StoreVmDatabase;
 
 #[derive(Debug)]
 pub struct Blockchain {
+    pub vm: Evm,
     pub evm_engine: EvmEngine,
     storage: Store,
     pub mempool: Mempool,
@@ -51,8 +52,12 @@ pub struct BatchBlockProcessingFailure {
 }
 
 impl Blockchain {
-    pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
+    pub fn new(evm_engine: EvmEngine, store: Store, starting_block_header_hash: H256) -> Self {
         Self {
+            vm: Evm::new(
+                evm_engine,
+                StoreVmDatabase::new(store.clone(), starting_block_header_hash),
+            ),
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
@@ -60,13 +65,32 @@ impl Blockchain {
         }
     }
 
-    pub fn default_with_store(store: Store) -> Self {
+    pub fn default_with_store(store: Store, starting_block_header_hash: H256) -> Self {
         Self {
+            vm: Evm::new(
+                EvmEngine::default(),
+                StoreVmDatabase::new(store.clone(), starting_block_header_hash),
+            ),
             evm_engine: EvmEngine::default(),
             storage: store,
             mempool: Mempool::new(),
             is_synced: AtomicBool::new(false),
         }
+    }
+
+    pub async fn start_new_vm_instance(
+        &mut self,
+        new_canonical_block_header: BlockHeader,
+    ) -> Result<(), ChainError> {
+        let vm_db = StoreVmDatabase::new(
+            self.storage.clone(),
+            *(new_canonical_block_header
+                .hash
+                .get()
+                .ok_or(ChainError::StoreError(StoreError::MissingLatestBlockNumber))?),
+        );
+        self.vm = Evm::new(self.evm_engine, vm_db);
+        Ok(())
     }
 
     /// Executes a block withing a new vm instance and state
@@ -86,10 +110,8 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.parent_hash);
-        let mut vm = Evm::new(self.evm_engine, vm_db);
-        let execution_result = vm.execute_block(block)?;
-        let account_updates = vm.get_state_transitions()?;
+        let execution_result = self.vm.execute_block(block)?;
+        let account_updates = self.vm.get_state_transitions()?;
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
@@ -100,7 +122,7 @@ impl Blockchain {
     }
 
     /// Executes a block from a given vm instance an does not clear its state
-    fn execute_block_from_state(
+    fn execute_block_from_batch(
         &self,
         parent_header: &BlockHeader,
         block: &Block,
@@ -146,7 +168,7 @@ impl Blockchain {
             .map_err(ChainError::StoreError)
     }
 
-    pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+    pub async fn add_block(self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();
@@ -245,7 +267,7 @@ impl Blockchain {
                 blocks[i - 1].header.clone()
             };
 
-            let BlockExecutionResult { receipts, .. } = match self.execute_block_from_state(
+            let BlockExecutionResult { receipts, .. } = match self.execute_block_from_batch(
                 &parent_header,
                 block,
                 &chain_config,
