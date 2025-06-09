@@ -15,6 +15,8 @@ use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt, Transaction,
 };
+use ethrex_common::Address;
+use ethrex_common::H160;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
@@ -1022,6 +1024,47 @@ impl StoreEngine for Store {
         self.write::<InvalidAncestors>(bad_block.into(), latest_valid.into())
             .await
     }
+
+    async fn setup_genesis_flat_account_storage(
+        &self,
+        genesis_accounts: &[(Address, H256, U256)],
+    ) -> Result<(), StoreError> {
+        self.update_flat_storage(genesis_accounts).await
+    }
+
+    async fn update_flat_storage(
+        &self,
+        updates: &[(Address, H256, U256)],
+    ) -> Result<(), StoreError> {
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        let mut cursor = tx
+            .cursor::<FlatAccountStorage>()
+            .map_err(StoreError::LibmdbxError)?;
+        for (addr, slot, value) in updates.iter().cloned() {
+            let key = (addr.into(), slot.into());
+            if !value.is_zero() {
+                cursor
+                    .upsert(key, value.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            } else {
+                if let Some(_) = cursor.seek_exact(key).map_err(StoreError::LibmdbxError)? {
+                    cursor.delete_current().map_err(StoreError::LibmdbxError)?;
+                }
+            }
+        }
+        tx.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
+        let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let res = tx
+            .get::<FlatAccountStorage>((address.into(), key.into()))
+            .map_err(StoreError::LibmdbxError)?;
+        Ok(res.map(Into::into))
+    }
 }
 
 impl Debug for Store {
@@ -1233,10 +1276,25 @@ table!(
     ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
 );
 
+table!(
+    /// Account storage as a flat mapping from (AccountAddress, Slot) to (Value)
+    ( FlatAccountStorage ) (AccountAddress, AccountStorageKeyBytes) [AccountAddress] => AccountStorageValueBytes
+);
+
 // Storage values are stored as bytes instead of using their rlp encoding
 // As they are stored in a dupsort table, they need to have a fixed size, and encoding them doesn't preserve their size
+#[derive(Clone)]
 pub struct AccountStorageKeyBytes(pub [u8; 32]);
+#[derive(Clone)]
 pub struct AccountStorageValueBytes(pub [u8; 32]);
+#[derive(Clone)]
+pub struct AccountAddress(pub H160);
+
+impl From<H160> for AccountAddress {
+    fn from(value: H160) -> Self {
+        Self(value)
+    }
+}
 
 impl Encodable for AccountStorageKeyBytes {
     type Encoded = [u8; 32];
@@ -1263,6 +1321,20 @@ impl Encodable for AccountStorageValueBytes {
 impl Decodable for AccountStorageValueBytes {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
         Ok(AccountStorageValueBytes(b.try_into()?))
+    }
+}
+
+impl Encodable for AccountAddress {
+    type Encoded = [u8; 20];
+
+    fn encode(self) -> Self::Encoded {
+        self.0 .0
+    }
+}
+
+impl Decodable for AccountAddress {
+    fn decode(b: &[u8]) -> anyhow::Result<Self> {
+        Ok(AccountAddress(H160(b.try_into()?)))
     }
 }
 
@@ -1337,6 +1409,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(StorageSnapShot),
         table_info!(StorageHealPaths),
         table_info!(InvalidAncestors),
+        table_info!(FlatAccountStorage),
     ]
     .into_iter()
     .collect();

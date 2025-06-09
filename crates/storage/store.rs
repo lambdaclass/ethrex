@@ -13,6 +13,7 @@ use ethrex_common::types::{
     BlockHash, BlockHeader, BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index,
     Receipt, Transaction, EMPTY_TRIE_HASH,
 };
+use ethrex_common::H160;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Trie};
@@ -322,6 +323,16 @@ impl Store {
             return Ok(None);
         };
 
+        let flat_updates: Vec<_> = account_updates
+            .iter()
+            .flat_map(|acc_upd| {
+                acc_upd
+                    .added_storage
+                    .iter()
+                    .map(|(k, v)| (acc_upd.address, *k, *v))
+            })
+            .collect();
+        self.engine.update_flat_storage(&flat_updates).await?;
         let mut state_trie = self
             .apply_account_updates_from_trie(state_trie, account_updates)
             .await?;
@@ -411,6 +422,15 @@ impl Store {
         genesis_state_trie.hash().map_err(StoreError::Trie)
     }
 
+    pub async fn setup_genesis_flat_account_storage(
+        &self,
+        genesis_accounts: &[(H160, H256, U256)],
+    ) -> Result<(), StoreError> {
+        self.engine
+            .setup_genesis_flat_account_storage(genesis_accounts)
+            .await
+    }
+
     pub async fn add_receipt(
         &self,
         block_hash: BlockHash,
@@ -455,6 +475,21 @@ impl Store {
         self.engine.mark_chain_as_canonical(blocks).await
     }
 
+    pub fn get_current_storage(
+        &self,
+        address: Address,
+        key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        self.engine.get_current_storage(address, key)
+    }
+
+    pub async fn update_flat_storage(
+        &self,
+        updates: &[(H160, H256, U256)],
+    ) -> Result<(), StoreError> {
+        self.engine.update_flat_storage(updates).await
+    }
+
     pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
         info!("Storing initial state from genesis");
 
@@ -473,6 +508,20 @@ impl Store {
             }
         }
         // Store genesis accounts
+        // Start with the snapshot because the trie consumes the struct
+        // FIXME: should probably just use a reference to the structure to avoid the noise here
+        let flat_storage: Vec<_> = genesis
+            .alloc
+            .iter()
+            .flat_map(|(addr, account)| {
+                account
+                    .storage
+                    .iter()
+                    .map(|(key, value)| (*addr, H256(key.to_big_endian()), *value))
+            })
+            .collect();
+        self.setup_genesis_flat_account_storage(&flat_storage)
+            .await?;
         // TODO: Should we use this root instead of computing it before the block hash check?
         let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
