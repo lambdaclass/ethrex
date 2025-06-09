@@ -59,6 +59,15 @@ pub struct SequencerOptions {
     pub proof_coordinator_opts: ProofCoordinatorOptions,
     #[command(flatten)]
     pub aligned_opts: AlignedOptions,
+    #[arg(
+        long = "validium",
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_L2_VALIDIUM",
+        help_heading = "L2 options",
+        long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
+    )]
+    pub validium: bool,
 }
 
 impl From<SequencerOptions> for SequencerConfig {
@@ -78,7 +87,7 @@ impl From<SequencerOptions> for SequencerConfig {
                 l1_private_key: opts.committer_opts.committer_l1_private_key,
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
-                validium: opts.committer_opts.validium,
+                validium: opts.validium,
             },
             eth: EthConfig {
                 rpc_url: opts.eth_opts.rpc_url,
@@ -107,6 +116,7 @@ impl From<SequencerOptions> for SequencerConfig {
                 listen_port: opts.proof_coordinator_opts.listen_port,
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
                 dev_mode: opts.proof_coordinator_opts.dev_mode,
+                validium: opts.validium,
             },
             aligned: AlignedConfig {
                 aligned_mode: opts.aligned_opts.aligned,
@@ -310,15 +320,6 @@ pub struct CommitterOptions {
         help_heading = "L1 Committer options"
     )]
     pub arbitrary_base_blob_gas_price: u64,
-    #[arg(
-        long = "committer.validium",
-        default_value = "false",
-        value_name = "BOOLEAN",
-        env = "ETHREX_COMMITTER_VALIDIUM",
-        help_heading = "L1 Committer options",
-        help = "If set to true, initializes the committer in validium mode."
-    )]
-    pub validium: bool,
 }
 
 impl Default for CommitterOptions {
@@ -333,7 +334,6 @@ impl Default for CommitterOptions {
                 .unwrap(),
             commit_time_ms: 1000,
             arbitrary_base_blob_gas_price: 1_000_000_000,
-            validium: false,
         }
     }
 }
