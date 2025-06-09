@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749253595751,
+  "lastUpdate": 1749481989969,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11485,6 +11485,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177729748614,
             "range": "± 568635871",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6ac33242b0b4b0d5fd1feafd53003a505dca6a0f",
+          "message": "feat(l2): prove state diffs (#2819)\n\n**Motivation**\n\nThe goal is that the prover includes the previously committed blob\nversioned hash as a public input, and checks that it's correct. This is\nthe last big feature missing from the prover. After merging this PR, all\nfields in the L1 block commitment will be validated.\n\n- The blob (encoded state diffs), its commitment and proof are created\nby the L1 Committer.\n- The L1 Committer will send the `commitBatch` transaction (EIP4844),\nembedding the blob data. Then the contract will recover the blob\nversioned hash with the `BLOBHASH` opcode and store it in the block\ncommitment.\n- The prover will take theblob commitment and blob proof as private\ninputs. The prover will compute the blob versioned hash, set it as\npublic input and do all necessary checks:\n- First it will compute the state diffs from the account updates\nresulted from the batch execution\n- Then it will compute the valid blob by encoding the state diffs, and\nverify the proof (proof that the commitment binds to the valid blob)\n- After that, it computes the blob versioned hash from the blob\ncommitment and sets it as a public input, so now the L1 can verify that\nthe previously commited blob versioned hash is valid.\n\nVerifying the blob proof in the zkvm guest and later verifying the zkvm\nproof in the L1 is equivalent to calling the point evaluation precompile\nin the L1, following the protocol as defined in `c-kzg` (the blob proof\nis an opening over a challenge, which is defined using the blob\ncommitment and blob data).\n\nWe leverage `kzg-rs` to verify the blob proof. `kzg-rs` is a\nzkvm-friendly replacement for `c-kzg`, without proving capabilities\n(because a zkvm guest is only interested in verification, the proof can\nbe calculated in the host).\n\n**Description**\n\n- created `ethrex-l2-common` crate and refactored state diffs into there\nso that both `ethrex-l2` and `zkvm-interface` can use them\n- also refactored into `ethrex-l2-common` duplicated functions related\nto withdrawals and deposits.\n- L1 committer pushes blob bundles (blobs, its commitment and proof)\ninto a cache\n- Proof coordinator retrieves a bundle, extracts the blob for the batch\nto prove and sends the blob commitment and blob proof to the prover as a\nprivate input.\n- prover computes (as part of its program) the state diffs\n- prover verifies the KZG blob proof (checks that the blob commitment\nbinds to the valid state diff) and computes the blob versioned hash from\nthe blob commitment, which then commits as a public input.\n- removed perf_zkvm tests for convenience (had to do extra work to\ncreate blobs for the test data, but we were planning removing these\ntests anyway).\n- changed `StateDiff` to use `BTreeMap` for data ordering and\ndeterministc encoding (necessary for deterministic commitments)\n- created `L2Options` and moved the `validium` opt from the commiter to\nthere, because now the proof coordinator is also interested in that\noption.\n- now the blob versioned hash isn't passed by calldata during the\n`commitBatch` transaction but it's recovered using the `BLOBLHASH`\nopcode\n- removed the `VALIDIUM` variable in the OnChainProposer contract\n\n \nCloses #1100",
+          "timestamp": "2025-06-09T14:23:50Z",
+          "tree_id": "f2fd5ceae96bdcdc49fdc8313734ff2fa5137dbd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6ac33242b0b4b0d5fd1feafd53003a505dca6a0f"
+        },
+        "date": 1749481984947,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177166852997,
+            "range": "± 389440657",
             "unit": "ns/iter"
           }
         ]
