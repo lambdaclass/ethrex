@@ -159,7 +159,7 @@ impl StateUpdater {
             .await?
         else {
             // Node is not up to date. There is no uncommitted state to revert.
-            info!("No uncommitted state to revert. Node is up to date.");
+            info!("No uncommitted state to revert. Node is not up to date.");
             return Ok(());
         };
 
