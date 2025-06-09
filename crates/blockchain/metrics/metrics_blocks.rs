@@ -9,6 +9,7 @@ pub static METRICS_BLOCKS: LazyLock<MetricsBlocks> = LazyLock::new(MetricsBlocks
 pub struct MetricsBlocks {
     gas_limit: Gauge,
     block_number: IntGauge,
+    gigagas: Gauge,
 }
 
 impl Default for MetricsBlocks {
@@ -30,11 +31,20 @@ impl MetricsBlocks {
                 "Keeps track of the block number for the head of the chain",
             )
             .unwrap(),
+            gigagas: Gauge::new(
+                "gigagas",
+                "Keeps track of the block building throughput through gigagas/s",
+            )
+            .unwrap(),
         }
     }
 
     pub fn set_latest_block_gas_limit(&self, gas_limit: f64) {
         self.gas_limit.set(gas_limit);
+    }
+
+    pub fn set_latest_gigagas(&self, gigagas: f64) {
+        self.gigagas.set(gigagas);
     }
 
     pub fn set_block_number(&self, block_number: u64) -> Result<(), MetricsError> {
@@ -48,6 +58,8 @@ impl MetricsBlocks {
         r.register(Box::new(self.gas_limit.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.block_number.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.gigagas.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
