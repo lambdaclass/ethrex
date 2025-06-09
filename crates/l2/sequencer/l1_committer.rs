@@ -3,7 +3,6 @@ use crate::{
     CommitterConfig, EthConfig, SequencerConfig,
 };
 
-use aligned_sdk::communication::batch;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     types::{
