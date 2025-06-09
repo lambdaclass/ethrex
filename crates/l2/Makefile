@@ -106,6 +106,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
 	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
+	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
 	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--deposit-rich \
@@ -203,7 +204,7 @@ integration-test: rm-db-l2 rm-db-l1# We create an empty .env file simply because
 	touch .env
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
-	ETHREX_COMMITTER_VALIDIUM=${ETHREX_COMMITTER_VALIDIUM} \
+	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
 	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & \
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
