@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749501958665,
+  "lastUpdate": 1749502146601,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11695,6 +11695,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177629786198,
             "range": "± 397743313",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a94a8c8c5afe71e6d654582ebc738b5dde96a96a",
+          "message": "fix(l2): privileged txs should not be filtered out of the building process by nonce (#3089)\n\n**Motivation**\n\nPrivileged transactions essentialy ignore their nonce as it comes from\nthe L1 contract instead. Filtering them out by having their nonce too\nlow is incorrect and leads to bugs.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-06-09T20:00:10Z",
+          "tree_id": "ecd0cacce9ef314b19b4dd8f802b72ad05a51b09",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a94a8c8c5afe71e6d654582ebc738b5dde96a96a"
+        },
+        "date": 1749502141656,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 175643851252,
+            "range": "± 139473799",
             "unit": "ns/iter"
           }
         ]
