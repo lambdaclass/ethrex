@@ -287,7 +287,7 @@ pub struct DeployerOptions {
     #[arg(
         long,
         value_name = "ADDRESS",
-        env = "ETHREX_SEQUENCER_REGISTRY_OWNER",
+        env = "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER",
         required_if_eq("deploy_based_contracts", "true"),
         help_heading = "Deployer options",
         help = "Address of the owner of the SequencerRegistry contract, who can upgrade the contract."
