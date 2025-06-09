@@ -168,40 +168,40 @@ impl StateUpdater {
             last_l2_committed_batch_blocks
         );
 
-        let Some(last_l2_committed_batch_block_number) = last_l2_committed_batch_blocks.last()
+        let Some(last_l2_committed_block_number) = last_l2_committed_batch_blocks.last()
         else {
             return Err(StateUpdaterError::InternalError(format!(
                 "No blocks found for the last committed batch {last_l2_committed_batch}"
             )));
         };
 
-        debug!("Last committed batch block number: {last_l2_committed_batch_block_number}");
+        debug!("Last committed batch block number: {last_l2_committed_block_number}");
 
-        let last_l2_committed_batch_block_body = self
+        let last_l2_committed_block_body = self
             .store
-            .get_block_body(*last_l2_committed_batch_block_number)
+            .get_block_body(*last_l2_committed_block_number)
             .await?
             .ok_or(StateUpdaterError::InternalError(
                 "No block body found for the last committed batch block number".to_string(),
             ))?;
 
-        let last_l2_committed_batch_block_header = self
+        let last_l2_committed_block_header = self
             .store
-            .get_block_header(*last_l2_committed_batch_block_number)?
+            .get_block_header(*last_l2_committed_block_number)?
             .ok_or(StateUpdaterError::InternalError(
                 "No block header found for the last committed batch block number".to_string(),
             ))?;
 
         let last_l2_committed_batch_block = Block::new(
-            last_l2_committed_batch_block_header,
-            last_l2_committed_batch_block_body,
+            last_l2_committed_block_header,
+            last_l2_committed_block_body,
         );
 
         let last_l2_committed_batch_block_hash = last_l2_committed_batch_block.hash();
 
-        info!("Reverting uncommitted state to the last committed batch block {last_l2_committed_batch_block_number} with hash {last_l2_committed_batch_block_hash:#x}");
+        info!("Reverting uncommitted state to the last committed batch block {last_l2_committed_block_number} with hash {last_l2_committed_batch_block_hash:#x}");
         self.store
-            .update_latest_block_number(*last_l2_committed_batch_block_number)
+            .update_latest_block_number(*last_l2_committed_block_number)
             .await?;
         let _ = apply_fork_choice(
             &self.store,
