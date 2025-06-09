@@ -3,6 +3,7 @@ use crate::{
     CommitterConfig, EthConfig, SequencerConfig,
 };
 
+use aligned_sdk::communication::batch;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     types::{
@@ -160,6 +161,7 @@ impl GenServer for L1Committer {
 }
 
 async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), CommitterError> {
+    info!("Running committer main loop");
     // Get the batch to commit
     let last_committed_batch_number = state
         .eth_client
@@ -170,11 +172,20 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
     let batch = match state.rollup_store.get_batch(batch_to_commit).await? {
         Some(batch) => batch,
         None => {
-            let last_committed_batch = state
+            let last_committed_blocks = state
                 .rollup_store
-                .get_batch(last_committed_batch_number)
-                .await?.ok_or(CommitterError::InternalError(format!("Failed to get batch with batch number {last_committed_batch_number}. Batch is missing when it should be present. This is a bug")))?;
-            let first_block_to_commit = last_committed_batch.last_block + 1;
+                .get_block_numbers_by_batch(last_committed_batch_number)
+                .await?
+                .ok_or(
+                    CommitterError::InternalError(format!("Failed to get batch with batch number {last_committed_batch_number}. Batch is missing when it should be present. This is a bug"))
+                )?;
+            let last_block = last_committed_blocks
+                .last()
+                .ok_or(
+                    CommitterError::InternalError(format!("Last committed batch ({last_committed_batch_number}) doesn't have any blocks. This is probably a bug."))
+                )?;
+            let first_block_to_commit = last_block + 1;
+
             // Try to prepare batch
             let (
                 blobs_bundle,
@@ -182,10 +193,9 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                 withdrawal_hashes,
                 deposit_logs_hash,
                 last_block_of_batch,
-            ) = prepare_batch_from_block(state, last_committed_batch.last_block, batch_to_commit)
-                .await?;
+            ) = prepare_batch_from_block(state, *last_block, batch_to_commit).await?;
 
-            if last_committed_batch.last_block == last_block_of_batch {
+            if *last_block == last_block_of_batch {
                 debug!("No new blocks to commit, skipping");
                 return Ok(());
             }
