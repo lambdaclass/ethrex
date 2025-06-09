@@ -1,6 +1,8 @@
 name: run-assertoor-ethrex-only-test
 
 on:
+    pull_request:
+      branches: ["**"]
     workflow_dispatch:
   
 jobs:
