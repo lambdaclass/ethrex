@@ -63,7 +63,10 @@ impl RpcDB {
     async fn cache_accounts(&mut self, block: &Block) -> eyre::Result<()> {
         let txs = &block.body.transactions;
 
-        let callers = txs.iter().map(|tx| tx.sender());
+        let mut callers = Vec::new();
+        for tx in txs.iter() {
+            callers.push(tx.sender()?)
+        }
         let to = txs.iter().filter_map(|tx| match tx.to() {
             TxKind::Call(to) => Some(to),
             TxKind::Create => None,
@@ -73,6 +76,7 @@ impl RpcDB {
         // dedup accounts and concatenate accessed storage keys
         let mut accounts = HashMap::new();
         for (address, keys) in callers
+            .into_iter()
             .chain(to)
             .map(|address| (address, Vec::new()))
             .chain(accessed_storage)
