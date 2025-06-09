@@ -1,6 +1,5 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
-use crate::query_plan::{QueryPlan, QueryPlanVec};
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
     BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP,
@@ -11,6 +10,7 @@ use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
+use crate::UpdateBatch;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
@@ -29,7 +29,6 @@ use libmdbx::{
 };
 use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
-use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -127,123 +126,28 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn store_changes(&self, query_plan: QueryPlan) -> Result<(), StoreError> {
+    async fn store_changes_batch(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
             // store account updates
-            for (node_hash, node_data) in query_plan.account_updates.0 {
-                tx.upsert::<StateTrieNodes>(node_hash.into(), node_data)
+            for (node_hash, node_data) in update_batch.account_updates {
+                tx.upsert::<StateTrieNodes>(node_hash, node_data)
                     .map_err(StoreError::LibmdbxError)?;
             }
 
-            for (hashed_address, nodes) in query_plan.account_updates.1 {
+            for (hashed_address, nodes) in update_batch.storage_updates {
                 for (node_hash, node_data) in nodes {
-                    let key_1: [u8; 32] = H256::from_slice(&hashed_address).into();
+                    let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
                     tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
                         .map_err(StoreError::LibmdbxError)?;
                 }
             }
-
-            // store block
-            let number = query_plan.block.header.number;
-            let hash = query_plan.block.hash();
-
-            for (index, transaction) in query_plan.block.body.transactions.iter().enumerate() {
-                tx.upsert::<TransactionLocations>(
-                    transaction.compute_hash().into(),
-                    (number, hash, index as u64).into(),
-                )
-                .map_err(StoreError::LibmdbxError)?;
-            }
-
-            tx.upsert::<Bodies>(
-                hash.into(),
-                BlockBodyRLP::from_bytes(query_plan.block.body.encode_to_vec()),
-            )
-            .map_err(StoreError::LibmdbxError)?;
-
-            tx.upsert::<Headers>(
-                hash.into(),
-                BlockHeaderRLP::from_bytes(query_plan.block.header.encode_to_vec()),
-            )
-            .map_err(StoreError::LibmdbxError)?;
-
-            tx.upsert::<BlockNumbers>(hash.into(), number)
-                .map_err(StoreError::LibmdbxError)?;
-
-            // store receipts
-            let mut key_values = vec![];
-            let block_hash = query_plan.receipts.0;
-            for (index, receipt) in query_plan.receipts.1.clone().into_iter().enumerate() {
-                let key = (block_hash, index as u64).into();
-                let receipt_rlp = receipt.encode_to_vec();
-                let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
-                    continue;
-                };
-
-                key_values.append(&mut entries);
-            }
-
-            let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-            for (key, value) in key_values {
-                cursor
-                    .upsert(key, value)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-
-            tx.commit().map_err(StoreError::LibmdbxError)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
-    }
-
-    async fn store_changes_batch(&self, query_plan: QueryPlanVec) -> Result<(), StoreError> {
-        use std::time::Instant;
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let num_receipts: usize = query_plan.receipts.iter().map(|x| x.1.len()).sum();
-            let num_account_updates: usize = query_plan.account_updates.0.len()
-                + query_plan
-                    .account_updates
-                    .1
-                    .iter()
-                    .map(|x| x.1.len())
-                    .sum::<usize>();
-            let num_blocks = query_plan.block.len();
-            let db_stats_start = db.stat().unwrap();
-            let db_info_start = db.info().unwrap();
-            let db_freelist_start = db.freelist().unwrap();
-            let total_start = Instant::now();
-
-            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-
-            // store account updates
-            let write_state_trie_start = Instant::now();
-            for (node_hash, node_data) in query_plan.account_updates.0 {
-                tx.upsert::<StateTrieNodes>(node_hash.into(), node_data)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-            let write_state_trie_end = Instant::now();
-
-            let write_storage_tries_start = Instant::now();
-            for (hashed_address, nodes) in query_plan.account_updates.1 {
-                for (node_hash, node_data) in nodes {
-                    let key_1: [u8; 32] = H256::from_slice(&hashed_address).into();
-                    let key_2 = node_hash_to_fixed_size(node_hash);
-
-                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
-                        .map_err(StoreError::LibmdbxError)?;
-                }
-            }
-            let write_storage_tries_end = Instant::now();
-
-            // store block one by one
-            let write_blocks_start = Instant::now();
-            for block in query_plan.block.into_iter() {
+            for block in update_batch.blocks {
+                // store block
                 let number = block.header.number;
                 let hash = block.hash();
 
@@ -254,6 +158,7 @@ impl StoreEngine for Store {
                     )
                     .map_err(StoreError::LibmdbxError)?;
                 }
+
                 tx.upsert::<Bodies>(
                     hash.into(),
                     BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
@@ -269,15 +174,10 @@ impl StoreEngine for Store {
                 tx.upsert::<BlockNumbers>(hash.into(), number)
                     .map_err(StoreError::LibmdbxError)?;
             }
-            let write_blocks_end = Instant::now();
-
-            // store receipts
-            let write_receipts_start = Instant::now();
-            let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-            for receipt in query_plan.receipts {
+            for (block_hash, receipts) in update_batch.receipts {
+                // store receipts
                 let mut key_values = vec![];
-                let block_hash = receipt.0;
-                for (index, receipt) in receipt.1.clone().into_iter().enumerate() {
+                for (index, receipt) in receipts.into_iter().enumerate() {
                     let key = (block_hash, index as u64).into();
                     let receipt_rlp = receipt.encode_to_vec();
                     let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp)
@@ -287,107 +187,15 @@ impl StoreEngine for Store {
 
                     key_values.append(&mut entries);
                 }
-
+                let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
                 for (key, value) in key_values {
                     cursor
                         .upsert(key, value)
                         .map_err(StoreError::LibmdbxError)?;
                 }
             }
-            let write_receipts_end = Instant::now();
 
-            let commit_start = Instant::now();
-            let res = tx.commit().map_err(StoreError::LibmdbxError);
-            let commit_end = Instant::now();
-
-            let db_stats_end = db.stat().unwrap();
-            let db_info_end = db.info().unwrap();
-            let db_freelist_end = db.freelist().unwrap();
-
-            let total_size_before = db_stats_start.total_size();
-            let entries_before = db_stats_start.entries();
-            let depth_before = db_stats_start.depth();
-            let leaf_pages_before = db_stats_start.leaf_pages();
-            let branch_pages_before = db_stats_start.branch_pages();
-            let overflow_pages_before = db_stats_start.overflow_pages();
-            let last_page_num_before = db_info_start.last_pgno();
-            let last_txn_id_before = db_info_start.last_txnid();
-            let num_readers_before = db_info_start.num_readers();
-            let freelists_before = db_freelist_start;
-            let total_size_after = db_stats_end.total_size();
-            let entries_after = db_stats_end.entries();
-            let depth_after = db_stats_end.depth();
-            let leaf_pages_after = db_stats_end.leaf_pages();
-            let branch_pages_after = db_stats_end.branch_pages();
-            let overflow_pages_after = db_stats_end.overflow_pages();
-            let last_page_num_after = db_info_end.last_pgno();
-            let last_txn_id_after = db_info_end.last_txnid();
-            let num_readers_after = db_info_end.num_readers();
-            let freelists_after = db_freelist_end;
-            let leaf_pages_delta = leaf_pages_after - leaf_pages_before;
-            let branch_pages_delta = branch_pages_after - branch_pages_before;
-            let overflow_pages_delta = overflow_pages_after - overflow_pages_before;
-            let last_page_num_delta = last_page_num_after - last_page_num_before;
-            let last_txn_id_delta = last_txn_id_after - last_txn_id_before;
-            let num_readers_delta = num_readers_after - num_readers_before;
-            let freelists_delta = freelists_after - freelists_before;
-            let total_size_delta = total_size_after - total_size_before;
-            let entries_delta = entries_after - entries_before;
-            let depth_delta = depth_after - depth_before;
-            let total_time = (commit_end - total_start).as_millis();
-            let commit_time = (commit_end - commit_start).as_millis();
-            let write_receipts_time = (write_receipts_end - write_receipts_start).as_millis();
-            let write_blocks_time = (write_blocks_end - write_blocks_start).as_millis();
-            let write_state_trie_time = (write_state_trie_end - write_state_trie_start).as_millis();
-            let write_storage_tries_time =
-                (write_storage_tries_end - write_storage_tries_start).as_millis();
-            let num_blocks = num_blocks;
-            let num_receipts = num_receipts;
-            let num_account_updates = num_account_updates;
-            ::tracing::warn!(
-                total_size_before,
-                entries_before,
-                depth_before,
-                leaf_pages_before,
-                branch_pages_before,
-                overflow_pages_before,
-                last_page_num_before,
-                last_txn_id_before,
-                num_readers_before,
-                freelists_before,
-                total_size_after,
-                entries_after,
-                depth_after,
-                leaf_pages_after,
-                branch_pages_after,
-                overflow_pages_after,
-                last_page_num_after,
-                last_txn_id_after,
-                num_readers_after,
-                freelists_after,
-                total_size_delta,
-                entries_delta,
-                depth_delta,
-                leaf_pages_delta,
-                branch_pages_delta,
-                overflow_pages_delta,
-                last_page_num_delta,
-                last_txn_id_delta,
-                num_readers_delta,
-                freelists_delta,
-                total_time,
-                commit_time,
-                write_receipts_time,
-                write_blocks_time,
-                write_state_trie_time,
-                write_storage_tries_time,
-                num_blocks,
-                num_receipts,
-                num_account_updates,
-                "BATCH COMMITED",
-            );
-
-            res
+            tx.commit().map_err(StoreError::LibmdbxError)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
@@ -945,27 +753,6 @@ impl StoreEngine for Store {
             };
 
             key_values.append(&mut entries);
-        }
-
-        self.write_batch::<Receipts>(key_values).await
-    }
-
-    async fn add_receipts_for_blocks(
-        &self,
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-    ) -> Result<(), StoreError> {
-        let mut key_values = vec![];
-
-        for (block_hash, receipts) in receipts.into_iter() {
-            for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).into();
-                let receipt_rlp = receipt.encode_to_vec();
-                let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
-                    continue;
-                };
-
-                key_values.append(&mut entries);
-            }
         }
 
         self.write_batch::<Receipts>(key_values).await

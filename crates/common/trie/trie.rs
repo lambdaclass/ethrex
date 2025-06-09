@@ -43,6 +43,8 @@ pub type PathRLP = Vec<u8>;
 pub type ValueRLP = Vec<u8>;
 /// RLP-encoded trie node
 pub type NodeRLP = Vec<u8>;
+/// Represents a node in the Merkle Patricia Trie.
+pub type TrieNode = (NodeHash, NodeRLP);
 
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
@@ -145,10 +147,10 @@ impl Trie {
         }
     }
 
-    pub fn hash_prepare_batch(&mut self) -> (H256, Vec<(NodeHash, Vec<u8>)>) {
-        let query_plan = self.commit_vec_aka_state_diff();
+    pub fn hash_prepare_batch(&mut self) -> (H256, Vec<TrieNode>) {
+        let updates = self.commit_without_storing();
         let ret_hash = self.hash_no_commit();
-        (ret_hash, query_plan)
+        (ret_hash, updates)
     }
 
     /// Compute the hash of the root node and flush any changes into the database.
@@ -165,7 +167,9 @@ impl Trie {
         Ok(())
     }
 
-    pub fn commit_vec_aka_state_diff(&mut self) -> Vec<(NodeHash, Vec<u8>)> {
+    /// Computes the nodes that would be added if updating the trie.
+    /// Nodes are given with their hash pre-calculated.
+    pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
         let mut acc = Vec::new();
         if self.root.is_valid() {
             self.root.commit(&mut acc);
@@ -318,7 +322,7 @@ impl Trie {
                 Ok(None)
             }
 
-            fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+            fn put_batch(&self, _key_values: Vec<TrieNode>) -> Result<(), TrieError> {
                 Ok(())
             }
         }
