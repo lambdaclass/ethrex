@@ -188,7 +188,7 @@ impl Blockchain {
             for (account, keys) in logger
                 .state_accessed
                 .lock()
-                .map_err(|_e| ChainError::Custom("sdf Failed to execute with witness".to_string()))?
+                .map_err(|_e| ChainError::Custom("Failed to execute with witness".to_string()))?
                 .iter()
             {
                 // Access the account from the state trie to record the nodes used to access it
