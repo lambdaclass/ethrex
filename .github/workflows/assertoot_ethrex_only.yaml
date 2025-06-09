@@ -1,7 +1,8 @@
+name: run-assertoor-ethrex-only-test
+
 on:
     workflow_dispatch:
   
-name: run-assertoor-test
 jobs:
       assertoor:
         runs-on: ubuntu-latest
