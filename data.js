@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749481989969,
+  "lastUpdate": 1749484393017,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11515,6 +11515,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177166852997,
             "range": "± 389440657",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4cad7368b437682070990de35b47b6d133a7280a",
+          "message": "feat(l1): drop unwraps from blockchain crate (#3083)\n\n**Motivation**\n\nDissallow unwraps on l1.\n\n**Description**\n\nThis pr drops unwraps on crate blockchain and introduces a new error for\nBuildPayloadArgs struct. Test's unwraps remain.\n\nResolves partially #2879",
+          "timestamp": "2025-06-09T15:04:10Z",
+          "tree_id": "518928f8be95730f1dbc5ea118fc66fa5ac7becb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4cad7368b437682070990de35b47b6d133a7280a"
+        },
+        "date": 1749484379614,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 174914999716,
+            "range": "± 163954796",
             "unit": "ns/iter"
           }
         ]
