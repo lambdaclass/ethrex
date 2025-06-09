@@ -375,7 +375,9 @@ async fn build_payload(
         version,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
     };
-    let payload_id = args.id();
+    let payload_id = args
+        .id()
+        .map_err(|error| RpcErr::Internal(error.to_string()))?;
     let payload = match create_payload(&args, &context.storage) {
         Ok(payload) => payload,
         Err(ChainError::EvmError(error)) => return Err(error.into()),
