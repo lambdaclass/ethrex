@@ -12,13 +12,13 @@ use crate::{
         PayloadBundleRLP, ReceiptRLP, TupleRLP,
     },
 };
-use ethrex_common::types::{AccountState, BlockBody};
+use ethrex_common::types::{AccountInfo, AccountState, BlockBody};
 use ethrex_common::{
     types::{
         payload::PayloadBundle, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
         Receipt,
     },
-    H256, U256,
+    Address, H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -1334,19 +1334,44 @@ impl StoreEngine for RedBStore {
 
     async fn setup_genesis_flat_account_storage(
         &self,
-        genesis_accounts: &[(Address, H256, U256)],
+        _genesis_accounts: &[(Address, H256, U256)],
     ) -> Result<(), StoreError> {
         todo!();
     }
 
     async fn update_flat_storage(
         &self,
-        updates: &[(Address, H256, U256)],
+        _updates: &[(Address, H256, U256)],
     ) -> Result<(), StoreError> {
         todo!();
     }
 
-    fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
+    fn get_current_storage(
+        &self,
+        _address: Address,
+        _key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        todo!();
+    }
+
+    async fn setup_genesis_flat_account_info(
+        &self,
+        _genesis_accounts: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    async fn update_flat_account_info(
+        &self,
+        _updates: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    fn get_current_account_info(
+        &self,
+        _address: Address,
+    ) -> Result<Option<AccountInfo>, StoreError> {
         todo!();
     }
 }

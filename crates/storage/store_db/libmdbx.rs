@@ -1139,7 +1139,11 @@ impl StoreEngine for Store {
         for (addr, nonce, balance, code_hash, removed) in updates.iter().cloned() {
             let key = addr.into();
             if removed {
-                if let Some(_) = cursor.seek_exact(key).map_err(StoreError::LibmdbxError)? {
+                if cursor
+                    .seek_exact(key)
+                    .map_err(StoreError::LibmdbxError)?
+                    .is_some()
+                {
                     cursor.delete_current().map_err(StoreError::LibmdbxError)?;
                 }
             } else {

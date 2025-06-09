@@ -6,7 +6,7 @@ use ethrex_common::types::{
     ChainConfig, Index, Receipt, Transaction,
 };
 use ethrex_common::Address;
-use std::{collections::HashMap, fmt::Debug, panic::RefUnwindSafe};
+use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
