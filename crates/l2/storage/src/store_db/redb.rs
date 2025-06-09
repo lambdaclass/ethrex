@@ -1,7 +1,7 @@
 use std::{panic::RefUnwindSafe, sync::Arc};
 
 use ethrex_common::{
-    types::{Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber},
     H256,
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -33,6 +33,9 @@ const DEPOSIT_LOGS_HASHES: TableDefinition<u64, Rlp<H256>> =
     TableDefinition::new("DepositLogsHashes");
 
 const LAST_SENT_BATCH_PROOF: TableDefinition<u64, u64> = TableDefinition::new("LastSentBatchProof");
+
+const ACCOUNT_UPDATES_BY_BLOCK_NUMBER: TableDefinition<BlockNumber, Rlp<Vec<AccountUpdate>>> =
+    TableDefinition::new("AccountUpdatesByBlockNumber");
 
 #[derive(Debug)]
 pub struct RedBStoreRollup {
@@ -112,6 +115,7 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_table(DEPOSIT_LOGS_HASHES)?;
     table_creation_txn.open_table(BLOCK_NUMBERS_BY_BATCH)?;
     table_creation_txn.open_table(LAST_SENT_BATCH_PROOF)?;
+    table_creation_txn.open_table(ACCOUNT_UPDATES_BY_BLOCK_NUMBER)?;
     table_creation_txn.commit()?;
 
     Ok(db)
@@ -299,5 +303,28 @@ impl StoreEngineRollup for RedBStoreRollup {
 
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
         self.write(LAST_SENT_BATCH_PROOF, 0, batch_number).await
+    }
+
+    async fn get_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Vec<AccountUpdate>>, StoreError> {
+        Ok(self
+            .read(ACCOUNT_UPDATES_BY_BLOCK_NUMBER, block_number)
+            .await?
+            .map(|rlp| rlp.value().to()))
+    }
+
+    async fn store_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+        account_updates: Vec<AccountUpdate>,
+    ) -> Result<(), StoreError> {
+        self.write(
+            ACCOUNT_UPDATES_BY_BLOCK_NUMBER,
+            block_number,
+            account_updates.into(),
+        )
+        .await
     }
 }

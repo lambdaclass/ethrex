@@ -3,7 +3,7 @@
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use ethrex_common::{
-    types::{Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber},
     H256,
 };
 use ethrex_storage::error::StoreError;
@@ -99,4 +99,15 @@ pub trait StoreEngineRollup: Debug + Send + Sync + RefUnwindSafe {
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError>;
 
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError>;
+
+    async fn get_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Vec<AccountUpdate>>, StoreError>;
+
+    async fn store_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+        account_updates: Vec<AccountUpdate>,
+    ) -> Result<(), StoreError>;
 }

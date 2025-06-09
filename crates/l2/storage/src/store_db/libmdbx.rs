@@ -5,7 +5,7 @@ use std::{
 };
 
 use ethrex_common::{
-    types::{Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber},
     H256,
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -73,6 +73,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
         table_info!(StateRoots),
         table_info!(DepositLogsHash),
         table_info!(LastSentBatchProof),
+        table_info!(AccountUpdatesByBlockNumber),
     ]
     .into_iter()
     .collect();
@@ -270,6 +271,22 @@ impl StoreEngineRollup for Store {
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
         self.write::<LastSentBatchProof>(0, batch_number).await
     }
+
+    async fn get_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Vec<AccountUpdate>>, StoreError> {
+        self.read::<AccountUpdatesByBlockNumber>(block_number).await
+    }
+
+    async fn store_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+        account_updates: Vec<AccountUpdate>,
+    ) -> Result<(), StoreError> {
+        self.write::<AccountUpdatesByBlockNumber>(block_number, account_updates.into())
+            .await
+    }
 }
 
 table!(
@@ -310,4 +327,9 @@ table!(
 table!(
     /// Last sent batch proof
     ( LastSentBatchProof ) u64 => u64
+);
+
+table!(
+    /// Account updates by block number
+    ( AccountUpdatesByBlockNumber ) BlockNumber => Rlp<Vec<AccountUpdate>>
 );

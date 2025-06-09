@@ -37,9 +37,7 @@ pub async fn start_block_producer(
     cfg: SequencerConfig,
 ) -> Result<(), SequencerError> {
     let proposer = BlockProducer::new_from_config(&cfg.block_producer);
-    proposer
-        .run(store.clone(), blockchain)
-        .await;
+    proposer.run(store.clone(), blockchain).await;
     Ok(())
 }
 
@@ -57,11 +55,7 @@ impl BlockProducer {
         }
     }
 
-    pub async fn run(
-        &self,
-        store: Store,
-        blockchain: Arc<Blockchain>,
-    ) {
+    pub async fn run(&self, store: Store, blockchain: Arc<Blockchain>) {
         loop {
             let _ = self
                 .main_logic(store.clone(), blockchain.clone())
