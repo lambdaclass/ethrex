@@ -1,7 +1,4 @@
-use ethrex_common::{
-    types::{Block, BlockHeader},
-    H256,
-};
+use ethrex_common::{types::Block, H256};
 use ethrex_vm::ProverDB;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::{serde_as, DeserializeAs, SerializeAs};
@@ -16,10 +13,7 @@ pub struct ProgramInput {
     /// blocks to execute
     #[serde_as(as = "SerdeJSON")]
     pub blocks: Vec<Block>,
-    /// header of the previous block
-    #[serde_as(as = "SerdeJSON")]
-    pub parent_block_header: BlockHeader,
-    /// database containing only the data necessary to execute
+    /// database containing all data necessary to execute
     pub db: ProverDB,
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
@@ -37,7 +31,6 @@ impl Default for ProgramInput {
     fn default() -> Self {
         Self {
             blocks: Default::default(),
-            parent_block_header: Default::default(),
             db: Default::default(),
             elasticity_multiplier: Default::default(),
             #[cfg(feature = "l2")]

@@ -29,7 +29,7 @@ use kzg_rs::{get_kzg_settings, Blob, Bytes48, KzgProof};
 #[derive(Debug, thiserror::Error)]
 pub enum StatelessExecutionError {
     #[error("ProverDB error: {0}")]
-    ProverDBError(ProverDBError),
+    ProverDBError(#[from] ProverDBError),
     #[error("Trie error: {0}")]
     TrieError(crate::trie::Error),
     #[error("Block validation error: {0}")]
@@ -67,6 +67,16 @@ pub enum StatelessExecutionError {
     InvalidInitialStateTrie,
     #[error("Invalid final state trie")]
     InvalidFinalStateTrie,
+    #[error("Missing deposit hash")]
+    MissingDepositHash,
+    #[error("No block headers required, should at least require parent header")]
+    NoHeadersRequired,
+    #[error("Unreachable code reached: {0}")]
+    Unreachable(String),
+    #[error("Invalid hash of block {0} (it's not the parent hash of its successor)")]
+    InvalidBlockHash(u64),
+    #[error("Invalid parent block header")]
+    InvalidParentBlockHeader,
     #[error("Failed to calculate deposit hash")]
     InvalidDeposit,
     #[error("Internal error: {0}")]
@@ -83,7 +93,6 @@ impl From<kzg_rs::KzgError> for StatelessExecutionError {
 pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, StatelessExecutionError> {
     let ProgramInput {
         blocks,
-        parent_block_header,
         mut db,
         elasticity_multiplier,
         #[cfg(feature = "l2")]
@@ -95,24 +104,17 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
         #[cfg(feature = "l2")]
         return stateless_validation_l2(
             &blocks,
-            &parent_block_header,
             &mut db,
             elasticity_multiplier,
             blob_commitment,
             blob_proof,
         );
     }
-    stateless_validation_l1(
-        &blocks,
-        &parent_block_header,
-        &mut db,
-        elasticity_multiplier,
-    )
+    stateless_validation_l1(&blocks, &mut db, elasticity_multiplier)
 }
 
 pub fn stateless_validation_l1(
     blocks: &[Block],
-    parent_block_header: &BlockHeader,
     db: &mut ProverDB,
     elasticity_multiplier: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
@@ -121,7 +123,7 @@ pub fn stateless_validation_l1(
         final_state_hash,
         last_block_hash,
         ..
-    } = execute_stateless(blocks, parent_block_header, db, elasticity_multiplier)?;
+    } = execute_stateless(blocks, db, elasticity_multiplier)?;
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
@@ -138,7 +140,6 @@ pub fn stateless_validation_l1(
 #[cfg(feature = "l2")]
 pub fn stateless_validation_l2(
     blocks: &[Block],
-    parent_block_header: &BlockHeader,
     db: &mut ProverDB,
     elasticity_multiplier: u64,
     blob_commitment: Commitment,
@@ -153,7 +154,7 @@ pub fn stateless_validation_l2(
         account_updates,
         last_block_header,
         last_block_hash,
-    } = execute_stateless(blocks, parent_block_header, db, elasticity_multiplier)?;
+    } = execute_stateless(blocks, db, elasticity_multiplier)?;
 
     let (withdrawals, deposits) = get_batch_withdrawals_and_deposits(blocks, &receipts)?;
     let (withdrawals_merkle_root, deposit_logs_hash) =
@@ -197,10 +198,26 @@ struct StatelessResult {
 
 fn execute_stateless(
     blocks: &[Block],
-    parent_block_header: &BlockHeader,
     db: &mut ProverDB,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
+    // Validate block hashes, except parent block hash (latest block hash)
+    if let Some(invalid_block_header) = db.get_first_invalid_block_hash()? {
+        return Err(StatelessExecutionError::InvalidBlockHash(
+            invalid_block_header,
+        ));
+    }
+
+    // Validate parent block header
+    let parent_block_header = db.get_last_block_header()?;
+    let first_block_header = &blocks
+        .first()
+        .ok_or(StatelessExecutionError::EmptyBatchError)?
+        .header;
+    if parent_block_header.hash() != first_block_header.parent_hash {
+        return Err(StatelessExecutionError::InvalidParentBlockHeader);
+    }
+
     // Tries used for validating initial state root
     let (mut state_trie, mut storage_tries) = db
         .get_tries()
@@ -215,15 +232,15 @@ fn execute_stateless(
         return Err(StatelessExecutionError::InvalidDatabase);
     };
 
-    let mut parent_header = parent_block_header;
+    // Execute blocks
+    let mut parent_block_header = parent_block_header;
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
     let mut acc_receipts = Vec::new();
-
     for block in blocks {
         // Validate the block
         validate_block(
             block,
-            parent_header,
+            parent_block_header,
             &db.chain_config,
             elasticity_multiplier,
         )
@@ -254,7 +271,7 @@ fn execute_stateless(
 
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
-        parent_header = &block.header;
+        parent_block_header = &block.header;
         acc_receipts.push(receipts);
     }
 
@@ -278,7 +295,7 @@ fn execute_stateless(
         initial_state_hash,
         final_state_hash,
         account_updates: acc_account_updates,
-        last_block_header: parent_header.clone(),
+        last_block_header: last_block.header.clone(),
         last_block_hash,
     })
 }

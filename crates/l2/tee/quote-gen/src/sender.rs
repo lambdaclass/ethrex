@@ -27,7 +27,6 @@ pub async fn get_batch() -> Result<(u64, ProgramInput), String> {
                 batch_number,
                 ProgramInput {
                     blocks: input.blocks,
-                    parent_block_header: input.parent_block_header,
                     db: input.db,
                     elasticity_multiplier: input.elasticity_multiplier,
                     #[cfg(feature = "l2")]

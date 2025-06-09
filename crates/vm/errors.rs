@@ -75,6 +75,12 @@ pub enum ProverDBError {
     InvalidStorageTrieValue(H160, H256),
     #[error("{0}")]
     Custom(String),
+    #[error("No block headers stored, should at least store parent header")]
+    NoBlockHeaders,
+    #[error("Non-contiguous block headers (there's a gap in the block headers list)")]
+    NoncontiguousBlockHeaders,
+    #[error("Unreachable code reached: {0}")]
+    Unreachable(String),
 }
 
 #[derive(Debug, Error)]

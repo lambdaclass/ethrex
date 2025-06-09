@@ -26,11 +26,6 @@ pub async fn get_blockdata(
         .await
         .wrap_err("failed to fetch block")?;
 
-    let parent_block_header = get_block(rpc_url, block_number - 1)
-        .await
-        .wrap_err("failed to fetch block")?
-        .header;
-
     println!("populating rpc db cache");
     let rpc_db = RpcDB::with_cache(rpc_url, chain_config, block_number - 1, &block)
         .await
@@ -42,7 +37,6 @@ pub async fn get_blockdata(
 
     let cache = Cache {
         blocks: vec![block],
-        parent_block_header,
         db,
     };
     write_cache(&cache).expect("failed to write cache");
@@ -81,10 +75,6 @@ pub async fn get_rangedata(
         .collect();
     rpc_db.load_accounts(&to_fetch).await?;
     let mut proverdb = rpc_db.to_exec_db(first_block)?;
-    proverdb.block_hashes = blocks
-        .iter()
-        .flat_map(|cache| cache.db.block_hashes.clone())
-        .collect();
     for block_data in blocks.iter() {
         proverdb
             .state_proofs
@@ -99,9 +89,9 @@ pub async fn get_rangedata(
     for (_, proofs) in proverdb.storage_proofs.iter_mut() {
         dedup_proofs(&mut proofs.1);
     }
+
     let cache = Cache {
         blocks: blocks.iter().map(|cache| cache.blocks[0].clone()).collect(),
-        parent_block_header: blocks[0].parent_block_header.clone(),
         db: proverdb,
     };
     write_cache_batch(&cache)?;
