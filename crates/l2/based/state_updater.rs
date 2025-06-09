@@ -6,11 +6,11 @@ use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::{clients::Overrides, EthClient};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use tokio::{sync::Mutex, time::sleep};
+use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    based::sequencer_state::SequencerState,
+    based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{errors::SequencerError, utils::node_is_up_to_date},
     utils::parse::hash_to_address,
     SequencerConfig,
@@ -44,7 +44,7 @@ pub struct StateUpdater {
 
 pub async fn start_state_updater(
     sequencer_cfg: SequencerConfig,
-    sequencer_state: Arc<Mutex<SequencerState>>,
+    sequencer_state: SequencerState,
     store: Store,
     rollup_store: StoreRollup,
 ) -> Result<(), SequencerError> {
@@ -72,7 +72,7 @@ impl StateUpdater {
         })
     }
 
-    pub async fn run(&self, sequencer_state: Arc<Mutex<SequencerState>>) {
+    pub async fn run(&self, sequencer_state: SequencerState) {
         loop {
             let _ = self
                 .main_logic(sequencer_state.clone())
@@ -87,7 +87,7 @@ impl StateUpdater {
 
     pub async fn main_logic(
         &self,
-        sequencer_state: Arc<Mutex<SequencerState>>,
+        sequencer_state: SequencerState,
     ) -> Result<(), StateUpdaterError> {
         let calldata = encode_calldata("leaderSequencer()", &[])?;
 
@@ -116,25 +116,25 @@ impl StateUpdater {
 
         let new_state = if lead_sequencer == self.sequencer_address {
             if node_is_up_to_date {
-                SequencerState::Sequencing
+                SequencerStatus::Sequencing
             } else {
                 warn!("Node should transition to sequencing but it is not up to date, continue syncing.");
-                SequencerState::Following
+                SequencerStatus::Following
             }
         } else {
-            SequencerState::Following
+            SequencerStatus::Following
         };
 
         let mut current_state = sequencer_state.lock().await;
 
         match (current_state.clone(), new_state.clone()) {
-            (SequencerState::Sequencing, SequencerState::Sequencing)
-            | (SequencerState::Following, SequencerState::Following) => {}
-            (SequencerState::Sequencing, SequencerState::Following) => {
+            (SequencerStatus::Sequencing, SequencerStatus::Sequencing)
+            | (SequencerStatus::Following, SequencerStatus::Following) => {}
+            (SequencerStatus::Sequencing, SequencerStatus::Following) => {
                 info!("Now the follower sequencer. Stopping sequencing.");
                 self.revert_uncommitted_state().await?;
             }
-            (SequencerState::Following, SequencerState::Sequencing) => {
+            (SequencerStatus::Following, SequencerStatus::Sequencing) => {
                 info!("Now the lead sequencer. Starting sequencing.");
             }
         };
@@ -168,8 +168,7 @@ impl StateUpdater {
             last_l2_committed_batch_blocks
         );
 
-        let Some(last_l2_committed_block_number) = last_l2_committed_batch_blocks.last()
-        else {
+        let Some(last_l2_committed_block_number) = last_l2_committed_batch_blocks.last() else {
             return Err(StateUpdaterError::InternalError(format!(
                 "No blocks found for the last committed batch {last_l2_committed_batch}"
             )));
@@ -192,10 +191,8 @@ impl StateUpdater {
                 "No block header found for the last committed batch block number".to_string(),
             ))?;
 
-        let last_l2_committed_batch_block = Block::new(
-            last_l2_committed_block_header,
-            last_l2_committed_block_body,
-        );
+        let last_l2_committed_batch_block =
+            Block::new(last_l2_committed_block_header, last_l2_committed_block_body);
 
         let last_l2_committed_batch_block_hash = last_l2_committed_batch_block.hash();
 

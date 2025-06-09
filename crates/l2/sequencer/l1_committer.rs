@@ -1,5 +1,5 @@
 use crate::{
-    based::sequencer_state::SequencerState,
+    based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{blobs_bundle_cache::BlobsBundleCache, errors::CommitterError},
     CommitterConfig, EthConfig, SequencerConfig,
 };
@@ -32,7 +32,6 @@ use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmEngine};
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::random_duration};
@@ -57,7 +56,7 @@ pub struct CommitterState {
     validium: bool,
     blobs_bundle_cache: Arc<BlobsBundleCache>,
     based: bool,
-    sequencer_state: Arc<Mutex<SequencerState>>,
+    sequencer_state: SequencerState,
 }
 
 impl CommitterState {
@@ -70,7 +69,7 @@ impl CommitterState {
         execution_cache: Arc<ExecutionCache>,
         blobs_bundle_cache: Arc<BlobsBundleCache>,
         based: bool,
-        sequencer_state: Arc<Mutex<SequencerState>>,
+        sequencer_state: SequencerState,
     ) -> Result<Self, CommitterError> {
         Ok(Self {
             eth_client: EthClient::new_with_config(
@@ -119,7 +118,7 @@ impl L1Committer {
         execution_cache: Arc<ExecutionCache>,
         blobs_bundle_cache: Arc<BlobsBundleCache>,
         cfg: SequencerConfig,
-        sequencer_state: Arc<Mutex<SequencerState>>,
+        sequencer_state: SequencerState,
     ) -> Result<(), CommitterError> {
         let state = CommitterState::new(
             &cfg.l1_committer,
@@ -166,7 +165,7 @@ impl GenServer for L1Committer {
         state: &mut Self::State,
     ) -> CastResponse {
         // Right now we only have the Commit message, so we ignore the message
-        if let SequencerState::Sequencing = *state.sequencer_state.clone().lock().await {
+        if let SequencerStatus::Sequencing = *state.sequencer_state.clone().lock().await {
             let _ = commit_next_batch_to_l1(state)
                 .await
                 .inspect_err(|err| error!("L1 Committer Error: {err}"));

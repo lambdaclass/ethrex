@@ -1,5 +1,5 @@
 use super::utils::random_duration;
-use crate::based::sequencer_state::SequencerState;
+use crate::based::sequencer_state::{SequencerState, SequencerStatus};
 use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use bytes::Bytes;
@@ -14,7 +14,6 @@ use ethrex_rpc::{
 use ethrex_storage::Store;
 use keccak_hash::keccak;
 use std::{cmp::min, sync::Arc};
-use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
@@ -31,7 +30,7 @@ pub struct L1WatcherState {
     pub last_block_fetched: U256,
     pub check_interval: u64,
     pub l1_block_delay: u64,
-    pub sequencer_state: Arc<Mutex<SequencerState>>,
+    pub sequencer_state: SequencerState,
 }
 
 impl L1WatcherState {
@@ -40,7 +39,7 @@ impl L1WatcherState {
         blockchain: Arc<Blockchain>,
         eth_config: &EthConfig,
         watcher_config: &L1WatcherConfig,
-        sequencer_state: Arc<Mutex<SequencerState>>,
+        sequencer_state: SequencerState,
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
         let l2_client = EthClient::new("http://localhost:1729")?;
@@ -79,7 +78,7 @@ impl L1Watcher {
         store: Store,
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
-        sequencer_state: Arc<Mutex<SequencerState>>,
+        sequencer_state: SequencerState,
     ) -> Result<(), L1WatcherError> {
         let state = L1WatcherState::new(
             store,
@@ -124,7 +123,7 @@ impl GenServer for L1Watcher {
     ) -> CastResponse {
         match message {
             Self::InMsg::Watch => {
-                if let SequencerState::Sequencing = *state.sequencer_state.clone().lock().await {
+                if let SequencerStatus::Sequencing = *state.sequencer_state.clone().lock().await {
                     watch(state).await;
                 }
                 let check_interval = random_duration(state.check_interval);

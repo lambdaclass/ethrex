@@ -2,7 +2,7 @@ pub mod blobs_bundle_cache;
 use std::sync::Arc;
 
 use crate::{
-    based::{block_fetcher, sequencer_state::SequencerState, state_updater},
+    based::{block_fetcher, sequencer_state::SequencerStatus, state_updater},
     utils::prover::proving_systems::ProverType,
     SequencerConfig,
 };
@@ -44,9 +44,9 @@ pub async fn start_l2(
     #[cfg(feature = "metrics")] l2_url: String,
 ) {
     let initial_state = if cfg.based.based {
-        SequencerState::default()
+        SequencerStatus::default()
     } else {
-        SequencerState::Sequencing
+        SequencerStatus::Sequencing
     };
 
     info!("Starting Sequencer in {initial_state} mode");

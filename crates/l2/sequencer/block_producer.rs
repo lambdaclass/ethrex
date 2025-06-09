@@ -14,11 +14,12 @@ use ethrex_storage::Store;
 use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
 use payload_builder::build_payload;
-use tokio::{sync::Mutex, time::sleep};
+use tokio::time::sleep;
 use tracing::{debug, error, info};
 
 use crate::{
-    based::sequencer_state::SequencerState, sequencer::execution_cache::ExecutionCache,
+    based::sequencer_state::{SequencerState, SequencerStatus},
+    sequencer::execution_cache::ExecutionCache,
     BlockProducerConfig, SequencerConfig,
 };
 
@@ -39,7 +40,7 @@ pub async fn start_block_producer(
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
     execution_cache: Arc<ExecutionCache>,
-    sequencer_state: Arc<Mutex<SequencerState>>,
+    sequencer_state: SequencerState,
 ) -> Result<(), SequencerError> {
     let proposer = BlockProducer::new_from_config(&cfg.block_producer);
     proposer
@@ -67,7 +68,7 @@ impl BlockProducer {
         store: Store,
         blockchain: Arc<Blockchain>,
         execution_cache: Arc<ExecutionCache>,
-        sequencer_state: Arc<Mutex<SequencerState>>,
+        sequencer_state: SequencerState,
     ) {
         loop {
             let _ = self
@@ -89,9 +90,9 @@ impl BlockProducer {
         store: Store,
         blockchain: Arc<Blockchain>,
         execution_cache: Arc<ExecutionCache>,
-        sequencer_state: Arc<Mutex<SequencerState>>,
+        sequencer_state: SequencerState,
     ) -> Result<(), BlockProducerError> {
-        if let SequencerState::Following = *sequencer_state.lock().await {
+        if let SequencerStatus::Following = *sequencer_state.lock().await {
             return Ok(());
         }
         self.produce(store, blockchain, execution_cache).await

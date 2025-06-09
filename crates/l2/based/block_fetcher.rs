@@ -14,11 +14,11 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmEngine};
 use keccak_hash::keccak;
-use tokio::{sync::Mutex, time::sleep};
+use tokio::time::sleep;
 use tracing::{debug, error, info};
 
 use crate::{
-    based::sequencer_state::SequencerState,
+    based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{
         errors::SequencerError, l1_committer::generate_blobs_bundle, utils::node_is_up_to_date,
     },
@@ -58,7 +58,7 @@ pub struct BlockFetcher {
     store: Store,
     rollup_store: StoreRollup,
     blockchain: Arc<Blockchain>,
-    sequencer_state: Arc<Mutex<SequencerState>>,
+    sequencer_state: SequencerState,
     fetch_interval_ms: u64,
     last_l1_block_fetched: U256,
     fetch_block_step: U256,
@@ -67,7 +67,7 @@ pub struct BlockFetcher {
 pub async fn start_block_fetcher(
     store: Store,
     blockchain: Arc<Blockchain>,
-    sequencer_state: Arc<Mutex<SequencerState>>,
+    sequencer_state: SequencerState,
     rollup_store: StoreRollup,
     cfg: SequencerConfig,
 ) -> Result<(), SequencerError> {
@@ -89,7 +89,7 @@ impl BlockFetcher {
         store: Store,
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
-        sequencer_state: Arc<Mutex<SequencerState>>,
+        sequencer_state: SequencerState,
     ) -> Result<Self, BlockFetcherError> {
         let eth_client = EthClient::new_with_multiple_urls(cfg.eth.rpc_url.clone())?;
         let last_l1_block_fetched = eth_client
@@ -120,7 +120,7 @@ impl BlockFetcher {
     }
 
     pub async fn main_logic(&mut self) -> Result<(), BlockFetcherError> {
-        if let SequencerState::Sequencing = *self.sequencer_state.clone().lock().await {
+        if let SequencerStatus::Sequencing = *self.sequencer_state.clone().lock().await {
             return Ok(());
         }
         self.fetch().await
