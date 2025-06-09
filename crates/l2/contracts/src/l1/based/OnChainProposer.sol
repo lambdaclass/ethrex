@@ -31,7 +31,7 @@ contract OnChainProposer is
     /// all the withdrawals that were processed in the batch being committed
     struct BatchCommitmentInfo {
         bytes32 newStateRoot;
-        bytes32 stateDiffKZGVersionedHash;
+        bytes32 blobVersionedHash;
         bytes32 processedDepositLogsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
         bytes32 lastBlockHash;
@@ -242,7 +242,6 @@ contract OnChainProposer is
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
-        bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash,
         bytes32 lastBlockHash,
@@ -280,9 +279,13 @@ contract OnChainProposer is
                 withdrawalsLogsMerkleRoot
             );
         }
+
+        // Blob is published in the (EIP-4844) transaction that calls this function.
+        bytes32 blobVersionedHash = blobhash(0);
+
         batchCommitments[batchNumber] = BatchCommitmentInfo(
             newStateRoot,
-            stateDiffKZGVersionedHash,
+            blobVersionedHash,
             processedDepositLogsRollingHash,
             withdrawalsLogsMerkleRoot,
             lastBlockHash

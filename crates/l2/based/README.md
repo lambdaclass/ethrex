@@ -132,19 +132,22 @@ In a console with `crates/l2` as the current directory, run the following comman
 
 ```bash
 cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
-    --genesis-l1-path ../../test_data/genesis-l1-dev.json \
-    --genesis-l2-path ../../test_data/genesis-l2.json \
-    --contracts-path contracts \
-    --sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-    --pico.verifier-address 0x00000000000000000000000000000000000000aa \
-    --risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-    --tdx.verifier-address 0x00000000000000000000000000000000000000aa \
-    --bridge-owner <ADDRESS> \
-    --on-chain-proposer-owner <ADDRESS> \
-    --deposit-rich \
-    --private-keys-file-path ../../test_data/private_keys_l1.txt \
-    --deploy-based-contracts \
-    --sequencer-registry-owner <ADDRESS>
+  --eth-rpc-url http://localhost:8545 \
+  --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --genesis-l1-path ../../test_data/genesis-l1-dev.json \
+  --genesis-l2-path ../../test_data/genesis-l2.json \
+  --contracts-path contracts \
+  --sp1.verifier-address 0x00000000000000000000000000000000000000aa \
+  --pico.verifier-address 0x00000000000000000000000000000000000000aa \
+  --risc0.verifier-address 0x00000000000000000000000000000000000000aa \
+  --tdx.verifier-address 0x00000000000000000000000000000000000000aa \
+  --aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
+  --bridge-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
+  --on-chain-proposer-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
+  --deposit-rich \
+  --private-keys-file-path ../../test_data/private_keys_l1.txt \
+  --deploy-based-contracts \
+  --sequencer-registry-owner 0xacb3bb54d7c5295c158184044bdeedd9aa426607
 ```
 
 This command will:
@@ -152,8 +155,6 @@ This command will:
 1. Deploy the L1 contracts, including the based contracts `SequencerRegistry`, and a modified `OnChainProposer`.
 2. Deposit funds in the accounts from `../../test_data/private_keys_l1.txt`.
 3. Skip deploying the verifier contracts by specifying `0x00000000000000000000000000000000000000aa` as their address. This means that the node will run in "dev mode" and that the proof verification will not be performed. This is useful for local development and testing, but should not be used in production environments.
-
-Optionally, you can define an owner for the `CommonBridge`, `OnChainProposer`, and `SequencerRegistry` contracts by replacing `<ADDRESS>` with the desired address. If left empty, the contracts will be deployed with the default owner address, that is to say, the address of the deployer.
 
 > [!NOTE]
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
@@ -168,16 +169,18 @@ In a console with `ethrex/` (repository root) as the current directory, run the 
 ```bash
 cargo run --release --bin ethrex --features l2 -- l2 init \
   --watcher.block-delay 0 \
-  --committer-l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
-  --proof-coordinator-l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --eth.rpc-url http://localhost:8545 \
+  --block-producer.coinbase-address 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
+  --committer.l1-private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 \
+  --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
   --network test_data/genesis-l2.json \
-  --datadir <DATA_DIRECTORY> \
-  --proof-coordinator-listen-ip 127.0.0.1 \
-  --proof-coordinator-listen-port 4566 \
+  --datadir ethrex_l2 \
+  --proof-coordinator.addr 127.0.0.1 \
+  --proof-coordinator.port 4566 \
   --http.port 1729 \
-  --state-updater.sequencer-registry <SEQUENCER_REGISTRY_ADDRESS> \
-  --on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
-  --bridge-address <COMMON_BRIDGE_ADDRESS> \
+  --state-updater.sequencer-registry 0xad860cee33bf496141b9f47d48c3955fa0ecf7ac \
+  --l1.on-chain-proposer-address 0x0cc759688cdb4aba65f1a356c6ebdb82edca3b46 \
+  --l1.bridge-address 0x765498d4d68eac9bf869a2bf9a870384c303e4f9 \
   --based
 ```
 

@@ -40,7 +40,7 @@ use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, Gen
 use spawned_rt::mpsc::Sender;
 
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
-    "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes32,bytes[])";
+    "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
 
 #[derive(Clone)]

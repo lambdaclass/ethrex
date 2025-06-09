@@ -420,6 +420,7 @@ async fn initialize_contracts(
     if opts.deploy_based_contracts {
         // Initialize OnChainProposer with Based config and SequencerRegistry
         let calldata_values = vec![
+            Value::Bool(opts.validium),
             Value::Address(deployer_address),
             Value::Address(contract_addresses.risc0_verifier_address),
             Value::Address(contract_addresses.sp1_verifier_address),
