@@ -245,7 +245,7 @@ contract OnChainProposer is
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash,
         bytes32 lastBlockHash,
-        bytes[] calldata //hexEncodedBlocks
+        bytes[] calldata //rlpEncodedBlocks
     ) external override onlyLeaderSequencer {
         // TODO: Refactor validation
         require(
