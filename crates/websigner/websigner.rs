@@ -6,7 +6,6 @@ use secp256k1::PublicKey;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebsignError {
-    // This is a horrible hack because we can't import Reqwest here
     #[error("Failed with a reqwest error: {0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("Failed to parse value: {0}")]
