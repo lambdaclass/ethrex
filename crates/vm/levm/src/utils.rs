@@ -45,12 +45,12 @@ use {crate::hooks::L2Hook, ethrex_common::types::PrivilegedL2Transaction};
 /// Prints a U256 value as UTF-8 (if possible) and as hex.
 pub fn print_u256(value: U256) {
     let value_bytes = value.to_big_endian().to_vec();
+    print!("PRINTED ");
     if let Ok(text) = String::from_utf8(value_bytes.clone()) {
-        print!("PRINTED: utf-8: {}", text);
-    } else {
-        print!("PRINTED: utf-8: <invalid>");
+        print!(" utf-8: {} -", text);
     }
-    println!(", hex: 0x{:x}", value);
+    print!(" hex: 0x{:x} -", value);
+    println!(" dec: {}", value);
 }
 
 // ================== Address related functions ======================
