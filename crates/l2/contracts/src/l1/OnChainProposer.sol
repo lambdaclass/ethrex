@@ -30,7 +30,7 @@ contract OnChainProposer is
     /// all the withdrawals that were processed in the batch being committed
     struct BatchCommitmentInfo {
         bytes32 newStateRoot;
-        bytes32 stateDiffKZGVersionedHash;
+        bytes32 blobVersionedHash;
         bytes32 processedDepositLogsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
         bytes32 lastBlockHash;
@@ -74,9 +74,8 @@ contract OnChainProposer is
     /// @dev Used only in dev mode.
     address public constant DEV_MODE = address(0xAA);
 
-    /// @notice Indicates whether the contract operates in validium mode.
-    /// @dev This value is immutable and can only be set during contract deployment.
-    bool public VALIDIUM;
+    /// @notice Unused variable, left here to avoid storage collisions.
+    bool public _VALIDIUM;
 
     address public TDXVERIFIER;
 
@@ -95,13 +94,11 @@ contract OnChainProposer is
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
     /// @dev It sets the bridge address.
-    /// @param _validium initialize the contract in validium mode.
     /// @param owner the address of the owner who can perform upgrades.
     /// @param alignedProofAggregator the address of the alignedProofAggregatorService contract.
     /// @param r0verifier the address of the risc0 groth16 verifier.
     /// @param sp1verifier the address of the sp1 groth16 verifier.
     function initialize(
-        bool _validium,
         address owner,
         address r0verifier,
         address sp1verifier,
@@ -112,8 +109,6 @@ contract OnChainProposer is
         bytes32 genesisStateRoot,
         address[] calldata sequencerAddresses
     ) public initializer {
-        VALIDIUM = _validium;
-
         // Set the AlignedProofAggregator address
         require(
             ALIGNEDPROOFAGGREGATOR == address(0),
@@ -233,7 +228,6 @@ contract OnChainProposer is
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
-        bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash,
         bytes32 lastBlockHash
@@ -252,8 +246,6 @@ contract OnChainProposer is
             "OnChainProposer: lastBlockHash cannot be zero"
         );
 
-        // Check if commitment is equivalent to blob's KZG commitment.
-
         if (processedDepositLogsRollingHash != bytes32(0)) {
             bytes32 claimedProcessedDepositLogs = ICommonBridge(BRIDGE)
                 .getPendingDepositLogsVersionedHash(
@@ -270,9 +262,13 @@ contract OnChainProposer is
                 withdrawalsLogsMerkleRoot
             );
         }
+
+        // Blob is published in the (EIP-4844) transaction that calls this function.
+        bytes32 blobVersionedHash = blobhash(0);
+
         batchCommitments[batchNumber] = BatchCommitmentInfo(
             newStateRoot,
-            stateDiffKZGVersionedHash,
+            blobVersionedHash,
             processedDepositLogsRollingHash,
             withdrawalsLogsMerkleRoot,
             lastBlockHash
@@ -438,7 +434,7 @@ contract OnChainProposer is
         bytes calldata publicData
     ) internal view {
         require(
-            publicData.length == 160,
+            publicData.length == 192,
             "OnChainProposer: invalid public data length"
         );
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
@@ -464,7 +460,13 @@ contract OnChainProposer is
                 depositsLogHash,
             "OnChainProposer: deposits hash public input does not match with committed deposits"
         );
-        bytes32 lastBlockHash = bytes32(publicData[128:160]);
+        bytes32 blobVersionedHash = bytes32(publicData[128:160]);
+        require(
+            batchCommitments[batchNumber].blobVersionedHash ==
+                blobVersionedHash,
+            "OnChainProposer: blob versioned hash public input does not match with committed hash"
+        );
+        bytes32 lastBlockHash = bytes32(publicData[160:192]);
         require(
             batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
             "OnChainProposer: last block hash public inputs don't match with last block hash"

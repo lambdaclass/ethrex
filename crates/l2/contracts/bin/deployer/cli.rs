@@ -235,9 +235,9 @@ pub struct DeployerOptions {
         long,
         default_value = "false",
         value_name = "BOOLEAN",
-        env = "ETHREX_COMMITTER_VALIDIUM",
+        env = "ETHREX_L2_VALIDIUM",
         help_heading = "Deployer options",
-        help = "If set to true, initializes the committer in validium mode."
+        help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
     )]
     pub validium: bool,
     #[arg(

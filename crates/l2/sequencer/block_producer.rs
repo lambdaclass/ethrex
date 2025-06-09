@@ -17,12 +17,12 @@ use payload_builder::build_payload;
 use tokio::{sync::Mutex, time::sleep};
 use tracing::{debug, error, info};
 
-use crate::{based::sequencer_state::SequencerState, BlockProducerConfig, SequencerConfig};
-
-use super::{
-    errors::{BlockProducerError, SequencerError},
-    execution_cache::ExecutionCache,
+use crate::{
+    based::sequencer_state::SequencerState, sequencer::execution_cache::ExecutionCache,
+    BlockProducerConfig, SequencerConfig,
 };
+
+use super::errors::{BlockProducerError, SequencerError};
 
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
@@ -37,8 +37,8 @@ pub struct BlockProducer {
 pub async fn start_block_producer(
     store: Store,
     blockchain: Arc<Blockchain>,
-    execution_cache: Arc<ExecutionCache>,
     cfg: SequencerConfig,
+    execution_cache: Arc<ExecutionCache>,
     sequencer_state: Arc<Mutex<SequencerState>>,
 ) -> Result<(), SequencerError> {
     let proposer = BlockProducer::new_from_config(&cfg.block_producer);

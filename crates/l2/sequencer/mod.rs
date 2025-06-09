@@ -1,3 +1,4 @@
+pub mod blobs_bundle_cache;
 use std::sync::Arc;
 
 use crate::{
@@ -5,6 +6,7 @@ use crate::{
     utils::prover::proving_systems::ProverType,
     SequencerConfig,
 };
+use blobs_bundle_cache::BlobsBundleCache;
 use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -26,7 +28,6 @@ mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
-pub mod state_diff;
 
 pub mod execution_cache;
 
@@ -53,6 +54,7 @@ pub async fn start_l2(
     let shared_state = Arc::new(Mutex::new(initial_state));
 
     let execution_cache = Arc::new(ExecutionCache::default());
+    let blobs_bundle_cache = Arc::new(BlobsBundleCache::default());
 
     let Ok(needed_proof_types) = get_needed_proof_types(
         cfg.proof_coordinator.dev_mode,
@@ -83,6 +85,7 @@ pub async fn start_l2(
         store.clone(),
         rollup_store.clone(),
         execution_cache.clone(),
+        blobs_bundle_cache.clone(),
         cfg.clone(),
         shared_state.clone(),
     )
@@ -94,6 +97,7 @@ pub async fn start_l2(
         store.clone(),
         rollup_store.clone(),
         cfg.clone(),
+        blobs_bundle_cache.clone(),
         needed_proof_types.clone(),
     )
     .await
@@ -120,8 +124,8 @@ pub async fn start_l2(
     task_set.spawn(start_block_producer(
         store.clone(),
         blockchain.clone(),
-        execution_cache.clone(),
         cfg.clone(),
+        execution_cache.clone(),
         shared_state.clone(),
     ));
     if cfg.based.based {
