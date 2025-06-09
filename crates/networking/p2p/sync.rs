@@ -472,7 +472,7 @@ impl BlockSyncState {
         }
     }
 
-    /// Converts self into a FullSync state, does nothing is self is already a FullSync state
+    /// Converts self into a FullSync state, does nothing if self is already a FullSync state
     pub async fn into_fullsync(self) -> Result<Self, SyncError> {
         // Switch from Snap to Full sync and vice versa
         let state = match self {
