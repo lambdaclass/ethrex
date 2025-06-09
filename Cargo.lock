@@ -1441,7 +1441,7 @@ dependencies = [
  "bitflags 2.9.1",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.11.0",
  "lazy_static",
  "lazycell",
  "log",
@@ -1464,7 +1464,7 @@ dependencies = [
  "bitflags 2.9.1",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.11.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -1484,7 +1484,7 @@ dependencies = [
  "bitflags 2.9.1",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "regex",
@@ -8812,7 +8812,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn 2.0.101",
@@ -10962,13 +10962,12 @@ dependencies = [
 
 [[package]]
 name = "sp1-cuda"
-version = "4.2.1"
+version = "4.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8371f5332b63bdcd3e42d9acd7d6f351783e91853aa9d4e07c053460c4f3b1d4"
+checksum = "a87155cf3b2ce1021150b02114b02f0f9c5f2e9304061b667e7de2beb22ab016"
 dependencies = [
  "bincode",
  "ctrlc",
- "once_cell",
  "prost",
  "serde",
  "sp1-core-machine",
