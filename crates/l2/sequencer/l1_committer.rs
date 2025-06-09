@@ -239,30 +239,6 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
         }
     };
 
-    let encoded_blocks = if state.based {
-        let mut encoded_blocks: Vec<Bytes> = Vec::new();
-        for i in batch.first_block..=batch.last_block {
-            let block_header = state
-                .store
-                .get_block_header(i)
-                .map_err(CommitterError::from)?
-                .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
-
-            let block_body = state
-                .store
-                .get_block_body(i)
-                .await
-                .map_err(CommitterError::from)?
-                .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
-
-            let block = Block::new(block_header, block_body);
-            encoded_blocks.push(block.encode_to_vec().into());
-        }
-        encoded_blocks
-    } else {
-        vec![]
-    };
-
     info!(
         first_block = batch.first_block,
         last_block = batch.last_block,
@@ -270,7 +246,7 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
         batch.number,
     );
 
-    match send_commitment(state, &batch, encoded_blocks).await {
+    match send_commitment(state, &batch).await {
         Ok(commit_tx_hash) => {
             metrics!(
             let _ = METRICS_L2
@@ -502,7 +478,6 @@ pub fn generate_blobs_bundle(
 async fn send_commitment(
     state: &mut CommitterState,
     batch: &Batch,
-    encoded_blocks: Vec<Bytes>,
 ) -> Result<H256, CommitterError> {
     let withdrawals_merkle_root = compute_withdrawals_merkle_root(&batch.withdrawal_hashes)?;
     let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
@@ -516,9 +491,31 @@ async fn send_commitment(
     ];
 
     let (commit_function_signature, values) = if state.based {
+        let mut encoded_blocks: Vec<Bytes> = Vec::new();
+
+        for i in batch.first_block..=batch.last_block {
+            let block_header = state
+                .store
+                .get_block_header(i)
+                .map_err(CommitterError::from)?
+                .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
+
+            let block_body = state
+                .store
+                .get_block_body(i)
+                .await
+                .map_err(CommitterError::from)?
+                .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
+
+            let block = Block::new(block_header, block_body);
+
+            encoded_blocks.push(block.encode_to_vec().into());
+        }
+
         calldata_values.push(Value::Array(
             encoded_blocks.into_iter().map(Value::Bytes).collect(),
         ));
+
         (COMMIT_FUNCTION_SIGNATURE_BASED, calldata_values)
     } else {
         (COMMIT_FUNCTION_SIGNATURE, calldata_values)
