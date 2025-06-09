@@ -10,11 +10,8 @@ use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use bytes::Bytes;
-use ethrex_common::types::BlobsBundle;
-use ethrex_common::{
-    types::{blobs_bundle, Block, BlockHeader},
-    Address,
-};
+use ethrex_common::types::{BlobsBundle, Block};
+use ethrex_common::Address;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -33,11 +30,13 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
+#[cfg(feature = "l2")]
+use ethrex_common::types::blobs_bundle;
+
 #[serde_as]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
-    pub parent_block_header: BlockHeader,
     pub db: ProverDB,
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
@@ -49,6 +48,7 @@ pub struct ProverInputData {
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
+#[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize)]
 pub enum ProofData {
     /// 1.
@@ -540,20 +540,6 @@ async fn create_prover_input(
     // Create prover_db
     let db = to_prover_db(&state.store.clone(), &blocks).await?;
 
-    // Get the block_header of the parent of the first block
-    let parent_hash = blocks
-        .first()
-        .ok_or_else(|| {
-            ProverServerError::Custom("No blocks found for the given batch number".to_string())
-        })?
-        .header
-        .parent_hash;
-
-    let parent_block_header = state
-        .store
-        .get_block_header_by_hash(parent_hash)?
-        .ok_or(ProverServerError::StorageDataIsNone)?;
-
     // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
     let (blob_commitment, blob_proof) = if state.validium {
         ([0; 48], [0; 48])
@@ -579,7 +565,6 @@ async fn create_prover_input(
     Ok(ProverInputData {
         db,
         blocks,
-        parent_block_header,
         elasticity_multiplier: state.elasticity_multiplier,
         #[cfg(feature = "l2")]
         blob_commitment,

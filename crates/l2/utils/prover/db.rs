@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{AccountUpdate, Block};
-use ethrex_common::{Address, H256};
+use ethrex_common::Address;
 use ethrex_storage::{hash_address, hash_key, Store};
 use ethrex_trie::{Node, PathRLP};
 use ethrex_trie::{NodeRLP, Trie, TrieError};
@@ -14,9 +14,11 @@ pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, P
     let chain_config = store
         .get_chain_config()
         .map_err(|e| ProverDBError::Store(e.to_string()))?;
-    let Some(first_block_parent_hash) = blocks.first().map(|e| e.header.parent_hash) else {
+    let Some(first_block) = blocks.first() else {
         return Err(ProverDBError::Custom("Unable to get first block".into()));
     };
+    let first_block_parent_hash = first_block.header.parent_hash;
+
     let Some(last_block) = blocks.last() else {
         return Err(ProverDBError::Custom("Unable to get last block".into()));
     };
@@ -121,14 +123,23 @@ pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, P
         })
         .collect::<Result<HashMap<_, _>, ProverDBError>>()?;
 
-    let block_hashes = logger
+    let mut block_headers = HashMap::new();
+    let oldest_required_block_number = logger
         .block_hashes_accessed
         .lock()
         .map_err(|_| ProverDBError::Store("Could not lock mutex".to_string()))?
         .clone()
-        .into_iter()
-        .map(|(num, hash)| (num, H256::from(hash.0)))
-        .collect();
+        .into_keys()
+        .min()
+        .unwrap_or(first_block.header.number - 1);
+    // from oldest required to parent:
+    for number in oldest_required_block_number..first_block.header.number {
+        let header = store
+            .get_block_header(number)
+            .map_err(|err| ProverDBError::Store(err.to_string()))?
+            .ok_or(ProverDBError::Store("block header not found".to_string()))?;
+        block_headers.insert(number, header);
+    }
 
     // get account proofs
     let state_trie = store
@@ -204,7 +215,7 @@ pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, P
         accounts,
         code,
         storage,
-        block_hashes,
+        block_headers,
         chain_config,
         state_proofs,
         storage_proofs,
