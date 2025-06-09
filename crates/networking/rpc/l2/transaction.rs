@@ -143,12 +143,12 @@ impl RpcHandler for SponsoredTx {
         let gas_price_request = GasPrice {}.handle(context.clone()).await?;
 
         let gas_price_request = gas_price_request
-            .ok_or(RpcErr::Internal(
-                "Gas price request has invalid format".to_string(),
-            ))?
             .as_str()
             .unwrap_or("0x0")
-            .strip_prefix("0x");
+            .strip_prefix("0x")
+            .ok_or(RpcErr::Internal(
+                "Gas price request has invalid format".to_string(),
+            ))?;
 
         let max_fee_per_gas = u64::from_str_radix(gas_price_request, 16)
             .map_err(|err| RpcErr::Internal(err.to_string()))?;
@@ -199,12 +199,12 @@ impl RpcHandler for SponsoredTx {
         .await?;
 
         let estimate_gas_request = estimate_gas_request
-            .ok_or(RpcErr::Internal(
-                "Estimate gas request has invalid format".to_string(),
-            ))?
             .as_str()
             .unwrap_or("0x0")
-            .strip_prefix("0x");
+            .strip_prefix("0x")
+            .ok_or(RpcErr::Internal(
+                "Estimate gas request has invalid format".to_string(),
+            ))?;
 
         let gas_limit = u64::from_str_radix(estimate_gas_request, 16)
             .map_err(|err| RpcErr::Internal(err.to_string()))?;
