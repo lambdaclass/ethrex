@@ -269,7 +269,7 @@ impl BlockFetcher {
         //     bytes32 stateDiffKZGVersionedHash,
         //     bytes32 withdrawalsLogsMerkleRoot,
         //     bytes32 processedDepositLogsRollingHash,
-        //     bytes[] calldata _hexEncodedBlocks
+        //     bytes[] calldata _rlpEncodedBlocks
         // ) external;
 
         // data =   4 bytes (function selector) 0..4
