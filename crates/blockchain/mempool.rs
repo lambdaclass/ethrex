@@ -243,7 +243,7 @@ impl Mempool {
             .filter(|(_, tx)| tx.nonce() == nonce && tx.sender() == sender)
             .count();
 
-        Ok(count != 0)
+        Ok(count > 0)
     }
 }
 
