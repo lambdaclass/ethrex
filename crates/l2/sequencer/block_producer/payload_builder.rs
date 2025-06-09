@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use ethrex_blockchain::{
@@ -10,6 +10,10 @@ use ethrex_blockchain::{
 use ethrex_common::{
     types::{Block, Receipt, Transaction, SAFE_BYTES_PER_BLOB},
     Address, U256,
+};
+use ethrex_l2_common::state_diff::{
+    AccountStateDiff, StateDiffError, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN,
+    SIMPLE_TX_STATE_DIFF_SIZE, WITHDRAWAL_LOG_LEN,
 };
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
@@ -24,13 +28,7 @@ use tokio::time::Instant;
 use tracing::{debug, error};
 
 use crate::{
-    sequencer::{
-        errors::{BlockProducerError, StateDiffError},
-        state_diff::{
-            AccountStateDiff, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN, SIMPLE_TX_STATE_DIFF_SIZE,
-            WITHDRAWAL_LOG_LEN,
-        },
-    },
+    sequencer::errors::BlockProducerError,
     utils::helpers::{is_deposit_l2, is_withdrawal_l2},
 };
 
@@ -64,6 +62,9 @@ pub async fn build_payload(
             tracing::info!(
                 "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
             );
+            metrics!(METRICS_BLOCKS.set_latest_gigagas(throughput));
+        } else {
+            metrics!(METRICS_BLOCKS.set_latest_gigagas(0_f64));
         }
     }
 
@@ -86,7 +87,7 @@ pub async fn build_payload(
     Ok(context.into())
 }
 
-/// Same as `blockchain::fill_transactions` but enforces that the `StateDiff` size  
+/// Same as `blockchain::fill_transactions` but enforces that the `StateDiff` size
 /// stays within the blob size limit after processing each transaction.
 pub async fn fill_transactions(
     blockchain: Arc<Blockchain>,
@@ -173,7 +174,7 @@ pub async fn fill_transactions(
             .await?;
 
         if let Some(acc_info) = maybe_sender_acc_info {
-            if head_tx.nonce() < acc_info.nonce {
+            if head_tx.nonce() < acc_info.nonce && !head_tx.is_privileged() {
                 debug!("Removing transaction with nonce too low from mempool: {tx_hash:#x}");
                 txs.pop();
                 blockchain.remove_transaction_from_pool(&tx_hash)?;
@@ -315,7 +316,7 @@ fn get_account_diffs_in_tx(
                 let account_state_diff = AccountStateDiff {
                     new_balance,
                     nonce_diff,
-                    storage: HashMap::new(), // We add the storage later
+                    storage: BTreeMap::new(), // We add the storage later
                     bytecode,
                     bytecode_hash: None,
                 };
@@ -334,7 +335,7 @@ fn get_account_diffs_in_tx(
                             "DB Cache".to_owned(),
                         ))?;
 
-                let mut added_storage = HashMap::new();
+                let mut added_storage = BTreeMap::new();
                 for key in original_storage_slots.keys() {
                     added_storage.insert(
                         *key,

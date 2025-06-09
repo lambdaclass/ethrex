@@ -213,6 +213,15 @@ pub struct DeployerOptions {
     )]
     pub tdx_deploy_verifier: bool,
     #[arg(
+        long = "aligned.aggregator-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS",
+        required = true,
+        help_heading = "Deployer options",
+        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+    )]
+    pub aligned_aggregator_address: Address,
+    #[arg(
         long,
         default_value = "false",
         value_name = "BOOLEAN",
@@ -226,9 +235,9 @@ pub struct DeployerOptions {
         long,
         default_value = "false",
         value_name = "BOOLEAN",
-        env = "ETHREX_COMMITTER_VALIDIUM",
+        env = "ETHREX_L2_VALIDIUM",
         help_heading = "Deployer options",
-        help = "If set to true, initializes the committer in validium mode."
+        help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
     )]
     pub validium: bool,
     #[arg(
@@ -322,6 +331,10 @@ impl Default for DeployerOptions {
                 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
             ])),
             tdx_deploy_verifier: false,
+            aligned_aggregator_address: H160([
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
+            ]),
             randomize_contract_deployment: false,
             validium: false,
             // 0x03d0a0aee676cc45bf7032649e0871927c947c8e

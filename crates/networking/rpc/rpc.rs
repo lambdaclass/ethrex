@@ -31,7 +31,7 @@ use crate::eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
-use crate::tracing::TraceTransactionRequest;
+use crate::tracing::{TraceBlockByNumberRequest, TraceTransactionRequest};
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
@@ -371,6 +371,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
+        "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }

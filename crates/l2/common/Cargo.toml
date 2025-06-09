@@ -1,0 +1,25 @@
+[package]
+name = "ethrex-l2-common"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ethereum-types.workspace = true
+ethrex-common.workspace = true
+ethrex-rlp.workspace = true
+ethrex-storage.workspace = true
+ethrex-trie.workspace = true
+ethrex-vm.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+keccak-hash.workspace = true
+serde.workspace = true
+lazy_static.workspace = true
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+as_conversions = "deny"
+unnecessary_cast = "warn"
+panic = "deny"
