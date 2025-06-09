@@ -231,8 +231,6 @@ impl BlockFetcher {
             self.last_l1_block_fetched = new_last_l1_fetched_block;
 
             batch_committed_logs.extend_from_slice(&logs);
-
-            sleep(Duration::from_millis(self.fetch_interval_ms)).await;
         }
 
         Ok(batch_committed_logs)
