@@ -6,7 +6,6 @@ use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use execution_cache::ExecutionCache;
 use l1_committer::L1Committer;
 use l1_proof_sender::L1ProofSender;
 use l1_watcher::L1Watcher;
@@ -24,8 +23,6 @@ mod l1_watcher;
 pub mod metrics;
 pub mod proof_coordinator;
 
-pub mod execution_cache;
-
 pub mod configs;
 pub mod errors;
 pub mod setup;
@@ -39,8 +36,6 @@ pub async fn start_l2(
     #[cfg(feature = "metrics")] l2_url: String,
 ) {
     info!("Starting Proposer");
-
-    let execution_cache = Arc::new(ExecutionCache::default());
 
     let Ok(needed_proof_types) = get_needed_proof_types(
         cfg.proof_coordinator.dev_mode,
@@ -65,7 +60,6 @@ pub async fn start_l2(
     let _ = L1Committer::spawn(
         store.clone(),
         rollup_store.clone(),
-        execution_cache.clone(),
         cfg.clone(),
     )
     .await
@@ -102,7 +96,6 @@ pub async fn start_l2(
         store.clone(),
         blockchain,
         cfg.clone(),
-        execution_cache,
     ));
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
