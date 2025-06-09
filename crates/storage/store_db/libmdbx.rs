@@ -35,9 +35,6 @@ use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
 
-
-const SNAPSHOT_HASH_KEY: [u8; 8] = u64::MAX.to_be_bytes();
-
 pub struct Store {
     db: Arc<Database>,
 }
@@ -1029,70 +1026,52 @@ impl StoreEngine for Store {
             .await
     }
 
-    fn set_block_snapshot(
+    fn write_block_snapshot(
         &self,
-        bh: BlockHash,
-        updates: Vec<SnapshotUpdate>,
+        storages_to_update: Vec<(Rlp<H256>, AccountStorageKeyBytes, AccountStorageValueBytes)>,
+        storages_to_remove: Vec<Rlp<H256>>,
+        states_to_remove: Vec<Rlp<H256>>,
+        states_to_update: Vec<(Rlp<H256>, Rlp<AccountState>)>,
     ) -> Result<(), StoreError> {
-        // FIXME:
-        // 1. Move this logic elsewhere
-        // 2. See if we can use the write_batch functions
-        let mut storages_to_update = vec![];
-        let mut storages_to_remove = vec![];
-        let mut states_to_update = vec![];
-        let mut states_to_remove: Vec<Rlp<H256>> = vec![];
-        for update in updates {
-            match update {
-                SnapshotUpdate::Remove { hashed_address } => {
-                    // FIXME Maybe avoid duplicating this if turns out
-                    // to be the same raw type.
-                    let encoded_key: AccountHashRLP = hashed_address.into();
-                    states_to_remove.push(encoded_key.clone());
-                    storages_to_remove.push(encoded_key);
-                }
-                SnapshotUpdate::Set { update, state, hashed_address} =>  {
-                   let encoded_hashed_address: AccountHashRLP = hashed_address.into();
-                   for (k, v) in update.added_storage {
-                       let encoded_key: AccountStorageKeyBytes = k.into();
-                       let encoded_value: AccountStorageValueBytes = v.into();
-                       storages_to_update.push((encoded_hashed_address.clone(), encoded_key, encoded_value));
-                   }
-                    let encoded_state: AccountStateRLP = state.into();
-                    states_to_update.push((encoded_hashed_address, encoded_state))
-                }
-            }
-        }
+        // FIXME: Consider using the existing batch functions.
+        // Pros: More consistent with existing code.
+        // Cons: We would open and close a tx for each table.
         let tx = self
             .db
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
         for (account_hash, storage_key, storage_value) in storages_to_update {
-            tx.upsert::<StorageSnapShot>(account_hash, (storage_key, storage_value)).map_err(StoreError::LibmdbxError)?;
+            tx.upsert::<StorageSnapShot>(account_hash, (storage_key, storage_value))
+                .map_err(StoreError::LibmdbxError)?;
         }
         for account_hash in storages_to_remove {
-           tx.delete::<StorageSnapShot>(account_hash, None).map_err(StoreError::LibmdbxError)?;
+            tx.delete::<StorageSnapShot>(account_hash, None)
+                .map_err(StoreError::LibmdbxError)?;
         }
         for (account_hash, state) in states_to_update {
-            tx.upsert::<StateSnapShot>(account_hash, state).map_err(StoreError::LibmdbxError)?;
+            tx.upsert::<StateSnapShot>(account_hash, state)
+                .map_err(StoreError::LibmdbxError)?;
         }
         for account_hash in states_to_remove {
-            tx.delete::<StateSnapShot>(account_hash, None).map_err(StoreError::LibmdbxError)?;
+            tx.delete::<StateSnapShot>(account_hash, None)
+                .map_err(StoreError::LibmdbxError)?;
         }
-
-        tx.upsert::<CurrentSnapShot>(SNAPSHOT_HASH_KEY, bh.into()).map_err(StoreError::LibmdbxError)?;
 
         tx.commit().map_err(StoreError::LibmdbxError)?;
 
         Ok(())
     }
 
-    fn state_snapshot_for_account(&self, account_hash: &H256) -> Result<Option<AccountState>, StoreError> {
+    fn state_snapshot_for_account(
+        &self,
+        account_hash: &H256,
+    ) -> Result<Option<AccountState>, StoreError> {
         // FIXME: Maybe avoid this encoding.
         let Some(encoded_state) = self.read_sync::<StateSnapShot>((*account_hash).into())? else {
-            return Ok(None)
+            return Ok(None);
         };
         let decoded_state = encoded_state.to()?;
-        println!("RETURNING STATE SNAPSHOT FOR ACCOUNT");
+        tracing::debug!("Returning snapshot data for account");
         Ok(Some(decoded_state))
     }
 }
@@ -1291,11 +1270,6 @@ table!(
     ( StateSnapShot ) AccountHashRLP => AccountStateRLP
 );
 
-table!(
-    /// Stores the hash for the current snapshot
-    ( CurrentSnapShot ) [u8; 8] => BlockHashRLP
-);
-
 dupsort!(
     /// Storage Snapshot used by an ongoing sync process
     ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
@@ -1419,8 +1393,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(StateSnapShot),
         table_info!(StorageSnapShot),
         table_info!(StorageHealPaths),
-        table_info!(InvalidAncestors),
-        table_info!(CurrentSnapShot)
+        table_info!(InvalidAncestors)
     ]
     .into_iter()
     .collect();

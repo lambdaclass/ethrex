@@ -1286,19 +1286,23 @@ impl StoreEngine for RedBStore {
         .await
     }
 
-    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError> {
-        todo!()
-    }
 
-    fn get_storage_snapshot(
+    fn write_block_snapshot(
         &self,
-        account_hash: H256,
-        storage_hash: H256,
-    ) -> Result<Option<U256>, StoreError> {
+        storages_to_update: Vec<(Rlp<H256>, AccountStorageKeyBytes, AccountStorageValueBytes)>,
+        storages_to_remove: Vec<Rlp<H256>>,
+        states_to_remove: Vec<Rlp<H256>>,
+        states_to_update: Vec<(Rlp<H256>, Rlp<AccountState>)>,
+    ) -> Result<(), StoreError> {
+        // FIXME: Implement this.
         todo!()
     }
 
-    fn account_snapshots_state(&self) -> Result<Option<AccountState>, StoreError> {
+    fn state_snapshot_for_account(
+        &self,
+        account_hash: &H256,
+    ) -> Result<Option<AccountState>, StoreError> {
+        // FIXME: Implement this.
         todo!()
     }
 }

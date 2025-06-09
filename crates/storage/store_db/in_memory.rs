@@ -1,12 +1,11 @@
 use crate::{
-    api::StoreEngine,
-    error::StoreError,
-    store::{SnapshotUpdate, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
+    api::StoreEngine, error::StoreError, rlp::Rlp, store::{SnapshotUpdate, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS}
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt
+    payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash,
+    BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
@@ -14,6 +13,8 @@ use std::{
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
+
+use super::libmdbx::{AccountStorageKeyBytes, AccountStorageValueBytes};
 pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
 
 #[derive(Default, Clone)]
@@ -710,15 +711,23 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn set_block_snapshot(
+
+    fn write_block_snapshot(
         &self,
-        bh: BlockHash,
-        updates: Vec<SnapshotUpdate>,
+        storages_to_update: Vec<(Rlp<H256>, AccountStorageKeyBytes, AccountStorageValueBytes)>,
+        storages_to_remove: Vec<Rlp<H256>>,
+        states_to_remove: Vec<Rlp<H256>>,
+        states_to_update: Vec<(Rlp<H256>, Rlp<AccountState>)>,
     ) -> Result<(), StoreError> {
-        // FIXME: Properly implement this
+        // FIXME: Implement this.
         todo!()
     }
-    fn state_snapshot_for_account(&self, account_hash: &H256) -> Result<Option<AccountState>, StoreError> {
+
+    fn state_snapshot_for_account(
+        &self,
+        account_hash: &H256,
+    ) -> Result<Option<AccountState>, StoreError> {
+        // FIXME: Implement this.
         todo!()
     }
 }

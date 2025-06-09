@@ -1,11 +1,17 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction
+    payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash,
+    BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
 use std::{collections::HashMap, fmt::Debug, panic::RefUnwindSafe};
 
-use crate::{error::StoreError, store::{SnapshotUpdate, STATE_TRIE_SEGMENTS}};
+use crate::{
+    error::StoreError,
+    rlp::Rlp,
+    store::{SnapshotUpdate, STATE_TRIE_SEGMENTS},
+    store_db::libmdbx::{AccountStorageKeyBytes, AccountStorageValueBytes},
+};
 use ethrex_trie::{Nibbles, Trie};
 
 // We need async_trait because the stabilized feature lacks support for object safety
@@ -417,11 +423,16 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError>;
 
-    fn set_block_snapshot(
+    fn write_block_snapshot(
         &self,
-        bh: BlockHash,
-        updates: Vec<SnapshotUpdate>,
+        storages_to_update: Vec<(Rlp<H256>, AccountStorageKeyBytes, AccountStorageValueBytes)>,
+        storages_to_remove: Vec<Rlp<H256>>,
+        states_to_remove: Vec<Rlp<H256>>,
+        states_to_update: Vec<(Rlp<H256>, Rlp<AccountState>)>,
     ) -> Result<(), StoreError>;
 
-    fn state_snapshot_for_account(&self, hashed_address: &H256) -> Result<Option<AccountState>, StoreError>;
+    fn state_snapshot_for_account(
+        &self,
+        hashed_address: &H256,
+    ) -> Result<Option<AccountState>, StoreError>;
 }
