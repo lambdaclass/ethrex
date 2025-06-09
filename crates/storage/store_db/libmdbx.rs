@@ -1050,10 +1050,12 @@ impl StoreEngine for Store {
                 cursor
                     .upsert(key, value.into())
                     .map_err(StoreError::LibmdbxError)?;
-            } else {
-                if let Some(_) = cursor.seek_exact(key).map_err(StoreError::LibmdbxError)? {
-                    cursor.delete_current().map_err(StoreError::LibmdbxError)?;
-                }
+            } else if cursor
+                .seek_exact(key)
+                .map_err(StoreError::LibmdbxError)?
+                .is_some()
+            {
+                cursor.delete_current().map_err(StoreError::LibmdbxError)?;
             }
         }
         tx.commit().map_err(StoreError::LibmdbxError)
