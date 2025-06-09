@@ -245,8 +245,8 @@ impl Mempool {
 
         let count = pooled_transactions
             .iter()
-            .filter(|(_, tx)| {
-                tx.nonce() == nonce && tx.sender() == sender && tx.transaction() != received_tx
+            .filter(|(hash, tx)| {
+                tx.sender() == sender && tx.nonce() == nonce && *hash != &received_tx.compute_hash()
             })
             .count();
 
