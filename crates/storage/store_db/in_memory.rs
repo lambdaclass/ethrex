@@ -7,8 +7,8 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountInfo, AccountState, Block, BlockBody, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Index, Receipt,
+    payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash,
+    BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
 };
 use ethrex_common::Address;
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
@@ -88,7 +88,11 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn store_changes_batch(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    async fn store_changes_batch(
+        &self,
+        update_batch: UpdateBatch,
+        _account_updates: &[AccountUpdate],
+    ) -> Result<(), StoreError> {
         let mut store = self.inner()?;
         {
             // store account updates

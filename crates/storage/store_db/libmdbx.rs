@@ -15,8 +15,8 @@ use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::AccountInfo;
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Index, Receipt, Transaction,
+    payload::PayloadBundle, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+    BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
 use ethrex_common::Address;
 use ethrex_common::H160;
@@ -129,10 +129,62 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn store_changes_batch(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    async fn store_changes_batch(
+        &self,
+        update_batch: UpdateBatch,
+        account_updates: &[AccountUpdate],
+    ) -> Result<(), StoreError> {
         let db = self.db.clone();
+        let account_updates = account_updates.to_vec();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+
+            let mut cursor = tx
+                .cursor::<FlatAccountInfo>()
+                .map_err(StoreError::LibmdbxError)?;
+            let mut storage_cursor = tx
+                .cursor::<FlatAccountStorage>()
+                .map_err(StoreError::LibmdbxError)?;
+            for update in account_updates {
+                let key = AccountAddress(update.address);
+                if update.removed {
+                    if cursor
+                        .seek_exact(key)
+                        .map_err(StoreError::LibmdbxError)?
+                        .is_some()
+                    {
+                        cursor.delete_current().map_err(StoreError::LibmdbxError)?;
+                    }
+                } else {
+                    if let Some(info_update) = update.info {
+                        let value = (
+                            info_update.code_hash,
+                            info_update.balance,
+                            info_update.nonce,
+                        )
+                            .into();
+                        cursor
+                            .upsert(key, value)
+                            .map_err(StoreError::LibmdbxError)?;
+                    }
+                }
+                for (slot, value) in update.added_storage.iter() {
+                    let key = (update.address.into(), (*slot).into());
+                    if !value.is_zero() {
+                        storage_cursor
+                            .upsert(key, (*value).into())
+                            .map_err(StoreError::LibmdbxError)?;
+                    } else if storage_cursor
+                        .seek_exact(key)
+                        .map_err(StoreError::LibmdbxError)?
+                        .is_some()
+                    {
+                        storage_cursor
+                            .delete_current()
+                            .map_err(StoreError::LibmdbxError)?;
+                    }
+                }
+            }
 
             // store account updates
             for (node_hash, node_data) in update_batch.account_updates {
@@ -1092,7 +1144,7 @@ impl StoreEngine for Store {
         &self,
         updates: &[(Address, H256, U256)],
     ) -> Result<(), StoreError> {
-        tracing::info!("called update_flat_storage");
+        // tracing::info!("called update_flat_storage");
         let tx = self
             .db
             .begin_readwrite()
@@ -1128,7 +1180,7 @@ impl StoreEngine for Store {
         &self,
         updates: &[(Address, u64, U256, H256, bool)],
     ) -> Result<(), StoreError> {
-        tracing::info!("called update_flat_account_info");
+        // tracing::info!("called update_flat_account_info");
         let tx = self
             .db
             .begin_readwrite()
@@ -1156,7 +1208,7 @@ impl StoreEngine for Store {
     }
 
     fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
-        tracing::info!("called get_current_storage");
+        // tracing::info!("called get_current_storage");
         let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         let res = tx
             .get::<FlatAccountStorage>((address.into(), key.into()))
@@ -1168,7 +1220,7 @@ impl StoreEngine for Store {
         &self,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        tracing::info!("called get_current_account_info");
+        // tracing::info!("called get_current_account_info");
         let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         let res = tx
             .get::<FlatAccountInfo>(address.into())

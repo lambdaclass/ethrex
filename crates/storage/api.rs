@@ -1,10 +1,10 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
-use ethrex_common::types::AccountInfo;
 use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt, Transaction,
 };
+use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::Address;
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
@@ -19,7 +19,11 @@ use ethrex_trie::{Nibbles, Trie};
 #[async_trait::async_trait]
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Store changes in a batch from a vec of blocks
-    async fn store_changes_batch(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
+    async fn store_changes_batch(
+        &self,
+        update_batch: UpdateBatch,
+        account_updates: &[AccountUpdate],
+    ) -> Result<(), StoreError>;
 
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.

@@ -144,7 +144,9 @@ impl Blockchain {
             receipts: vec![(block.hash(), execution_result.receipts)],
         };
 
-        update_batch.apply_to_store(self.storage.clone()).await?;
+        update_batch
+            .apply_to_store(self.storage.clone(), account_updates)
+            .await?;
 
         Ok(())
     }
@@ -291,7 +293,7 @@ impl Blockchain {
         };
 
         self.storage
-            .store_changes(update_batch)
+            .store_changes(update_batch, &account_updates)
             .await
             .map_err(|e| (e.into(), None))?;
 

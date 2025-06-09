@@ -55,14 +55,24 @@ pub struct UpdateBatch {
 }
 
 impl UpdateBatch {
-    pub async fn apply_to_store(self, store: Store) -> Result<(), StoreError> {
-        store.store_changes(self).await
+    pub async fn apply_to_store(
+        self,
+        store: Store,
+        account_updates: &[AccountUpdate],
+    ) -> Result<(), StoreError> {
+        store.store_changes(self, account_updates).await
     }
 }
 
 impl Store {
-    pub async fn store_changes(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        self.engine.store_changes_batch(update_batch).await
+    pub async fn store_changes(
+        &self,
+        update_batch: UpdateBatch,
+        account_updates: &[AccountUpdate],
+    ) -> Result<(), StoreError> {
+        self.engine
+            .store_changes_batch(update_batch, account_updates)
+            .await
     }
 
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
