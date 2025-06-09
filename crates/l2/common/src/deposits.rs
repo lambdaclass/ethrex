@@ -1,12 +1,23 @@
-// This module was based on the L1 committer.
-// TODO: We should move this to some kind of "common" library for the L2, but the zkvm programs
-// can't depend on ethrex-l2 because of incompatible dependencies.
+use ethereum_types::{Address, H256, U256};
+use ethrex_common::types::{PrivilegedL2Transaction, Transaction};
+use keccak_hash::keccak;
+use serde::{Deserialize, Serialize};
 
-use ethrex_common::{
-    types::{PrivilegedL2Transaction, Transaction},
-    Address, U256,
-};
-use keccak_hash::{keccak, H256};
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DepositLog {
+    pub address: Address,
+    pub amount: U256,
+    pub nonce: u64,
+}
+
+impl DepositLog {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        encoded.extend(self.address.0);
+        encoded.extend_from_slice(&self.amount.to_big_endian());
+        encoded
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum DepositError {
@@ -14,13 +25,6 @@ pub enum DepositError {
     FailedToDecodeHash,
     #[error("Length does not fit in u16")]
     LengthTooLarge(#[from] std::num::TryFromIntError),
-}
-
-#[derive(Clone)]
-pub struct DepositLog {
-    pub address: Address,
-    pub amount: U256,
-    pub nonce: u64,
 }
 
 pub fn get_block_deposits(txs: &[Transaction]) -> Vec<PrivilegedL2Transaction> {
@@ -32,9 +36,9 @@ pub fn get_block_deposits(txs: &[Transaction]) -> Vec<PrivilegedL2Transaction> {
         .collect()
 }
 
-pub fn get_deposit_hash(deposit_hashes: Vec<H256>) -> Result<H256, DepositError> {
-    if !deposit_hashes.is_empty() {
-        let deposit_hashes_len: u16 = deposit_hashes
+pub fn compute_deposit_logs_hash(deposit_log_hashes: Vec<H256>) -> Result<H256, DepositError> {
+    if !deposit_log_hashes.is_empty() {
+        let deposit_hashes_len: u16 = deposit_log_hashes
             .len()
             .try_into()
             .map_err(DepositError::from)?;
@@ -42,7 +46,7 @@ pub fn get_deposit_hash(deposit_hashes: Vec<H256>) -> Result<H256, DepositError>
             [
                 &deposit_hashes_len.to_be_bytes(),
                 keccak(
-                    deposit_hashes
+                    deposit_log_hashes
                         .iter()
                         .map(H256::as_bytes)
                         .collect::<Vec<&[u8]>>()
