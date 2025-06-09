@@ -281,7 +281,7 @@ pub struct DeployerOptions {
         env = "ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS",
         action = ArgAction::SetTrue,
         help_heading = "Deployer options",
-        help = "If set to true, it will deploy the SequencerRegistry contract."
+        help = "If set to true, it will deploy the SequencerRegistry contract and a modified OnChainProposer contract."
     )]
     pub deploy_based_contracts: bool,
     #[arg(
