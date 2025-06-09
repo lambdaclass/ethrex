@@ -39,7 +39,7 @@ struct Cli {
     #[arg(
         long,
         short = 'n',
-        default_value = "http://localhost:1729",
+        default_value = "http://localhost:8545",
         help = "URL of the node being tested."
     )]
     node: String,
