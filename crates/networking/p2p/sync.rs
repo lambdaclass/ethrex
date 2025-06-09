@@ -31,7 +31,7 @@ use tokio::{
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, field::debug, info, warn};
+use tracing::{debug, error, info, warn};
 use trie_rebuild::TrieRebuilder;
 
 use crate::peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST};
