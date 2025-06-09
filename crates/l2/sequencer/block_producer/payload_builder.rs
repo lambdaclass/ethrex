@@ -64,6 +64,9 @@ pub async fn build_payload(
             tracing::info!(
                 "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
             );
+            metrics!(METRICS_BLOCKS.set_latest_gigagas(throughput));
+        } else {
+            metrics!(METRICS_BLOCKS.set_latest_gigagas(0_f64));
         }
     }
 
