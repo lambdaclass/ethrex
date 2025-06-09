@@ -730,6 +730,14 @@ impl StoreEngine for Store {
         // FIXME: Implement this.
         todo!()
     }
+
+    fn storage_snapshot_for_hash(
+        &self,
+        account_hash: &H256,
+        hashed_key: &H256,
+    ) -> Result<Option<U256>, StoreError>{
+        todo!()
+    }
 }
 
 impl Debug for Store {

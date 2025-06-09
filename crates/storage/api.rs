@@ -435,4 +435,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         hashed_address: &H256,
     ) -> Result<Option<AccountState>, StoreError>;
+
+    fn storage_snapshot_for_hash(
+        &self,
+        account_hash: &H256,
+        hashed_key: &H256
+    ) -> Result<Option<U256>, StoreError>;
 }

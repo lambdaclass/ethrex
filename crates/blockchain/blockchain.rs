@@ -130,7 +130,7 @@ impl Blockchain {
         // Apply the account updates over the last block's state and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(block.header.clone(), account_updates)
+            .apply_account_updates(block.header.parent_hash, account_updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
@@ -145,10 +145,6 @@ impl Blockchain {
             .add_receipts(block.hash(), execution_result.receipts)
             .await
             .map_err(ChainError::StoreError)?;
-
-        // if let Err(error) = self.storage.add_block_snapshot(block.clone(), account_updates.clone().to_vec()) {
-        //     error!("FAILED TO ADD SNAPSHOT FOR BLOCK {}: {error}", block.header.hash());
-        // }
 
         return Ok(());
     }
@@ -287,7 +283,7 @@ impl Blockchain {
         // Apply the account updates over all blocks and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(first_block_header.clone(), &account_updates)
+            .apply_account_updates(first_block_header.parent_hash, &account_updates)
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;

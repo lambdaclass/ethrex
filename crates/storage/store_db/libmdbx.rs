@@ -1074,6 +1074,26 @@ impl StoreEngine for Store {
         tracing::debug!("Returning snapshot data for account");
         Ok(Some(decoded_state))
     }
+
+    fn storage_snapshot_for_hash(
+        &self,
+        account_hash: &H256,
+        hashed_key: &H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let account_hash_rlp: Rlp<H256> = (*account_hash).into();
+        let hashed_key_bytes: AccountStorageKeyBytes = (*hashed_key).into();
+        let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let mut cursor = tx.cursor::<StorageSnapShot>().map_err(StoreError::LibmdbxError)?;
+        cursor.seek_closest(account_hash_rlp.clone()).unwrap();
+        // FIXME: Remove this unwrap
+        while let Some((_key, (sub_key, value))) = cursor.next_value().unwrap() {
+            if sub_key.0 == hashed_key_bytes.0 {
+                let value = U256::from_big_endian(&value.0);
+                return Ok(Some(value));
+            }
+        }
+        Ok(None)
+    }
 }
 
 impl Debug for Store {

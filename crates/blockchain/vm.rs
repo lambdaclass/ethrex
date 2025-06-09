@@ -47,9 +47,11 @@ impl VmDatabase for StoreVmDatabase {
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        self.store
+        let value = self
+            .store
             .get_storage_at_hash(self.block_hash, address, key)
-            .map_err(|e| EvmError::DB(e.to_string()))
+            .map_err(|e| EvmError::DB(e.to_string()));
+        return value;
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {

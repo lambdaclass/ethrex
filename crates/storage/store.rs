@@ -353,6 +353,7 @@ impl Store {
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<H256>, StoreError> {
+        tracing::debug!("Applying account updates");
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -367,6 +368,7 @@ impl Store {
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
     ) -> Result<Trie, StoreError> {
+        tracing::debug!("Accessing state trie");
         let mut snapshot_updates = Vec::with_capacity(account_updates.len());
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
@@ -608,14 +610,19 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        let hashed_key = hash_key_fixed_size(&storage_key);
+        let hashed_address = hash_address_fixed(&address);
+        if let Some(value) = self.engine.storage_snapshot_for_hash(&hashed_address, &H256::from(hashed_key))? {
+            return Ok(Some(value));
+        };
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
             return Ok(None);
         };
-        let hashed_key = hash_key(&storage_key);
-        storage_trie
-            .get(&hashed_key)?
+        let res = storage_trie
+            .get(&hashed_key.to_vec())?
             .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
-            .transpose()
+            .transpose();
+        return res;
     }
 
     pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
@@ -1244,6 +1251,7 @@ impl Store {
                 }
             }
         }
+        tracing::debug!("Snapshot created");
         self.engine.write_block_snapshot(
             storages_to_update,
             storages_to_remove,
