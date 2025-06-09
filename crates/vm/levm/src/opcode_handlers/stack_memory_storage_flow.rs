@@ -1,9 +1,10 @@
 use crate::{
     call_frame::CallFrame,
-    constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
+    constants::{DEBUG_MEMORY_OFFSET, WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
     errors::{OpcodeResult, OutOfGasError, VMError},
     gas_cost::{self, SSTORE_STIPEND},
     memory::{self, calculate_memory_size},
+    utils::print_u256,
     vm::VM,
 };
 use ethrex_common::{types::Fork, H256, U256};
@@ -89,8 +90,16 @@ impl<'a> VM<'a> {
 
     // MSTORE operation
     pub fn op_mstore(&mut self) -> Result<OpcodeResult, VMError> {
+        let offset = self.current_call_frame_mut()?.stack.pop()?;
+        let value = self.current_call_frame_mut()?.stack.pop()?;
+
+        // This is only for debugging purposes of special solidity contracts that enable printing text on screen.
+        if self.debug_mode && offset == DEBUG_MEMORY_OFFSET {
+            print_u256(value);
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+        }
+
         let current_call_frame = self.current_call_frame_mut()?;
-        let offset = current_call_frame.stack.pop()?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
 
@@ -98,8 +107,6 @@ impl<'a> VM<'a> {
             new_memory_size,
             current_call_frame.memory.len(),
         )?)?;
-
-        let value = current_call_frame.stack.pop()?;
 
         memory::try_store_data(
             &mut current_call_frame.memory,

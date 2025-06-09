@@ -46,6 +46,8 @@ pub struct VM<'a> {
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
     /// When enabled, it "logs" relevant information during execution
     pub tracer: LevmCallTracer,
+    /// Mode for printing some useful stuff, only used in development!
+    pub debug_mode: bool,
 }
 
 impl<'a> VM<'a> {
@@ -67,6 +69,7 @@ impl<'a> VM<'a> {
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
             tracer,
+            debug_mode: false,
         }
     }
 
@@ -107,6 +110,11 @@ impl<'a> VM<'a> {
             self.env.gas_limit,
             self.tx.data(),
         );
+
+        #[cfg(feature = "debug")]
+        {
+            self.debug_mode = true;
+        }
 
         Ok(())
     }

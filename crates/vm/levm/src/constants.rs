@@ -76,3 +76,6 @@ pub const SET_CODE_DELEGATION_BYTES: [u8; 3] = [0xef, 0x01, 0x00];
 pub const EIP7702_DELEGATED_CODE_LEN: usize = 23;
 pub const PER_AUTH_BASE_COST: u64 = 12500;
 pub const PER_EMPTY_ACCOUNT_COST: u64 = 25000;
+
+/// Special constant for debugging. 0xFEDEBEBECAFEDECEBADA
+pub const DEBUG_MEMORY_OFFSET: U256 = U256([0xBEBECAFEDECEBADA, 0xFEDE, 0, 0]);
