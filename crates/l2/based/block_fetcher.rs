@@ -7,7 +7,7 @@ use ethrex_common::{
     },
     Address, H160, H256, U256,
 };
-use ethrex_l2_common::state_diff::prepare_state_diff;
+use ethrex_l2_common::{deposits::compute_deposit_logs_hash, state_diff::prepare_state_diff};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::{types::receipt::RpcLog, utils::get_withdrawal_hash, EthClient};
 use ethrex_storage::Store;
@@ -50,6 +50,8 @@ pub enum BlockFetcherError {
     EvmError(#[from] ethrex_vm::EvmError),
     #[error("Failed to produce the blob bundle")]
     BlobBundleError,
+    #[error("Failed to compute deposit logs hash: {0}")]
+    DepositError(#[from] ethrex_l2_common::deposits::DepositError),
 }
 
 pub struct BlockFetcher {
@@ -433,7 +435,7 @@ impl BlockFetcher {
                 })
             })
             .collect();
-        let deposit_hashes = deposits
+        let deposit_log_hashes = deposits
             .iter()
             .filter_map(|tx| tx.get_deposit_hash())
             .collect();
@@ -442,7 +444,7 @@ impl BlockFetcher {
             let block_withdrawals = self.get_block_withdrawals(block.header.number).await?;
             withdrawals.extend(block_withdrawals);
         }
-        let deposit_logs_hash = get_deposit_logs_hash(deposit_hashes)?;
+        let deposit_logs_hash = compute_deposit_logs_hash(deposit_log_hashes)?;
 
         let first_block = batch.first().ok_or(BlockFetcherError::InternalError(
             "Batch is empty. This shouldn't happen.".to_owned(),
@@ -507,32 +509,4 @@ impl BlockFetcher {
             blobs_bundle,
         })
     }
-}
-
-fn get_deposit_logs_hash(deposit_hashes: Vec<H256>) -> Result<H256, BlockFetcherError> {
-    if deposit_hashes.is_empty() {
-        return Ok(H256::zero());
-    }
-    let deposit_hashes_len: u16 = deposit_hashes.len().try_into().map_err(|e| {
-        BlockFetcherError::InternalError(format!("Failed to convert usize to u16: {e}"))
-    })?;
-    Ok(H256::from_slice(
-        [
-            &deposit_hashes_len.to_be_bytes(),
-            keccak(
-                deposit_hashes
-                    .iter()
-                    .map(H256::as_bytes)
-                    .collect::<Vec<&[u8]>>()
-                    .concat(),
-            )
-            .as_bytes()
-            .get(2..32)
-            .ok_or(BlockFetcherError::WrongBatchCalldata(
-                "Failed to decode deposit hashes".to_string(),
-            ))?,
-        ]
-        .concat()
-        .as_slice(),
-    ))
 }
