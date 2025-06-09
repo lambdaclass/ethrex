@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749484393017,
+  "lastUpdate": 1749488479631,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11545,6 +11545,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 174914999716,
             "range": "± 163954796",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "084310ceaab6fb933023f14ea7e2077b96b876e6",
+          "message": "fix(l1): invalidTXs hive test (#3031)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nThe InvalidTxs test in hive was failing\n\n**Description**\n\nChanges introduced\n- Added more validations to incoming TXs. 128Kb for non contratct\ncreation data limit (not really a spec, but\n[recommended](https://github.com/ethereum/devp2p/blob/bc76b9809a30e6dc5c8dcda996273f0f9bcf7108/caps/eth.md?plain=1#L180)\nto avoid ddos). Added cap to the nonce value (shoudn't reach u64::max).\nNow we check the mempool for getting the pending TXs nonces.\n- Fixed ping/pong decoding when empty string received (still valid)\n- Avoid broadcasting TXs when there are not valid TXs\n- Added the test to the CI again\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2726 & #1139\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-06-09T16:12:06Z",
+          "tree_id": "37b4f6b8bf11580fed178f4695d8c5ca3e72eebd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/084310ceaab6fb933023f14ea7e2077b96b876e6"
+        },
+        "date": 1749488474487,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178402680518,
+            "range": "± 911476812",
             "unit": "ns/iter"
           }
         ]
