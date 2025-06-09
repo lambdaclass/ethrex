@@ -14,4 +14,4 @@ jobs:
             - name: Kurtosis Assertoor GitHub Action
               uses: ethpandaops/kurtosis-assertoor-github-action@v1
               with:
-                ethereum_package_args: ../config/assertoor/network_params_ethrex_only.yaml
+                ethereum_package_args: ./config/assertoor/network_params_ethrex_only.yaml
