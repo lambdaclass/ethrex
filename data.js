@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749488479631,
+  "lastUpdate": 1749489443707,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11575,6 +11575,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178402680518,
             "range": "± 911476812",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "be6e91ac15fdfbc81bff078c9b1244ab99bdbb37",
+          "message": "chore(l2): move `validium` flag to `SequencerOptions` (#3084)\n\n**Motivation**\n\nhttps://github.com/lambdaclass/ethrex/pull/2819 introduced `L2Options`\nintended for arguments needed for more than one component of the\nSequencer while the struct `Options` from the same module already\nrepresents this.\n\nIn addition, the `validium` arg is a Sequencer option as more than one\ncomponent uses it.\n\n**Description**\n\n- Removes the `L2Options` struct.\n- `validium` is now a `SequencerOptions` field.",
+          "timestamp": "2025-06-09T16:28:29Z",
+          "tree_id": "dc68998909dca2a647b09174edb6ce9816f15f18",
+          "url": "https://github.com/lambdaclass/ethrex/commit/be6e91ac15fdfbc81bff078c9b1244ab99bdbb37"
+        },
+        "date": 1749489438442,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178300915652,
+            "range": "± 383593321",
             "unit": "ns/iter"
           }
         ]
