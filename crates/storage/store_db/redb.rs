@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, collections::HashMap, panic::RefUnwindSafe, sync::Arc};
+use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
 use crate::rlp::{
     AccountHashRLP, AccountStateRLP, BlockRLP, Rlp, TransactionHashRLP, TriePathsRLP,
@@ -681,33 +681,6 @@ impl StoreEngine for RedBStore {
             <Receipt as Into<ReceiptRLP>>::into(receipt),
         )
         .await
-    }
-
-    async fn add_receipts_for_blocks(
-        &self,
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-    ) -> Result<(), StoreError> {
-        let mut key_values = vec![];
-
-        for (block_hash, receipts) in receipts.into_iter() {
-            let mut kv = receipts
-                .into_iter()
-                .enumerate()
-                .map(|(index, receipt)| {
-                    (
-                        <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((
-                            block_hash,
-                            index as u64,
-                        )),
-                        <Receipt as Into<ReceiptRLP>>::into(receipt),
-                    )
-                })
-                .collect();
-
-            key_values.append(&mut kv);
-        }
-
-        self.write_batch(RECEIPTS_TABLE, key_values).await
     }
 
     async fn get_receipt(

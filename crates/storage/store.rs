@@ -17,7 +17,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieNode};
 use sha3::{Digest as _, Keccak256};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tracing::info;
@@ -467,13 +467,6 @@ impl Store {
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
         self.engine.add_receipts(block_hash, receipts).await
-    }
-
-    pub async fn add_receipts_for_blocks(
-        &self,
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-    ) -> Result<(), StoreError> {
-        self.engine.add_receipts_for_blocks(receipts).await
     }
 
     pub async fn get_receipt(

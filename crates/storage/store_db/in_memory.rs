@@ -535,17 +535,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn add_receipts_for_blocks(
-        &self,
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-    ) -> Result<(), StoreError> {
-        for (block_hash, receipts) in receipts.into_iter() {
-            self.add_receipts(block_hash, receipts).await?;
-        }
-
-        Ok(())
-    }
-
     async fn add_transaction_locations(
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
