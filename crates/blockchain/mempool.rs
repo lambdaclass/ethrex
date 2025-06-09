@@ -232,7 +232,12 @@ impl Mempool {
             .collect())
     }
 
-    pub fn contains_sender_nonce(&self, sender: Address, nonce: u64) -> Result<bool, MempoolError> {
+    pub fn contains_sender_nonce(
+        &self,
+        sender: Address,
+        nonce: u64,
+        received_tx: &Transaction,
+    ) -> Result<bool, MempoolError> {
         let pooled_transactions = self
             .transaction_pool
             .read()
@@ -240,7 +245,9 @@ impl Mempool {
 
         let count = pooled_transactions
             .iter()
-            .filter(|(_, tx)| tx.nonce() == nonce && tx.sender() == sender)
+            .filter(|(_, tx)| {
+                tx.nonce() == nonce && tx.sender() == sender && tx.transaction() != received_tx
+            })
             .count();
 
         Ok(count > 0)
