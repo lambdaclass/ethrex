@@ -1095,14 +1095,6 @@ impl StoreEngine for Store {
         println!("RETURNING STATE SNAPSHOT FOR ACCOUNT");
         Ok(Some(decoded_state))
     }
-
-    fn current_snapshot_block_hash(&self) -> Result<Option<H256>, StoreError> {
-        let Some(res) = self.read_sync::<CurrentSnapShot>(SNAPSHOT_HASH_KEY)? else {
-            return Ok(None)
-        };
-        let decoded = res.to()?;
-        return Ok(Some(decoded))
-    }
 }
 
 impl Debug for Store {

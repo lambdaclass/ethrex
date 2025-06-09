@@ -1298,10 +1298,6 @@ impl StoreEngine for RedBStore {
         todo!()
     }
 
-    fn current_block_hash(&self) -> Result<Option<H256>, StoreError> {
-       todo!()
-    }
-
     fn account_snapshots_state(&self) -> Result<Option<AccountState>, StoreError> {
         todo!()
     }

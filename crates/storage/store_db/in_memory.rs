@@ -718,9 +718,6 @@ impl StoreEngine for Store {
         // FIXME: Properly implement this
         todo!()
     }
-    fn current_snapshot_block_hash(&self) -> Result<Option<H256>, StoreError> {
-       todo!()
-    }
     fn state_snapshot_for_account(&self, account_hash: &H256) -> Result<Option<AccountState>, StoreError> {
         todo!()
     }

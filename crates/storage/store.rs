@@ -110,14 +110,9 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        // FIXME: Cache this value
-        if let Some(current_snapshot) = self.current_block_hash()? {
-            if block_hash == current_snapshot {
-                // FIXME: See if we can avoid hashing here.
-                if let Some(AccountState { nonce, balance, code_hash, .. }) = self.state_snapshot_for_account(&hash_address_fixed(&address))? {
-                    return Ok(Some(AccountInfo { code_hash, balance, nonce }));
-                }
-            }
+        // FIXME: See if we can avoid hashing here.
+        if let Some(AccountState { nonce, balance, code_hash, .. }) = self.state_snapshot_for_account(&hash_address_fixed(&address))? {
+            return Ok(Some(AccountInfo { code_hash, balance, nonce }));
         }
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
@@ -757,14 +752,9 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        // FIXME: Cache this value
-        if let Some(current_snapshot) = self.current_block_hash()? {
-            if block_hash == current_snapshot {
-                // FIXME: See if we can avoid hashing here.
-                if let Some(state) = self.state_snapshot_for_account(&hash_address_fixed(&address))? {
-                    return Ok(Some(state))
-                }
-            }
+        // FIXME: See if we can avoid hashing here.
+        if let Some(state) = self.state_snapshot_for_account(&hash_address_fixed(&address))? {
+            return Ok(Some(state))
         }
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
@@ -1212,9 +1202,6 @@ impl Store {
         updates: Vec<SnapshotUpdate>,
     ) -> Result<(), StoreError> {
         todo!()
-    }
-    fn current_block_hash(&self) ->Result<Option<H256>, StoreError> {
-        self.engine.current_snapshot_block_hash()
     }
 }
 
