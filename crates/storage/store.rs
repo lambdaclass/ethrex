@@ -350,7 +350,7 @@ impl Store {
             return Ok(None);
         };
 
-        let (state_trie_hash, state_updates, storage_updates) = self
+        let (state_trie_hash, state_updates, storage_updates, _state_trie) = self
             .apply_account_updates_from_trie_batch(state_trie, account_updates)
             .await?;
 
@@ -366,6 +366,7 @@ impl Store {
             H256,
             Vec<(NodeHash, Vec<u8>)>,
             Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+            Trie,
         ),
         StoreError,
     > {
@@ -414,7 +415,7 @@ impl Store {
         }
         let (state_hash, state_updates) = state_trie.hash_prepare_batch();
 
-        Ok((state_hash, state_updates, ret_vec_account))
+        Ok((state_hash, state_updates, ret_vec_account, state_trie))
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
