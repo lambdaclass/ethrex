@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749502146601,
+  "lastUpdate": 1749510335374,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11725,6 +11725,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 175643851252,
             "range": "± 139473799",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a167cd6532c76e0878a3f3cadfcf9156101898e1",
+          "message": "fix(l2): bring back validium variable in OnChainProposer contract (#3094)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-06-09T22:17:22Z",
+          "tree_id": "2795b9ccd87e561198cc47e468a996e7b95b5adb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a167cd6532c76e0878a3f3cadfcf9156101898e1"
+        },
+        "date": 1749510330141,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177089292850,
+            "range": "± 348998478",
             "unit": "ns/iter"
           }
         ]
