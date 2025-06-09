@@ -60,7 +60,7 @@ pub struct SequencerOptions {
     #[command(flatten)]
     pub aligned_opts: AlignedOptions,
     #[arg(
-        long = "l2-validium",
+        long = "validium",
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_L2_VALIDIUM",
