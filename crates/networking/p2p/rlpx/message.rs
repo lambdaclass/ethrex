@@ -196,77 +196,71 @@ impl Message {
 
         let eth_msg_id = msg_id - p2p_capability.length();
 
+        let eth_capability = eth_capability
+            .as_ref()
+            .ok_or(RLPDecodeError::MalformedData)?;
+
         // eth (wire) protocol
-        if let Some(eth_capability) = eth_capability {
-            if eth_msg_id < eth_capability.length() {
-                return match eth_msg_id {
-                    StatusMessage::CODE => match eth_capability.version {
-                        68 => Ok(Message::Status(StatusMessage::decode68(data)?)),
-                        69 => Ok(Message::Status(StatusMessage::decode(data)?)),
-                        _ => Err(RLPDecodeError::IncompatibleProtocol),
-                    },
-                    Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
-                    GetBlockHeaders::CODE => {
-                        Ok(Message::GetBlockHeaders(GetBlockHeaders::decode(data)?))
+
+        if eth_msg_id < eth_capability.length() {
+            return match eth_msg_id {
+                StatusMessage::CODE => match eth_capability.version {
+                    68 => Ok(Message::Status(StatusMessage::decode68(data)?)),
+                    69 => Ok(Message::Status(StatusMessage::decode(data)?)),
+                    _ => Err(RLPDecodeError::IncompatibleProtocol),
+                },
+                Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
+                GetBlockHeaders::CODE => {
+                    Ok(Message::GetBlockHeaders(GetBlockHeaders::decode(data)?))
+                }
+                BlockHeaders::CODE => Ok(Message::BlockHeaders(BlockHeaders::decode(data)?)),
+                GetBlockBodies::CODE => Ok(Message::GetBlockBodies(GetBlockBodies::decode(data)?)),
+                BlockBodies::CODE => Ok(Message::BlockBodies(BlockBodies::decode(data)?)),
+                NewPooledTransactionHashes::CODE => Ok(Message::NewPooledTransactionHashes(
+                    NewPooledTransactionHashes::decode(data)?,
+                )),
+                GetPooledTransactions::CODE => Ok(Message::GetPooledTransactions(
+                    GetPooledTransactions::decode(data)?,
+                )),
+                PooledTransactions::CODE => Ok(Message::PooledTransactions(
+                    PooledTransactions::decode(data)?,
+                )),
+                GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
+                Receipts::CODE => match eth_capability.version {
+                    68 => Ok(Message::Receipts(Receipts::decode68(data)?)),
+                    69 => Ok(Message::Receipts(Receipts::decode(data)?)),
+                    _ => Err(RLPDecodeError::IncompatibleProtocol),
+                },
+                BlockRangeUpdate::CODE => match eth_capability.version {
+                    69 => Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?)),
+                    _ => Err(RLPDecodeError::IncompatibleProtocol),
+                },
+                _ => Err(RLPDecodeError::MalformedData),
+            };
+        } else {
+            let snap_msg_id = eth_msg_id - eth_capability.length();
+            let snap_capability = snap_capability
+                .as_ref()
+                .ok_or(RLPDecodeError::MalformedData)?;
+
+            if snap_msg_id < snap_capability.length() {
+                return match snap_msg_id {
+                    GetAccountRange::CODE => {
+                        Ok(Message::GetAccountRange(GetAccountRange::decode(data)?))
                     }
-                    BlockHeaders::CODE => Ok(Message::BlockHeaders(BlockHeaders::decode(data)?)),
-                    GetBlockBodies::CODE => {
-                        Ok(Message::GetBlockBodies(GetBlockBodies::decode(data)?))
+                    AccountRange::CODE => Ok(Message::AccountRange(AccountRange::decode(data)?)),
+                    GetStorageRanges::CODE => {
+                        Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?))
                     }
-                    BlockBodies::CODE => Ok(Message::BlockBodies(BlockBodies::decode(data)?)),
-                    NewPooledTransactionHashes::CODE => Ok(Message::NewPooledTransactionHashes(
-                        NewPooledTransactionHashes::decode(data)?,
-                    )),
-                    GetPooledTransactions::CODE => Ok(Message::GetPooledTransactions(
-                        GetPooledTransactions::decode(data)?,
-                    )),
-                    PooledTransactions::CODE => Ok(Message::PooledTransactions(
-                        PooledTransactions::decode(data)?,
-                    )),
-                    GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
-                    Receipts::CODE => match eth_capability.version {
-                        68 => Ok(Message::Receipts(Receipts::decode68(data)?)),
-                        69 => Ok(Message::Receipts(Receipts::decode(data)?)),
-                        _ => Err(RLPDecodeError::IncompatibleProtocol),
-                    },
-                    BlockRangeUpdate::CODE => match eth_capability.version {
-                        69 => Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?)),
-                        _ => Err(RLPDecodeError::IncompatibleProtocol),
-                    },
+                    StorageRanges::CODE => Ok(Message::StorageRanges(StorageRanges::decode(data)?)),
+                    GetByteCodes::CODE => Ok(Message::GetByteCodes(GetByteCodes::decode(data)?)),
+                    ByteCodes::CODE => Ok(Message::ByteCodes(ByteCodes::decode(data)?)),
+                    GetTrieNodes::CODE => Ok(Message::GetTrieNodes(GetTrieNodes::decode(data)?)),
+                    TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
                     _ => Err(RLPDecodeError::MalformedData),
                 };
-            } else {
-                let snap_msg_id = eth_msg_id - eth_capability.length();
-                if let Some(snap_capability) = snap_capability {
-                    if snap_msg_id < snap_capability.length() {
-                        return match snap_msg_id {
-                            GetAccountRange::CODE => {
-                                Ok(Message::GetAccountRange(GetAccountRange::decode(data)?))
-                            }
-                            AccountRange::CODE => {
-                                Ok(Message::AccountRange(AccountRange::decode(data)?))
-                            }
-                            GetStorageRanges::CODE => {
-                                Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?))
-                            }
-                            StorageRanges::CODE => {
-                                Ok(Message::StorageRanges(StorageRanges::decode(data)?))
-                            }
-                            GetByteCodes::CODE => {
-                                Ok(Message::GetByteCodes(GetByteCodes::decode(data)?))
-                            }
-                            ByteCodes::CODE => Ok(Message::ByteCodes(ByteCodes::decode(data)?)),
-                            GetTrieNodes::CODE => {
-                                Ok(Message::GetTrieNodes(GetTrieNodes::decode(data)?))
-                            }
-                            TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
-                            _ => Err(RLPDecodeError::MalformedData),
-                        };
-                    }
-                }
             }
         }
-
         Err(RLPDecodeError::MalformedData)
     }
 
