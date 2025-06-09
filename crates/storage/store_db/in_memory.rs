@@ -81,9 +81,7 @@ impl Store {
         Self::default()
     }
     fn inner(&self) -> Result<MutexGuard<'_, StoreInner>, StoreError> {
-        self.0
-            .lock()
-            .map_err(|_| StoreError::Custom("Lock Error".to_string()))
+        self.0.lock().map_err(|_| StoreError::LockError)
     }
 }
 
@@ -96,7 +94,7 @@ impl StoreEngine for Store {
             let mut state_trie_store = store
                 .state_trie_nodes
                 .lock()
-                .map_err(|_| StoreError::Custom("Lock Error".to_string()))?;
+                .map_err(|_| StoreError::LockError)?;
             for (node_hash, node_data) in update_batch.account_updates {
                 state_trie_store.insert(node_hash, node_data);
             }
@@ -108,7 +106,7 @@ impl StoreEngine for Store {
                 .entry(hashed_address)
                 .or_default()
                 .lock()
-                .map_err(|_| StoreError::Custom("Lock Error".to_string()))?;
+                .map_err(|_| StoreError::LockError)?;
             for (node_hash, node_data) in nodes {
                 addr_store.insert(node_hash, node_data);
             }
