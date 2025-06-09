@@ -38,6 +38,7 @@ use crate::{
     Blockchain,
 };
 
+use thiserror::Error;
 use tracing::{debug, error};
 
 pub struct BuildPayloadArgs {
@@ -51,9 +52,15 @@ pub struct BuildPayloadArgs {
     pub elasticity_multiplier: u64,
 }
 
+#[derive(Debug, Error)]
+pub enum BuildPayloadArgsError {
+    #[error("Payload hashed has wrong size")]
+    FailedToConvertPayload,
+}
+
 impl BuildPayloadArgs {
     /// Computes an 8-byte identifier by hashing the components of the payload arguments.
-    pub fn id(&self) -> u64 {
+    pub fn id(&self) -> Result<u64, BuildPayloadArgsError> {
         let mut hasher = Keccak256::new();
         hasher.update(self.parent);
         hasher.update(self.timestamp.to_be_bytes());
@@ -67,7 +74,9 @@ impl BuildPayloadArgs {
         }
         let res = &mut hasher.finalize()[..8];
         res[0] = self.version;
-        u64::from_be_bytes(res.try_into().unwrap())
+        Ok(u64::from_be_bytes(res.try_into().map_err(|_| {
+            BuildPayloadArgsError::FailedToConvertPayload
+        })?))
     }
 }
 
