@@ -112,7 +112,12 @@ fn try_store(
 
     for (byte_to_store, memory_slot) in data.iter().zip(
         memory
-            .get_mut(at_offset..at_offset.checked_add(data_size).ok_or(OutOfBounds)?)
+            .get_mut(
+                at_offset
+                    ..at_offset
+                        .checked_add(data_size)
+                        .ok_or(InternalError::Overflow)?,
+            )
             .ok_or(OutOfBounds)?
             .iter_mut(),
     ) {
@@ -142,14 +147,14 @@ pub fn try_copy_within(
         to_offset
             .max(from_offset)
             .checked_add(size)
-            .ok_or(OutOfBounds)?,
+            .ok_or(InternalError::Overflow)?,
     )?;
 
     let mut temporary_buffer = vec![0u8; size];
     for i in 0..size {
         if let Some(temporary_buffer_byte) = temporary_buffer.get_mut(i) {
             *temporary_buffer_byte = *memory
-                .get(from_offset.checked_add(i).ok_or(OutOfBounds)?)
+                .get(from_offset.checked_add(i).ok_or(InternalError::Overflow)?)
                 .unwrap_or(&0u8);
         }
     }
