@@ -118,7 +118,7 @@ impl Blockchain {
         Ok(execution_result)
     }
 
-    async fn store_block_in_bulk(
+    pub async fn store_block(
         &self,
         block: &Block,
         execution_result: BlockExecutionResult,
@@ -146,37 +146,11 @@ impl Blockchain {
         Ok(())
     }
 
-    pub async fn store_block(
-        &self,
-        block: &Block,
-        execution_result: BlockExecutionResult,
-        account_updates: &[AccountUpdate],
-    ) -> Result<(), ChainError> {
-        // Apply the account updates over the last block's state and compute the new state root
-        let new_state_root = self
-            .storage
-            .apply_account_updates(block.header.parent_hash, account_updates)
-            .await?
-            .ok_or(ChainError::ParentStateNotFound)?;
-
-        // Check state root matches the one in block header
-        validate_state_root(&block.header, new_state_root)?;
-
-        self.storage
-            .add_block(block.clone())
-            .await
-            .map_err(ChainError::StoreError)?;
-        self.storage
-            .add_receipts(block.hash(), execution_result.receipts)
-            .await
-            .map_err(ChainError::StoreError)
-    }
-
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();
-        let result = self.store_block_in_bulk(block, res, &updates).await;
+        let result = self.store_block(block, res, &updates).await;
         let stored = Instant::now();
         Self::print_add_block_logs(block, since, executed, stored);
         result

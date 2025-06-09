@@ -19,7 +19,7 @@ use ethrex_rpc::{
     clients::{beacon::BeaconClient, eth::BlockByNumber},
     EthClient,
 };
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{EngineType, Store, UpdateBatch};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::OptionExt;
 use itertools::Itertools;
@@ -332,10 +332,21 @@ impl Command {
 
                             // Apply all account updates to trie
                             let account_updates = state_diff.to_account_updates(&new_trie)?;
-                            new_trie = store
-                                .apply_account_updates_from_trie(new_trie, &account_updates)
+                            let (new_state_root, state_updates, accounts_updates) = store
+                                .apply_account_updates_from_trie_batch(new_trie, &account_updates)
                                 .await
                                 .expect("Error applying account updates");
+
+                            let pseudo_update_batch = UpdateBatch {
+                                account_updates: state_updates,
+                                storage_updates: accounts_updates,
+                                blocks: vec![],
+                                receipts: vec![],
+                            };
+
+                            store.store_changes(pseudo_update_batch).await.expect("Error storing trie updates");
+
+                            new_trie = store.open_state_trie(new_state_root).expect("Error opening new state trie");
 
                             // Get withdrawal hashes
                             let withdrawal_hashes = state_diff
