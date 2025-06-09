@@ -423,9 +423,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         updates: Vec<SnapshotUpdate>,
     ) -> Result<(), StoreError>;
 
-    fn current_block_hash(
+    fn current_snapshot_block_hash(
         &self,
     ) -> Result<Option<H256>, StoreError>;
 
-    fn state_snapshot_for_account(&self, hashed_address: &H256) -> Result<Option<AccountInfo>, StoreError>;
+    fn state_snapshot_for_account(&self, hashed_address: &H256) -> Result<Option<AccountState>, StoreError>;
 }

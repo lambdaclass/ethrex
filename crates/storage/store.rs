@@ -101,7 +101,7 @@ impl Store {
         }
     }
 
-    fn state_snapshot_for_account(&self, account_hash: &H256) -> Result<Option<AccountInfo>, StoreError> {
+    fn state_snapshot_for_account(&self, account_hash: &H256) -> Result<Option<AccountState>, StoreError> {
         self.engine.state_snapshot_for_account(account_hash)
     }
 
@@ -114,7 +114,9 @@ impl Store {
         if let Some(current_snapshot) = self.current_block_hash()? {
             if block_hash == current_snapshot {
                 // FIXME: See if we can avoid hashing here.
-                return self.state_snapshot_for_account(&hash_address_fixed(&address))
+                if let Some(AccountState { nonce, balance, code_hash, .. }) = self.state_snapshot_for_account(&hash_address_fixed(&address))? {
+                    return Ok(Some(AccountInfo { code_hash, balance, nonce }));
+                }
             }
         }
         let Some(state_trie) = self.state_trie(block_hash)? else {
@@ -747,10 +749,7 @@ impl Store {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        self.get_account_state_from_trie(&state_trie, address)
+        self.get_account_state_by_hash(block_hash, address)
     }
 
     pub fn get_account_state_by_hash(
@@ -758,6 +757,15 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
+        // FIXME: Cache this value
+        if let Some(current_snapshot) = self.current_block_hash()? {
+            if block_hash == current_snapshot {
+                // FIXME: See if we can avoid hashing here.
+                if let Some(state) = self.state_snapshot_for_account(&hash_address_fixed(&address))? {
+                    return Ok(Some(state))
+                }
+            }
+        }
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1206,7 +1214,7 @@ impl Store {
         todo!()
     }
     fn current_block_hash(&self) ->Result<Option<H256>, StoreError> {
-        self.engine.current_block_hash()
+        self.engine.current_snapshot_block_hash()
     }
 }
 

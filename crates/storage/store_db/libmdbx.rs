@@ -1086,19 +1086,17 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn state_snapshot_for_account(&self, account_hash: &H256) -> Result<Option<AccountInfo>, StoreError> {
+    fn state_snapshot_for_account(&self, account_hash: &H256) -> Result<Option<AccountState>, StoreError> {
         // FIXME: Maybe avoid this encoding.
         let Some(encoded_state) = self.read_sync::<StateSnapShot>((*account_hash).into())? else {
             return Ok(None)
         };
-
-        let AccountState { nonce, balance, code_hash, .. } = encoded_state.to()?;
-
-        println!("RETURNING STATE SNAPSHOT FOR ACCOUNT {nonce} {balance} {code_hash}");
-        Ok(Some(AccountInfo{nonce,balance,code_hash}))
+        let decoded_state = encoded_state.to()?;
+        println!("RETURNING STATE SNAPSHOT FOR ACCOUNT");
+        Ok(Some(decoded_state))
     }
 
-    fn current_block_hash(&self) -> Result<Option<H256>, StoreError> {
+    fn current_snapshot_block_hash(&self) -> Result<Option<H256>, StoreError> {
         let Some(res) = self.read_sync::<CurrentSnapShot>(SNAPSHOT_HASH_KEY)? else {
             return Ok(None)
         };
