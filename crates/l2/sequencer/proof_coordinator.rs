@@ -10,6 +10,8 @@ use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use bytes::Bytes;
+#[cfg(feature = "l2")]
+use ethrex_common::types::blobs_bundle;
 use ethrex_common::{types::Block, Address};
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
@@ -17,8 +19,10 @@ use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::ProverDB;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::{fmt::Debug, net::IpAddr};
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::{
@@ -28,11 +32,20 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+use super::blobs_bundle_cache::BlobsBundleCache;
+
+#[serde_as]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
     pub db: ProverDB,
     pub elasticity_multiplier: u64,
+    #[cfg(feature = "l2")]
+    #[serde_as(as = "[_; 48]")]
+    pub blob_commitment: blobs_bundle::Commitment,
+    #[cfg(feature = "l2")]
+    #[serde_as(as = "[_; 48]")]
+    pub blob_proof: blobs_bundle::Proof,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -136,10 +149,13 @@ pub struct ProofCoordinatorState {
     rollup_store: StoreRollup,
     rpc_url: String,
     l1_private_key: SecretKey,
+    blobs_bundle_cache: Arc<BlobsBundleCache>,
+    validium: bool,
     needed_proof_types: Vec<ProverType>,
 }
 
 impl ProofCoordinatorState {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         config: &ProofCoordinatorConfig,
         committer_config: &CommitterConfig,
@@ -147,6 +163,7 @@ impl ProofCoordinatorState {
         proposer_config: &BlockProducerConfig,
         store: Store,
         rollup_store: StoreRollup,
+        blobs_bundle_cache: Arc<BlobsBundleCache>,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProverServerError> {
         let eth_client = EthClient::new_with_config(
@@ -176,8 +193,10 @@ impl ProofCoordinatorState {
             on_chain_proposer_address,
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             rollup_store,
+            blobs_bundle_cache,
             rpc_url,
             l1_private_key: config.l1_private_key,
+            validium: config.validium,
             needed_proof_types,
         })
     }
@@ -199,6 +218,7 @@ impl ProofCoordinator {
         store: Store,
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
+        blobs_bundle_cache: Arc<BlobsBundleCache>,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProverServerError> {
         let state = ProofCoordinatorState::new(
@@ -208,6 +228,7 @@ impl ProofCoordinator {
             &cfg.block_producer,
             store,
             rollup_store,
+            blobs_bundle_cache,
             needed_proof_types,
         )
         .await?;
@@ -297,6 +318,8 @@ async fn handle_listens(state: &ProofCoordinatorState, listener: TcpListener) {
                 error!("Failed to accept connection: {e}");
             }
         }
+
+        debug!("Connection closed");
     }
 }
 
@@ -523,12 +546,34 @@ async fn create_prover_input(
     // Create prover_db
     let db = to_prover_db(&state.store.clone(), &blocks).await?;
 
+    // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
+    let (blob_commitment, blob_proof) = if state.validium {
+        ([0; 48], [0; 48])
+    } else {
+        let Some(mut bundle) = state.blobs_bundle_cache.get(batch_number)? else {
+            return Err(ProverServerError::Custom(format!(
+                "BlobsBundle for batch {batch_number} not found in cache and coordinator is in rollup mode (no validium). Prover input cannot be created."
+            )));
+        };
+        let (Some(commitment), Some(proof)) = (bundle.commitments.pop(), bundle.proofs.pop())
+        else {
+            return Err(ProverServerError::Custom(format!(
+                "Cached BlobsBundle for batch {batch_number} is empty"
+            )));
+        };
+        (commitment, proof)
+    };
+
     debug!("Created prover input for batch {batch_number}");
 
     Ok(ProverInputData {
         db,
         blocks,
         elasticity_multiplier: state.elasticity_multiplier,
+        #[cfg(feature = "l2")]
+        blob_commitment,
+        #[cfg(feature = "l2")]
+        blob_proof,
     })
 }
 

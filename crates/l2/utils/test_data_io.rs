@@ -1,20 +1,16 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
-use ethrex_blockchain::Blockchain;
-use ethrex_common::types::{Block, Genesis, ELASTICITY_MULTIPLIER};
+use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::Store;
 use tracing::info;
-use zkvm_interface::io::ProgramInput;
 
 use std::{
     fs::File,
     io::{BufReader, Read as _, Write},
     path::PathBuf,
 };
-
-use super::{error::ProverInputError, prover::db::to_prover_db};
 
 // From cmd/ethrex
 pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
@@ -55,39 +51,6 @@ pub async fn generate_rlp(
         info!("TEST RLP GENERATED AT: {path:?}");
     }
     Ok(())
-}
-
-// Unused. Generates the program input for a batch of only one block.
-pub async fn generate_program_input(
-    genesis: Genesis,
-    chain: Vec<Block>,
-    block_number: usize,
-) -> Result<ProgramInput, ProverInputError> {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-
-    let block = chain
-        .get(block_number)
-        .ok_or(ProverInputError::InvalidBlockNumber(block_number))?
-        .clone();
-
-    // create store
-    let store = Store::new("memory", EngineType::InMemory)?;
-    rt.block_on(store.add_initial_state(genesis))?;
-    // create blockchain
-    let blockchain = Blockchain::default_with_store(store.clone());
-    for block in chain {
-        rt.block_on(blockchain.add_block(&block))?;
-    }
-
-    let elasticity_multiplier = ELASTICITY_MULTIPLIER;
-    let blocks = vec![block];
-    let db = to_prover_db(&store, &blocks).await?;
-
-    Ok(ProgramInput {
-        db,
-        blocks,
-        elasticity_multiplier,
-    })
 }
 
 // From cmd/ethrex/decode.rs
