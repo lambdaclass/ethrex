@@ -31,7 +31,7 @@ use tokio::{
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, field::debug, info, warn};
 use trie_rebuild::TrieRebuilder;
 
 use crate::peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST};
@@ -250,6 +250,7 @@ impl Syncer {
                 let latest_block_number = store.get_latest_block_number().await?;
                 if last_block_number.saturating_sub(latest_block_number) < MIN_FULL_BLOCKS as u64 {
                     // Too few blocks for a snap sync, switching to full sync
+                    debug!("Sync head is less than {MIN_FULL_BLOCKS} blocks away, switching to FullSync");
                     sync_mode = SyncMode::Full;
                     self.snap_enabled.store(false, Ordering::Relaxed);
                     block_sync_state = block_sync_state.into_fullsync().await?;
