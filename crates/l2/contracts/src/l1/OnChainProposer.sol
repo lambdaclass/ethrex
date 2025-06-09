@@ -30,7 +30,7 @@ contract OnChainProposer is
     /// all the withdrawals that were processed in the batch being committed
     struct BatchCommitmentInfo {
         bytes32 newStateRoot;
-        bytes32 blobVersionedHash;
+        bytes32 stateDiffKZGVersionedHash;
         bytes32 processedDepositLogsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
         bytes32 lastBlockHash;
@@ -466,7 +466,7 @@ contract OnChainProposer is
         );
         bytes32 blobVersionedHash = bytes32(publicData[128:160]);
         require(
-            batchCommitments[batchNumber].blobVersionedHash ==
+            batchCommitments[batchNumber].stateDiffKZGVersionedHash ==
                 blobVersionedHash,
             "OnChainProposer: blob versioned hash public input does not match with committed hash"
         );
