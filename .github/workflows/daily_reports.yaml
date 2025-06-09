@@ -3,7 +3,7 @@ name: Daily Reports
 on:
   schedule:
     # Every day at UTC midnight
-    - cron: "0 0 * * 1,2,3,4,5"
+    - cron: "0 3 * * 1,2,3,4,5"
   workflow_dispatch:
 
 jobs:
