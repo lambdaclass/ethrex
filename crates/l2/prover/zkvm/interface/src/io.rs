@@ -35,6 +35,8 @@ pub struct ProgramOutput {
     #[cfg(feature = "l2")]
     /// hash of all the deposit logs made in a batch
     pub deposit_logs_hash: H256,
+    /// hash of the last block in a batch
+    pub last_block_hash: H256,
 }
 
 impl ProgramOutput {
@@ -46,6 +48,7 @@ impl ProgramOutput {
             self.withdrawals_merkle_root.to_fixed_bytes(),
             #[cfg(feature = "l2")]
             self.deposit_logs_hash.to_fixed_bytes(),
+            self.last_block_hash.to_fixed_bytes(),
         ]
         .concat()
     }

@@ -21,7 +21,10 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn prove(input: ProgramInput) -> Result<Receipt, Box<dyn std::error::Error>> {
+pub fn prove(
+    input: ProgramInput,
+    _aligned_mode: bool,
+) -> Result<Receipt, Box<dyn std::error::Error>> {
     let mut stdout = Vec::new();
 
     let env = ExecutorEnv::builder()
@@ -43,7 +46,14 @@ pub fn verify(receipt: &Receipt) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Box<dyn std::error::Error>> {
+pub fn to_batch_proof(
+    proof: ProveOutput,
+    _aligned_mode: bool,
+) -> Result<ProofData, Box<dyn std::error::Error>> {
+    Ok(BatchProof::ProofCalldata(to_calldata(proof)))
+}
+
+fn to_calldata(receipt: Receipt) -> ProofCalldata {
     let seal = encode_seal(&receipt)?;
     let image_id = ZKVM_RISC0_PROGRAM_ID;
     let journal = receipt.journal.bytes;
@@ -66,8 +76,8 @@ pub fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Box<dyn std::error
         Value::Bytes(journal.into()),
     ];
 
-    Ok(ProofCalldata {
+    ProofCalldata {
         prover_type: ProverType::RISC0,
         calldata,
-    })
+    }
 }

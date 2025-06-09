@@ -35,9 +35,14 @@ rand.workspace = true
 thiserror.workspace = true
 directories = "5.0.1"
 bincode = "1.3.3"
-spawned-concurrency = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.0-alpha"}
-spawned-rt = {git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.0-alpha"}
+# Changing the tag for spawned will break the TDX image build
+# When updating it try to build the TDX image and update service.nix with the new hash
+spawned-concurrency = { git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.0-alpha" }
+spawned-rt = { git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.0-alpha" }
 lazy_static.workspace = true
+aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "124eba82524bd95d1419ace19f8d959c492ffee0" }
+ethers = "2.0"
+cfg-if.workspace = true
 
 zkvm_interface = { path = "./prover/zkvm/interface/" }
 
