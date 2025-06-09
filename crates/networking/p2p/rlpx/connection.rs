@@ -635,7 +635,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::NewBlock(req) if peer_supports_based => {
                 if let Ok(Some(_)) = self.storage.get_block_body_by_hash(req.block.hash()).await {
-                    info!("Block received by peer already exists, ignoring it");
+                    info!(
+                        "Block {} received by peer already stored, ignoring it",
+                        req.block.header.number
+                    );
                     return Ok(());
                 }
                 let _ = self
