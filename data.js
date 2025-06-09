@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749498828673,
+  "lastUpdate": 1749501700576,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11635,6 +11635,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 176482170610,
             "range": "± 363780875",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "af13c19ff019a7f6ce044f4da36af50e42f6f575",
+          "message": "fix(l1): fix hive daily report (#3090)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nThe hive daily report is failing very often.\n\n**Description**\n\nBy moving by 3 hours, the job is less probable to have conflicts with\nthe merge queue.\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3054",
+          "timestamp": "2025-06-09T19:52:18Z",
+          "tree_id": "895e895945aa873fafb2e133c0b0d970d6353526",
+          "url": "https://github.com/lambdaclass/ethrex/commit/af13c19ff019a7f6ce044f4da36af50e42f6f575"
+        },
+        "date": 1749501695367,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178224226531,
+            "range": "± 508869250",
             "unit": "ns/iter"
           }
         ]
