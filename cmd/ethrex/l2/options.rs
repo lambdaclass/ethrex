@@ -412,61 +412,6 @@ impl Default for ProofCoordinatorOptions {
         }
     }
 }
-
-#[derive(Parser, Default)]
-pub struct BasedOptions {
-    #[clap(
-        long,
-        default_value = "false",
-        value_name = "BOOLEAN",
-        env = "ETHREX_BASED",
-        help_heading = "Based options"
-    )]
-    pub based: bool,
-    #[clap(flatten)]
-    pub state_updater_opts: StateUpdaterOptions,
-    #[clap(flatten)]
-    pub block_fetcher: BlockFetcherOptions,
-}
-
-#[derive(Parser, Default)]
-pub struct StateUpdaterOptions {
-    #[arg(
-        long = "state-updater.sequencer-registry",
-        value_name = "ADDRESS",
-        env = "ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY",
-        help_heading = "Based options"
-    )]
-    pub sequencer_registry: Address,
-    #[arg(
-        long = "state-updater.check-interval",
-        default_value = "1000",
-        value_name = "UINT64",
-        env = "ETHREX_STATE_UPDATER_CHECK_INTERVAL",
-        help_heading = "Based options"
-    )]
-    pub check_interval_ms: u64,
-}
-
-#[derive(Parser, Default)]
-pub struct BlockFetcherOptions {
-    #[arg(
-        long = "block-fetcher.fetch_interval_ms",
-        default_value = "5000",
-        value_name = "UINT64",
-        env = "ETHREX_BLOCK_FETCHER_FETCH_INTERVAL_MS",
-        help_heading = "Based options"
-    )]
-    pub fetch_interval_ms: u64,
-    #[arg(
-        long,
-        default_value = "5000",
-        value_name = "UINT64",
-        env = "ETHREX_BLOCK_FETCHER_FETCH_BLOCK_STEP",
-        help_heading = "Based options"
-    )]
-    pub fetch_block_step: u64,
-}
 #[derive(Parser, Clone)]
 pub struct AlignedOptions {
     #[arg(
@@ -540,4 +485,59 @@ impl Default for AlignedOptions {
             )),
         }
     }
+}
+
+#[derive(Parser, Default)]
+pub struct BasedOptions {
+    #[clap(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_BASED",
+        help_heading = "Based options"
+    )]
+    pub based: bool,
+    #[clap(flatten)]
+    pub state_updater_opts: StateUpdaterOptions,
+    #[clap(flatten)]
+    pub block_fetcher: BlockFetcherOptions,
+}
+
+#[derive(Parser, Default)]
+pub struct StateUpdaterOptions {
+    #[arg(
+        long = "state-updater.sequencer-registry",
+        value_name = "ADDRESS",
+        env = "ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY",
+        help_heading = "Based options"
+    )]
+    pub sequencer_registry: Address,
+    #[arg(
+        long = "state-updater.check-interval",
+        default_value = "1000",
+        value_name = "UINT64",
+        env = "ETHREX_STATE_UPDATER_CHECK_INTERVAL",
+        help_heading = "Based options"
+    )]
+    pub check_interval_ms: u64,
+}
+
+#[derive(Parser, Default)]
+pub struct BlockFetcherOptions {
+    #[arg(
+        long = "block-fetcher.fetch_interval_ms",
+        default_value = "5000",
+        value_name = "UINT64",
+        env = "ETHREX_BLOCK_FETCHER_FETCH_INTERVAL_MS",
+        help_heading = "Based options"
+    )]
+    pub fetch_interval_ms: u64,
+    #[arg(
+        long,
+        default_value = "5000",
+        value_name = "UINT64",
+        env = "ETHREX_BLOCK_FETCHER_FETCH_BLOCK_STEP",
+        help_heading = "Based options"
+    )]
+    pub fetch_block_step: u64,
 }
