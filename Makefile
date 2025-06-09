@@ -103,7 +103,7 @@ setup-hive-local: setup-hive ## 🐝 Set up Hive testing framework with local fi
 
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 1
-SIM_PARALLELISM := 16
+SIM_PARALLELISM ?= 16
 
 # Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080
 # The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
