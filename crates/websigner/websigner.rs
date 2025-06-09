@@ -18,7 +18,7 @@ pub async fn web3sign(
     public_key: PublicKey,
 ) -> Result<Signature, WebsignError> {
     let url = format!(
-        "{}api/v1/eth1/sign/{}",
+        "{}/api/v1/eth1/sign/{}",
         url,
         hex::encode(&public_key.serialize_uncompressed()[1..]),
     );
