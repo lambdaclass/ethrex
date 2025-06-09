@@ -28,7 +28,8 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,address,bytes32,bytes32,address[])";
+    "initialize(address,address,address,address,address,address,bytes32,bytes32,address[])";
+
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
@@ -71,13 +72,18 @@ async fn main() -> Result<(), DeployerError> {
         sp1_verifier_address,
         pico_verifier_address,
         tdx_verifier_address,
+        opts.aligned_aggregator_address,
         &eth_client,
         &opts,
     )
     .await?;
 
     if opts.deposit_rich {
-        make_deposits(bridge_address, &eth_client, &opts).await?;
+        let _ = make_deposits(bridge_address, &eth_client, &opts)
+            .await
+            .inspect_err(|err| {
+                warn!("Failed to make deposits: {err}");
+            });
     }
 
     write_contract_addresses_to_env(
@@ -86,6 +92,7 @@ async fn main() -> Result<(), DeployerError> {
         sp1_verifier_address,
         pico_verifier_address,
         risc0_verifier_address,
+        opts.aligned_aggregator_address,
         tdx_verifier_address,
         opts.env_file_path,
     )?;
@@ -357,6 +364,7 @@ async fn initialize_contracts(
     sp1_verifier_address: Address,
     pico_verifier_address: Address,
     tdx_verifier_address: Address,
+    aligned_aggregator_address: Address,
     eth_client: &EthClient,
     opts: &DeployerOptions,
 ) -> Result<(), DeployerError> {
@@ -390,12 +398,12 @@ async fn initialize_contracts(
 
     let initialize_tx_hash = {
         let calldata_values = vec![
-            Value::Bool(opts.validium),
             Value::Address(deployer_address),
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
             Value::Address(tdx_verifier_address),
+            Value::Address(aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Array(vec![
@@ -594,6 +602,7 @@ async fn make_deposits(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_contract_addresses_to_env(
     on_chain_proposer_address: Address,
     bridge_address: Address,
@@ -601,6 +610,7 @@ fn write_contract_addresses_to_env(
     pico_verifier_address: Address,
     risc0_verifier_address: Address,
     tdx_verifier_address: Address,
+    aligned_aggregator_address: Address,
     env_file_path: Option<PathBuf>,
 ) -> Result<(), DeployerError> {
     trace!("Writing contract addresses to .env file");
@@ -638,6 +648,10 @@ fn write_contract_addresses_to_env(
     writeln!(
         writer,
         "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={risc0_verifier_address:#x}"
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS={aligned_aggregator_address:#x}"
     )?;
     writeln!(
         writer,

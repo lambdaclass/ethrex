@@ -1,17 +1,20 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{
-    code_hash, AccountInfo, AccountState, AccountUpdate, BlockHeader, BlockNumber,
+    code_hash, AccountInfo, AccountState, AccountUpdate, BlockHeader, PrivilegedL2Transaction,
+    Transaction, TxKind,
 };
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_storage::{error::StoreError, hash_address, Store};
-use ethrex_trie::Trie;
-
-use super::errors::StateDiffError;
+use ethrex_storage::{error::StoreError, hash_address};
+use ethrex_trie::{Trie, TrieError};
+use ethrex_vm::{EvmError, VmDatabase};
+use serde::{Deserialize, Serialize};
 
 use lazy_static::lazy_static;
+
+use crate::{deposits::DepositLog, withdrawals::WithdrawalLog};
 
 lazy_static! {
     /// The serialized length of a default withdrawal log
@@ -28,16 +31,44 @@ lazy_static! {
 // Two `AccountUpdates` with new_balance, one of which also has nonce_diff.
 pub const SIMPLE_TX_STATE_DIFF_SIZE: usize = 116;
 
-#[derive(Clone, Debug)]
+#[derive(Debug, thiserror::Error)]
+pub enum StateDiffError {
+    #[error("StateDiff failed to deserialize: {0}")]
+    FailedToDeserializeStateDiff(String),
+    #[error("StateDiff failed to serialize: {0}")]
+    FailedToSerializeStateDiff(String),
+    #[error("StateDiff invalid account state diff type: {0}")]
+    InvalidAccountStateDiffType(u8),
+    #[error("StateDiff unsupported version: {0}")]
+    UnsupportedVersion(u8),
+    #[error("Both bytecode and bytecode hash are set")]
+    BytecodeAndBytecodeHashSet,
+    #[error("Empty account diff")]
+    EmptyAccountDiff,
+    #[error("The length of the vector is too big to fit in u16: {0}")]
+    LengthTooBig(#[from] core::num::TryFromIntError),
+    #[error("DB Error: {0}")]
+    DbError(#[from] TrieError),
+    #[error("Store Error: {0}")]
+    StoreError(#[from] StoreError),
+    #[error("New nonce is lower than the previous one")]
+    FailedToCalculateNonce,
+    #[error("Unexpected Error: {0}")]
+    InternalError(String),
+    #[error("Evm Error: {0}")]
+    EVMError(#[from] EvmError),
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AccountStateDiff {
     pub new_balance: Option<U256>,
     pub nonce_diff: u16,
-    pub storage: HashMap<H256, U256>,
+    pub storage: BTreeMap<H256, U256>,
     pub bytecode: Option<Bytes>,
     pub bytecode_hash: Option<H256>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum AccountStateDiffType {
     NewBalance = 1,
     NonceDiff = 2,
@@ -46,44 +77,11 @@ pub enum AccountStateDiffType {
     BytecodeHash = 16,
 }
 
-#[derive(Clone, Default)]
-pub struct WithdrawalLog {
-    pub address: Address,
-    pub amount: U256,
-    pub tx_hash: H256,
-}
-
-impl WithdrawalLog {
-    pub fn encode(&self) -> Vec<u8> {
-        let mut encoded = Vec::new();
-        encoded.extend(self.address.0);
-        encoded.extend_from_slice(&self.amount.to_big_endian());
-        encoded.extend(&self.tx_hash.0);
-        encoded
-    }
-}
-
-#[derive(Clone, Default)]
-pub struct DepositLog {
-    pub address: Address,
-    pub amount: U256,
-    pub nonce: u64,
-}
-
-impl DepositLog {
-    pub fn encode(&self) -> Vec<u8> {
-        let mut encoded = Vec::new();
-        encoded.extend(self.address.0);
-        encoded.extend_from_slice(&self.amount.to_big_endian());
-        encoded
-    }
-}
-
-#[derive(Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateDiff {
     pub version: u8,
     pub last_header: BlockHeader,
-    pub modified_accounts: HashMap<Address, AccountStateDiff>,
+    pub modified_accounts: BTreeMap<Address, AccountStateDiff>,
     pub withdrawal_logs: Vec<WithdrawalLog>,
     pub deposit_logs: Vec<DepositLog>,
 }
@@ -127,7 +125,7 @@ impl Default for StateDiff {
         StateDiff {
             version: 1,
             last_header: BlockHeader::default(),
-            modified_accounts: HashMap::new(),
+            modified_accounts: BTreeMap::new(),
             withdrawal_logs: Vec::new(),
             deposit_logs: Vec::new(),
         }
@@ -213,7 +211,7 @@ impl StateDiff {
         // Accounts diff
         let modified_accounts_len = decoder.get_u16()?;
 
-        let mut modified_accounts = HashMap::with_capacity(modified_accounts_len.into());
+        let mut modified_accounts = BTreeMap::new();
         for _ in 0..modified_accounts_len {
             let next_bytes = bytes.get(decoder.consumed()..).ok_or(
                 StateDiffError::FailedToSerializeStateDiff("Not enough bytes".to_string()),
@@ -264,8 +262,8 @@ impl StateDiff {
     pub fn to_account_updates(
         &self,
         prev_state: &Trie,
-    ) -> Result<Vec<AccountUpdate>, StateDiffError> {
-        let mut account_updates = Vec::new();
+    ) -> Result<HashMap<Address, AccountUpdate>, StateDiffError> {
+        let mut account_updates = HashMap::new();
 
         for (address, diff) in &self.modified_accounts {
             let account_state = match prev_state
@@ -297,13 +295,16 @@ impl StateDiff {
                 None
             };
 
-            account_updates.push(AccountUpdate {
-                address: *address,
-                removed: false,
-                info: account_info,
-                code: diff.bytecode.clone(),
-                added_storage: diff.storage.clone(),
-            });
+            account_updates.insert(
+                *address,
+                AccountUpdate {
+                    address: *address,
+                    removed: false,
+                    info: account_info,
+                    code: diff.bytecode.clone(),
+                    added_storage: diff.storage.clone().into_iter().collect(),
+                },
+            );
         }
 
         Ok(account_updates)
@@ -393,10 +394,9 @@ impl AccountStateDiff {
             None
         };
 
-        let mut storage_diff = HashMap::new();
+        let mut storage_diff = BTreeMap::new();
         if AccountStateDiffType::Storage.is_in(update_type) {
             let storage_slots_updated = decoder.get_u16()?;
-            storage_diff.reserve(storage_slots_updated.into());
 
             for _ in 0..storage_slots_updated {
                 let key = decoder.get_h256()?;
@@ -538,29 +538,12 @@ impl Decoder {
 }
 
 /// Calculates nonce_diff between current and previous block.
-/// Uses cache if provided to optimize account_info lookups.
-pub async fn get_nonce_diff(
+pub fn get_nonce_diff(
     account_update: &AccountUpdate,
-    store: &Store,
-    accounts_info_cache: Option<&mut HashMap<Address, Option<AccountInfo>>>,
-    current_block_number: BlockNumber,
+    db: &impl VmDatabase,
 ) -> Result<u16, StateDiffError> {
     // Get previous account_info either from store or cache
-    let account_info = match accounts_info_cache {
-        None => store
-            .get_account_info(current_block_number - 1, account_update.address)
-            .await
-            .map_err(StoreError::from)?,
-        Some(cache) => {
-            account_info_from_cache(
-                cache,
-                store,
-                account_update.address,
-                current_block_number - 1,
-            )
-            .await?
-        }
-    };
+    let account_info = db.get_account_info(account_update.address)?;
 
     // Get previous nonce
     let prev_nonce = match account_info {
@@ -585,24 +568,57 @@ pub async fn get_nonce_diff(
     Ok(nonce_diff)
 }
 
-/// Retrieves account info from cache or falls back to store.
-/// Updates cache with fresh data if cache miss occurs.
-async fn account_info_from_cache(
-    cache: &mut HashMap<Address, Option<AccountInfo>>,
-    store: &Store,
-    address: Address,
-    block_number: BlockNumber,
-) -> Result<Option<AccountInfo>, StateDiffError> {
-    let account_info = match cache.get(&address) {
-        Some(account_info) => account_info.clone(),
-        None => {
-            let account_info = store
-                .get_account_info(block_number, address)
-                .await
-                .map_err(StoreError::from)?;
-            cache.insert(address, account_info.clone());
-            account_info
-        }
+/// Prepare the state diff for the block.
+pub fn prepare_state_diff(
+    last_header: BlockHeader,
+    db: &impl VmDatabase,
+    withdrawals: &[Transaction],
+    deposits: &[PrivilegedL2Transaction],
+    account_updates: Vec<AccountUpdate>,
+) -> Result<StateDiff, StateDiffError> {
+    let mut modified_accounts = BTreeMap::new();
+    for account_update in account_updates {
+        let nonce_diff = get_nonce_diff(&account_update, db)?;
+
+        modified_accounts.insert(
+            account_update.address,
+            AccountStateDiff {
+                new_balance: account_update.info.clone().map(|info| info.balance),
+                nonce_diff,
+                storage: account_update.added_storage.clone().into_iter().collect(),
+                bytecode: account_update.code.clone(),
+                bytecode_hash: None,
+            },
+        );
+    }
+
+    let state_diff = StateDiff {
+        modified_accounts,
+        version: StateDiff::default().version,
+        last_header,
+        withdrawal_logs: withdrawals
+            .iter()
+            .map(|tx| WithdrawalLog {
+                address: match tx.to() {
+                    TxKind::Call(address) => address,
+                    TxKind::Create => Address::zero(),
+                },
+                amount: tx.value(),
+                tx_hash: tx.compute_hash(),
+            })
+            .collect(),
+        deposit_logs: deposits
+            .iter()
+            .map(|tx| DepositLog {
+                address: match tx.to {
+                    TxKind::Call(address) => address,
+                    TxKind::Create => Address::zero(),
+                },
+                amount: tx.value,
+                nonce: tx.nonce,
+            })
+            .collect(),
     };
-    Ok(account_info)
+
+    Ok(state_diff)
 }
