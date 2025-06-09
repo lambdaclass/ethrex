@@ -32,6 +32,7 @@ use libmdbx::{
 };
 use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
+use std::collections::HashSet;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -124,6 +125,41 @@ impl Store {
             .map(|block_hash| block_hash.to())
             .transpose()
             .map_err(StoreError::from)
+    }
+
+    fn prune_tries_older_than(&self, upto: BlockNumber) -> Result<usize, StoreError> {
+        // 0. We need to work the mark phase on a read-only snapshot to avoid
+        //    deleting nodes added after it.
+        let rd_tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let cursor = rd_tx
+            .cursor::<CanonicalBlockHashes>()
+            .map_err(StoreError::LibmdbxError)?;
+        // 1. Walk the blocks to find the roots of reachable tries.
+        let mut state_roots = Vec::new();
+        let mut seen_node_hashes = HashSet::new();
+        for block in cursor.walk(Some(upto)) {
+            let block_numhash = block.map_err(StoreError::LibmdbxError)?;
+            let block_hash = block_numhash.1;
+            let Some(block_header) = rd_tx
+                .get::<Headers>(block_hash)
+                .map_err(StoreError::LibmdbxError)?
+            else {
+                continue;
+            };
+            let block_header = block_header.to().map_err(StoreError::RLPDecode)?;
+            state_roots.push(block_header.state_root);
+            seen_node_hashes.insert(block_header.state_root);
+        }
+        // 2. Mark reachable nodes by BFS or DFS.
+        let mut cursor = rd_tx
+            .cursor::<StateTrieNodes>()
+            .map_err(StoreError::LibmdbxError)?;
+        for root in state_roots {}
+        // 3. Iterate nodes keeping the hashes of the unreachable ones in a set.
+        // 4. Upgrade tx to readwrite.
+        // 5. Iterate all nodes deleting unreachable ones.
+        // 6. Commit the readwrite tx.
+        Ok(0)
     }
 }
 
