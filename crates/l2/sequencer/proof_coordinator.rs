@@ -10,6 +10,7 @@ use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use bytes::Bytes;
+use ethrex_common::types::BlobsBundle;
 use ethrex_common::{
     types::{blobs_bundle, Block, BlockHeader},
     Address,
@@ -23,7 +24,6 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer};
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::{fmt::Debug, net::IpAddr};
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::{
@@ -32,8 +32,6 @@ use tokio::{
     sync::TryAcquireError,
 };
 use tracing::{debug, error, info, warn};
-
-use super::blobs_bundle_cache::BlobsBundleCache;
 
 #[serde_as]
 #[derive(Debug, Serialize, Deserialize)]
@@ -150,7 +148,6 @@ pub struct ProofCoordinatorState {
     rollup_store: StoreRollup,
     rpc_url: String,
     l1_private_key: SecretKey,
-    blobs_bundle_cache: Arc<BlobsBundleCache>,
     validium: bool,
     needed_proof_types: Vec<ProverType>,
 }
@@ -164,7 +161,6 @@ impl ProofCoordinatorState {
         proposer_config: &BlockProducerConfig,
         store: Store,
         rollup_store: StoreRollup,
-        blobs_bundle_cache: Arc<BlobsBundleCache>,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProverServerError> {
         let eth_client = EthClient::new_with_config(
@@ -194,7 +190,6 @@ impl ProofCoordinatorState {
             on_chain_proposer_address,
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             rollup_store,
-            blobs_bundle_cache,
             rpc_url,
             l1_private_key: config.l1_private_key,
             validium: config.validium,
@@ -219,7 +214,6 @@ impl ProofCoordinator {
         store: Store,
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
-        blobs_bundle_cache: Arc<BlobsBundleCache>,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProverServerError> {
         let state = ProofCoordinatorState::new(
@@ -229,7 +223,6 @@ impl ProofCoordinator {
             &cfg.block_producer,
             store,
             rollup_store,
-            blobs_bundle_cache,
             needed_proof_types,
         )
         .await?;
@@ -565,18 +558,20 @@ async fn create_prover_input(
     let (blob_commitment, blob_proof) = if state.validium {
         ([0; 48], [0; 48])
     } else {
-        let Some(mut bundle) = state.blobs_bundle_cache.get(batch_number)? else {
-            return Err(ProverServerError::Custom(format!(
-                "BlobsBundle for batch {batch_number} not found in cache and coordinator is in rollup mode (no validium). Prover input cannot be created."
-            )));
-        };
-        let (Some(commitment), Some(proof)) = (bundle.commitments.pop(), bundle.proofs.pop())
-        else {
-            return Err(ProverServerError::Custom(format!(
-                "Cached BlobsBundle for batch {batch_number} is empty"
-            )));
-        };
-        (commitment, proof)
+        let blob = state
+            .rollup_store
+            .get_blobs_by_batch(batch_number)
+            .await?
+            .ok_or(ProverServerError::MissingBlob(batch_number))?;
+        let BlobsBundle {
+            mut commitments,
+            mut proofs,
+            ..
+        } = BlobsBundle::create_from_blobs(&blob)?;
+        match (commitments.pop(), proofs.pop()) {
+            (Some(commitment), Some(proof)) => (commitment, proof),
+            _ => return Err(ProverServerError::MissingBlob(batch_number)),
+        }
     };
 
     debug!("Created prover input for batch {batch_number}");
