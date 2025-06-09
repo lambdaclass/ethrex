@@ -65,7 +65,6 @@ contract OnChainProposer is
     address public PICOVERIFIER;
     address public R0VERIFIER;
     address public SP1VERIFIER;
-    address public TDXVERIFIER;
 
     bytes32 public SP1_VERIFICATION_KEY;
 
@@ -78,6 +77,8 @@ contract OnChainProposer is
     /// @notice Indicates whether the contract operates in validium mode.
     /// @dev This value is immutable and can only be set during contract deployment.
     bool public VALIDIUM;
+
+    address public TDXVERIFIER;
 
     /// @notice The address of the AlignedProofAggregatorService contract.
     /// @dev This address is set during contract initialization and is used to verify aligned proofs.
