@@ -40,7 +40,7 @@ use crate::utils::{
 use crate::{admin, net};
 use crate::{eth, mempool};
 use axum::extract::State;
-use axum::{routing::post, Json, Router};
+use axum::{http::StatusCode, routing::post, Json, Router};
 use axum_extra::{
     headers::{authorization::Bearer, Authorization},
     TypedHeader,
@@ -229,48 +229,56 @@ async fn shutdown_signal() {
 async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
-) -> Json<Value> {
+) -> Result<Json<Value>, StatusCode> {
     let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
         Ok(RpcRequestWrapper::Single(request)) => {
             let res = map_http_requests(&request, service_context).await;
-            rpc_response(request.id, res)
+            rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
         }
         Ok(RpcRequestWrapper::Multiple(requests)) => {
             let mut responses = Vec::new();
             for req in requests {
                 let res = map_http_requests(&req, service_context.clone()).await;
-                responses.push(rpc_response(req.id, res));
+                responses.push(rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?);
             }
-            serde_json::to_value(responses).expect("Failed to convert rpc responses to json")
+            serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
         }
         Err(_) => rpc_response(
             RpcRequestId::String("".to_string()),
             Err(RpcErr::BadParams("Invalid request body".to_string())),
-        ),
+        )
+        .map_err(|_| StatusCode::BAD_REQUEST)?,
     };
-    Json(res)
+    Ok(Json(res))
 }
 
 pub async fn handle_authrpc_request(
     State(service_context): State<RpcApiContext>,
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
-) -> Json<Value> {
+) -> Result<Json<Value>, StatusCode> {
     let req: RpcRequest = match serde_json::from_str(&body) {
         Ok(req) => req,
         Err(_) => {
-            return Json(rpc_response(
-                RpcRequestId::String("".to_string()),
-                Err(RpcErr::BadParams("Invalid request body".to_string())),
+            return Ok(Json(
+                rpc_response(
+                    RpcRequestId::String("".to_string()),
+                    Err(RpcErr::BadParams("Invalid request body".to_string())),
+                )
+                .map_err(|_| StatusCode::BAD_REQUEST)?,
             ));
         }
     };
     match authenticate(&service_context.node_data.jwt_secret, auth_header) {
-        Err(error) => Json(rpc_response(req.id, Err(error))),
+        Err(error) => Ok(Json(
+            rpc_response(req.id, Err(error)).map_err(|_| StatusCode::BAD_REQUEST)?,
+        )),
         Ok(()) => {
             // Proceed with the request
             let res = map_authrpc_requests(&req, service_context).await;
-            Json(rpc_response(req.id, res))
+            Ok(Json(
+                rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
+            ))
         }
     }
 }
@@ -444,11 +452,11 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
     }
 }
 
-fn rpc_response<E>(id: RpcRequestId, res: Result<Value, E>) -> Value
+fn rpc_response<E>(id: RpcRequestId, res: Result<Value, E>) -> Result<Value, RpcErr>
 where
     E: Into<RpcErrorMetadata>,
 {
-    match res {
+    Ok(match res {
         Ok(result) => serde_json::to_value(RpcSuccessResponse {
             id,
             jsonrpc: "2.0".to_string(),
@@ -459,8 +467,7 @@ where
             jsonrpc: "2.0".to_string(),
             error: error.into(),
         }),
-    }
-    .expect("Failed to convert rpc response to json")
+    }?)
 }
 
 #[cfg(test)]
@@ -498,7 +505,7 @@ mod tests {
 
         let enr_url = context.node_data.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
-        let rpc_response = rpc_response(request.id, result);
+        let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
             "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
             "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 }
@@ -576,7 +583,7 @@ mod tests {
         // Process request
         let context = default_context_with_storage(storage).await;
         let result = map_http_requests(&request, context).await;
-        let response = rpc_response(request.id, result);
+        let response = rpc_response(request.id, result).unwrap();
         let expected_response = to_rpc_response_success_value(
             r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[],"gasUsed":"0x5208"}}"#,
         );
@@ -627,7 +634,7 @@ mod tests {
         let context = default_context_with_storage(storage).await;
         // Process request
         let result = map_http_requests(&request, context).await;
-        let response = rpc_response(request.id, result);
+        let response = rpc_response(request.id, result).unwrap();
         let expected_response_string =
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{}"}}"#, chain_id);
         let expected_response = to_rpc_response_success_value(&expected_response_string);
