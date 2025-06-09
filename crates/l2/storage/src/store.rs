@@ -6,6 +6,8 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::libmdbx::Store as LibmdbxStoreRollup;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStoreRollup;
+#[cfg(feature = "limbo")]
+use crate::store_db::limbo::LimboStore;
 use ethrex_common::{
     types::{batch::Batch, Blob, BlobsBundle, BlockNumber},
     H256,
@@ -34,10 +36,12 @@ pub enum EngineType {
     Libmdbx,
     #[cfg(feature = "redb")]
     RedB,
+    #[cfg(feature = "limbo")]
+    Limbo,
 }
 
 impl Store {
-    pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
+    pub async fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting l2 storage engine ({engine_type:?})");
         let store = match engine_type {
             #[cfg(feature = "libmdbx")]
@@ -50,6 +54,10 @@ impl Store {
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStoreRollup::new()?),
+            },
+            #[cfg(feature = "limbo")]
+            EngineType::Limbo => Self {
+                engine: Arc::new(LimboStore::new(_path).await?),
             },
         };
         info!("Started l2 store engine");

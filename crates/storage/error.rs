@@ -30,6 +30,12 @@ pub enum StoreError {
     #[error("Redb Cast error")]
     #[cfg(feature = "redb")]
     RedbCastError,
+    #[cfg(feature = "limbo")]
+    #[error("Limbo Query error: {0}")]
+    LimboQueryError(#[from] limbo::Error),
+    #[cfg(feature = "limbo")]
+    #[error("Limbo Query error: unexpected type found while querying DB")]
+    LimboInvalidTypeError,
     #[error("{0}")]
     Custom(String),
     #[error(transparent)]

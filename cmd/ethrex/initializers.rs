@@ -94,7 +94,9 @@ pub fn open_store(data_dir: &str) -> Store {
 #[cfg(feature = "l2")]
 pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
     cfg_if::cfg_if! {
-        if #[cfg(feature = "rollup_storage_redb")] {
+        if #[cfg(feature = "rollup_storage_limbo")] {
+            let engine_type = EngineTypeRollup::Limbo;
+        } else if #[cfg(feature = "rollup_storage_redb")] {
             let engine_type = EngineTypeRollup::RedB;
         } else if #[cfg(feature = "rollup_storage_libmdbx")] {
             let engine_type = EngineTypeRollup::Libmdbx;
@@ -103,7 +105,7 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
         }
     }
     let rollup_store =
-        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
+        StoreRollup::new(data_dir, engine_type).await.expect("Failed to create StoreRollup");
     rollup_store
         .init()
         .await
