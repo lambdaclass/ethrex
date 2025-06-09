@@ -27,7 +27,6 @@ pub async fn get_batch() -> Result<(u64, ProgramInput), String> {
                 batch_number,
                 ProgramInput {
                     blocks: input.blocks,
-                    block_headers: input.block_headers,
                     db: input.db,
                     elasticity_multiplier: input.elasticity_multiplier,
                 },
