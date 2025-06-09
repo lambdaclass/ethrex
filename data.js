@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749501700576,
+  "lastUpdate": 1749501958665,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11665,6 +11665,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178224226531,
             "range": "± 508869250",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d347aa0932b612e4599e4a5228b05a7529ba551c",
+          "message": "feat(l2): add gigagas/s as a metric to our grafana dashboard (#3088)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-09T19:57:26Z",
+          "tree_id": "ddc1e4fcfd5fadef2b67c11fe85ca17ead07a6f6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d347aa0932b612e4599e4a5228b05a7529ba551c"
+        },
+        "date": 1749501953569,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177629786198,
+            "range": "± 397743313",
             "unit": "ns/iter"
           }
         ]
