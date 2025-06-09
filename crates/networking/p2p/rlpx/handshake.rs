@@ -317,7 +317,8 @@ fn decrypt_message(
     let mac_key = sha256(&buf[16..]);
 
     // Verify the MAC.
-    let expected_d = sha256_hmac(&mac_key, &[iv, c], size_data)?;
+    let expected_d = sha256_hmac(&mac_key, &[iv, c], size_data)
+        .map_err(|error| RLPxError::CryptographyError(error.to_string()))?;
     if d != expected_d {
         return Err(RLPxError::HandshakeError(String::from("Invalid MAC")));
     }
@@ -362,9 +363,8 @@ fn encrypt_message(
 
     // Derive the AES and MAC keys from the message secret.
     let mut secret_keys = [0; 32];
-    kdf(&message_secret, &mut secret_keys).map_err(|error| {
-        RLPxError::CryptographyError(format!("Couldn't get keys from shared secret: {error}"))
-    })?;
+    kdf(&message_secret, &mut secret_keys)
+        .map_err(|error| RLPxError::CryptographyError(error.to_string()))?;
     let aes_key = &secret_keys[..16];
     let mac_key = sha256(&secret_keys[16..]);
 
@@ -376,7 +376,8 @@ fn encrypt_message(
 
     // Use the MAC secret to compute the MAC.
     let r_public_key = message_secret_key.public_key().to_encoded_point(false);
-    let mac_footer = sha256_hmac(&mac_key, &[&iv.0, &encrypted_auth_msg], &auth_size_bytes)?;
+    let mac_footer = sha256_hmac(&mac_key, &[&iv.0, &encrypted_auth_msg], &auth_size_bytes)
+        .map_err(|error| RLPxError::CryptographyError(error.to_string()))?;
 
     // Return the message
     Ok([
