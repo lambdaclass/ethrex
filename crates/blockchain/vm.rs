@@ -42,7 +42,7 @@ impl StoreVmDatabase {
 impl VmDatabase for StoreVmDatabase {
     fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
         self.store
-            .get_account_info_by_hash(self.block_hash, address)
+            .get_current_account_info(address)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 

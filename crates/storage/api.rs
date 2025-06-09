@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
+use ethrex_common::types::AccountInfo;
 use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt, Transaction,
@@ -313,13 +314,23 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         genesis_accounts: &[(Address, H256, U256)],
     ) -> Result<(), StoreError>;
+    async fn setup_genesis_flat_account_info(
+        &self,
+        genesis_accounts: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError>;
 
     async fn update_flat_storage(
         &self,
         updates: &[(Address, H256, U256)],
     ) -> Result<(), StoreError>;
+    async fn update_flat_account_info(
+        &self,
+        updates: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError>;
 
     fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError>;
+    fn get_current_account_info(&self, address: Address)
+        -> Result<Option<AccountInfo>, StoreError>;
 
     /// Sets storage trie paths in need of healing, grouped by hashed address
     /// This will overwite previously stored paths for the received storages but will not remove other storage's paths

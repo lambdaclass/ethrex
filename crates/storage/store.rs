@@ -333,6 +333,22 @@ impl Store {
             })
             .collect();
         self.engine.update_flat_storage(&flat_updates).await?;
+        let flat_info_updates: Vec<_> = account_updates
+            .iter()
+            .filter(|acc_upd| acc_upd.removed || acc_upd.info.is_some())
+            .map(|acc_upd| {
+                let info = acc_upd.info.clone().unwrap_or_default();
+                (
+                    acc_upd.address,
+                    info.nonce,
+                    info.balance,
+                    info.code_hash,
+                    acc_upd.removed,
+                )
+            })
+            .collect();
+        self.update_flat_account_info(&flat_info_updates).await?;
+
         let mut state_trie = self
             .apply_account_updates_from_trie(state_trie, account_updates)
             .await?;
@@ -430,6 +446,14 @@ impl Store {
             .setup_genesis_flat_account_storage(genesis_accounts)
             .await
     }
+    pub async fn setup_genesis_flat_account_info(
+        &self,
+        genesis_accounts: &[(H160, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError> {
+        self.engine
+            .setup_genesis_flat_account_info(genesis_accounts)
+            .await
+    }
 
     pub async fn add_receipt(
         &self,
@@ -483,11 +507,25 @@ impl Store {
         self.engine.get_current_storage(address, key)
     }
 
+    pub fn get_current_account_info(
+        &self,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, StoreError> {
+        self.engine.get_current_account_info(address)
+    }
+
     pub async fn update_flat_storage(
         &self,
         updates: &[(H160, H256, U256)],
     ) -> Result<(), StoreError> {
         self.engine.update_flat_storage(updates).await
+    }
+
+    pub async fn update_flat_account_info(
+        &self,
+        updates: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError> {
+        self.engine.update_flat_account_info(updates).await
     }
 
     pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
@@ -522,6 +560,21 @@ impl Store {
             .collect();
         self.setup_genesis_flat_account_storage(&flat_storage)
             .await?;
+        let flat_info: Vec<_> = genesis
+            .alloc
+            .iter()
+            .map(|(addr, account)| {
+                let code_hash: [u8; 32] = Keccak256::digest(&account.code).into();
+                (
+                    *addr,
+                    account.nonce,
+                    account.balance,
+                    H256::from(code_hash),
+                    false,
+                )
+            })
+            .collect();
+        self.setup_genesis_flat_account_info(&flat_info).await?;
         // TODO: Should we use this root instead of computing it before the block hash check?
         let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
