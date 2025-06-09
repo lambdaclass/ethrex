@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use ethrex_blockchain::{
     constants::TX_GAS_COST,
-    error::ChainError,
     payload::{apply_plain_transaction, HeadTransaction, PayloadBuildContext, PayloadBuildResult},
     Blockchain,
 };
@@ -181,8 +180,19 @@ pub async fn fill_transactions(
             }
         }
 
+        // Check if the transaction is a blob transaction, which is not supported in L2
+        if matches!(*head_tx, Transaction::EIP4844Transaction(_)) {
+            debug!(
+                "Skipping blob transaction: {} (not supported in L2)",
+                tx_hash
+            );
+            txs.pop();
+            blockchain.remove_transaction_from_pool(&tx_hash)?;
+            continue;
+        }
+
         // Execute tx
-        let receipt = match apply_transaction_l2(&head_tx, context) {
+        let receipt = match apply_plain_transaction(&head_tx, context) {
             Ok(receipt) => {
                 metrics!(METRICS_TX.inc_tx_with_status_and_type(
                     MetricsTxStatus::Succeeded,
@@ -244,18 +254,6 @@ pub async fn fill_transactions(
         context.receipts.push(receipt);
     }
     Ok(())
-}
-
-fn apply_transaction_l2(
-    head: &HeadTransaction,
-    context: &mut PayloadBuildContext,
-) -> Result<Receipt, ChainError> {
-    match **head {
-        Transaction::EIP4844Transaction(_) => Err(ChainError::InvalidTransaction(
-            "Blob transactions not supported in the L2".to_string(),
-        )),
-        _ => apply_plain_transaction(head, context),
-    }
 }
 
 /// Returns the state diffs introduced by the transaction by comparing the call frame backup
