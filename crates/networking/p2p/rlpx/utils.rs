@@ -13,17 +13,17 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     use k256::sha2::Digest;
     k256::sha2::Sha256::digest(data).into()
 }
+use std::array::TryFromSliceError;
 
 pub fn sha256_hmac(
     key: &[u8],
     inputs: &[&[u8]],
     size_data: &[u8],
-) -> Result<[u8; 32], RLPDecodeError> {
+) -> Result<[u8; 32], sha3::digest::InvalidLength> {
     use hmac::Mac;
     use k256::sha2::Sha256;
 
-    let mut hasher =
-        hmac::Hmac::<Sha256>::new_from_slice(key).map_err(|_| RLPDecodeError::InvalidLength)?;
+    let mut hasher = hmac::Hmac::<Sha256>::new_from_slice(key)?;
     for input in inputs {
         hasher.update(input);
     }
@@ -34,17 +34,15 @@ pub fn sha256_hmac(
 pub fn ecdh_xchng(
     secret_key: &SecretKey,
     public_key: &PublicKey,
-) -> Result<[u8; 32], RLPDecodeError> {
+) -> Result<[u8; 32], TryFromSliceError> {
     k256::ecdh::diffie_hellman(secret_key.to_nonzero_scalar(), public_key.as_affine())
         .raw_secret_bytes()[..32]
         .try_into()
-        .map_err(|_| RLPDecodeError::InvalidLength)
 }
 
-pub fn kdf(secret: &[u8], output: &mut [u8]) -> Result<(), RLPDecodeError> {
+pub fn kdf(secret: &[u8], output: &mut [u8]) -> Result<(), concat_kdf::Error> {
     // We don't use the `other_info` field
     concat_kdf::derive_key_into::<k256::sha2::Sha256>(secret, &[], output)
-        .map_err(|_| RLPDecodeError::InvalidLength)
 }
 
 /// Cpmputes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
@@ -103,8 +101,8 @@ mod tests {
         let a_sk = SecretKey::random(&mut OsRng);
         let b_sk = SecretKey::random(&mut OsRng);
 
-        let a_sk_b_pk = ecdh_xchng(&a_sk, &b_sk.public_key());
-        let b_sk_a_pk = ecdh_xchng(&b_sk, &a_sk.public_key());
+        let a_sk_b_pk = ecdh_xchng(&a_sk, &b_sk.public_key()).unwrap();
+        let b_sk_a_pk = ecdh_xchng(&b_sk, &a_sk.public_key()).unwrap();
 
         // The shared secrets should be the same.
         // The operation done is:

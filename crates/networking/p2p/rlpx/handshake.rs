@@ -218,7 +218,9 @@ fn encode_auth_message(
     let public_key = decompress_pubkey(&static_key.public_key());
 
     // Derive a shared secret from the static keys.
-    let static_shared_secret = ecdh_xchng(static_key, remote_static_pubkey)?;
+    let static_shared_secret = ecdh_xchng(static_key, remote_static_pubkey).map_err(|error| {
+        RLPxError::CryptographyError(format!("Invalid generated static shared secret: {error}"))
+    })?;
 
     // Create the signature included in the message.
     let signature = sign_shared_secret(
@@ -249,7 +251,9 @@ fn decode_auth_message(
 
     // Derive a shared secret from the static keys.
     let peer_pk = compress_pubkey(auth.public_key).ok_or(RLPxError::InvalidPeerId())?;
-    let static_shared_secret = ecdh_xchng(static_key, &peer_pk)?;
+    let static_shared_secret = ecdh_xchng(static_key, &peer_pk).map_err(|error| {
+        RLPxError::CryptographyError(format!("Invalid generated static shared secret: {error}"))
+    })?;
     let remote_ephemeral_key =
         retrieve_remote_ephemeral_key(static_shared_secret.into(), auth.nonce, auth.signature)?;
     Ok((auth, remote_ephemeral_key))
@@ -299,11 +303,16 @@ fn decrypt_message(
     let (c, d) = rest.split_at(rest.len() - 32);
 
     // Derive the message shared secret.
-    let shared_secret = ecdh_xchng(static_key, &PublicKey::from_sec1_bytes(pk)?)?;
+    let shared_secret =
+        ecdh_xchng(static_key, &PublicKey::from_sec1_bytes(pk)?).map_err(|error| {
+            RLPxError::CryptographyError(format!("Invalid generated shared secret: {error}"))
+        })?;
 
     // Derive the AES and MAC keys from the message shared secret.
     let mut buf = [0; 32];
-    kdf(&shared_secret, &mut buf)?;
+    kdf(&shared_secret, &mut buf).map_err(|error| {
+        RLPxError::CryptographyError(format!("Couldn't get keys from shared secret: {error}"))
+    })?;
     let aes_key = &buf[..16];
     let mac_key = sha256(&buf[16..]);
 
@@ -346,11 +355,16 @@ fn encrypt_message(
     let message_secret_key = SecretKey::random(&mut rng);
 
     // Derive a shared secret for this message.
-    let message_secret = ecdh_xchng(&message_secret_key, remote_static_pubkey)?;
+    let message_secret =
+        ecdh_xchng(&message_secret_key, remote_static_pubkey).map_err(|error| {
+            RLPxError::CryptographyError(format!("Invalid generated message secret:  {error}"))
+        })?;
 
     // Derive the AES and MAC keys from the message secret.
     let mut secret_keys = [0; 32];
-    kdf(&message_secret, &mut secret_keys)?;
+    kdf(&message_secret, &mut secret_keys).map_err(|error| {
+        RLPxError::CryptographyError(format!("Couldn't get keys from shared secret: {error}"))
+    })?;
     let aes_key = &secret_keys[..16];
     let mac_key = sha256(&secret_keys[16..]);
 

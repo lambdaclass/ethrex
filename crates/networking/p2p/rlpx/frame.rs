@@ -33,8 +33,13 @@ impl RLPxCodec {
         remote_state: &RemoteState,
         hashed_nonces: [u8; 32],
     ) -> Result<Self, RLPxError> {
-        let ephemeral_key_secret =
-            ecdh_xchng(&local_state.ephemeral_key, &remote_state.ephemeral_key)?;
+        let ephemeral_key_secret = ecdh_xchng(
+            &local_state.ephemeral_key,
+            &remote_state.ephemeral_key,
+        )
+        .map_err(|error| {
+            RLPxError::CryptographyError(format!("Invalid generated ephemeral key secret: {error}"))
+        })?;
 
         // shared-secret = keccak256(ephemeral-key || keccak256(nonce || initiator-nonce))
         let shared_secret =
