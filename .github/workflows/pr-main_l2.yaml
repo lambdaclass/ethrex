@@ -81,8 +81,13 @@ jobs:
         include:
           - name: "Validium"
             validium: true
+            compose_target: docker-compose-l2.yaml
           - name: "Vanilla"
             validium: false
+            compose_target: docker-compose-l2.yaml
+          - name: "Vanilla with Web3signer"
+            validium: false
+            compose_target: docker-compose-l2-websigner.yaml
     needs: [docker-bake]
     steps:
       - name: Checkout sources
@@ -137,12 +142,18 @@ jobs:
           docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Start Sequencer
+        if: matrix.compose_target == 'docker-compose-l2.yaml'
+        run: |
+          cd crates/l2
+          docker compose -f ${{ matrix.compose_target }} up --detach web3signer
+
+      - name: Start Sequencer
         run: |
           cd crates/l2
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_VALIDIUM=${{ matrix.validium }} \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
-          docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
+          docker compose -f ${{ matrix.compose_target }} up --detach ethrex_l2
 
       - name: Run test
         run: |
