@@ -116,12 +116,8 @@ async fn fetch_storage_batch(
         // Handle incomplete ranges
         if incomplete {
             // An incomplete range cannot be empty
-            let last_keys = keys
-                .pop()
-                .ok_or(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree))?;
-            let last_values = values
-                .pop()
-                .ok_or(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree))?;
+            let last_keys = keys.pop().ok_or(SyncError::InvalidStorageRangeReceived)?;
+            let last_values = values.pop().ok_or(SyncError::InvalidStorageRangeReceived)?;
             // If only one incomplete range is returned then it must belong to a trie that is too big to fit into one request
             // We will handle this large trie separately
             if keys.is_empty() {
@@ -129,7 +125,7 @@ async fn fetch_storage_batch(
                 let (account_hash, storage_root) = batch.remove(0);
                 let lk = last_keys
                     .last()
-                    .ok_or(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree))?;
+                    .ok_or(SyncError::InvalidStorageRangeReceived)?;
                 let last_key = *lk;
                 // Store downloaded range
                 store

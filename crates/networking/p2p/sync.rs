@@ -728,6 +728,8 @@ pub enum SyncError {
     CorruptDB,
     #[error("No bodies were found for the given headers")]
     BodiesNotFound,
+    #[error("Storage range received is invalid")]
+    InvalidStorageRangeReceived,
 }
 
 impl<T> From<SendError<T>> for SyncError {
