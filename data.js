@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749489443707,
+  "lastUpdate": 1749498828673,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11605,6 +11605,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178300915652,
             "range": "± 383593321",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "76f725eac646cc17c811cabd43b92cd433103fa3",
+          "message": "feat(l2): prove block hashes (#3010)\n\n**Motivation**\n\nThe idea is to:\n1. After pre-execution, we have a list of all required block hashes.\n2. Take the oldest required block hash\n2. Store all block headers from the oldest required up to the parent in\n`ProverDB`\n\nFor verification in the zkvm:\n1. For all block headers:\n1. Check that the next block header's hash is the hash of the current\none\n2. Check that the next block header's number is the successor of the\ncurrent one\n\nThis way we check that block headers are valid and form a chain, whose\nhead is the batch's parent block.\n\nCloses #2893",
+          "timestamp": "2025-06-09T19:05:11Z",
+          "tree_id": "d613c41066d70687e798ef330cc82e8238b9296c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/76f725eac646cc17c811cabd43b92cd433103fa3"
+        },
+        "date": 1749498823064,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 176482170610,
+            "range": "± 363780875",
             "unit": "ns/iter"
           }
         ]
