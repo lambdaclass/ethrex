@@ -6,7 +6,7 @@ use zkvm_interface::io::ProgramInput;
 
 use ethrex_l2::{
     sequencer::proof_coordinator::ProofData,
-    utils::prover::proving_systems::{ProofCalldata, ProverType},
+    utils::prover::proving_systems::{BatchProof, ProverType},
 };
 
 use ethrex_common::Bytes;
@@ -30,6 +30,10 @@ pub async fn get_batch() -> Result<(u64, ProgramInput), String> {
                     parent_block_header: input.parent_block_header,
                     db: input.db,
                     elasticity_multiplier: input.elasticity_multiplier,
+                    #[cfg(feature = "l2")]
+                    blob_commitment: input.blob_commitment,
+                    #[cfg(feature = "l2")]
+                    blob_proof: input.blob_proof,
                 },
             )),
             _ => Err("No blocks to prove.".to_owned()),
@@ -38,8 +42,8 @@ pub async fn get_batch() -> Result<(u64, ProgramInput), String> {
     }
 }
 
-pub async fn submit_proof(batch_number: u64, proving_output: ProofCalldata) -> Result<u64, String> {
-    let submit = ProofData::proof_submit(batch_number, proving_output);
+pub async fn submit_proof(batch_number: u64, batch_proof: BatchProof) -> Result<u64, String> {
+    let submit = ProofData::proof_submit(batch_number, batch_proof);
 
     let submit_ack = connect_to_prover_server_wr(&submit)
         .await

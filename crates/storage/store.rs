@@ -360,7 +360,7 @@ impl Store {
     pub async fn apply_account_updates_from_trie_batch(
         &self,
         mut state_trie: Trie,
-        account_updates: &[AccountUpdate],
+        account_updates: impl IntoIterator<Item = &AccountUpdate>,
     ) -> Result<
         (
             H256,
@@ -370,7 +370,7 @@ impl Store {
         StoreError,
     > {
         let mut ret_vec_account = Vec::new();
-        for update in account_updates.iter() {
+        for update in account_updates {
             let hashed_address = hash_address(&update.address);
             if update.removed {
                 // Remove account from trie

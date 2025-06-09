@@ -13,7 +13,8 @@ use ethrex_common::{
     types::{batch::Batch, bytes_from_blob, BlobsBundle, BlockHeader, BYTES_PER_BLOB},
     Address, U256,
 };
-use ethrex_l2::{sequencer::state_diff::StateDiff, SequencerConfig};
+use ethrex_l2::SequencerConfig;
+use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
     clients::{beacon::BeaconClient, eth::BlockByNumber},
@@ -332,7 +333,7 @@ impl Command {
 
                             // Apply all account updates to trie
                             let account_updates = state_diff.to_account_updates(&new_trie)?;
-                            let (new_state_root, state_updates, accounts_updates) = store
+                            let (new_state_root, state_updates, accounts_updates, new_trie) = store
                                 .apply_account_updates_from_trie_batch(new_trie, &account_updates)
                                 .await
                                 .expect("Error applying account updates");
