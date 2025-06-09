@@ -1037,6 +1037,7 @@ impl StoreEngine for Store {
         &self,
         updates: &[(Address, H256, U256)],
     ) -> Result<(), StoreError> {
+        tracing::info!("called update_flat_storage");
         let tx = self
             .db
             .begin_readwrite()
@@ -1072,6 +1073,7 @@ impl StoreEngine for Store {
         &self,
         updates: &[(Address, u64, U256, H256, bool)],
     ) -> Result<(), StoreError> {
+        tracing::info!("called update_flat_account_info");
         let tx = self
             .db
             .begin_readwrite()
@@ -1095,6 +1097,7 @@ impl StoreEngine for Store {
     }
 
     fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
+        tracing::info!("called get_current_storage");
         let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         let res = tx
             .get::<FlatAccountStorage>((address.into(), key.into()))
@@ -1106,6 +1109,7 @@ impl StoreEngine for Store {
         &self,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
+        tracing::info!("called get_current_account_info");
         let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         let res = tx
             .get::<FlatAccountInfo>(address.into())
