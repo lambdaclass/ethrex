@@ -13,10 +13,13 @@ use crate::utils::{ChainDataIndex, SnapStateIndex};
 use crate::UpdateBatch;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
+use ethrex_common::types::AccountInfo;
 use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt, Transaction,
 };
+use ethrex_common::Address;
+use ethrex_common::H160;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
@@ -1077,6 +1080,97 @@ impl StoreEngine for Store {
         self.write::<InvalidAncestors>(bad_block.into(), latest_valid.into())
             .await
     }
+
+    async fn setup_genesis_flat_account_storage(
+        &self,
+        genesis_accounts: &[(Address, H256, U256)],
+    ) -> Result<(), StoreError> {
+        self.update_flat_storage(genesis_accounts).await
+    }
+
+    async fn update_flat_storage(
+        &self,
+        updates: &[(Address, H256, U256)],
+    ) -> Result<(), StoreError> {
+        tracing::info!("called update_flat_storage");
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        let mut cursor = tx
+            .cursor::<FlatAccountStorage>()
+            .map_err(StoreError::LibmdbxError)?;
+        for (addr, slot, value) in updates.iter().cloned() {
+            let key = (addr.into(), slot.into());
+            if !value.is_zero() {
+                cursor
+                    .upsert(key, value.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            } else if cursor
+                .seek_exact(key)
+                .map_err(StoreError::LibmdbxError)?
+                .is_some()
+            {
+                cursor.delete_current().map_err(StoreError::LibmdbxError)?;
+            }
+        }
+        tx.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    async fn setup_genesis_flat_account_info(
+        &self,
+        genesis_accounts: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError> {
+        self.update_flat_account_info(genesis_accounts).await
+    }
+
+    async fn update_flat_account_info(
+        &self,
+        updates: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError> {
+        tracing::info!("called update_flat_account_info");
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        let mut cursor = tx
+            .cursor::<FlatAccountInfo>()
+            .map_err(StoreError::LibmdbxError)?;
+        for (addr, nonce, balance, code_hash, removed) in updates.iter().cloned() {
+            let key = addr.into();
+            if removed {
+                if let Some(_) = cursor.seek_exact(key).map_err(StoreError::LibmdbxError)? {
+                    cursor.delete_current().map_err(StoreError::LibmdbxError)?;
+                }
+            } else {
+                cursor
+                    .upsert(key, (code_hash, balance, nonce).into())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+        }
+        tx.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
+        tracing::info!("called get_current_storage");
+        let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let res = tx
+            .get::<FlatAccountStorage>((address.into(), key.into()))
+            .map_err(StoreError::LibmdbxError)?;
+        Ok(res.map(Into::into))
+    }
+
+    fn get_current_account_info(
+        &self,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, StoreError> {
+        tracing::info!("called get_current_account_info");
+        let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let res = tx
+            .get::<FlatAccountInfo>(address.into())
+            .map_err(StoreError::LibmdbxError)?;
+        Ok(res.map(|i| i.0))
+    }
 }
 
 impl Debug for Store {
@@ -1288,10 +1382,31 @@ table!(
     ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
 );
 
+table!(
+    /// Account storage as a flat mapping from (AccountAddress, Slot) to (Value)
+    ( FlatAccountStorage ) (AccountAddress, AccountStorageKeyBytes) [AccountAddress] => AccountStorageValueBytes
+);
+table!(
+    /// Account state as a flat mapping from (AccountAddress) to (State)
+    ( FlatAccountInfo ) AccountAddress => EncodableAccountInfo
+);
+
 // Storage values are stored as bytes instead of using their rlp encoding
 // As they are stored in a dupsort table, they need to have a fixed size, and encoding them doesn't preserve their size
+#[derive(Clone)]
 pub struct AccountStorageKeyBytes(pub [u8; 32]);
+#[derive(Clone)]
 pub struct AccountStorageValueBytes(pub [u8; 32]);
+#[derive(Clone)]
+pub struct AccountAddress(pub H160);
+#[derive(Clone)]
+pub struct EncodableAccountInfo(pub AccountInfo);
+
+impl From<H160> for AccountAddress {
+    fn from(value: H160) -> Self {
+        Self(value)
+    }
+}
 
 impl Encodable for AccountStorageKeyBytes {
     type Encoded = [u8; 32];
@@ -1318,6 +1433,56 @@ impl Encodable for AccountStorageValueBytes {
 impl Decodable for AccountStorageValueBytes {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
         Ok(AccountStorageValueBytes(b.try_into()?))
+    }
+}
+
+impl Encodable for AccountAddress {
+    type Encoded = [u8; 20];
+
+    fn encode(self) -> Self::Encoded {
+        self.0 .0
+    }
+}
+
+impl Decodable for AccountAddress {
+    fn decode(b: &[u8]) -> anyhow::Result<Self> {
+        Ok(AccountAddress(H160(b.try_into()?)))
+    }
+}
+
+impl Encodable for EncodableAccountInfo {
+    type Encoded = [u8; 72];
+    fn encode(self) -> Self::Encoded {
+        let mut encoded = [0u8; 72];
+        encoded[0..32].copy_from_slice(&self.0.code_hash.to_fixed_bytes());
+        encoded[32..64].copy_from_slice(&self.0.balance.to_big_endian());
+        encoded[64..72].copy_from_slice(&self.0.nonce.to_be_bytes());
+        encoded
+    }
+}
+
+impl Decodable for EncodableAccountInfo {
+    fn decode(b: &[u8]) -> anyhow::Result<Self> {
+        if b.len() < 72 {
+            anyhow::bail!("too few bytes");
+        }
+        let mut nonce_bytes = [0u8; 8];
+        nonce_bytes.copy_from_slice(&b[64..72]);
+        Ok(Self(AccountInfo {
+            code_hash: H256::from_slice(&b[0..32]),
+            balance: U256::from_big_endian(&b[32..64]),
+            nonce: u64::from_be_bytes(nonce_bytes),
+        }))
+    }
+}
+
+impl From<(H256, U256, u64)> for EncodableAccountInfo {
+    fn from(value: (H256, U256, u64)) -> Self {
+        Self(AccountInfo {
+            code_hash: value.0,
+            balance: value.1,
+            nonce: value.2,
+        })
     }
 }
 
@@ -1392,6 +1557,8 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(StorageSnapShot),
         table_info!(StorageHealPaths),
         table_info!(InvalidAncestors),
+        table_info!(FlatAccountStorage),
+        table_info!(FlatAccountInfo),
     ]
     .into_iter()
     .collect();

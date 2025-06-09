@@ -1331,6 +1331,24 @@ impl StoreEngine for RedBStore {
         )
         .await
     }
+
+    async fn setup_genesis_flat_account_storage(
+        &self,
+        genesis_accounts: &[(Address, H256, U256)],
+    ) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    async fn update_flat_storage(
+        &self,
+        updates: &[(Address, H256, U256)],
+    ) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
+        todo!();
+    }
 }
 
 impl redb::Value for ChainDataIndex {

@@ -1,14 +1,18 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
+use ethrex_common::types::AccountInfo;
 use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt, Transaction,
 };
-use std::{fmt::Debug, panic::RefUnwindSafe};
+use ethrex_common::Address;
+use std::{collections::HashMap, fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
+
+// FIXME: these definitions should come from elsewhere
 
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
@@ -303,6 +307,28 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn get_state_trie_key_checkpoint(
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError>;
+
+    async fn setup_genesis_flat_account_storage(
+        &self,
+        genesis_accounts: &[(Address, H256, U256)],
+    ) -> Result<(), StoreError>;
+    async fn setup_genesis_flat_account_info(
+        &self,
+        genesis_accounts: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError>;
+
+    async fn update_flat_storage(
+        &self,
+        updates: &[(Address, H256, U256)],
+    ) -> Result<(), StoreError>;
+    async fn update_flat_account_info(
+        &self,
+        updates: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError>;
+
+    fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError>;
+    fn get_current_account_info(&self, address: Address)
+        -> Result<Option<AccountInfo>, StoreError>;
 
     /// Sets storage trie paths in need of healing, grouped by hashed address
     /// This will overwite previously stored paths for the received storages but will not remove other storage's paths

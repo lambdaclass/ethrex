@@ -42,13 +42,13 @@ impl StoreVmDatabase {
 impl VmDatabase for StoreVmDatabase {
     fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
         self.store
-            .get_account_info_by_hash(self.block_hash, address)
+            .get_current_account_info(address)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.store
-            .get_storage_at_hash(self.block_hash, address, key)
+            .get_current_storage(address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
