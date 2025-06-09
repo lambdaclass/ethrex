@@ -1,4 +1,7 @@
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use ethrex_common::{tracing::CallTrace, types::Block, H256};
 use ethrex_storage::Store;
@@ -27,15 +30,73 @@ impl Blockchain {
         let Some(block) = self.storage.get_block_by_hash(block_hash).await? else {
             return Err(ChainError::Custom("Block not Found".to_string()));
         };
+        // Obtain the block's parent state
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        // Run the block until the transaction we want to trace
+        vm.rerun_block(&block, Some(tx_index))?;
+        // Trace the transaction
+        timeout_trace_operation(timeout, move || {
+            vm.trace_tx_calls(&block, tx_index, only_top_call, with_log)
+        })
+        .await
+    }
+
+    /// Outputs the call trace for each transaction in the block along with the transaction's hash
+    /// May need to re-execute blocks in order to rebuild the transaction's prestate, up to the amount given by `reexec`
+    /// Returns transaction call traces from oldest to newest
+    pub async fn trace_block_calls(
+        &self,
+        // We receive the block instead of its hash/number to support multiple potential endpoints
+        block: Block,
+        reexec: usize,
+        timeout: Duration,
+        only_top_call: bool,
+        with_log: bool,
+    ) -> Result<Vec<(H256, CallTrace)>, ChainError> {
+        // Obtain the block's parent state
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        // Run anything necessary before executing the block's transactions (system calls, etc)
+        vm.rerun_block(&block, Some(0))?;
+        // Trace each transaction
+        // We need to do this in order to pass ownership of block & evm to a blocking process without cloning
+        let vm = Arc::new(Mutex::new(vm));
+        let block = Arc::new(block);
+        let mut call_traces = vec![];
+        for index in 0..block.body.transactions.len() {
+            // We are cloning the `Arc`s here, not the structs themselves
+            let block = block.clone();
+            let vm = vm.clone();
+            let tx_hash = block.as_ref().body.transactions[index].compute_hash();
+            let call_trace = timeout_trace_operation(timeout, move || {
+                vm.lock()
+                    .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
+                    .trace_tx_calls(block.as_ref(), index, only_top_call, with_log)
+            })
+            .await?;
+            call_traces.push((tx_hash, call_trace));
+        }
+        Ok(call_traces)
+    }
+
+    /// Rebuild the parent state for a block given its parent hash, returning an `Evm` instance with all changes cached
+    /// Will re-execute all ancestor block's which's state is not stored up to a maximum given by `reexec`
+    async fn rebuild_parent_state(
+        &self,
+        parent_hash: H256,
+        reexec: usize,
+    ) -> Result<Evm, ChainError> {
         // Check if we need to re-execute parent blocks
         let blocks_to_re_execute =
-            get_missing_state_parents(block.header.parent_hash, &self.storage, reexec).await?;
+            get_missing_state_parents(parent_hash, &self.storage, reexec).await?;
         // Base our Evm's state on the newest parent block which's state we have available
         let parent_hash = blocks_to_re_execute
             .last()
-            .unwrap_or(&block)
-            .header
-            .parent_hash;
+            .map(|b| b.header.parent_hash)
+            .unwrap_or(parent_hash);
         // Cache block hashes for all parent blocks so we can access them during execution
         let block_hash_cache = blocks_to_re_execute
             .iter()
@@ -53,13 +114,7 @@ impl Blockchain {
         for block in blocks_to_re_execute.iter().rev() {
             vm.rerun_block(block, None)?;
         }
-        // Run the block until the transaction we want to trace
-        vm.rerun_block(&block, Some(tx_index))?;
-        // Trace the transaction
-        timeout_trace_operation(timeout, move || {
-            vm.trace_tx_calls(&block, tx_index, only_top_call, with_log)
-        })
-        .await
+        Ok(vm)
     }
 }
 

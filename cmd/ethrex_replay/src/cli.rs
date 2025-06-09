@@ -4,6 +4,7 @@ use ethrex_common::types::{AccountUpdate, Receipt};
 use crate::bench::run_and_measure;
 use crate::constants::get_chain_config;
 use crate::fetcher::{get_blockdata, get_rangedata, or_latest};
+use crate::plot_composition::plot;
 use crate::rpc::get_tx_block;
 use crate::run::{exec, prove, run_tx};
 
@@ -230,6 +231,23 @@ enum EthrexReplayCommand {
         about = "Proves blocks, ranges of blocks, or individual transactions."
     )]
     Prove(SubcommandProve),
+    #[command(about = "Proves blocks, ranges of blocks, or individual transactions.")]
+    BlockComposition {
+        #[arg(help = "Starting block. (Inclusive)")]
+        start: usize,
+        #[arg(help = "Ending block. (Inclusive)")]
+        end: usize,
+        #[arg(long, env = "RPC_URL", required = true)]
+        rpc_url: String,
+        #[arg(
+            long,
+            default_value = "mainnet",
+            env = "NETWORK",
+            required = false,
+            help = "Name or ChainID of the network to use"
+        )]
+        network: String,
+    },
 }
 
 pub async fn start() -> eyre::Result<()> {
@@ -238,6 +256,21 @@ pub async fn start() -> eyre::Result<()> {
     match command {
         EthrexReplayCommand::Execute(cmd) => cmd.run().await?,
         EthrexReplayCommand::Prove(cmd) => cmd.run().await?,
+        EthrexReplayCommand::BlockComposition {
+            start,
+            end,
+            rpc_url,
+            network,
+        } => {
+            if start >= end {
+                return Err(eyre::Error::msg(
+                    "starting point can't be greater than ending point",
+                ));
+            }
+            let chain_config = get_chain_config(&network)?;
+            let cache = get_rangedata(&rpc_url, chain_config, start, end).await?;
+            plot(cache).await?;
+        }
     };
     Ok(())
 }

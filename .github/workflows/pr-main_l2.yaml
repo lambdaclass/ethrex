@@ -75,7 +75,7 @@ jobs:
 
   integration-test:
     name: Integration Test - ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: larger_runners
     strategy:
       matrix:
         include:
