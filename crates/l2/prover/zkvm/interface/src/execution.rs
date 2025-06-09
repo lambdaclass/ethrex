@@ -83,6 +83,7 @@ pub fn stateless_validation_l1(
     let StatelessResult {
         initial_state_hash,
         final_state_hash,
+        last_block_hash,
         ..
     } = execute_stateless(blocks, parent_block_header, db, elasticity_multiplier)?;
     Ok(ProgramOutput {
@@ -92,6 +93,7 @@ pub fn stateless_validation_l1(
         withdrawals_merkle_root: H256::zero(),
         #[cfg(feature = "l2")]
         deposit_logs_hash: H256::zero(),
+        last_block_hash,
     })
 }
 
@@ -106,6 +108,7 @@ pub fn stateless_validation_l2(
         receipts,
         initial_state_hash,
         final_state_hash,
+        last_block_hash,
     } = execute_stateless(blocks, parent_block_header, db, elasticity_multiplier)?;
 
     let mut withdrawals = vec![];
@@ -141,6 +144,7 @@ pub fn stateless_validation_l2(
         final_state_hash,
         withdrawals_merkle_root,
         deposit_logs_hash,
+        last_block_hash,
     })
 }
 
@@ -149,6 +153,7 @@ struct StatelessResult {
     receipts: Vec<Vec<ethrex_common::types::Receipt>>,
     initial_state_hash: H256,
     final_state_hash: H256,
+    last_block_hash: H256,
 }
 
 fn execute_stateless(
@@ -210,17 +215,21 @@ fn execute_stateless(
         .last()
         .ok_or(StatelessExecutionError::EmptyBatchError)?;
     let last_block_state_root = last_block.header.state_root;
+
     let final_state_hash = db
         .state_trie_root()
         .map_err(|_| StatelessExecutionError::InvalidDatabase)?;
-
     if final_state_hash != last_block_state_root {
         return Err(StatelessExecutionError::InvalidFinalStateTrie);
     }
+
+    let last_block_hash = last_block.header.hash();
+
     Ok(StatelessResult {
         #[cfg(feature = "l2")]
         receipts: acc_receipts,
         initial_state_hash,
         final_state_hash,
+        last_block_hash,
     })
 }

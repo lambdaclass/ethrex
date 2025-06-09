@@ -30,12 +30,15 @@ pub async fn prove(cache: Cache) -> eyre::Result<String> {
         witness: db,
         ..
     } = cache;
-    let out = ethrex_prover_lib::prove(ProgramInput {
-        blocks,
-        parent_block_header,
-        db,
-        elasticity_multiplier: ELASTICITY_MULTIPLIER,
-    })
+    let out = ethrex_prover_lib::prove(
+        ProgramInput {
+            blocks,
+            parent_block_header,
+            db,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        },
+        false,
+    )
     .map_err(|e| eyre::Error::msg(e.to_string()))?;
     #[cfg(feature = "sp1")]
     return Ok(format!("{out:#?}"));
@@ -52,13 +55,13 @@ pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<Acc
     let mut prover_db = cache.witness;
     prover_db.rebuild_tries()?;
 
-    // GeneralizedDatabase::new explicitly requires an Arc
-    // TODO: refactor GeneralizedDatabase and/or Database to avoid this
-    {
+    let changes = {
         let store: Arc<DynVmDatabase> = Arc::new(Box::new(prover_db.clone()));
         let mut db = GeneralizedDatabase::new(store.clone(), CacheDB::new());
         LEVM::prepare_block(block, &mut db)?;
-    }
+        LEVM::get_state_transitions(&mut db)?
+    };
+    prover_db.apply_account_updates(&changes)?;
 
     for (tx, tx_sender) in block.body.get_transactions_with_sender() {
         let mut vm = Evm::new(EvmEngine::LEVM, prover_db.clone());

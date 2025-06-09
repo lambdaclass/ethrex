@@ -39,7 +39,8 @@ use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils:
 use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
 use spawned_rt::mpsc::Sender;
 
-const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str =
+    "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes32)";
 
 #[derive(Clone)]
 pub struct CommitterState {
@@ -159,6 +160,7 @@ impl GenServer for L1Committer {
 }
 
 async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), CommitterError> {
+    info!("Running committer main loop");
     // Get the batch to commit
     let last_committed_batch_number = state
         .eth_client
@@ -169,11 +171,20 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
     let batch = match state.rollup_store.get_batch(batch_to_commit).await? {
         Some(batch) => batch,
         None => {
-            let last_committed_batch = state
+            let last_committed_blocks = state
                 .rollup_store
-                .get_batch(last_committed_batch_number)
-                .await?.ok_or(CommitterError::InternalError(format!("Failed to get batch with batch number {last_committed_batch_number}. Batch is missing when it should be present. This is a bug")))?;
-            let first_block_to_commit = last_committed_batch.last_block + 1;
+                .get_block_numbers_by_batch(last_committed_batch_number)
+                .await?
+                .ok_or(
+                    CommitterError::InternalError(format!("Failed to get batch with batch number {last_committed_batch_number}. Batch is missing when it should be present. This is a bug"))
+                )?;
+            let last_block = last_committed_blocks
+                .last()
+                .ok_or(
+                    CommitterError::InternalError(format!("Last committed batch ({last_committed_batch_number}) doesn't have any blocks. This is probably a bug."))
+                )?;
+            let first_block_to_commit = last_block + 1;
+
             // Try to prepare batch
             let (
                 blobs_bundle,
@@ -181,9 +192,9 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                 withdrawal_hashes,
                 deposit_logs_hash,
                 last_block_of_batch,
-            ) = prepare_batch_from_block(state, last_committed_batch.last_block).await?;
+            ) = prepare_batch_from_block(state, *last_block).await?;
 
-            if last_committed_batch.last_block == last_block_of_batch {
+            if *last_block == last_block_of_batch {
                 debug!("No new blocks to commit, skipping");
                 return Ok(());
             }
@@ -565,12 +576,15 @@ async fn send_commitment(
 
     let withdrawal_logs_merkle_root = get_withdrawals_merkle_root(batch.withdrawal_hashes.clone())?;
 
+    let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
+
     let calldata_values = vec![
         Value::Uint(U256::from(batch.number)),
         Value::FixedBytes(batch.state_root.0.to_vec().into()),
         Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
         Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
         Value::FixedBytes(batch.deposit_logs_hash.0.to_vec().into()),
+        Value::FixedBytes(last_block_hash.0.to_vec().into()),
     ];
 
     let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;
@@ -649,6 +663,18 @@ async fn send_commitment(
     info!("Commitment sent: {commit_tx_hash:#x}");
 
     Ok(commit_tx_hash)
+}
+
+fn get_last_block_hash(
+    store: &Store,
+    last_block_number: BlockNumber,
+) -> Result<H256, CommitterError> {
+    store
+        .get_block_header(last_block_number)?
+        .map(|header| header.hash())
+        .ok_or(CommitterError::InternalError(
+            "Failed to get last block hash from storage".to_owned(),
+        ))
 }
 
 /// Estimates the gas price for blob transactions based on the current state of the blockchain.
