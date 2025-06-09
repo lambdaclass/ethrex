@@ -7,6 +7,7 @@ use ethrex_common::{
     },
     Address, H160, H256, U256,
 };
+use ethrex_l2_common::state_diff::prepare_state_diff;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::{types::receipt::RpcLog, utils::get_withdrawal_hash, EthClient};
 use ethrex_storage::Store;
@@ -18,10 +19,7 @@ use tracing::{debug, error, info};
 
 use crate::{
     based::sequencer_state::SequencerState,
-    sequencer::{
-        errors::SequencerError,
-        l1_committer::{generate_blobs_bundle, prepare_state_diff},
-    },
+    sequencer::{errors::SequencerError, l1_committer::generate_blobs_bundle},
     utils::helpers::is_withdrawal_l2,
     SequencerConfig,
 };
@@ -375,7 +373,7 @@ impl BlockFetcher {
         for block in batch {
             let block_withdrawals = self.get_block_withdrawals(block.header.number).await?;
 
-            for (_tx_hash, tx) in &block_withdrawals {
+            for tx in &block_withdrawals {
                 let hash = get_withdrawal_hash(tx).ok_or(BlockFetcherError::InternalError(
                     "Invalid withdraw transaction".to_owned(),
                 ))?;
@@ -389,7 +387,7 @@ impl BlockFetcher {
     async fn get_block_withdrawals(
         &self,
         block_number: BlockNumber,
-    ) -> Result<Vec<(H256, Transaction)>, BlockFetcherError> {
+    ) -> Result<Vec<Transaction>, BlockFetcherError> {
         let Some(block_body) = self.store.get_block_body(block_number).await? else {
             return Err(BlockFetcherError::InternalError(format!(
                 "Block {block_number} is supposed to be in store at this point"
@@ -419,7 +417,7 @@ impl BlockFetcher {
 
         for (tx, receipt) in txs_and_receipts {
             if is_withdrawal_l2(&tx, &receipt) {
-                ret.push((tx.compute_hash(), tx.clone()))
+                ret.push(tx.clone())
             }
         }
         Ok(ret)
@@ -491,16 +489,19 @@ impl BlockFetcher {
             }
         }
 
+        let parent_block_hash = first_block.header.parent_hash;
+
+        let parent_db = StoreVmDatabase::new(self.store.clone(), parent_block_hash);
+
         let state_diff = prepare_state_diff(
-            first_block.header.number,
             last_block.header.clone(),
-            self.store.clone(),
+            &parent_db,
             &withdrawals,
             &deposits,
             acc_account_updates.into_values().collect(),
         )
-        .await
         .map_err(|_| BlockFetcherError::BlobBundleError)?;
+
         let (blobs_bundle, _) =
             generate_blobs_bundle(&state_diff).map_err(|_| BlockFetcherError::BlobBundleError)?;
 

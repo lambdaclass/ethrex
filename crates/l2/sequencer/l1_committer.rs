@@ -1,11 +1,6 @@
 use crate::{
     based::sequencer_state::SequencerState,
-    sequencer::{
-        blobs_bundle_cache::BlobsBundleCache,
-        errors::CommitterError,
-        state_diff::{get_nonce_diff, AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
-    },
-    utils::helpers::is_withdrawal_l2,
+    sequencer::{blobs_bundle_cache::BlobsBundleCache, errors::CommitterError},
     CommitterConfig, EthConfig, SequencerConfig,
 };
 
@@ -66,6 +61,7 @@ pub struct CommitterState {
 }
 
 impl CommitterState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
