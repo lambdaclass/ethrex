@@ -70,6 +70,14 @@ pub struct SequencerOptions {
         long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
     )]
     pub validium: bool,
+    #[clap(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_BASED",
+        help_heading = "Based options"
+    )]
+    pub based: bool,
 }
 
 impl From<SequencerOptions> for SequencerConfig {
@@ -121,7 +129,7 @@ impl From<SequencerOptions> for SequencerConfig {
                 validium: opts.validium,
             },
             based: BasedConfig {
-                based: opts.based_opts.based,
+                based: opts.based,
                 state_updater: StateUpdaterConfig {
                     sequencer_registry: opts.based_opts.state_updater_opts.sequencer_registry,
                     check_interval_ms: opts.based_opts.state_updater_opts.check_interval_ms,
@@ -489,14 +497,6 @@ impl Default for AlignedOptions {
 
 #[derive(Parser, Default)]
 pub struct BasedOptions {
-    #[clap(
-        long,
-        default_value = "false",
-        value_name = "BOOLEAN",
-        env = "ETHREX_BASED",
-        help_heading = "Based options"
-    )]
-    pub based: bool,
     #[clap(flatten)]
     pub state_updater_opts: StateUpdaterOptions,
     #[clap(flatten)]
