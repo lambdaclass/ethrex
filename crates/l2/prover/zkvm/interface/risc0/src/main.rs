@@ -1,10 +1,9 @@
 use risc0_zkvm::guest::env;
-
-use zkvm_interface::io::ProgramInput;
+use zkvm_interface::{io::ProgramInput, execution::execution_program};
 
 fn main() {
     let input: ProgramInput = env::read();
-    let output = zkvm_interface::execution::execution_program(input).unwrap();
+    let output = execution_program(input).unwrap();
 
     env::commit(&output);
 }

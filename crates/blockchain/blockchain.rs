@@ -14,12 +14,12 @@ use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
 use ethrex_common::types::MempoolTransaction;
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_common::types::{
     compute_receipts_root, validate_block_header, validate_cancun_header_fields,
     validate_prague_header_fields, validate_pre_cancun_header_fields, AccountUpdate, Block,
     BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
-use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
 use ethrex_common::{Address, H256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
@@ -29,6 +29,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
 use vm::StoreVmDatabase;
+
+#[cfg(feature = "c-kzg")]
+use ethrex_common::types::BlobsBundle;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
