@@ -426,7 +426,7 @@ impl Blockchain {
         }
 
         if !tx.is_contract_creation() && tx.data().len() >= MAX_TRANSACTION_DATA_SIZE {
-            return Err(MempoolError::TxMaxInitCodeSizeError);
+            return Err(MempoolError::TxMaxDataSizeError);
         }
 
         // Check gas limit is less than header's gas limit
