@@ -198,7 +198,10 @@ init-l2-no-metrics-based: ## 🚀 Initializes an L2 Lambda ethrex Based Client
 	--on-chain-proposer-address ${ON_CHAIN_PROPOSER_ADDRESS} \
 	--proof-coordinator-listen-ip ${PROOF_COORDINATOR_ADDRESS} \
 	--based \
-	--state-updater.sequencer-registry ${SEQUENCER_REGISTRY_ADDRESS}
+	--state-updater.sequencer-registry ${SEQUENCER_REGISTRY_ADDRESS} \
+	--p2p.enabled \
+	--p2p.port 30303 \
+	--discovery.port 30303
 
 init-based-node-2: ## 🚀 Initializes a second L2 Lambda ethrex Client for testing purposes
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 removedb --datadir ${ethrex_L2_2_DEV_LIBMDBX} --force;
@@ -214,7 +217,10 @@ init-based-node-2: ## 🚀 Initializes a second L2 Lambda ethrex Client for test
 		--bridge-address ${BRIDGE_ADDRESS} \
 		--on-chain-proposer-address ${ON_CHAIN_PROPOSER_ADDRESS} \
 		--state-updater.sequencer-registry ${SEQUENCER_REGISTRY_ADDRESS} \
-		--based
+		--based \
+		--p2p.enabled \
+		--p2p.port 30304 \
+		--discovery.port 30304
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
