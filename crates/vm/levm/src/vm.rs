@@ -3,6 +3,7 @@ use crate::call_frame::CallFrameBackup;
 use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
+    debug::DebugMode,
     environment::Environment,
     errors::{ExecutionReport, OpcodeResult, VMError},
     hooks::hook::Hook,
@@ -47,7 +48,7 @@ pub struct VM<'a> {
     /// When enabled, it "logs" relevant information during execution
     pub tracer: LevmCallTracer,
     /// Mode for printing some useful stuff, only used in development!
-    pub debug_mode: bool,
+    pub debug_mode: DebugMode,
 }
 
 impl<'a> VM<'a> {
@@ -69,7 +70,7 @@ impl<'a> VM<'a> {
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
             tracer,
-            debug_mode: false,
+            debug_mode: DebugMode::disabled(),
         }
     }
 
@@ -113,7 +114,8 @@ impl<'a> VM<'a> {
 
         #[cfg(feature = "debug")]
         {
-            self.debug_mode = true;
+            // Enable debug mode for printing in Solidity contracts.
+            self.debug_mode.enabled = true;
         }
 
         Ok(())

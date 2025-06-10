@@ -1,10 +1,9 @@
 use crate::{
     call_frame::CallFrame,
-    constants::{DEBUG_MEMORY_OFFSET, WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
+    constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
     errors::{OpcodeResult, OutOfGasError, VMError},
     gas_cost::{self, SSTORE_STIPEND},
     memory::{self, calculate_memory_size},
-    utils::print_u256,
     vm::VM,
 };
 use ethrex_common::{types::Fork, H256, U256};
@@ -94,8 +93,8 @@ impl<'a> VM<'a> {
         let value = self.current_call_frame_mut()?.stack.pop()?;
 
         // This is only for debugging purposes of special solidity contracts that enable printing text on screen.
-        if self.debug_mode && offset == DEBUG_MEMORY_OFFSET {
-            print_u256(value);
+        if self.debug_mode.enabled {
+            self.debug_mode.handle_debug(offset, value)?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
