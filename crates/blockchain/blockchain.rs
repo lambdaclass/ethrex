@@ -132,7 +132,9 @@ impl Blockchain {
     ) -> Result<ExecutionWitnessResult, ChainError> {
         let first_block_header = blocks
             .first()
-            .ok_or(ChainError::Custom("Empty block batch".to_string()))?
+            .ok_or(ChainError::WitnessGeneration(
+                "Empty block batch".to_string(),
+            ))?
             .header
             .clone();
 
@@ -145,14 +147,14 @@ impl Blockchain {
         let trie = self
             .storage
             .state_trie(first_block_header.parent_hash)
-            .map_err(|_| ChainError::ParentNotFound)?
+            .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
         let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
 
         // Store the root node in case the block is empty and the witness does not record any nodes
-        let root_node = trie
-            .root_node()
-            .map_err(|_| ChainError::Custom("Failed to get root state node".to_string()))?;
+        let root_node = trie.root_node().map_err(|_| {
+            ChainError::WitnessGeneration("Failed to get root state node".to_string())
+        })?;
 
         let mut encoded_storage_tries: HashMap<ethrex_common::H160, Vec<Vec<u8>>> = HashMap::new();
         let mut block_hashes = HashMap::new();
@@ -175,7 +177,9 @@ impl Blockchain {
             let logger_block_hashes = logger
                 .block_hashes_accessed
                 .lock()
-                .map_err(|_e| ChainError::Custom("Failed to get block hashes".to_string()))?
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to get block hashes".to_string())
+                })?
                 .clone();
             block_hashes.extend(logger_block_hashes);
 
@@ -184,12 +188,14 @@ impl Blockchain {
             for (account, keys) in logger
                 .state_accessed
                 .lock()
-                .map_err(|_e| ChainError::Custom("Failed to execute with witness".to_string()))?
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
+                })?
                 .iter()
             {
                 // Access the account from the state trie to record the nodes used to access it
                 trie.get(&hash_address(account)).map_err(|_e| {
-                    ChainError::Custom("Failed to access account from trie".to_string())
+                    ChainError::WitnessGeneration("Failed to access account from trie".to_string())
                 })?;
                 // Get storage trie at before updates
                 if !keys.is_empty() {
@@ -201,7 +207,9 @@ impl Blockchain {
                         for storage_key in keys {
                             let hashed_key = hash_key(storage_key);
                             storage_trie.get(&hashed_key).map_err(|_e| {
-                                ChainError::Custom("Failed to access storage key".to_string())
+                                ChainError::WitnessGeneration(
+                                    "Failed to access storage key".to_string(),
+                                )
                             })?;
                         }
                         // Store the tries to reuse when applying account updates
@@ -213,14 +221,20 @@ impl Blockchain {
             for code_hash in logger
                 .code_accessed
                 .lock()
-                .map_err(|_e| ChainError::Custom("Failed to gather used bytecodes".to_string()))?
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
+                })?
                 .iter()
             {
                 let code = self
                     .storage
                     .get_account_code(*code_hash)
-                    .map_err(|_e| ChainError::Custom("Failed to get account code".to_string()))?
-                    .ok_or(ChainError::Custom("Failed to get account code".to_string()))?;
+                    .map_err(|_e| {
+                        ChainError::WitnessGeneration("Failed to get account code".to_string())
+                    })?
+                    .ok_or(ChainError::WitnessGeneration(
+                        "Failed to get account code".to_string(),
+                    ))?;
                 codes.insert(*code_hash, code);
             }
 
@@ -235,7 +249,7 @@ impl Blockchain {
                 .await?;
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
-                    ChainError::Custom("Failed to lock storage trie witness".to_string())
+                    ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
                 })?;
                 let witness = std::mem::take(&mut *witness);
                 let witness = witness.into_iter().collect::<Vec<_>>();
@@ -252,9 +266,9 @@ impl Blockchain {
         }
 
         // Get the witness for the state trie
-        let mut state_trie_witness = state_trie_witness
-            .lock()
-            .map_err(|_| ChainError::Custom("Failed to lock state trie witness".to_string()))?;
+        let mut state_trie_witness = state_trie_witness.lock().map_err(|_| {
+            ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
+        })?;
         let state_trie_witness = std::mem::take(&mut *state_trie_witness);
         let mut used_trie_nodes = Vec::from_iter(state_trie_witness.into_iter());
         // If the witness is empty at least try to store the root
@@ -269,7 +283,7 @@ impl Blockchain {
         // The last block number we need is the parent of the last block we execute
         let last_needed_block_number = blocks
             .last()
-            .ok_or(ChainError::Custom("Empty batch".to_string()))?
+            .ok_or(ChainError::WitnessGeneration("Empty batch".to_string()))?
             .header
             .number
             .saturating_sub(1);
@@ -282,10 +296,9 @@ impl Blockchain {
         }
         let mut block_headers = HashMap::new();
         for block_number in first_needed_block_number..=last_needed_block_number {
-            let header = self
-                .storage
-                .get_block_header(block_number)?
-                .ok_or(ChainError::Custom("Failed to get block header".to_string()))?;
+            let header = self.storage.get_block_header(block_number)?.ok_or(
+                ChainError::WitnessGeneration("Failed to get block header".to_string()),
+            )?;
             block_headers.insert(block_number, header);
         }
 
