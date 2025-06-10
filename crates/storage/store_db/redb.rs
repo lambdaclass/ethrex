@@ -305,7 +305,7 @@ impl RedBStore {
 
 #[async_trait::async_trait]
 impl StoreEngine for RedBStore {
-    async fn store_changes_batch(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let write_txn = db.begin_write()?;
