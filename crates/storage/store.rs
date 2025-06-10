@@ -2,7 +2,6 @@ use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
-use crate::store_db::libmdbx::Store as LibmdbxStore;
 use crate::store_db::mdbx_fork::MDBXFork;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
