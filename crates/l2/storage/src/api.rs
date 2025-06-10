@@ -11,7 +11,7 @@ use ethrex_storage::error::StoreError;
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
 #[async_trait::async_trait]
-pub trait StoreEngineRollup: Debug + Send + Sync + RefUnwindSafe {
+pub trait StoreEngineRollup: Debug + Send + Sync {
     /// Returns the batch number by a given block number.
     async fn get_batch_number_by_block(
         &self,

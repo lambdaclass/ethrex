@@ -6,13 +6,17 @@ use ethrex_common::{
     H256,
 };
 use ethrex_storage::error::StoreError;
-use limbo::{params::IntoParams, params::Params, Builder, Connection, Row, Value};
 
-pub struct LimboStore {
+use libsql::{
+    params::{IntoParams, Params},
+    Builder, Connection, Row, Rows, Value,
+};
+
+pub struct SQLStore {
     conn: Connection,
 }
 
-impl Debug for LimboStore {
+impl Debug for SQLStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("data")
     }
@@ -30,26 +34,51 @@ const DB_SCHEMA: [&str; 9] = [
     "INSERT INTO latest_sent VALUES (0, 0)",
 ];
 
-impl LimboStore {
+impl SQLStore {
     pub async fn new(path: &str) -> Result<Self, StoreError> {
         let db = Builder::new_local(path).build().await?;
         let conn = db.connect()?;
-        for line in DB_SCHEMA {
-            conn.execute(line, ()).await?;
+        let store = SQLStore { conn };
+        store.init_db().await?;
+        Ok(store)
+    }
+    async fn execute<T: IntoParams>(&self, sql: &str, params: T) -> Result<(), StoreError> {
+        println!("executing: {sql}");
+        self.conn.execute(sql, params).await?;
+        Ok(())
+    }
+    async fn query<T: IntoParams>(&self, sql: &str, params: T) -> Result<Rows, StoreError> {
+        println!("querying: {sql}");
+        Ok(self.conn.query(sql, params).await?)
+    }
+    async fn init_db(&self) -> Result<(), StoreError> {
+        let mut rows = self
+            .query(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='blocks'",
+                (),
+            )
+            .await?;
+        if rows.next().await?.is_none() {
+            let empty_param = ().into_params()?;
+            let queries = DB_SCHEMA
+                .iter()
+                .map(|v| (*v, empty_param.clone()))
+                .collect();
+            self.execute_in_tx(queries).await?;
         }
-        Ok(LimboStore { conn })
+        Ok(())
     }
     async fn execute_in_tx(&self, queries: Vec<(&str, Params)>) -> Result<(), StoreError> {
-        self.conn.execute("BEGIN TRANSACTION", ()).await?;
+        self.execute("BEGIN TRANSACTION", ()).await?;
         for (query, params) in queries {
-            self.conn.execute(query, params).await?;
+            self.execute(query, params).await?;
         }
-        self.conn.execute("COMMIT TRANSACTION", ()).await?;
+        self.execute("COMMIT TRANSACTION", ()).await?;
         Ok(())
     }
 }
 
-fn read_from_row_int(row: &Row, index: usize) -> Result<u64, StoreError> {
+fn read_from_row_int(row: &Row, index: i32) -> Result<u64, StoreError> {
     match row.get_value(index)? {
         Value::Integer(i) => {
             let val = i
@@ -57,27 +86,26 @@ fn read_from_row_int(row: &Row, index: usize) -> Result<u64, StoreError> {
                 .map_err(|e| StoreError::Custom(format!("conversion error: {e}")))?;
             return Ok(val);
         }
-        _ => return Err(StoreError::LimboInvalidTypeError),
+        _ => return Err(StoreError::SQLInvalidTypeError),
     }
 }
 
-fn read_from_row_blob(row: &Row, index: usize) -> Result<Vec<u8>, StoreError> {
+fn read_from_row_blob(row: &Row, index: i32) -> Result<Vec<u8>, StoreError> {
     match row.get_value(index)? {
         Value::Blob(vec) => {
             return Ok(vec);
         }
-        _ => return Err(StoreError::LimboInvalidTypeError),
+        _ => return Err(StoreError::SQLInvalidTypeError),
     }
 }
 
 #[async_trait::async_trait]
-impl StoreEngineRollup for LimboStore {
+impl StoreEngineRollup for SQLStore {
     async fn get_batch_number_by_block(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<u64>, StoreError> {
         let mut rows = self
-            .conn
             .query(
                 "SELECT * from blocks WHERE block_number = ?1",
                 vec![block_number],
@@ -115,16 +143,13 @@ impl StoreEngineRollup for LimboStore {
     ) -> Result<Option<Vec<H256>>, StoreError> {
         let mut hashes = vec![];
         let mut rows = self
-            .conn
             .query(
-                "SELECT * from withdrawals WHERE batch = ?1 ORDER BY idx DESC",
+                "SELECT * from withdrawals WHERE batch = ?1 ORDER BY idx ASC",
                 vec![batch_number],
             )
             .await?;
         while let Some(row) = rows.next().await? {
-            let index = read_from_row_int(&row, 1)?;
             let vec = read_from_row_blob(&row, 2)?;
-            println!("index={index}");
             hashes.push(H256::from_slice(&vec));
         }
         if hashes.is_empty() {
@@ -174,7 +199,6 @@ impl StoreEngineRollup for LimboStore {
     ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
         let mut blocks = Vec::new();
         let mut rows = self
-            .conn
             .query("SELECT * from blocks WHERE batch = ?1", vec![batch_number])
             .await?;
         while let Some(row) = rows.next().await? {
@@ -211,7 +235,6 @@ impl StoreEngineRollup for LimboStore {
         batch_number: u64,
     ) -> Result<Option<H256>, StoreError> {
         let mut rows = self
-            .conn
             .query(
                 "SELECT * from deposits WHERE batch = ?1",
                 vec![batch_number],
@@ -247,7 +270,6 @@ impl StoreEngineRollup for LimboStore {
         batch_number: u64,
     ) -> Result<Option<H256>, StoreError> {
         let mut rows = self
-            .conn
             .query(
                 "SELECT * FROM state_roots WHERE batch = ?1",
                 vec![batch_number],
@@ -270,7 +292,6 @@ impl StoreEngineRollup for LimboStore {
             vec![batch_number].into_params()?,
         )];
         for (index, blob) in state_diff.iter().enumerate() {
-            println!("saving blob idx={index} to batch {batch_number}");
             queries.push((
                 "INSERT INTO blob_bundles VALUES (?1, ?2, ?3)",
                 (batch_number, index as u64, blob.to_vec()).into_params()?,
@@ -284,22 +305,15 @@ impl StoreEngineRollup for LimboStore {
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<Blob>>, StoreError> {
-        println!("get_blob_bundle_by_batch_number({batch_number})");
         let mut bundles = Vec::new();
         let mut rows = self
-            .conn
             .query(
-                "SELECT * from blob_bundles WHERE batch = ?1 ORDER BY idx DESC",
+                "SELECT * FROM blob_bundles WHERE batch = ?1 ORDER BY idx ASC",
                 vec![batch_number],
             )
             .await?;
         while let Some(row) = rows.next().await? {
-            println!("index_blob={}", read_from_row_int(&row, 1)?);
             let val = read_from_row_blob(&row, 2)?;
-            println!(
-                "get_blob_bundle_by_batch_number({batch_number}) => {:?}",
-                &val[0..10]
-            );
             bundles.push(
                 Blob::try_from(val)
                     .map_err(|_| StoreError::Custom(format!("error converting to Blob")))?,
@@ -318,14 +332,14 @@ impl StoreEngineRollup for LimboStore {
         deposits_inc: u64,
         withdrawals_inc: u64,
     ) -> Result<(), StoreError> {
-        self.conn.execute(
+        self.execute(
             "UPDATE operation_count SET transactions = transactions + ?1, deposits = deposits + ?2, withdrawals = withdrawals + ?3", 
             (transaction_inc, deposits_inc, withdrawals_inc)).await?;
         Ok(())
     }
 
     async fn get_operations_count(&self) -> Result<[u64; 3], StoreError> {
-        let mut rows = self.conn.query("SELECT * from operation_count", ()).await?;
+        let mut rows = self.query("SELECT * from operation_count", ()).await?;
         if let Some(row) = rows.next().await? {
             return Ok([
                 read_from_row_int(&row, 1)?,
@@ -341,14 +355,13 @@ impl StoreEngineRollup for LimboStore {
     /// Returns whether the batch with the given number is present.
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
         let mut row = self
-            .conn
             .query("SELECT * from blocks WHERE batch = ?1", vec![*batch_number])
             .await?;
         Ok(row.next().await?.is_some())
     }
 
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
-        let mut rows = self.conn.query("SELECT * from latest_sent", ()).await?;
+        let mut rows = self.query("SELECT * from latest_sent", ()).await?;
         if let Some(row) = rows.next().await? {
             return Ok(read_from_row_int(&row, 1)?);
         }
@@ -358,8 +371,7 @@ impl StoreEngineRollup for LimboStore {
     }
 
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
-        self.conn
-            .execute("UPDATE latest_sent SET batch = ?1", (0, batch_number))
+        self.execute("UPDATE latest_sent SET batch = ?1", (0, batch_number))
             .await?;
         Ok(())
     }

@@ -6,8 +6,8 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::libmdbx::Store as LibmdbxStoreRollup;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStoreRollup;
-#[cfg(feature = "limbo")]
-use crate::store_db::limbo::LimboStore;
+#[cfg(feature = "sql")]
+use crate::store_db::sql::SQLStore;
 use ethrex_common::{
     types::{batch::Batch, Blob, BlobsBundle, BlockNumber},
     H256,
@@ -36,8 +36,8 @@ pub enum EngineType {
     Libmdbx,
     #[cfg(feature = "redb")]
     RedB,
-    #[cfg(feature = "limbo")]
-    Limbo,
+    #[cfg(feature = "sql")]
+    SQL,
 }
 
 impl Store {
@@ -55,9 +55,9 @@ impl Store {
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStoreRollup::new()?),
             },
-            #[cfg(feature = "limbo")]
-            EngineType::Limbo => Self {
-                engine: Arc::new(LimboStore::new(_path).await?),
+            #[cfg(feature = "sql")]
+            EngineType::SQL => Self {
+                engine: Arc::new(SQLStore::new(_path).await?),
             },
         };
         info!("Started l2 store engine");

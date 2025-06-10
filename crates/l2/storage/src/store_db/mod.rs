@@ -3,5 +3,5 @@ pub mod in_memory;
 pub mod libmdbx;
 #[cfg(feature = "redb")]
 pub mod redb;
-#[cfg(feature = "limbo")]
-pub mod limbo;
+#[cfg(feature = "sql")]
+pub mod sql;

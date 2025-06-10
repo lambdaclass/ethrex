@@ -172,7 +172,6 @@ pub fn stateless_validation_l2(
             &deposits,
             account_updates.values().cloned().collect(),
         )?;
-        println!("proof: {:?}", (&state_diff, &blob_commitment, &blob_proof));
         verify_blob(state_diff, blob_commitment, blob_proof)?
     } else {
         H256::zero()
