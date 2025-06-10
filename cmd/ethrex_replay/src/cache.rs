@@ -3,14 +3,13 @@ use std::{
     io::{BufReader, BufWriter},
 };
 
-use ethrex_common::types::{block_execution_witness::ExecutionWitnessResult, Block, BlockHeader};
+use ethrex_common::types::{block_execution_witness::ExecutionWitnessResult, Block};
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct Cache {
     pub blocks: Vec<Block>,
-    pub parent_block_header: BlockHeader,
     pub witness: ExecutionWitnessResult,
 }
 

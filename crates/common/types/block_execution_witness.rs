@@ -59,7 +59,7 @@ pub struct ExecutionWitnessResult {
     #[serde(skip)]
     pub storage_tries: Option<Arc<Mutex<HashMap<Address, Trie>>>>,
     // Block headers needed for BLOCKHASH opcode
-    pub block_hashes: HashMap<u64, H256>,
+    pub block_headers: HashMap<u64, BlockHeader>,
     // Parent block header to get the initial state root
     pub parent_block_header: BlockHeader,
     // Chain config
@@ -74,6 +74,12 @@ pub enum ExecutionWitnessError {
     ApplyAccountUpdates(String),
     #[error("DB error: {0}")]
     Database(String),
+    #[error("No block headers stored, should at least store parent header")]
+    NoBlockHeaders,
+    #[error("Non-contiguous block headers (there's a gap in the block headers list)")]
+    NoncontiguousBlockHeaders,
+    #[error("Unreachable code reached: {0}")]
+    Unreachable(String),
 }
 
 impl ExecutionWitnessResult {
@@ -238,6 +244,51 @@ impl ExecutionWitnessResult {
             ExecutionWitnessError::Database("Failed to lock state trie".to_string())
         })?;
         Ok(lock.hash_no_commit())
+    }
+
+    /// Returns Some(block_number) if the hash for block_number is not the parent
+    /// hash of block_number + 1. None if there's no such hash.
+    ///
+    /// Keep in mind that the last block hash (which is a batch's parent hash)
+    /// can't be validated against the next header, because it has no successor.
+    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, ExecutionWitnessError> {
+        // Enforces there's at least one block header, so windows() call doesn't panic.
+        if self.block_headers.is_empty() {
+            return Err(ExecutionWitnessError::NoBlockHeaders);
+        };
+
+        // Sort in ascending order
+        let mut block_headers: Vec<_> = self.block_headers.iter().collect();
+        block_headers.sort_by_key(|(number, _)| *number);
+
+        // Validate hashes
+        for window in block_headers.windows(2) {
+            let (Some((number, header)), Some((next_number, next_header))) =
+                (window.first().cloned(), window.get(1).cloned())
+            else {
+                // windows() returns an empty iterator in this case.
+                return Err(ExecutionWitnessError::Unreachable(
+                    "block header window len is < 2".to_string(),
+                ));
+            };
+            if *next_number != *number + 1 {
+                return Err(ExecutionWitnessError::NoncontiguousBlockHeaders);
+            }
+            if next_header.parent_hash != header.hash() {
+                return Ok(Some(*number));
+            }
+        }
+
+        Ok(None)
+    }
+
+    pub fn get_block_parent_header(
+        &self,
+        block_number: u64,
+    ) -> Result<&BlockHeader, ExecutionWitnessError> {
+        self.block_headers
+            .get(&block_number.saturating_sub(1))
+            .ok_or(ExecutionWitnessError::NoBlockHeaders)
     }
 }
 

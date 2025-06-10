@@ -26,11 +26,6 @@ pub async fn get_blockdata(
         .await
         .wrap_err("failed to fetch block")?;
 
-    let parent_block_header = get_block(rpc_url, block_number - 1)
-        .await
-        .wrap_err("failed to fetch block")?
-        .header;
-
     println!("populating rpc db cache");
     let witness = get_witness(rpc_url, block_number)
         .await
@@ -43,7 +38,6 @@ pub async fn get_blockdata(
 
     let cache = Cache {
         blocks: vec![block],
-        parent_block_header,
         witness,
     };
     write_cache(&cache, &file_name).expect("failed to write cache");
@@ -68,11 +62,6 @@ pub async fn get_rangedata(
         blocks.push(block);
     }
 
-    let parent_block_header = get_block(rpc_url, from - 1)
-        .await
-        .wrap_err("failed to fetch block")?
-        .header;
-
     let witness = get_witness_range(rpc_url, from, to)
         .await
         .wrap_err("Failed to get execution witness for range")?;
@@ -82,11 +71,7 @@ pub async fn get_rangedata(
         ));
     }
 
-    let cache = Cache {
-        blocks,
-        parent_block_header,
-        witness,
-    };
+    let cache = Cache { blocks, witness };
 
     write_cache(&cache, &file_name).expect("failed to write cache");
 

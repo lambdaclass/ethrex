@@ -34,9 +34,9 @@ impl VmDatabase for ExecutionWitnessResult {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
-        self.block_hashes
+        self.block_headers
             .get(&block_number)
-            .cloned()
+            .map(|header| header.hash())
             .ok_or_else(|| {
                 EvmError::DB(format!(
                     "Block hash not found for block number {block_number}"

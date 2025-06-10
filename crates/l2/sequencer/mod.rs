@@ -1,9 +1,7 @@
-pub mod blobs_bundle_cache;
 use std::sync::Arc;
 
 use crate::utils::prover::proving_systems::ProverType;
 use crate::SequencerConfig;
-use blobs_bundle_cache::BlobsBundleCache;
 use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -43,7 +41,6 @@ pub async fn start_l2(
     info!("Starting Proposer");
 
     let execution_cache = Arc::new(ExecutionCache::default());
-    let blobs_bundle_cache = Arc::new(BlobsBundleCache::default());
 
     let Ok(needed_proof_types) = get_needed_proof_types(
         cfg.proof_coordinator.dev_mode,
@@ -69,7 +66,6 @@ pub async fn start_l2(
         store.clone(),
         rollup_store.clone(),
         execution_cache.clone(),
-        blobs_bundle_cache.clone(),
         cfg.clone(),
     )
     .await
@@ -81,7 +77,6 @@ pub async fn start_l2(
         rollup_store.clone(),
         cfg.clone(),
         blockchain.clone(),
-        blobs_bundle_cache.clone(),
         needed_proof_types.clone(),
     )
     .await
