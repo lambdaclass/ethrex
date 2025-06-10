@@ -32,7 +32,8 @@ use std::{ops::Div, time::Instant};
 
 use vm::StoreVmDatabase;
 
-metrics!(use ethrex_metrics::metrics_blocks::METRICS_BLOCKS);
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
