@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749510335374,
+  "lastUpdate": 1749549952873,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11755,6 +11755,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177089292850,
             "range": "± 348998478",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "885e1101fcddebf528daf7da57b77c5865b4f7e0",
+          "message": "refactor(core): refactor encode for primitive types, removing duplicate code (#3052)\n\n**Motivation**\n\nRemoves duplicate code from the rlp encode for primitive types.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-10T09:17:05Z",
+          "tree_id": "06e32bd1e0893e480ef3938ad4b0a5bdc9832d7c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/885e1101fcddebf528daf7da57b77c5865b4f7e0"
+        },
+        "date": 1749549946746,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177285473216,
+            "range": "± 696619815",
             "unit": "ns/iter"
           }
         ]
