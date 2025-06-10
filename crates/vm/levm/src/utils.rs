@@ -8,7 +8,6 @@ use crate::{
         BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
-    hooks::hook::Hook,
     opcodes::Opcode,
     precompiles::{
         is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
@@ -18,7 +17,7 @@ use crate::{
     EVMConfig,
 };
 use bytes::Bytes;
-use ethrex_common::types::{Account, Transaction, TxKind};
+use ethrex_common::types::{Account, TxKind};
 use ethrex_common::{
     types::{tx_fields::*, Fork},
     Address, H256, U256,
@@ -31,16 +30,8 @@ use secp256k1::{
     Message,
 };
 use sha3::{Digest, Keccak256};
-use std::{
-    collections::{BTreeSet, HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{BTreeSet, HashMap, HashSet};
 pub type Storage = HashMap<U256, H256>;
-
-#[cfg(not(feature = "l2"))]
-use crate::hooks::DefaultHook;
-#[cfg(feature = "l2")]
-use {crate::hooks::L2Hook, ethrex_common::types::PrivilegedL2Transaction};
 
 // ================== Address related functions ======================
 /// Converts address (H160) to word (U256)
@@ -662,25 +653,6 @@ impl<'a> VM<'a> {
         };
 
         Ok(())
-    }
-
-    pub fn get_hooks(_tx: &Transaction) -> Vec<Arc<dyn Hook + 'static>> {
-        #[cfg(not(feature = "l2"))]
-        let hooks: Vec<Arc<dyn Hook>> = vec![Arc::new(DefaultHook)];
-        #[cfg(feature = "l2")]
-        let hooks: Vec<Arc<dyn Hook>> = {
-            let recipient = if let Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
-                recipient,
-                ..
-            }) = _tx
-            {
-                Some(*recipient)
-            } else {
-                None
-            };
-            vec![Arc::new(L2Hook { recipient })]
-        };
-        hooks
     }
 
     /// Gets transaction callee, calculating create address if it's a "Create" transaction.
