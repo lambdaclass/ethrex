@@ -4,7 +4,9 @@ use ethrex_common::U256;
 #[derive(Default)]
 pub struct DebugMode {
     pub enabled: bool,
+    /// Chunks left to read and load to the print buffer.
     pub chunks_left: u8,
+    /// Accumulates chunks of data to print in one byte array.
     pub print_buffer: Vec<u8>,
 }
 
@@ -47,7 +49,7 @@ impl DebugMode {
                     println!("PRINTED -> {}", s);
                 } else {
                     // This shouldn't ever happen if the contract works fine but we are not going to return an internal error because of it...
-                    println!("PRINTED FAILED -> {:?}", &self.print_buffer);
+                    println!("PRINTED (failed) -> {:?}", &self.print_buffer);
                 }
                 self.print_buffer.clear();
             }
