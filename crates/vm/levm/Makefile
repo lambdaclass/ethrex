@@ -36,6 +36,7 @@ BENCH_MINT_ITERATIONS := 500
 BENCH_TRANSFER_ITERATIONS := 500
 BENCH_APPROVAL_ITERATIONS := 500
 
+# For manually testing you could add --show-output to hyperfine
 define run_benchmark
 	@printf "%s\n" "revm_$(1)"
 	@target/release/benchmark revm $(1) 1 $($(3))
