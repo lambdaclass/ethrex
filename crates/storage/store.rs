@@ -53,10 +53,12 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
 }
 
+type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+
 pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
     pub state_updates: Vec<(NodeHash, Vec<u8>)>,
-    pub storage_updates: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+    pub storage_updates: StorageUpdates,
 }
 
 impl Store {
