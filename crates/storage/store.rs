@@ -22,6 +22,7 @@ use ethrex_trie::{Nibbles, Trie};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
+use std::str::FromStr;
 use std::sync::Arc;
 use tracing::info;
 /// Number of state trie segments to fetch concurrently during state sync
@@ -618,11 +619,10 @@ impl Store {
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
             return Ok(None);
         };
-        let res = storage_trie
+        storage_trie
             .get(&hashed_key.to_vec())?
             .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
-            .transpose();
-        return res;
+            .transpose()
     }
 
     pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
@@ -1238,7 +1238,9 @@ impl Store {
                 } => {
                     let encoded_hashed_address: AccountHashRLP = hashed_address.into();
                     for (k, v) in update.added_storage {
-                        let encoded_key: AccountStorageKeyBytes = k.into();
+                        // FIXME: Avoid hashing twice.
+                        let hashed_key = hash_key_fixed_size(&k);
+                        let encoded_key = AccountStorageKeyBytes(hashed_key);
                         let encoded_value: AccountStorageValueBytes = v.into();
                         storages_to_update.push((
                             encoded_hashed_address.clone(),

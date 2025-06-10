@@ -33,6 +33,7 @@ use serde_json;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 
 pub struct Store {
@@ -1028,21 +1029,21 @@ impl StoreEngine for Store {
 
     fn write_block_snapshot(
         &self,
-        storages_to_update: Vec<(Rlp<H256>, AccountStorageKeyBytes, AccountStorageValueBytes)>,
+        mut storages_to_update: Vec<(Rlp<H256>, AccountStorageKeyBytes, AccountStorageValueBytes)>,
         storages_to_remove: Vec<Rlp<H256>>,
         states_to_remove: Vec<Rlp<H256>>,
         states_to_update: Vec<(Rlp<H256>, Rlp<AccountState>)>,
     ) -> Result<(), StoreError> {
-        // FIXME: Consider using the existing batch functions.
-        // Pros: More consistent with existing code.
-        // Cons: We would open and close a tx for each table.
         let tx = self
             .db
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
+        let mut cursor = tx.cursor::<StorageSnapShot>().map_err(StoreError::LibmdbxError)?;
         for (account_hash, storage_key, storage_value) in storages_to_update {
-            tx.upsert::<StorageSnapShot>(account_hash, (storage_key, storage_value))
-                .map_err(StoreError::LibmdbxError)?;
+            if let Some(_) = cursor.seek_value(account_hash.clone(), storage_key.clone()).map_err(StoreError::LibmdbxError)? {
+                cursor.delete_current().map_err(StoreError::LibmdbxError)?;
+            }
+            cursor.upsert(account_hash, (storage_key, storage_value)).map_err(StoreError::LibmdbxError)?;
         }
         for account_hash in storages_to_remove {
             tx.delete::<StorageSnapShot>(account_hash, None)
@@ -1066,7 +1067,6 @@ impl StoreEngine for Store {
         &self,
         account_hash: &H256,
     ) -> Result<Option<AccountState>, StoreError> {
-        // FIXME: Maybe avoid this encoding.
         let Some(encoded_state) = self.read_sync::<StateSnapShot>((*account_hash).into())? else {
             return Ok(None);
         };
@@ -1083,11 +1083,10 @@ impl StoreEngine for Store {
         let account_hash_rlp: Rlp<H256> = (*account_hash).into();
         let hashed_key_bytes: AccountStorageKeyBytes = (*hashed_key).into();
         let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let mut cursor = tx.cursor::<StorageSnapShot>().map_err(StoreError::LibmdbxError)?;
-        cursor.seek_closest(account_hash_rlp.clone()).unwrap();
-        // FIXME: Remove this unwrap
-        while let Some((_key, (sub_key, value))) = cursor.next_value().unwrap() {
-            if sub_key.0 == hashed_key_bytes.0 {
+        let cursor = tx.cursor::<StorageSnapShot>().map_err(StoreError::LibmdbxError)?;
+        for found in cursor.walk_key(account_hash_rlp.clone(), Some(hashed_key_bytes.clone())) {
+            let (sub_key, value) = found.map_err(StoreError::LibmdbxError)?;
+            if sub_key == hashed_key_bytes {
                 let value = U256::from_big_endian(&value.0);
                 return Ok(Some(value));
             }
@@ -1312,7 +1311,9 @@ table!(
 
 // Storage values are stored as bytes instead of using their rlp encoding
 // As they are stored in a dupsort table, they need to have a fixed size, and encoding them doesn't preserve their size
+#[derive(Debug, Clone, PartialEq)]
 pub struct AccountStorageKeyBytes(pub [u8; 32]);
+#[derive(Debug, Clone, PartialEq)]
 pub struct AccountStorageValueBytes(pub [u8; 32]);
 
 impl Encodable for AccountStorageKeyBytes {

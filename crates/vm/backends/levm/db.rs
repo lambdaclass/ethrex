@@ -132,13 +132,11 @@ impl LevmDatabase for DynVmDatabase {
         address: CoreAddress,
         key: CoreH256,
     ) -> Result<ethrex_common::U256, DatabaseError> {
-        Ok(dbg!(<dyn VmDatabase>::get_storage_slot(
-            self.as_ref(),
-            address,
-            key
+        Ok(
+            <dyn VmDatabase>::get_storage_slot(self.as_ref(), address, key)
+                .map_err(|e| DatabaseError::Custom(e.to_string()))?
+                .unwrap_or_default(),
         )
-        .map_err(|e| DatabaseError::Custom(e.to_string()))?
-        .unwrap_or_default()))
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
