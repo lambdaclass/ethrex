@@ -95,9 +95,7 @@ impl Prover {
                 blocks: input.blocks,
                 db: input.db,
                 elasticity_multiplier: input.elasticity_multiplier,
-                #[cfg(feature = "l2")]
                 blob_commitment: input.blob_commitment,
-                #[cfg(feature = "l2")]
                 blob_proof: input.blob_proof,
             },
         })
