@@ -202,7 +202,7 @@ jobs:
               Syncing=False|
               Payload Build after New Invalid Payload|
               Invalid NewPayload|
-              Invalid Missing Ancestor" # Invalid Missing Ancestor Syncing ReOrG is flaky with high parallelism, tested with 8 and works
+             Invalid Missing Ancestor" # Invalid Missing Ancestor Syncing ReOrG is flaky with high parallelism, tested with 8 and works
             ethrex_flags: ""
           - name: "Paris Engine tests"
             simulation: ethereum/engine
