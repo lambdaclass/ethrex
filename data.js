@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749585414526,
+  "lastUpdate": 1749593662459,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11995,6 +11995,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 176606645849,
             "range": "± 524181419",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d176d0205ce30a410156473d0be79525cb0dce51",
+          "message": "fix(core): avoid runtime creation errors in storage test (#3018)\n\n**Motivation**\nAs reported by #2820, when running `cargo test --features libmdbx --\n--nocapture` on the storage crate, all tests pass, but a panic message\nis shown indicating that runtime creation failed (`Cannot start a\nruntime from within a runtime`). This is due to the test checking that\ninitializing the store with a different genesis panics using\n`catch_unwind` to catch the panic. This worked fine when the `store` api\nwas sync, but when it was moved to async in order to call the async\nmethod a new runtime has to be created in order to `block_on` it during\ncatch_unwind call. This resulted in a runtime being created inside the\n`tokio::test` runtime, leading to the resulting panic.\nThis PR removes this runtime, instead relying on `tokio::spawn` and its\nresulting `JoinError` to check for panics. As the `JoinError` will\nrecord panics, we can not only check that the call panicked, but also\nmake assertions on the panic message itself. Unluckily, we cannot\nprevent the panic message from also being shown via stderr when running\nwith `nocapture`, like this:\n<img width=\"1448\" alt=\"Captura de pantalla 2025-06-02 a la(s) 17 27 41\"\nsrc=\"https://github.com/user-attachments/assets/9662ca8c-a129-41ec-95d7-b5e33eaeed52\"\n/>\nEven if the panic message is shown, this doesn't stop the test and its\nlater assertion (you can check for yourself that changing the expected\npanic message results in the test failing)\n\nThis PR also fixes the Tokio dev dependency import that was changed by\n#2981\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Remove Tokio runtime creation from `test_genesis_block`\n* Check the panic message returned in `test_genesis_block`\n* Fix Tokio dev dependency in storage crate\n* (Misc) Use a constant for the panic message when importing a different\ngenesis\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2820\n\n---------\n\nCo-authored-by: fedacking <francisco.gauna@lambdaclass.com>",
+          "timestamp": "2025-06-10T21:23:13Z",
+          "tree_id": "658863c1f509168149d44fc2176755579efe64b8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d176d0205ce30a410156473d0be79525cb0dce51"
+        },
+        "date": 1749593642646,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180055399009,
+            "range": "± 304592380",
             "unit": "ns/iter"
           }
         ]
