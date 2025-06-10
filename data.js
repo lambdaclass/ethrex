@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749567119073,
+  "lastUpdate": 1749567581163,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11845,6 +11845,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179560748577,
             "range": "± 690842818",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ab6740bd7b07ee93ec9c047299cf3ae9384a876f",
+          "message": "chore(l2): remove blobs bundle cache (#3086)\n\n**Motivation**\n\nThis was added in #2819 before the rollup store had the ability to store\nblobs. This PR removes it in favor of the rollup store.",
+          "timestamp": "2025-06-10T14:10:43Z",
+          "tree_id": "496b38bb99fbf353ebdeac7be0c1c7696c8cec5a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ab6740bd7b07ee93ec9c047299cf3ae9384a876f"
+        },
+        "date": 1749567575602,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177786357455,
+            "range": "± 881145360",
             "unit": "ns/iter"
           }
         ]
