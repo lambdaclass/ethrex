@@ -550,10 +550,41 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 .ok_or(RLPxError::InternalError(
                     "No withdrawal hashes found for the batch".to_string(),
                 ))?;
+
+            let Some(secret_key) = self.secret_key else {
+                return Err(RLPxError::InternalError(
+                    "Secret key is not set for based connection".to_string(),
+                ));
+            };
+
+            let block_numbers_bytes: Vec<u8> = block_numbers
+                .iter()
+                .flat_map(|num| num.to_be_bytes().to_vec())
+                .collect();
+
+            let withdrawal_bytes: Vec<u8> = withdrawal_hashes
+                .iter()
+                .flat_map(|hash| hash.as_bytes().to_vec())
+                .collect();
+
+            let mut hasher = Keccak256::new();
+            hasher.update(next_batch_to_send.to_be_bytes());
+            hasher.update(&block_numbers_bytes);
+            hasher.update(&withdrawal_bytes);
+            let next_batch_hash = hasher.finalize();
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&next_batch_hash);
+
+            let (recovery_id, signature) = secp256k1::SECP256K1
+                .sign_ecdsa_recoverable(&SignedMessage::from_digest(hash), &secret_key)
+                .serialize_compact();
+            let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
             let msg = Message::BatchSealed(BatchSealedMessage {
                 batch_number: next_batch_to_send,
                 block_numbers,
                 withdrawal_hashes,
+                signature,
+                recovery_id,
             });
             self.send(msg).await?;
             self.batches_broadcasted += 1;
@@ -801,6 +832,49 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             // This is to not sent the same batch to the one who sent it
             self.batches_broadcasted += 1;
+
+            let recovery_id: i32 = i32::from_be_bytes(msg.recovery_id);
+            let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
+                &msg.signature,
+                RecoveryId::from_i32(recovery_id).unwrap(), // cannot fail
+            )
+            .unwrap();
+
+            let block_numbers_bytes: Vec<u8> = msg
+                .block_numbers
+                .iter()
+                .flat_map(|num| num.to_be_bytes().to_vec())
+                .collect();
+
+            let withdrawal_bytes: Vec<u8> = msg
+                .withdrawal_hashes
+                .iter()
+                .flat_map(|hash| hash.as_bytes().to_vec())
+                .collect();
+
+            let mut hasher = Keccak256::new();
+            hasher.update(msg.batch_number.to_be_bytes());
+            hasher.update(&block_numbers_bytes);
+            hasher.update(&withdrawal_bytes);
+            let next_batch_hash = hasher.finalize();
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&next_batch_hash);
+
+            // Recover public key
+            let public = secp256k1::SECP256K1
+                .recover_ecdsa(&SignedMessage::from_digest(hash), &signature)
+                .unwrap();
+            // Hash public key to obtain address
+            let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
+            let recovered_lead_sequencer = Address::from_slice(&hash[12..]);
+
+            if recovered_lead_sequencer != *ADDRESS_LEAD_SEQUENCER {
+                warn!(
+                    "Received block from wrong lead sequencer: {}. Expected: {}",
+                    recovered_lead_sequencer, *ADDRESS_LEAD_SEQUENCER
+                );
+                return Ok(false);
+            }
             Ok(true)
         }
         #[cfg(not(feature = "l2"))]

@@ -52,6 +52,8 @@ pub struct BatchSealedMessage {
     pub batch_number: u64,
     pub block_numbers: Vec<u64>,
     pub withdrawal_hashes: Vec<H256>,
+    pub signature: [u8; 64],
+    pub recovery_id: [u8; 4],
 }
 impl RLPxMessage for BatchSealedMessage {
     const CODE: u8 = 0x1;
@@ -62,6 +64,8 @@ impl RLPxMessage for BatchSealedMessage {
             .encode_field(&self.batch_number)
             .encode_field(&self.block_numbers)
             .encode_field(&self.withdrawal_hashes)
+            .encode_field(&self.signature)
+            .encode_field(&self.recovery_id)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
         buf.put_slice(&msg_data);
@@ -74,11 +78,15 @@ impl RLPxMessage for BatchSealedMessage {
         let (batch_number, decoder) = decoder.decode_field("batch_number")?;
         let (block_numbers, decoder) = decoder.decode_field("block_numbers")?;
         let (withdrawal_hashes, decoder) = decoder.decode_field("withdrawal_hashes")?;
+        let (signature, decoder) = decoder.decode_field("signature")?;
+        let (recovery_id, decoder) = decoder.decode_field("recovery_id")?;
         decoder.finish()?;
         Ok(BatchSealedMessage {
             batch_number,
             block_numbers,
             withdrawal_hashes,
+            signature,
+            recovery_id,
         })
     }
 }
