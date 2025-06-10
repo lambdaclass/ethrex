@@ -8,6 +8,7 @@ use std::ops::Div;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::sync::RwLock;
 
 use crate::api::StoreEngine;
@@ -37,7 +38,7 @@ use reth_db_api::cursor::DbCursorRO;
 use reth_db_api::cursor::DbDupCursorRO;
 use reth_db_api::cursor::DbDupCursorRW;
 
-const DB_DUPSORT_MAX_SIZE: OnceCell<usize> = OnceCell::new();
+static DB_DUPSORT_MAX_SIZE: OnceLock<usize> = OnceLock::new();
 
 pub struct MDBXFork {
     env: DatabaseEnv,
@@ -102,13 +103,13 @@ impl MDBXFork {
             .unwrap();
         tx.commit().unwrap();
         let env_account_trie = DatabaseEnv::open(
-            &Path::new(&format!("{}/account_trie", path)),
+            Path::new(&format!("{}/account_trie", path)),
             reth_db::DatabaseEnvKind::RW,
             Default::default(),
         )
         .unwrap();
         let env_storage_trie = DatabaseEnv::open(
-            &Path::new(&format!("{}/storage_trie", path)),
+            Path::new(&format!("{}/storage_trie", path)),
             reth_db::DatabaseEnvKind::RW,
             Default::default(),
         )
@@ -177,7 +178,7 @@ impl TrieDB for MDBXTrieDB<StateTrieNodes> {
 pub struct MDBXTrieDupsort<T: DupSort> {
     db: DatabaseEnv,
     phantom: PhantomData<T>,
-    pub fixed_key: Arc<RwLock<Option<Vec<u8>>>>,
+    pub fixed_key: Arc<RwLock<Option<H256>>>,
 }
 
 impl<T> MDBXTrieDupsort<T>
@@ -199,7 +200,7 @@ where
 
 impl TrieDB for MDBXTrieDupsort<StorageTriesNodes> {
     fn get(&self, subkey: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        let key = self.fixed_key.read().unwrap().as_ref().unwrap().clone();
+        let key = self.fixed_key.read().unwrap().as_ref().unwrap().0.to_vec();
         let tx = self.db.tx().unwrap();
         let mut cursor = tx.cursor_read::<StorageTriesNodes>().unwrap();
         cursor.seek_exact(key).unwrap();
@@ -215,7 +216,7 @@ impl TrieDB for MDBXTrieDupsort<StorageTriesNodes> {
     }
 
     fn put(&self, subkey: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
-        let key = self.fixed_key.read().unwrap().as_ref().unwrap().clone();
+        let key = self.fixed_key.read().unwrap().as_ref().unwrap().0.to_vec();
         let tx = self.db.tx_mut().unwrap();
         tx.put::<StorageTriesNodes>(key, (subkey, value).encode_to_vec())
             .unwrap();
@@ -224,11 +225,11 @@ impl TrieDB for MDBXTrieDupsort<StorageTriesNodes> {
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
-        let key = self.fixed_key.read().unwrap().as_ref().unwrap().clone();
+        let key = *self.fixed_key.read().unwrap().as_ref().unwrap();
         let tx = self.db.tx_mut().unwrap();
 
         for (subkey, value) in key_values {
-            tx.put::<StorageTriesNodes>(key.clone(), (subkey, value).encode_to_vec())
+            tx.put::<StorageTriesNodes>(key.0.to_vec(), (subkey, value).encode_to_vec())
                 .unwrap();
         }
 
@@ -733,8 +734,7 @@ impl StoreEngine for MDBXFork {
         hashed_address: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        *(self.storage_trie.fixed_key.write().unwrap()) =
-            Some(hashed_address.0.as_slice().to_vec());
+        *(self.storage_trie.fixed_key.write().unwrap()) = Some(hashed_address);
         Ok(Trie::open(self.storage_trie.clone(), storage_root))
     }
 
