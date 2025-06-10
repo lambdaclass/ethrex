@@ -49,7 +49,7 @@ impl Store {
         let store = match engine_type {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
-                engine: Arc::new(MDBXFork::new(path)?)
+                engine: Arc::new(MDBXFork::new(path)?),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),

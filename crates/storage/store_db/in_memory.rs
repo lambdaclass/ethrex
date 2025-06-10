@@ -370,7 +370,11 @@ impl StoreEngine for Store {
         Ok(self.inner().chain_data.pending_block_number)
     }
 
-    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Result<Trie, StoreError> {
+    fn open_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
         let mut store = self.inner();
         let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
         let db = Arc::new(InMemoryTrieDB::new(trie_backend.clone()));
@@ -696,7 +700,7 @@ impl StoreEngine for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-         Ok(self.inner().canonical_hashes.get(&block_number).cloned())
+        Ok(self.inner().canonical_hashes.get(&block_number).cloned())
     }
 }
 
