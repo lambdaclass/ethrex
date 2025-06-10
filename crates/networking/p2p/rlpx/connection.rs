@@ -41,6 +41,7 @@ use lazy_static::lazy_static;
 use rand::random;
 use secp256k1::Message as SignedMessage;
 use secp256k1::SecretKey as SigningKeySecp256k1;
+use std::collections::BTreeMap;
 use std::{collections::HashSet, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -102,7 +103,9 @@ pub(crate) struct RLPxConnection<S> {
     next_tx_broadcast: Instant,
     next_block_broadcast: Instant,
     broadcasted_txs: HashSet<H256>,
-    latest_broadcasted_block: u64,
+    latest_block_sent: u64,
+    latest_block_added: u64,
+    blocks_on_queue: BTreeMap<u64, Block>,
     batches_broadcasted: u64,
     client_version: String,
     /// Send end of the channel used to broadcast messages
@@ -148,7 +151,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
             next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
             broadcasted_txs: HashSet::new(),
-            latest_broadcasted_block: 0,
+            latest_block_sent: 0,
+            latest_block_added: 0,
+            blocks_on_queue: BTreeMap::new(),
             batches_broadcasted: 0,
             client_version,
             connection_broadcast_send: connection_broadcast,
@@ -490,10 +495,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             return Ok(());
         }
         let latest_block_number = self.storage.get_latest_block_number().await?;
-        for i in self.latest_broadcasted_block + 1..=latest_block_number {
+        for i in self.latest_block_sent + 1..=latest_block_number {
             debug!(
                 "Broadcasting new block, current: {}, last broadcasted: {}",
-                i, self.latest_broadcasted_block
+                i, self.latest_block_sent
             );
             let new_block_body = self.storage.get_block_body(i).await?.unwrap();
             let new_block_header = self.storage.get_block_header(i)?.unwrap();
@@ -522,7 +527,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }))
             .await?;
         }
-        self.latest_broadcasted_block = latest_block_number;
+        self.latest_block_sent = latest_block_number;
 
         Ok(())
     }
@@ -742,24 +747,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn validate_new_block(&mut self, msg: &NewBlockMessage) -> Result<bool, RLPxError> {
-        // This is to not send the same block to the one who sent it
-        if self.latest_broadcasted_block + 1 == msg.block.header.number {
-            self.latest_broadcasted_block = msg.block.header.number;
-        } else {
-            debug!(
-                "Not received the immediate next block, expected {}, received {}, ignoring it",
-                self.latest_broadcasted_block + 1,
-                msg.block.header.number
-            );
-            return Ok(false);
-        }
-        if let Ok(Some(_)) = self.storage.get_block_body_by_hash(msg.block.hash()).await {
+        if self.latest_block_added >= msg.block.header.number
+            || self.blocks_on_queue.contains_key(&msg.block.header.number)
+        {
             info!(
                 "Block {} received by peer already stored, ignoring it",
                 msg.block.header.number
             );
             return Ok(false);
         }
+
         let block_hash = msg.block.hash();
 
         let recovered_lead_sequencer = get_pub_key(
@@ -779,18 +776,24 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn process_new_block(&mut self, msg: &NewBlockMessage) -> Result<(), RLPxError> {
-        let _ = self
-            .blockchain
-            .add_block(&msg.block)
-            .await
-            .inspect_err(|e| {
+        self.blocks_on_queue
+            .entry(msg.block.header.number)
+            .or_insert_with(|| msg.block.clone());
+
+        let mut next_block_to_add = self.latest_block_added + 1;
+        while let Some(block) = self.blocks_on_queue.remove(&next_block_to_add) {
+            let _ = self.blockchain.add_block(&block).await.inspect_err(|e| {
                 log_peer_warn(&self.node, &format!("Error adding new block: {e}"));
             });
-        let block_hash = msg.block.hash();
+            let block_hash = block.hash();
 
-        apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
-            .await
-            .map_err(|e| RLPxError::BadRequest(format!("Error adding new block: {e}")))?;
+            apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
+                .await
+                .map_err(|e| RLPxError::BadRequest(format!("Error adding new block: {e}")))?;
+
+            self.latest_block_added = next_block_to_add;
+            next_block_to_add += 1;
+        }
         Ok(())
     }
 
