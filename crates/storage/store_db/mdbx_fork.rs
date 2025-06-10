@@ -35,6 +35,7 @@ use reth_db::{
     Database,
 };
 use reth_db_api::cursor::DbCursorRO;
+use reth_db_api::cursor::DbCursorRW;
 use reth_db_api::cursor::DbDupCursorRO;
 use reth_db_api::cursor::DbDupCursorRW;
 
@@ -227,9 +228,11 @@ impl TrieDB for MDBXTrieDupsort<StorageTriesNodes> {
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let key = *self.fixed_key.read().unwrap().as_ref().unwrap();
         let tx = self.db.tx_mut().unwrap();
+        let mut cursor = tx.cursor_write::<StorageTriesNodes>().unwrap();
 
         for (subkey, value) in key_values {
-            tx.put::<StorageTriesNodes>(key.0.to_vec(), (subkey, value).encode_to_vec())
+            cursor
+                .upsert(key.0.to_vec(), (subkey, value).encode_to_vec())
                 .unwrap();
         }
 
