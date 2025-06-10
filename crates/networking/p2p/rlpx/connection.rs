@@ -666,43 +666,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::TrieNodes(response)).await?
             }
             Message::NewBlock(req) if peer_supports_based => {
-                if self.validate_new_block_received(&req).await? {
-                    self.process_new_block_message(&req).await?;
+                if self.validate_new_block(&req).await? {
+                    self.process_new_block(&req).await?;
                     self.broadcast_message(Message::NewBlock(req))?;
                 }
             }
             Message::BatchSealed(req) => {
                 #[cfg(feature = "l2")]
                 {
-                    if self.store_rollup.contains_batch(&req.batch_number).await?
-                        || req.batch_number != self.batches_broadcasted + 1
-                    {
-                        info!("Batch {} already sealed, ignoring it", req.batch_number);
-                        return Ok(());
+                    if self.validate_batch_sealed(&req).await? {
+                        self.process_batch_sealed(req).await?;
                     }
-                    // This is to not sent the same batch to the one who sent it
-                    self.batches_broadcasted += 1;
-
-                    let first_block_number =
-                        req.block_numbers.first().ok_or(RLPxError::InternalError(
-                            "No block numbers found in BatchSealed message".to_string(),
-                        ))?;
-                    let last_block_number =
-                        req.block_numbers.last().ok_or(RLPxError::InternalError(
-                            "No block numbers found in BatchSealed message".to_string(),
-                        ))?;
-                    self.store_rollup
-                        .seal_batch(
-                            req.batch_number,
-                            *first_block_number,
-                            *last_block_number,
-                            req.withdrawal_hashes,
-                        )
-                        .await?;
-                    info!(
-                        "Sealed batch {} with blocks from {} to {}",
-                        req.batch_number, first_block_number, last_block_number
-                    );
                 }
             }
 
@@ -748,10 +722,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(())
     }
 
-    async fn validate_new_block_received(
-        &mut self,
-        msg: &NewBlockMessage,
-    ) -> Result<bool, RLPxError> {
+    async fn validate_new_block(&mut self, msg: &NewBlockMessage) -> Result<bool, RLPxError> {
         // This is to not send the same block to the one who sent it
         if self.latest_broadcasted_block + 1 == msg.block.header.number {
             self.latest_broadcasted_block = msg.block.header.number;
@@ -800,7 +771,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(true)
     }
 
-    async fn process_new_block_message(&mut self, msg: &NewBlockMessage) -> Result<(), RLPxError> {
+    async fn process_new_block(&mut self, msg: &NewBlockMessage) -> Result<(), RLPxError> {
         let _ = self
             .blockchain
             .add_block(&msg.block)
@@ -816,6 +787,60 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(())
     }
 
+    async fn validate_batch_sealed(&mut self, msg: &BatchSealedMessage) -> Result<bool, RLPxError> {
+        #[cfg(feature = "l2")]
+        {
+            if self.store_rollup.contains_batch(&msg.batch_number).await?
+                || msg.batch_number != self.batches_broadcasted + 1
+            {
+                info!("Batch {} already sealed, ignoring it", msg.batch_number);
+                return Ok(false);
+            }
+            if msg.block_numbers.is_empty() {
+                return Ok(false);
+            }
+            // This is to not sent the same batch to the one who sent it
+            self.batches_broadcasted += 1;
+            Ok(true)
+        }
+        #[cfg(not(feature = "l2"))]
+        {
+            Err(RLPxError::InternalError(
+                "Batch sealed message is not supported in this build".to_string(),
+            ))
+        }
+    }
+
+    async fn process_batch_sealed(&mut self, msg: BatchSealedMessage) -> Result<(), RLPxError> {
+        #[cfg(feature = "l2")]
+        {
+            let first_block_number = msg.block_numbers.first().ok_or(RLPxError::BadRequest(
+                "No block numbers found in BatchSealed message".to_string(),
+            ))?;
+            let last_block_number = msg.block_numbers.last().ok_or(RLPxError::BadRequest(
+                "No block numbers found in BatchSealed message".to_string(),
+            ))?;
+            self.store_rollup
+                .seal_batch(
+                    msg.batch_number,
+                    *first_block_number,
+                    *last_block_number,
+                    msg.withdrawal_hashes,
+                )
+                .await?;
+            info!(
+                "Sealed batch {} with blocks from {} to {}",
+                msg.batch_number, first_block_number, last_block_number
+            );
+            Ok(())
+        }
+        #[cfg(not(feature = "l2"))]
+        {
+            Err(RLPxError::InternalError(
+                "Batch sealed message is not supported in this build".to_string(),
+            ))
+        }
+    }
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
         if let Some(eth) = self.negotiated_eth_capability.clone() {
