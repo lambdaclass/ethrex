@@ -20,7 +20,6 @@ use rand::rngs::OsRng;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
-    future::IntoFuture,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
@@ -159,8 +158,7 @@ pub async fn init_rpc_api(
         l2_opts.sponsor_private_key,
         #[cfg(feature = "l2")]
         rollup_store,
-    )
-    .into_future();
+    );
 
     tracker.spawn(rpc_api);
 }
