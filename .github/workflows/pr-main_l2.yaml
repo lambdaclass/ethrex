@@ -148,7 +148,8 @@ jobs:
         run: |
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1 &
+          docker logs --follow ethrex_l2
           killall ethrex_prover -s SIGINT
 
   state-diff-test:
