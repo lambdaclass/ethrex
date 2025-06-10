@@ -213,6 +213,9 @@ integration-test: rm-db-l2 rm-db-l1 build-prover# We create an empty .env file s
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	mkdir -p prover/zkvm/interface/sp1/out && touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
 	cd ../../; cargo test l2 --no-run --release
+ifeq ($(ethrex_L2_DOCKER_COMPOSE_PATH), ./docker-compose-l2-websigner.yaml)
+	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach web3signer
+endif
 	rm .env
 	touch .env
 	CI_ETHREX_WORKDIR=/usr/local/bin \
