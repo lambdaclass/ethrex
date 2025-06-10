@@ -338,10 +338,17 @@ impl Command {
 
                             // Apply all account updates to trie
                             let account_updates = state_diff.to_account_updates(&new_trie)?;
-                            let (new_state_root, state_updates, accounts_updates) = store
+                            let account_updates_list = store
                                 .apply_account_updates_from_trie_batch(new_trie, account_updates.values())
                                 .await
                                 .expect("Error applying account updates");
+
+                            let (new_state_root, state_updates, accounts_updates) =
+                                (
+                                    account_updates_list.state_trie_hash,
+                                    account_updates_list.state_updates,
+                                    account_updates_list.storage_updates
+                                );
 
                             let pseudo_update_batch = UpdateBatch {
                                 account_updates: state_updates,
@@ -350,7 +357,7 @@ impl Command {
                                 receipts: vec![],
                             };
 
-                            store.store_changes(pseudo_update_batch).await.expect("Error storing trie updates");
+                            store.store_block_updates(pseudo_update_batch).await.expect("Error storing trie updates");
 
                             new_trie = store.open_state_trie(new_state_root).expect("Error opening new state trie");
 
