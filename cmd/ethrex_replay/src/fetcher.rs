@@ -32,10 +32,14 @@ pub async fn get_blockdata(
         .header;
 
     println!("populating rpc db cache");
-    let mut witness = get_witness(rpc_url, block_number)
+    let witness = get_witness(rpc_url, block_number)
         .await
         .wrap_err("Failed to get execution witness")?;
-    witness.chain_config = chain_config;
+    if witness.chain_config != chain_config {
+        return Err(eyre::eyre!(
+            "Rpc endpoint returned a different chain config than the one set by --network"
+        ));
+    }
 
     let cache = Cache {
         blocks: vec![block],
@@ -69,10 +73,14 @@ pub async fn get_rangedata(
         .wrap_err("failed to fetch block")?
         .header;
 
-    let mut witness = get_witness_range(rpc_url, from, to)
+    let witness = get_witness_range(rpc_url, from, to)
         .await
         .wrap_err("Failed to get execution witness for range")?;
-    witness.chain_config = chain_config;
+    if witness.chain_config != chain_config {
+        return Err(eyre::eyre!(
+            "Rpc endpoint returned a different chain config than the one set by --network"
+        ));
+    }
 
     let cache = Cache {
         blocks,

@@ -15,12 +15,12 @@ use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
 use ethrex_common::types::MempoolTransaction;
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_common::types::{
     compute_receipts_root, validate_block_header, validate_cancun_header_fields,
     validate_prague_header_fields, validate_pre_cancun_header_fields, AccountUpdate, Block,
     BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
-use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
 use ethrex_common::{Address, TrieLogger, H256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{hash_address, hash_key, Store};
@@ -32,6 +32,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{ops::Div, time::Instant};
 use vm::StoreVmDatabase;
+
+#[cfg(feature = "c-kzg")]
+use ethrex_common::types::BlobsBundle;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -163,7 +166,7 @@ impl Blockchain {
             let mut vm = Evm::new_from_db(logger.clone());
 
             // Re-execute block with logger
-            let _ = vm.execute_block(block)?;
+            vm.execute_block(block)?;
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
 
@@ -192,9 +195,9 @@ impl Blockchain {
                 .iter()
             {
                 // Access the account from the state trie to record the nodes used to access it
-                let _ = trie.get(&hash_address(account)).map_err(|_e| {
+                trie.get(&hash_address(account)).map_err(|_e| {
                     ChainError::Custom("Failed to access account from trie".to_string())
-                });
+                })?;
                 // Get storage trie at before updates
                 if !keys.is_empty() {
                     if let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
@@ -220,12 +223,11 @@ impl Blockchain {
                 .map_err(|_e| ChainError::Custom("Failed to gather used bytecodes".to_string()))?
                 .iter()
             {
-                let lock = logger.store.lock().map_err(|_e| {
-                    ChainError::Custom("Failed to gather used bytecodes".to_string())
-                })?;
-                let code = lock
+                let code = self
+                    .storage
                     .get_account_code(*code_hash)
-                    .map_err(|_e| ChainError::Custom("Failed to get account code".to_string()))?;
+                    .map_err(|_e| ChainError::Custom("Failed to get account code".to_string()))?
+                    .ok_or(ChainError::Custom("Failed to get account code".to_string()))?;
                 codes.insert(*code_hash, code);
             }
 

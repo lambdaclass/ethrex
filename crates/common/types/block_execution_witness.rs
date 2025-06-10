@@ -12,7 +12,7 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::Address;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{Node, Trie};
+use ethrex_trie::{Node, Trie, EMPTY_TRIE_HASH};
 use hex::FromHexError;
 use keccak_hash::H256;
 use serde::{
@@ -111,16 +111,19 @@ impl ExecutionWitnessResult {
         let mut storage_tries = HashMap::new();
         for (addr, nodes) in storage_trie_map {
             let hashed_address = hash_address(addr);
-            let Some(encoded_state) = state_trie
+            let encoded_state = state_trie
                 .get(&hashed_address)
-                .expect("Failed to get from trie")
-            else {
-                // TODO re-explore this. When testing with hoodi this happened block 521990 an this continue fixed it
-                continue;
-            };
+                .expect("Failed to get from trie");
 
-            let state = AccountState::decode(&encoded_state)
-                .expect("Failed to get state from encoded state");
+            let state = encoded_state
+                .map(|encoded| AccountState::decode(&encoded))
+                .unwrap_or_else(|| Ok(AccountState::default()))
+                .expect("failed to get account state");
+
+            if state.storage_root == *EMPTY_TRIE_HASH {
+                storage_tries.insert(*addr, Trie::from_nodes(None, nodes).unwrap());
+                continue;
+            }
 
             let mut initial_node = None;
 
