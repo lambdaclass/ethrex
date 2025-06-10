@@ -282,7 +282,7 @@ impl PeerHandler {
                 .find_map(|block| validate_block_body(block).err())
             {
                 warn!("[SYNCING] Invalid block body error {e}, discarding peer {peer_id} and retrying...");
-                self.remove_peer(peer_id).await;
+                self.record_peer_critical_failure(peer_id).await;
                 continue; // Retry on validation failure
             }
 
