@@ -99,6 +99,7 @@ contract PrintTest {
         print(addr);
         print(myBytes); // Notice this won't print the string, just the bytes.
         print(string(abi.encodePacked(myBytes))); // But this will
+
         // Some possible combinations between types
         print(unicode_str, ascii_str);
         print("This is fifty thousand:", integer);
