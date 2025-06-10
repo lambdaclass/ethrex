@@ -122,7 +122,7 @@ impl BlockFetcher {
     }
 
     pub async fn main_logic(&mut self) -> Result<(), BlockFetcherError> {
-        if let SequencerStatus::Sequencing = *self.sequencer_state.clone().lock().await {
+        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
             return Ok(());
         }
         self.fetch().await

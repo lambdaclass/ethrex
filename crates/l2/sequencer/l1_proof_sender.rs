@@ -166,7 +166,7 @@ impl GenServer for L1ProofSender {
         state: &mut Self::State,
     ) -> CastResponse {
         // Right now we only have the Send message, so we ignore the message
-        if let SequencerStatus::Sequencing = *state.sequencer_state.lock().await {
+        if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
             let _ = verify_and_send_proof(state)
                 .await
                 .inspect_err(|err| error!("L1 Proof Sender: {err}"));

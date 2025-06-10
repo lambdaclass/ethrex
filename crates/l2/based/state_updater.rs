@@ -114,7 +114,7 @@ impl StateUpdater {
         )
         .await?;
 
-        let new_state = if lead_sequencer == self.sequencer_address {
+        let new_status = if lead_sequencer == self.sequencer_address {
             if node_is_up_to_date {
                 SequencerStatus::Sequencing
             } else {
@@ -125,9 +125,9 @@ impl StateUpdater {
             SequencerStatus::Following
         };
 
-        let mut current_state = sequencer_state.lock().await;
+        let current_state = sequencer_state.status().await;
 
-        match (current_state.clone(), new_state.clone()) {
+        match (current_state, new_status.clone()) {
             (SequencerStatus::Sequencing, SequencerStatus::Sequencing)
             | (SequencerStatus::Following, SequencerStatus::Following) => {}
             (SequencerStatus::Sequencing, SequencerStatus::Following) => {
@@ -139,7 +139,7 @@ impl StateUpdater {
             }
         };
 
-        *current_state = new_state;
+        sequencer_state.new_status(new_status).await;
 
         Ok(())
     }

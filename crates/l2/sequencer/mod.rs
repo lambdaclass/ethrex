@@ -2,7 +2,11 @@ pub mod blobs_bundle_cache;
 use std::sync::Arc;
 
 use crate::{
-    based::{block_fetcher, sequencer_state::SequencerStatus, state_updater},
+    based::{
+        block_fetcher,
+        sequencer_state::{SequencerState, SequencerStatus},
+        state_updater,
+    },
     utils::prover::proving_systems::ProverType,
     SequencerConfig,
 };
@@ -16,7 +20,7 @@ use l1_committer::L1Committer;
 use l1_proof_sender::L1ProofSender;
 use l1_watcher::L1Watcher;
 use proof_coordinator::ProofCoordinator;
-use tokio::{sync::Mutex, task::JoinSet};
+use tokio::task::JoinSet;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
 
@@ -43,15 +47,15 @@ pub async fn start_l2(
     cfg: SequencerConfig,
     #[cfg(feature = "metrics")] l2_url: String,
 ) {
-    let initial_state = if cfg.based.based {
+    let initial_status = if cfg.based.based {
         SequencerStatus::default()
     } else {
         SequencerStatus::Sequencing
     };
 
-    info!("Starting Sequencer in {initial_state} mode");
+    info!("Starting Sequencer in {initial_status} mode");
 
-    let shared_state = Arc::new(Mutex::new(initial_state));
+    let shared_state = SequencerState::from(initial_status);
 
     let execution_cache = Arc::new(ExecutionCache::default());
     let blobs_bundle_cache = Arc::new(BlobsBundleCache::default());

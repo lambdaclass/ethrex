@@ -92,7 +92,7 @@ impl BlockProducer {
         execution_cache: Arc<ExecutionCache>,
         sequencer_state: SequencerState,
     ) -> Result<(), BlockProducerError> {
-        if let SequencerStatus::Following = *sequencer_state.lock().await {
+        if let SequencerStatus::Following = sequencer_state.status().await {
             return Ok(());
         }
         self.produce(store, blockchain, execution_cache).await

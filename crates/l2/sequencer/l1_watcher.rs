@@ -123,7 +123,7 @@ impl GenServer for L1Watcher {
     ) -> CastResponse {
         match message {
             Self::InMsg::Watch => {
-                if let SequencerStatus::Sequencing = *state.sequencer_state.clone().lock().await {
+                if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
                     watch(state).await;
                 }
                 let check_interval = random_duration(state.check_interval);

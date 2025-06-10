@@ -165,7 +165,7 @@ impl GenServer for L1Committer {
         state: &mut Self::State,
     ) -> CastResponse {
         // Right now we only have the Commit message, so we ignore the message
-        if let SequencerStatus::Sequencing = *state.sequencer_state.clone().lock().await {
+        if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
             let _ = commit_next_batch_to_l1(state)
                 .await
                 .inspect_err(|err| error!("L1 Committer Error: {err}"));
