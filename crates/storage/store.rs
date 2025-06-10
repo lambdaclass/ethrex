@@ -397,13 +397,14 @@ impl Store {
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
                 }
-                let (storage_hash, storage_updates) = storage_trie.hash_prepare_batch();
+                let (storage_hash, storage_updates) =
+                    storage_trie.collect_changes_since_last_hash();
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
             }
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        let (state_trie_hash, state_updates) = state_trie.hash_prepare_batch();
+        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
         Ok(AccountUpdatesList {
             state_trie_hash,

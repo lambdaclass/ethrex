@@ -147,7 +147,12 @@ impl Trie {
         }
     }
 
-    pub fn hash_prepare_batch(&mut self) -> (H256, Vec<TrieNode>) {
+    /// Returns a list of changes in a TrieNode format since last root hash processed.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing the hash and the list of changes.
+    pub fn collect_changes_since_last_hash(&mut self) -> (H256, Vec<TrieNode>) {
         let updates = self.commit_without_storing();
         let ret_hash = self.hash_no_commit();
         (ret_hash, updates)
