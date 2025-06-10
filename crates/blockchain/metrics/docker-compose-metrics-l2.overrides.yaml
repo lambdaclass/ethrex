@@ -10,3 +10,6 @@ services:
     volumes:
       - ../metrics/provisioning/grafana_provisioning/dashboards/l2_dashboards:/etc/grafana/provisioning/dashboards/l2_dashboards
       - ../metrics/provisioning/grafana_provisioning/dashboards/dashboard_config_l2.yaml:/etc/grafana/provisioning/dashboards/dashboard.yaml
+      - ../metrics/provisioning/grafana_provisioning/alerting:/etc/grafana/provisioning/alerting
+    environment:
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3802}
