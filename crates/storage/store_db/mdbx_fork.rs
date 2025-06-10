@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 use ethrex_trie::NodeHash;
 use reth_db::table::DupSort;
 use std::cell::OnceCell;

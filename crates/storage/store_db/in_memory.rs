@@ -81,7 +81,7 @@ impl Store {
         Self::default()
     }
     fn inner(&self) -> MutexGuard<'_, StoreInner> {
-        self.0.lock().unwrap()
+        self.0.lock().expect("should lock")
     }
 }
 
@@ -296,7 +296,7 @@ impl StoreEngine for Store {
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        Ok(self.inner().chain_data.chain_config.unwrap())
+        Ok(self.inner().chain_data.chain_config.expect("should exist"))
     }
 
     async fn update_earliest_block_number(
