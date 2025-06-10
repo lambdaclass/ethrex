@@ -6,7 +6,7 @@ use std::{
 
 use ethrex_common::{
     types::{AccountUpdate, Blob, BlockNumber},
-    H256,
+    Bytes, H256,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -276,7 +276,10 @@ impl StoreEngineRollup for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<Vec<AccountUpdate>>, StoreError> {
-        self.read::<AccountUpdatesByBlockNumber>(block_number).await
+        let serialized = self
+            .read::<AccountUpdatesByBlockNumber>(block_number)
+            .await?;
+        bincode::deserialize(&serialized)
     }
 
     async fn store_account_updates_by_block_number(
@@ -284,7 +287,9 @@ impl StoreEngineRollup for Store {
         block_number: BlockNumber,
         account_updates: Vec<AccountUpdate>,
     ) -> Result<(), StoreError> {
-        self.write::<AccountUpdatesByBlockNumber>(block_number, account_updates.into())
+        // add encoding to bytes
+        let serialized = bincode::serialize(&account_updates)?;
+        self.write::<AccountUpdatesByBlockNumber>(block_number, serialized.into())
             .await
     }
 }
@@ -330,6 +335,6 @@ table!(
 );
 
 table!(
-    /// Account updates by block number
-    ( AccountUpdatesByBlockNumber ) BlockNumber => Rlp<Vec<AccountUpdate>>
+    /// List of serialized account updates by block number
+    ( AccountUpdatesByBlockNumber ) BlockNumber => Bytes
 );
