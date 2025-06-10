@@ -47,7 +47,7 @@ pub struct MDBXFork {
 }
 
 impl std::fmt::Debug for MDBXFork {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+    fn fmt(&self, _f: &mut Formatter<'_>) -> Result<(), Error> {
         todo!()
     }
 }
@@ -617,15 +617,9 @@ impl StoreEngine for MDBXFork {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        let tx = self.env.tx_mut().unwrap();
-        tokio::task::spawn_blocking(move || {
-            let encoded = receipt.encode_to_vec();
-            let key = (block_hash, index).encode_to_vec();
-            tx.put::<Receipts>(key, encoded).unwrap();
-            tx.commit().unwrap();
-        })
-        .await
-        .unwrap();
+        let encoded = receipt.encode_to_vec();
+        let key = (block_hash, index).encode_to_vec();
+        self.write::<Receipts>(key, encoded).await?;
         Ok(())
     }
 
@@ -634,7 +628,6 @@ impl StoreEngine for MDBXFork {
         block_number: u64,
         receipt_index: u64,
     ) -> Result<Option<Receipt>, StoreError> {
-        let tx = self.env.tx().unwrap();
         let Some(key) = self.read::<CanonicalBlockHashes>(block_number).await? else {
             return Ok(None);
         };
@@ -993,7 +986,6 @@ impl StoreEngine for MDBXFork {
     }
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
-        let db = self.env.clone();
         let mut encoded_receipts: Vec<Vec<u8>> = vec![];
         {
             let mut receipt_index = 0_u64;
