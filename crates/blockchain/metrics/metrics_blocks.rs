@@ -58,7 +58,7 @@ impl MetricsBlocks {
         Ok(())
     }
 
-    pub fn set_blocks_per_second(&self, blocks_per_second: f64) {
+    pub fn set_latest_blocks_per_second(&self, blocks_per_second: f64) {
         self.blocks_per_second.set(blocks_per_second);
     }
 

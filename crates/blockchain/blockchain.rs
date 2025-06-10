@@ -21,6 +21,7 @@ use ethrex_common::types::{
     BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_common::{Address, H256};
+use ethrex_metrics::metrics;
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
 use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
@@ -31,8 +32,7 @@ use std::{ops::Div, time::Instant};
 
 use vm::StoreVmDatabase;
 
-#[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
+metrics!(use ethrex_metrics::metrics_blocks::METRICS_BLOCKS);
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
@@ -173,8 +173,10 @@ impl Blockchain {
             let storage_fraction = (storage_time * 100_f64 / interval).round() as u64;
             let execution_time_per_gigagas = (execution_time / as_gigas).round() as u64;
             let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
-            metrics!(METRICS_BLOCKS.set_latest_gigagas(throughput));
-            metrics!(METRICS_BLOCKS.set_blocks_per_second(interval));
+            metrics!(
+                METRICS_BLOCKS.set_latest_gigagas(throughput);
+                METRICS_BLOCKS.set_latest_blocks_per_second(interval)
+            );
             let base_log =
                 format!(
                 "[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {:.0} ms. #Txs: {}.",
@@ -305,18 +307,17 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?;
 
-        let elapsed_total = interval.elapsed().as_millis();
+        let elapsed_seconds = interval.elapsed().as_millis() / 1000;
         let mut throughput = 0.0;
-        if elapsed_total != 0 && total_gas_used != 0 {
+        if elapsed_seconds != 0 && total_gas_used != 0 {
             let as_gigas = (total_gas_used as f64).div(10_f64.powf(9_f64));
-            throughput = (as_gigas) / (elapsed_total as f64) * 1000_f64;
+            throughput = (as_gigas) / (elapsed_seconds as f64);
         }
 
-        let elapsed_seconds = elapsed_total / 1000;
         metrics!(
-            METRICS_BLOCKS.set_blocks_per_second((blocks_len as f64) / (elapsed_seconds as f64))
+            METRICS_BLOCKS.set_latest_blocks_per_second((blocks_len as f64) / (elapsed_seconds as f64));
+            METRICS_BLOCKS.set_latest_gigagas(throughput);
         );
-        metrics!(METRICS_BLOCKS.set_latest_gigagas(throughput));
 
         info!(
             "[METRICS] Executed and stored: Range: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
