@@ -25,7 +25,7 @@ impl REVM {
         only_top_call: bool,
         with_log: bool,
     ) -> Result<CallTrace, EvmError> {
-        let spec_id: SpecId = spec_id(&state.chain_config()?, block_header.timestamp);
+        let spec_id: SpecId = spec_id(&state.chain_config()?, block_header.timestamp,block_header.number);
         let block_env = block_env(block_header, spec_id);
         let tx_env = tx_env(tx, tx.sender());
         // Trace the transaction
@@ -40,7 +40,7 @@ impl REVM {
         state: &mut EvmState,
         stop_index: Option<usize>,
     ) -> Result<(), EvmError> {
-        let spec_id: SpecId = spec_id(&state.chain_config()?, block.header.timestamp);
+        let spec_id: SpecId = spec_id(&state.chain_config()?, block.header.timestamp,block.header.number);
         let block_env = block_env(&block.header, spec_id);
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {

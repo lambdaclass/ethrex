@@ -1,10 +1,10 @@
-use ethrex_common::types::{ChainConfig, Fork};
+use ethrex_common::types::{BlockNumber, ChainConfig, Fork};
 pub use revm::primitives::SpecId;
 
 /// Returns the spec id according to the block timestamp and the stored chain config
 /// WARNING: Assumes at least Merge fork is active
-pub fn spec_id(chain_config: &ChainConfig, block_timestamp: u64) -> SpecId {
-    fork_to_spec_id(chain_config.get_fork(block_timestamp))
+pub fn spec_id(chain_config: &ChainConfig, block_timestamp: u64,block_number: BlockNumber) -> SpecId {
+    fork_to_spec_id(chain_config.get_fork(block_timestamp,block_number))
 }
 
 pub fn fork_to_spec_id(fork: Fork) -> SpecId {

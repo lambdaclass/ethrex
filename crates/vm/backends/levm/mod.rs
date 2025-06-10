@@ -415,7 +415,7 @@ impl LEVM {
     pub fn prepare_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let block_header = &block.header;
-        let fork = chain_config.fork(block_header.timestamp);
+        let fork = chain_config.fork(block_header.timestamp,block_header.number);
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             #[cfg(not(feature = "l2"))]
@@ -495,7 +495,7 @@ pub fn extract_all_requests_levm(
     header: &BlockHeader,
 ) -> Result<Vec<Requests>, EvmError> {
     let chain_config = db.store.get_chain_config()?;
-    let fork = chain_config.fork(header.timestamp);
+    let fork = chain_config.fork(header.timestamp,header.number);
 
     if fork < Fork::Prague {
         return Ok(Default::default());

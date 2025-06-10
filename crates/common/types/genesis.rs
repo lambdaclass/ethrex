@@ -209,19 +209,71 @@ impl ChainConfig {
         self.istanbul_block.is_some_and(|num| num <= block_number)
     }
 
+    pub fn is_byzantium_activated(&self,block_number: BlockNumber) -> bool {
+        self.byzantium_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_constantinople_activated(&self,block_number: BlockNumber) -> bool {
+        self.constantinople_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_petersburg_activated(&self,block_number: BlockNumber) -> bool {
+        self.petersburg_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_muir_glacier_activated(&self,block_number: BlockNumber) -> bool {
+        self.muir_glacier_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_berlin_activated(&self,block_number: BlockNumber) -> bool {
+        self.berlin_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_london_activated(&self,block_number: BlockNumber) -> bool {
+        self.london_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_arrow_glacier_activated(&self,block_number: BlockNumber) -> bool {
+        self.arrow_glacier_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_gray_glacier_activated(&self,block_number: BlockNumber) -> bool {
+        self.gray_glacier_block.is_some_and(|num| num <= block_number)
+    }
+
     pub fn is_eip155_activated(&self, block_number: BlockNumber) -> bool {
         self.eip155_block.is_some_and(|num| num <= block_number)
     }
 
-    pub fn get_fork(&self, block_timestamp: u64) -> Fork {
+    pub fn get_fork(&self, block_timestamp: u64,block_number: BlockNumber) -> Fork {
         if self.is_prague_activated(block_timestamp) {
             Fork::Prague
         } else if self.is_cancun_activated(block_timestamp) {
             Fork::Cancun
         } else if self.is_shanghai_activated(block_timestamp) {
             Fork::Shanghai
-        } else {
+        } else if self.terminal_total_difficulty_passed{ // If the terminal total difficulty flase then we are pre-merge
             Fork::Paris
+        } else if self.is_gray_glacier_activated(block_number){
+            Fork::GrayGlacier
+        } else if self.is_arrow_glacier_activated(block_number){
+            Fork::ArrowGlacier
+        } else if self.is_london_activated(block_number){
+            Fork::London
+        } else if self.is_berlin_activated(block_number){
+            Fork::Berlin
+        } else if self.is_muir_glacier_activated(block_number){
+            Fork::MuirGlacier
+        } else if self.is_istanbul_activated(block_number){
+            Fork::Istanbul
+        } else if self.is_petersburg_activated(block_number){
+            Fork::Petersburg
+        } else if self.is_constantinople_activated(block_number){
+            Fork::Constantinople
+        } else if self.is_byzantium_activated(block_number){
+            Fork::Byzantium
+        } else { // Missing Supurious Dragon DaoFork HomeStead
+            Fork::FrontierThawing
         }
     }
 
@@ -235,8 +287,8 @@ impl ChainConfig {
         }
     }
 
-    pub fn fork(&self, block_timestamp: u64) -> Fork {
-        self.get_fork(block_timestamp)
+    pub fn fork(&self, block_timestamp: u64,block_number: BlockNumber) -> Fork {
+        self.get_fork(block_timestamp,block_number)
     }
 
     pub fn gather_forks(&self, genesis_header: BlockHeader) -> (Vec<u64>, Vec<u64>) {

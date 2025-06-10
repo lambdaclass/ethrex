@@ -7,7 +7,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{error::ChainError, fork_choice::apply_fork_choice};
-use ethrex_common::types::Genesis;
+use ethrex_common::types::{Fork, Genesis};
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -355,6 +355,17 @@ pub async fn import_blocks(
     genesis: Genesis,
     evm: EvmEngine,
 ) -> Result<(), ChainError> {
+    // Check if the genesis.json file received is post merge or not
+    if !genesis.config.terminal_total_difficulty_passed{
+        let fork = genesis.config.fork(genesis.timestamp, genesis.get_block().header.number);
+        match fork { // If the fork is post-merge do nothing if it's pre merge return an error
+            Fork::Prague => {},
+            Fork::Cancun => {},
+            Fork::Shanghai => {},
+            Fork::Paris => {},
+            f => return Err(ChainError::Custom(format!("Fork {:?} is not supported. Only post-merge networks are supported",f)))
+        }
+    }
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
     let blockchain = init_blockchain(evm, store.clone());
