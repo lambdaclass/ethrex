@@ -58,6 +58,8 @@ pub enum MempoolError {
     BlobsBundleError(#[from] BlobsBundleError),
     #[error("Transaction max init code size exceeded")]
     TxMaxInitCodeSizeError,
+    #[error("Transaction max data size exceeded")]
+    TxMaxDataSizeError,
     #[error("Transaction gas limit exceeded")]
     TxGasLimitExceededError,
     #[error("Transaction priority fee above gas fee")]

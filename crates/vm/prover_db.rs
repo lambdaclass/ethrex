@@ -2,7 +2,7 @@ use bytes::Bytes;
 use ethereum_types::H160;
 use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountInfo, AccountUpdate, ChainConfig},
+    types::{AccountInfo, AccountUpdate, BlockHeader, ChainConfig},
     Address, H256, U256,
 };
 use ethrex_trie::{NodeRLP, Trie, TrieError};
@@ -25,7 +25,7 @@ pub struct ProverDB {
     /// indexed by account address and storage key
     pub storage: HashMap<Address, HashMap<H256, U256>>,
     /// indexed by block number
-    pub block_hashes: HashMap<u64, H256>,
+    pub block_headers: HashMap<u64, BlockHeader>,
     /// stored chain config
     pub chain_config: ChainConfig,
     /// Encoded nodes to reconstruct a state trie, but only including relevant data ("pruned trie").
@@ -104,6 +104,55 @@ impl ProverDB {
             }
         }
     }
+
+    /// Returns Some(block_number) if the hash for block_number is not the parent
+    /// hash of block_number + 1. None if there's no such hash.
+    ///
+    /// Keep in mind that the last block hash (which is a batch's parent hash)
+    /// can't be validated against the next header, because it has no successor.
+    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, ProverDBError> {
+        // Enforces there's at least one block header, so windows() call doesn't panic.
+        if self.block_headers.is_empty() {
+            return Err(ProverDBError::NoBlockHeaders);
+        };
+
+        // Sort in ascending order
+        let mut block_headers: Vec<_> = self.block_headers.iter().collect();
+        block_headers.sort_by_key(|(number, _)| *number);
+
+        // Validate hashes
+        for window in block_headers.windows(2) {
+            let (Some((number, header)), Some((next_number, next_header))) =
+                (window.first().cloned(), window.get(1).cloned())
+            else {
+                // windows() returns an empty iterator in this case.
+                return Err(ProverDBError::Unreachable(
+                    "block header window len is < 2".to_string(),
+                ));
+            };
+            if *next_number != *number + 1 {
+                return Err(ProverDBError::NoncontiguousBlockHeaders);
+            }
+            if next_header.parent_hash != header.hash() {
+                return Ok(Some(*number));
+            }
+        }
+
+        Ok(None)
+    }
+
+    pub fn get_last_block_header(&self) -> Result<&BlockHeader, ProverDBError> {
+        let latest_block_header = self
+            .block_headers
+            .keys()
+            .max()
+            .ok_or(ProverDBError::NoBlockHeaders)?;
+        self.block_headers
+            .get(latest_block_header)
+            .ok_or(ProverDBError::Unreachable(
+                "empty block headers after retreiving non-empty keys".to_string(),
+            ))
+    }
 }
 
 impl VmDatabase for ProverDB {
@@ -119,9 +168,9 @@ impl VmDatabase for ProverDB {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
-        self.block_hashes
+        self.block_headers
             .get(&block_number)
-            .cloned()
+            .map(|header| header.hash())
             .ok_or_else(|| {
                 EvmError::DB(format!(
                     "Block hash not found for block number {block_number}"

@@ -28,7 +28,7 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(address,address,address,address,address,address,bytes32,bytes32,address[])";
+    "initialize(bool,address,address,address,address,address,address,bytes32,bytes32,address[])";
 
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
@@ -398,6 +398,7 @@ async fn initialize_contracts(
 
     let initialize_tx_hash = {
         let calldata_values = vec![
+            Value::Bool(opts.validium),
             Value::Address(deployer_address),
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),

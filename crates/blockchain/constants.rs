@@ -31,6 +31,9 @@ pub const MAX_CODE_SIZE: usize = 0x6000;
 // Max contract creation bytecode size
 pub const MAX_INITCODE_SIZE: usize = 2 * MAX_CODE_SIZE;
 
+// Max non-contract creation bytecode size
+pub const MAX_TRANSACTION_DATA_SIZE: usize = 4 * 32 * 1024; // 128 Kb
+
 // === EIP-2028 constants ===
 
 // Gas cost for each non zero byte on transaction data

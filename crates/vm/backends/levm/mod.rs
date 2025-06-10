@@ -21,7 +21,6 @@ use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
 use ethrex_levm::tracing::LevmCallTracer;
-use ethrex_levm::utils::restore_cache_state;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
@@ -165,11 +164,8 @@ impl LEVM {
         Ok((report_result, call_frame_backup))
     }
 
-    pub fn restore_cache_state(
-        db: &mut GeneralizedDatabase,
-        call_frame_backup: CallFrameBackup,
-    ) -> Result<(), EvmError> {
-        restore_cache_state(db, call_frame_backup).map_err(VMError::from)?;
+    pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
+        db.undo_last_transaction()?;
         Ok(())
     }
 
