@@ -246,35 +246,36 @@ impl KademliaTable {
         filter: &'a dyn Fn(&'a PeerData) -> bool,
     ) -> Option<&'a PeerData> {
         let filtered_peers: Vec<&PeerData> = self.filter_peers(filter).collect();
-        
+
         if filtered_peers.is_empty() {
             return None;
         }
-        
+
         // Simple weighted selection: convert scores to weights
         // Score -5 -> weight 1, Score 0 -> weight 6, Score 2 -> weight 8, etc.
-        let weights: Vec<u32> = filtered_peers.iter()
-            .map(|peer| (peer.score + 6).max(1) as u32)  // Ensure positive weights
+        let weights: Vec<u32> = filtered_peers
+            .iter()
+            .map(|peer| (peer.score + 6).max(1) as u32)
             .collect();
-        
+
         let total_weight: u32 = weights.iter().sum();
         if total_weight == 0 {
             // Fallback to random selection if somehow all weights are 0
             let peer_idx = random::<usize>() % filtered_peers.len();
             return filtered_peers.get(peer_idx).cloned();
         }
-        
+
         // Weighted random selection using cumulative weights
         let random_value = random::<u32>() % total_weight;
         let mut cumulative_weight = 0u32;
-        
+
         for (i, &weight) in weights.iter().enumerate() {
             cumulative_weight += weight;
             if random_value < cumulative_weight {
                 return filtered_peers.get(i).cloned();
             }
         }
-        
+
         // Fallback (should not reach here due to the total_weight check above)
         filtered_peers.last().cloned()
     }
@@ -356,12 +357,14 @@ impl KademliaTable {
 
     /// Penalize a peer for failed response or timeout
     pub fn penalize_peer(&mut self, node_id: H256) {
-        self.penalize_peer_with_critical(node_id, false);
+        if let Some(peer) = self.get_by_node_id_mut(node_id) {
+            peer.penalize_peer(false);
+        }
     }
 
-    pub fn penalize_peer_with_critical(&mut self, node_id: H256, critical: bool) {
+    pub fn critically_penalize_peer(&mut self, node_id: H256) {
         if let Some(peer) = self.get_by_node_id_mut(node_id) {
-            peer.penalize_peer(critical);
+            peer.penalize_peer(true);
         }
     }
 
@@ -436,7 +439,7 @@ impl PeerData {
             supported_capabilities: vec![],
             is_connected: false,
             is_connection_inbound: false,
-            score: 0,  // Start neutral
+            score: 0,
         }
     }
 
@@ -461,8 +464,8 @@ impl PeerData {
     pub fn reward_peer(&mut self) {
         self.score += 1;
     }
-    
-    /// Simple scoring: -1 for failure
+
+    /// Simple scoring: -5 for critical failure, -1 for non-critical
     pub fn penalize_peer(&mut self, critical: bool) {
         if critical {
             self.score -= 5;
@@ -700,62 +703,60 @@ mod tests {
     #[test]
     fn test_peer_scoring_system() {
         let mut table = get_test_table();
-        
+
         // Initialization and basic scoring operations
         let public_key = public_key_from_signing_key(&SigningKey::random(&mut OsRng));
         let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0, 0, public_key);
         table.insert_node(node);
         let first_node_id = node_id(&public_key);
-        
+
         // New peers start with score 0
         assert_eq!(table.get_by_node_id(first_node_id).unwrap().score, 0);
-        
+
         // Test rewards and penalties
         table.reward_peer(first_node_id);
         table.reward_peer(first_node_id);
         assert_eq!(table.get_by_node_id(first_node_id).unwrap().score, 2);
-        
+
         table.penalize_peer(first_node_id);
         assert_eq!(table.get_by_node_id(first_node_id).unwrap().score, 1);
-        
+
         // Edge cases and weight calculation
         // Very negative score
-        for _ in 0..15 {
-            table.penalize_peer(first_node_id);
+        for _ in 0..3 {
+            table.critically_penalize_peer(first_node_id);
         }
         assert_eq!(table.get_by_node_id(first_node_id).unwrap().score, -14);
-        let weight = (table.get_by_node_id(first_node_id).unwrap().score + 6).max(1);
-        assert_eq!(weight, 1); // Minimum weight
-        
+
         // Very positive score
         for _ in 0..20 {
             table.reward_peer(first_node_id);
         }
         assert_eq!(table.get_by_node_id(first_node_id).unwrap().score, 6);
-        let weight = (table.get_by_node_id(first_node_id).unwrap().score + 6).max(1);
-        assert_eq!(weight, 12);
-        
+
         // Weighted selection with multiple peers
-        let peer_keys: Vec<_> = (0..3).map(|_| public_key_from_signing_key(&SigningKey::random(&mut OsRng))).collect();
+        let peer_keys: Vec<_> = (0..3)
+            .map(|_| public_key_from_signing_key(&SigningKey::random(&mut OsRng)))
+            .collect();
         let mut peer_ids = Vec::new();
-        
+
         for key in &peer_keys {
             let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0, 0, *key);
             table.insert_node(node);
             peer_ids.push(node_id(key));
         }
-        
+
         // Set different scores: -2, 0, 3
         table.penalize_peer(peer_ids[0]);
         table.penalize_peer(peer_ids[0]);
         table.reward_peer(peer_ids[2]);
         table.reward_peer(peer_ids[2]);
         table.reward_peer(peer_ids[2]);
-        
+
         assert_eq!(table.get_by_node_id(peer_ids[0]).unwrap().score, -2);
         assert_eq!(table.get_by_node_id(peer_ids[1]).unwrap().score, 0);
         assert_eq!(table.get_by_node_id(peer_ids[2]).unwrap().score, 3);
-        
+
         // Test weighted selection distribution
         let mut selection_counts = [0; 3];
         for _ in 0..300 {
@@ -768,7 +769,7 @@ mod tests {
                 }
             }
         }
-        
+
         // Higher scoring peers should be selected more often
         assert!(selection_counts[0] < selection_counts[1]); // -2 < 0
         assert!(selection_counts[1] < selection_counts[2]); // 0 < 3
@@ -778,7 +779,7 @@ mod tests {
         // Non-existent peer should not panic
         table.reward_peer(H256::random());
         table.penalize_peer(H256::random());
-        
+
         // Empty table should return None
         let empty_table = get_test_table();
         assert!(empty_table.get_peer_with_score_filter(&|_| true).is_none());

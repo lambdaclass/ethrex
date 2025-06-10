@@ -84,7 +84,7 @@ impl PeerHandler {
     /// This is used when the peer returns invalid data or is otherwise unreliable
     async fn record_peer_critical_failure(&self, peer_id: H256) {
         if let Ok(mut table) = self.peer_table.try_lock() {
-            table.penalize_peer_with_critical(peer_id, true);
+            table.critically_penalize_peer(peer_id);
         }
     }
 
@@ -159,7 +159,9 @@ impl PeerHandler {
                     self.record_peer_success(peer_id).await;
                     return Some(block_headers);
                 } else {
-                    warn!("[SYNCING] Received invalid headers from peer, penalizing peer {peer_id}");
+                    warn!(
+                        "[SYNCING] Received invalid headers from peer, penalizing peer {peer_id}"
+                    );
                     self.record_peer_critical_failure(peer_id).await;
                 }
             }
