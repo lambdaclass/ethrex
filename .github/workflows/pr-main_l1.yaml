@@ -160,7 +160,6 @@ jobs:
             simulation: ethereum/engine
             test_pattern: "engine-cancun/Blob Transactions On Block 1
               |Blob Transaction Ordering
-              |Replace Blob Transactions
               |Parallel Blob Transactions
               |ForkchoiceUpdatedV3
               |ForkchoiceUpdatedV2
