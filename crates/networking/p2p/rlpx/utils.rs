@@ -1,10 +1,11 @@
 use crate::types::Node;
-use ethrex_common::{H256, H512};
+use ethrex_common::{Address, H256, H512};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use k256::{
     elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
     EncodedPoint, PublicKey, SecretKey,
 };
+use secp256k1::{ecdsa::RecoveryId, Message as SignedMessage};
 use sha3::{Digest, Keccak256};
 use snap::raw::{max_compress_len, Decoder as SnappyDecoder, Encoder as SnappyEncoder};
 use tracing::{debug, error, warn};
@@ -81,6 +82,23 @@ pub(crate) fn log_peer_error(node: &Node, text: &str) {
 }
 pub(crate) fn log_peer_warn(node: &Node, text: &str) {
     warn!("[{0}]: {1}", node, text)
+}
+
+pub fn get_pub_key(recovery_id: [u8; 4], signature: &[u8; 64], payload: [u8; 32]) -> Address {
+    let recovery_id: i32 = i32::from_be_bytes(recovery_id);
+    let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
+        signature,
+        RecoveryId::from_i32(recovery_id).unwrap(), // cannot fail
+    )
+    .unwrap();
+
+    // Recover public key
+    let public = secp256k1::SECP256K1
+        .recover_ecdsa(&SignedMessage::from_digest(payload), &signature)
+        .unwrap();
+    // Hash public key to obtain address
+    let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
+    Address::from_slice(&hash[12..])
 }
 
 #[cfg(test)]

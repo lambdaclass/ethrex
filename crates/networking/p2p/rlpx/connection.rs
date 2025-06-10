@@ -1,3 +1,6 @@
+#[cfg(feature = "l2")]
+use crate::rlpx::based::get_hash_batch_sealed;
+use crate::rlpx::utils::get_pub_key;
 use crate::{
     kademlia::PeerChannels,
     rlpx::{
@@ -37,8 +40,7 @@ use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use lazy_static::lazy_static;
 use rand::random;
 use secp256k1::Message as SignedMessage;
-use secp256k1::{ecdsa::RecoveryId, SecretKey as SigningKeySecp256k1};
-use sha3::{Digest, Keccak256};
+use secp256k1::SecretKey as SigningKeySecp256k1;
 use std::{collections::HashSet, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -557,23 +559,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 ));
             };
 
-            let block_numbers_bytes: Vec<u8> = block_numbers
-                .iter()
-                .flat_map(|num| num.to_be_bytes().to_vec())
-                .collect();
-
-            let withdrawal_bytes: Vec<u8> = withdrawal_hashes
-                .iter()
-                .flat_map(|hash| hash.as_bytes().to_vec())
-                .collect();
-
-            let mut hasher = Keccak256::new();
-            hasher.update(next_batch_to_send.to_be_bytes());
-            hasher.update(&block_numbers_bytes);
-            hasher.update(&withdrawal_bytes);
-            let next_batch_hash = hasher.finalize();
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&next_batch_hash);
+            let hash =
+                get_hash_batch_sealed(next_batch_to_send, &block_numbers, &withdrawal_hashes);
 
             let (recovery_id, signature) = secp256k1::SECP256K1
                 .sign_ecdsa_recoverable(&SignedMessage::from_digest(hash), &secret_key)
@@ -774,23 +761,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
         let block_hash = msg.block.hash();
 
-        let recovery_id: i32 = i32::from_be_bytes(msg.recovery_id);
-        let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
+        let recovered_lead_sequencer = get_pub_key(
+            msg.recovery_id,
             &msg.signature,
-            RecoveryId::from_i32(recovery_id).unwrap(), // cannot fail
-        )
-        .unwrap();
-
-        // Recover public key
-        let public = secp256k1::SECP256K1
-            .recover_ecdsa(
-                &SignedMessage::from_digest(block_hash.to_fixed_bytes()),
-                &signature,
-            )
-            .unwrap();
-        // Hash public key to obtain address
-        let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
-        let recovered_lead_sequencer = Address::from_slice(&hash[12..]);
+            *block_hash.as_fixed_bytes(),
+        );
 
         if recovered_lead_sequencer != *ADDRESS_LEAD_SEQUENCER {
             warn!(
@@ -833,44 +808,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // This is to not sent the same batch to the one who sent it
             self.batches_broadcasted += 1;
 
-            let recovery_id: i32 = i32::from_be_bytes(msg.recovery_id);
-            let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
-                &msg.signature,
-                RecoveryId::from_i32(recovery_id).unwrap(), // cannot fail
-            )
-            .unwrap();
+            let hash =
+                get_hash_batch_sealed(msg.batch_number, &msg.block_numbers, &msg.withdrawal_hashes);
 
-            let block_numbers_bytes: Vec<u8> = msg
-                .block_numbers
-                .iter()
-                .flat_map(|num| num.to_be_bytes().to_vec())
-                .collect();
-
-            let withdrawal_bytes: Vec<u8> = msg
-                .withdrawal_hashes
-                .iter()
-                .flat_map(|hash| hash.as_bytes().to_vec())
-                .collect();
-
-            let mut hasher = Keccak256::new();
-            hasher.update(msg.batch_number.to_be_bytes());
-            hasher.update(&block_numbers_bytes);
-            hasher.update(&withdrawal_bytes);
-            let next_batch_hash = hasher.finalize();
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&next_batch_hash);
-
-            // Recover public key
-            let public = secp256k1::SECP256K1
-                .recover_ecdsa(&SignedMessage::from_digest(hash), &signature)
-                .unwrap();
-            // Hash public key to obtain address
-            let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
-            let recovered_lead_sequencer = Address::from_slice(&hash[12..]);
+            let recovered_lead_sequencer = get_pub_key(msg.recovery_id, &msg.signature, hash);
 
             if recovered_lead_sequencer != *ADDRESS_LEAD_SEQUENCER {
                 warn!(
-                    "Received block from wrong lead sequencer: {}. Expected: {}",
+                    "Received batch from wrong lead sequencer: {}. Expected: {}",
                     recovered_lead_sequencer, *ADDRESS_LEAD_SEQUENCER
                 );
                 return Ok(false);

@@ -4,6 +4,7 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
+use sha3::{Digest, Keccak256};
 
 use super::{
     message::RLPxMessage,
@@ -89,4 +90,29 @@ impl RLPxMessage for BatchSealedMessage {
             recovery_id,
         })
     }
+}
+
+pub fn get_hash_batch_sealed(
+    batch_number: u64,
+    block_numbers: &[u64],
+    withdrawal_hashes: &[H256],
+) -> [u8; 32] {
+    let block_numbers_bytes: Vec<u8> = block_numbers
+        .iter()
+        .flat_map(|num| num.to_be_bytes().to_vec())
+        .collect();
+
+    let withdrawal_bytes: Vec<u8> = withdrawal_hashes
+        .iter()
+        .flat_map(|hash| hash.as_bytes().to_vec())
+        .collect();
+
+    let mut hasher = Keccak256::new();
+    hasher.update(batch_number.to_be_bytes());
+    hasher.update(&block_numbers_bytes);
+    hasher.update(&withdrawal_bytes);
+    let next_batch_hash = hasher.finalize();
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&next_batch_hash);
+    hash
 }
