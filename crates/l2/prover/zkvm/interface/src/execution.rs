@@ -294,14 +294,13 @@ fn execute_stateless(
         .ok_or(StatelessExecutionError::EmptyBatchError)?;
     let last_block_state_root = last_block.header.state_root;
 
+    let last_block_hash = last_block.header.hash();
     let final_state_hash = db
         .state_trie_root()
         .map_err(|_| StatelessExecutionError::InvalidDatabase)?;
     if final_state_hash != last_block_state_root {
         return Err(StatelessExecutionError::InvalidFinalStateTrie);
     }
-
-    let last_block_hash = last_block.header.hash();
 
     Ok(StatelessResult {
         receipts: acc_receipts,
