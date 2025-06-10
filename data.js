@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749562339720,
+  "lastUpdate": 1749567119073,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11815,6 +11815,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180057983323,
             "range": "± 579244249",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2cf8c9ee5bea623efeffed9dc67260bd4827508d",
+          "message": "chore(l1): drop unwraps from rpc crate (#3075)\n\n**Motivation**\n\nDissallow unwraps on l1.\n\n**Description**\n\nThis pr drops unwraps on crate rpc in networking. Test's unwraps remain.\nResolves partially #2879",
+          "timestamp": "2025-06-10T14:02:04Z",
+          "tree_id": "093e9a1cd137c575a4618843e574d673601c6f28",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2cf8c9ee5bea623efeffed9dc67260bd4827508d"
+        },
+        "date": 1749567112512,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179560748577,
+            "range": "± 690842818",
             "unit": "ns/iter"
           }
         ]
