@@ -179,7 +179,6 @@ start_hoodi_metrics_docker: ## Start L1 docker compose, lighthouse in background
 	cd $(ETHREX_DIR)/tooling/sync && nohup make hoodi-lighthouse > /dev/null 2>&1 &
 	@echo "Starting ethrex..."
 	cd $(ETHREX_DIR)/tooling/sync && make start_ethrex_hoodi
-	make start_ethrex_hoodi
 
 start_holesky_metrics_docker: ## Start L1 docker compose, lighthouse in background, and ethrex for holesky
 	@echo "Starting L1 docker compose with metrics..."
