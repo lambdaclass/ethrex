@@ -5,7 +5,8 @@ use again::{RetryPolicy, Task};
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountState, Block, EMPTY_KECCACK_HASH},
+    constants::EMPTY_KECCACK_HASH,
+    types::{AccountState, Block},
     Address, H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;

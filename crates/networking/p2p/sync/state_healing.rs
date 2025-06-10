@@ -10,10 +10,7 @@
 
 use std::{cmp::min, time::Instant};
 
-use ethrex_common::{
-    types::{AccountState, EMPTY_KECCACK_HASH},
-    H256,
-};
+use ethrex_common::{constants::EMPTY_KECCACK_HASH, types::AccountState, H256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{Nibbles, Node, NodeHash, EMPTY_TRIE_HASH};

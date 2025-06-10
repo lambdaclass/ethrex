@@ -923,8 +923,7 @@ impl Signable for EIP1559Transaction {
             &mut self.signature_r,
             &mut self.signature_s,
             &mut self.signature_y_parity,
-        )?;
-        Ok(())
+        )
     }
 }
 
@@ -938,8 +937,7 @@ impl Signable for EIP2930Transaction {
             &mut self.signature_r,
             &mut self.signature_s,
             &mut self.signature_y_parity,
-        )?;
-        Ok(())
+        )
     }
 }
 
@@ -953,8 +951,7 @@ impl Signable for EIP4844Transaction {
             &mut self.signature_r,
             &mut self.signature_s,
             &mut self.signature_y_parity,
-        )?;
-        Ok(())
+        )
     }
 }
 
@@ -968,8 +965,7 @@ impl Signable for EIP7702Transaction {
             &mut self.signature_r,
             &mut self.signature_s,
             &mut self.signature_y_parity,
-        )?;
-        Ok(())
+        )
     }
 }
 

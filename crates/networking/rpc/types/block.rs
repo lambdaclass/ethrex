@@ -99,7 +99,8 @@ mod test {
 
     use bytes::Bytes;
     use ethrex_common::{
-        types::{EIP1559Transaction, Transaction, TxKind, EMPTY_KECCACK_HASH},
+        constants::EMPTY_KECCACK_HASH,
+        types::{EIP1559Transaction, Transaction, TxKind},
         Address, Bloom, H256, U256,
     };
     use std::str::FromStr;

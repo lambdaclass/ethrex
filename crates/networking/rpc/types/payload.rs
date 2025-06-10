@@ -3,11 +3,11 @@ use ethrex_rlp::error::RLPDecodeError;
 use serde::{Deserialize, Serialize};
 
 use ethrex_common::{
+    constants::DEFAULT_OMMERS_HASH,
     serde_utils,
     types::{
         compute_transactions_root, compute_withdrawals_root, requests::EncodedRequests,
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, Transaction, Withdrawal,
-        DEFAULT_OMMERS_HASH,
     },
     Address, Bloom, H256, U256,
 };

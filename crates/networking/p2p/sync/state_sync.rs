@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use ethrex_common::{types::EMPTY_KECCACK_HASH, BigEndianHash, H256, U256, U512};
+use ethrex_common::{constants::EMPTY_KECCACK_HASH, BigEndianHash, H256, U256, U512};
 use ethrex_storage::{Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::EMPTY_TRIE_HASH;
 use tokio::{

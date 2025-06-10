@@ -5,8 +5,9 @@ use crate::{
     types::{BlockWithRLP, TestUnit},
 };
 use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
-use ethrex_common::types::{
-    Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader, EMPTY_KECCACK_HASH,
+use ethrex_common::{
+    constants::EMPTY_KECCACK_HASH,
+    types::{Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader},
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};

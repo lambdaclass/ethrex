@@ -3998,6 +3998,7 @@ dependencies = [
  "revm 19.7.0",
  "revm-inspectors",
  "revm-primitives 15.2.0",
+ "secp256k1",
  "serde",
  "serde_json",
  "tokio",

@@ -18,11 +18,11 @@ use ethrex_vm::{ProverDB, ProverDBError};
 use futures_util::future::join_all;
 use tokio_utils::RateLimiter;
 
+use super::{Account, NodeRLP};
 use ethrex_levm::db::error::DatabaseError;
+use secp256k1;
 use std::sync::Arc;
 use std::sync::Mutex;
-
-use super::{Account, NodeRLP};
 
 #[derive(Clone)]
 pub struct RpcDB {
@@ -63,10 +63,11 @@ impl RpcDB {
     async fn cache_accounts(&mut self, block: &Block) -> eyre::Result<()> {
         let txs = &block.body.transactions;
 
-        let mut callers = Vec::new();
-        for tx in txs.iter() {
-            callers.push(tx.sender()?)
-        }
+        let callers = txs
+            .iter()
+            .map(|tx| tx.sender())
+            .collect::<Result<Vec<Address>, secp256k1::Error>>()?;
+
         let to = txs.iter().filter_map(|tx| match tx.to() {
             TxKind::Call(to) => Some(to),
             TxKind::Create => None,

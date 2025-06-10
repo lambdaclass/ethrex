@@ -14,9 +14,10 @@ pub(crate) mod max_priority_fee;
 pub mod test_utils {
     use bytes::Bytes;
     use ethrex_common::{
+        constants::DEFAULT_REQUESTS_HASH,
         types::{
             Block, BlockBody, BlockHeader, EIP1559Transaction, Genesis, LegacyTransaction,
-            Transaction, TxKind, DEFAULT_REQUESTS_HASH,
+            Transaction, TxKind,
         },
         Address, Bloom, H256, U256,
     };

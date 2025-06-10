@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountInfo, BlockHash, BlockNumber, ChainConfig, EMPTY_KECCACK_HASH},
+    constants::EMPTY_KECCACK_HASH,
+    types::{AccountInfo, BlockHash, BlockNumber, ChainConfig},
     Address, H256, U256,
 };
 use ethrex_storage::Store;

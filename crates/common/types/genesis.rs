@@ -8,9 +8,10 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
-    Block, BlockBody, BlockHeader, BlockNumber, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
-    INITIAL_BASE_FEE,
+    Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
 };
+
+use crate::constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH};
 
 #[allow(unused)]
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]

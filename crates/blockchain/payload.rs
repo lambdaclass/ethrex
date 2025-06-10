@@ -6,14 +6,13 @@ use std::{
 };
 
 use ethrex_common::{
-    constants::GAS_PER_BLOB,
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
     types::{
         calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
         compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
         requests::{compute_requests_hash, EncodedRequests},
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
-        DEFAULT_REQUESTS_HASH,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal,
     },
     Address, Bloom, Bytes, H256, U256,
 };
