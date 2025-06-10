@@ -21,3 +21,4 @@ assertoor_params:
     - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml
     - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/blob-transactions-test.yaml
     - https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml
+    - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/all-opcodes-test.yaml
