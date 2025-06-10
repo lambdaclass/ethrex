@@ -172,6 +172,7 @@ impl Blockchain {
             let storage_fraction = (storage_time * 100_f64 / interval).round() as u64;
             let execution_time_per_gigagas = (execution_time / as_gigas).round() as u64;
             let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
+            METRICS_BLOCKS.set_latest_gigagas(throughput);
             let base_log =
                 format!(
                 "[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {:.0} ms. #Txs: {}.",
@@ -188,7 +189,6 @@ impl Blockchain {
             } else {
                 "".to_string()
             };
-            metrics!(METRICS_BLOCKS.set_latest_gigagas(throughput));
             info!("{}{}", base_log, extra_log);
         }
     }
