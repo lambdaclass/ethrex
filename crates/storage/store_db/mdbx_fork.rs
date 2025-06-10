@@ -962,16 +962,21 @@ impl StoreEngine for MDBXFork {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        let receipts_data = receipts
-            .into_iter()
-            .enumerate()
-            .map(|(r, i)| {
-                let receipt_bytes = r.encode_to_vec();
-                let receipt_db_key = (block_hash, i).encode_to_vec();
-                (receipt_db_key, receipt_bytes)
-            })
-            .collect();
-        self.write_batch::<Receipts>(receipts_data).await?;
+        // Using write batch here crashes libmdbx at some point due to a max size limit.
+        let db = self.env.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let tx = db.tx_mut().unwrap();
+            for (index, receipt) in receipts.into_iter().enumerate() {
+                let receipt_bytes = receipt.encode_to_vec();
+                let receipt_db_key = (block_hash, index).encode_to_vec();
+                tx.put::<Receipts>(receipt_db_key, receipt_bytes).unwrap();
+            }
+
+            tx.commit().unwrap();
+        })
+        .await
+        .unwrap();
 
         Ok(())
     }
@@ -1125,7 +1130,7 @@ impl StoreEngine for MDBXFork {
             let mut cursor = tx.cursor_dup_write::<StateSnapShot>().unwrap();
             cursor.seek_exact(encoded_hash.clone()).unwrap();
             for v in encoded_values {
-                cursor.append_dup(encoded_hash.clone(), v).unwrap();
+                cursor.upsert(encoded_hash.clone(), v).unwrap();
             }
         })
         .await
@@ -1164,7 +1169,7 @@ impl StoreEngine for MDBXFork {
             for (encoded_hash, encoded_pairs) in pre_encoded {
                 cursor.seek_exact(encoded_hash.clone()).unwrap();
                 for pair in encoded_pairs {
-                    cursor.append_dup(encoded_hash.clone(), pair).unwrap();
+                    cursor.upsert(encoded_hash.clone(), pair).unwrap();
                 }
             }
         })
