@@ -6,12 +6,13 @@ use ethrex_common::types::BlockNumber;
 use ethrex_common::H160;
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
-use ethrex_l2_sdk::wait_for_transaction_receipt;
+use ethrex_l2_sdk::{get_address_from_secret_key, wait_for_transaction_receipt};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient};
 use ethrex_rpc::types::receipt::RpcReceipt;
+use hex::FromHexError;
 use keccak_hash::{keccak, H256};
 use secp256k1::SecretKey;
-use std::fs::File;
+use std::fs::{read_to_string, File};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::{ops::Mul, str::FromStr, time::Duration};
@@ -35,6 +36,8 @@ const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
 ]);
 
 const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
+
+const DEFAULT_PRIVATE_KEYS_FILE_PATH: &str = "../../test_data/private_keys_l1.txt";
 
 /// Test the full flow of depositing, transferring, and withdrawing funds
 /// from L1 to L2 and back.
@@ -69,6 +72,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     test_transfer(&rich_wallet_private_key, &proposer_client).await?;
 
     test_n_withdraws(&rich_wallet_private_key, &eth_client, &proposer_client, 5).await?;
+
+    test_total_eth_l2(&eth_client, &proposer_client).await?;
 
     println!("l2_integration_test is done");
     Ok(())
@@ -593,6 +598,48 @@ async fn test_n_withdraws(
     Ok(())
 }
 
+async fn test_total_eth_l2(
+    eth_client: &EthClient,
+    proposer_client: &EthClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Checking total ETH on L2");
+
+    println!("Fetching rich accounts balance on L2");
+    let rich_accounts_balance = get_rich_accounts_balance(proposer_client)
+        .await
+        .expect("Failed to get rich accounts balance");
+
+    println!("Rich accounts balance: {rich_accounts_balance}");
+
+    println!("Getting coinbase balance");
+
+    let coinbase_balance = proposer_client
+        .get_balance(fees_vault(), BlockByNumber::Latest)
+        .await?;
+
+    println!("Coinbase balance: {coinbase_balance}");
+
+    let total_eth_on_l2 = rich_accounts_balance + coinbase_balance;
+
+    println!("Total ETH on L2: {rich_accounts_balance} + {coinbase_balance} = {total_eth_on_l2}",);
+
+    println!("Checking locked ETH on CommonBridge");
+
+    let bridge_address = common_bridge_address();
+    let bridge_locked_eth = eth_client
+        .get_balance(bridge_address, BlockByNumber::Latest)
+        .await?;
+
+    println!("Bridge locked ETH: {bridge_locked_eth}");
+
+    assert!(
+        total_eth_on_l2 <= bridge_locked_eth,
+        "Total ETH on L2 ({total_eth_on_l2}) is greater than bridge locked ETH ({bridge_locked_eth})"
+    );
+
+    Ok(())
+}
+
 async fn test_deploy(
     init_code: &[u8],
     deployer_private_key: &SecretKey,
@@ -879,5 +926,53 @@ pub fn read_env_file_by_config() {
             }
             None => continue,
         };
+    }
+}
+
+async fn get_rich_accounts_balance(
+    proposer_client: &EthClient,
+) -> Result<U256, Box<dyn std::error::Error>> {
+    let mut total_balance = U256::zero();
+    let private_keys_file_path = private_keys_file_path();
+
+    let pks = read_to_string(private_keys_file_path)?;
+    let private_keys: Vec<String> = pks
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.trim().to_string())
+        .collect();
+
+    for pk in private_keys.iter() {
+        let secret_key = parse_private_key(pk)?;
+        let address = get_address_from_secret_key(&secret_key)?;
+        let get_balance = proposer_client
+            .get_balance(address, BlockByNumber::Latest)
+            .await?;
+        total_balance += get_balance;
+    }
+    Ok(total_balance)
+}
+
+fn private_keys_file_path() -> PathBuf {
+    match std::env::var("ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH") {
+        Ok(path) => PathBuf::from(path),
+        Err(_) => {
+            println!(
+                "ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH not set, using default: {}",
+                DEFAULT_PRIVATE_KEYS_FILE_PATH
+            );
+            PathBuf::from(DEFAULT_PRIVATE_KEYS_FILE_PATH)
+        }
+    }
+}
+
+pub fn parse_private_key(s: &str) -> Result<SecretKey, Box<dyn std::error::Error>> {
+    Ok(SecretKey::from_slice(&parse_hex(s)?)?)
+}
+
+pub fn parse_hex(s: &str) -> Result<Bytes, FromHexError> {
+    match s.strip_prefix("0x") {
+        Some(s) => hex::decode(s).map(Into::into),
+        None => hex::decode(s).map(Into::into),
     }
 }
