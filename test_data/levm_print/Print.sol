@@ -23,15 +23,20 @@ function print(string memory _str) pure {
     uint256 chunkCount = chunks.length;
 
     assembly {
-        mstore(MAGIC_PRINT_OFFSET, chunkCount) // Print mode enabled
+        mstore(MAGIC_PRINT_OFFSET, 0) // Enable print mode
     }
 
-    // Fill buffer with data and print all at the end (logic in LEVM)
+    // Fill buffer with data (logic in LEVM)
     for (uint256 i = 0; i < chunkCount; i++) {
         bytes32 chunk = chunks[i];
         assembly {
-            mstore(0, chunk) // Offset doesn't matter in print mode.
+            mstore(0, chunk)
         }
+    }
+
+    // Print data stored in buffer
+    assembly {
+        mstore(MAGIC_PRINT_OFFSET, 0) // Disable print mode
     }
 }
 
@@ -93,7 +98,6 @@ contract PrintTest {
         print(addr);
         print(myBytes); // Notice this won't print the string, just the bytes.
         print(string(abi.encodePacked(myBytes))); // But this will
-
         // Some possible combinations between types
         print(unicode_str, ascii_str);
         print("This is fifty thousand:", integer);
