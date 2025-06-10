@@ -81,7 +81,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
     }
     check_poststate_against_db(test_key, test, &store).await;
     #[cfg(feature = "stateless")]
-    re_run_stateless(blockchain, test, genesis_block_header).await;
+    re_run_stateless(blockchain, test).await;
 }
 
 /// Tests the rlp decoding of a block
@@ -227,11 +227,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
 }
 
 #[cfg(feature = "stateless")]
-async fn re_run_stateless(
-    blockchain: Blockchain,
-    test: &TestUnit,
-    genesis_header: CoreBlockHeader,
-) {
+async fn re_run_stateless(blockchain: Blockchain, test: &TestUnit) {
     let blocks = test
         .blocks
         .iter()
@@ -258,9 +254,9 @@ async fn re_run_stateless(
 
     let program_input = ProgramInput {
         blocks,
-        parent_block_header: genesis_header,
         db: witness,
         elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
+        ..Default::default()
     };
 
     if let Err(e) = ethrex_prover_lib::execute(program_input) {
