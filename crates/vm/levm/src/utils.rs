@@ -42,17 +42,6 @@ use crate::hooks::DefaultHook;
 #[cfg(feature = "l2")]
 use {crate::hooks::L2Hook, ethrex_common::types::PrivilegedL2Transaction};
 
-/// Prints a U256 value as UTF-8 (if possible) and as hex and dec.
-pub fn print_u256(value: U256) {
-    let value_bytes = value.to_big_endian().to_vec();
-    print!("PRINTED ");
-    if let Ok(text) = String::from_utf8(value_bytes.clone()) {
-        print!(" utf-8: {} -", text);
-    }
-    print!(" hex: 0x{:x} -", value);
-    println!(" dec: {}", value);
-}
-
 // ================== Address related functions ======================
 /// Converts address (H160) to word (U256)
 pub fn address_to_word(address: Address) -> U256 {
