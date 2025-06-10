@@ -2912,6 +2912,7 @@
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
+            "axisWidth": -3,
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
@@ -2925,7 +2926,7 @@
             "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
-            "pointSize": 1,
+            "pointSize": 5,
             "scaleDistribution": {
               "type": "linear"
             },
@@ -2951,8 +2952,7 @@
                 "value": 80
               }
             ]
-          },
-          "unit": "Gwei"
+          }
         },
         "overrides": []
       },
@@ -2962,7 +2962,7 @@
         "x": 10,
         "y": 37
       },
-      "id": 38,
+      "id": 73,
       "options": {
         "legend": {
           "calcs": [],
@@ -2979,18 +2979,18 @@
       "pluginVersion": "12.0.1",
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prom-001"
-          },
-          "exemplar": true,
-          "expr": "eth_exe_gas_price_gwei{instance=~\"$instance\"}",
-          "interval": "",
-          "legendFormat": "{{ instance }}",
-          "refId": "A"
+          "disableTextWrap": false,
+          "editorMode": "builder",
+          "expr": "blocks_per_second",
+          "fullMetaSearch": false,
+          "includeNullMetadata": true,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A",
+          "useBackend": false
         }
       ],
-      "title": "Suggested Gas Price",
+      "title": "Blocks per second",
       "type": "timeseries"
     },
     {
@@ -3055,7 +3055,7 @@
       },
       "gridPos": {
         "h": 6,
-        "w": 9,
+        "w": 5,
         "x": 15,
         "y": 37
       },
@@ -3141,6 +3141,106 @@
             "steps": [
               {
                 "color": "green"
+<<<<<<< Updated upstream
+=======
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 20,
+        "y": 37
+      },
+      "id": 52,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.0.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "exemplar": true,
+          "expr": "eth_exe_block_head_gas_limit{instance=~\"$instance\"}",
+          "interval": "",
+          "legendFormat": "{{ instance }}",
+          "refId": "A"
+        }
+      ],
+      "title": "Gas limit",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+>>>>>>> Stashed changes
               },
               {
                 "color": "red",
@@ -3345,7 +3445,7 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "Gwei"
         },
         "overrides": []
       },
@@ -3355,7 +3455,7 @@
         "x": 10,
         "y": 43
       },
-      "id": 55,
+      "id": 38,
       "options": {
         "legend": {
           "calcs": [],
@@ -3376,16 +3476,14 @@
             "type": "prometheus",
             "uid": "prom-001"
           },
-          "editorMode": "code",
           "exemplar": true,
-          "expr": "eth_exe_txpool_transactions{instance=~\"$instance\"}",
+          "expr": "eth_exe_gas_price_gwei{instance=~\"$instance\"}",
           "interval": "",
-          "legendFormat": "{{ status }}",
-          "range": true,
+          "legendFormat": "{{ instance }}",
           "refId": "A"
         }
       ],
-      "title": "Transaction Pool",
+      "title": "Suggested Gas Price",
       "type": "timeseries"
     },
     {
@@ -3541,7 +3639,7 @@
               }
             ]
           },
-          "unit": "short"
+          "unit": "none"
         },
         "overrides": []
       },
@@ -3551,7 +3649,7 @@
         "x": 20,
         "y": 43
       },
-      "id": 52,
+      "id": 55,
       "options": {
         "legend": {
           "calcs": [],
@@ -3572,14 +3670,16 @@
             "type": "prometheus",
             "uid": "prom-001"
           },
+          "editorMode": "code",
           "exemplar": true,
-          "expr": "eth_exe_block_head_gas_limit{instance=~\"$instance\"}",
+          "expr": "eth_exe_txpool_transactions{instance=~\"$instance\"}",
           "interval": "",
-          "legendFormat": "{{ instance }}",
+          "legendFormat": "{{ status }}",
+          "range": true,
           "refId": "A"
         }
       ],
-      "title": "Gas limit",
+      "title": "Transaction Pool",
       "type": "timeseries"
     },
     {
@@ -3700,5 +3800,10 @@
   "timezone": "",
   "title": "Ethereum Metrics Exporter (Single)",
   "uid": "M2TT9Su7z",
+<<<<<<< Updated upstream
   "version": 13
 }
+=======
+  "version": 26
+}
+>>>>>>> Stashed changes
