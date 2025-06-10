@@ -150,7 +150,7 @@ async fn state_sync_segment(
             // Update starting hash for next batch
             let last_account_hash = account_hashes
                 .last()
-                .ok_or(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree))?;
+                .ok_or(SyncError::InvalidRangeReceived)?;
             start_account_hash = *last_account_hash;
 
             // Fetch Account Storage & Bytecode
