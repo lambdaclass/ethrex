@@ -18,7 +18,12 @@ impl DebugMode {
         }
     }
 
-    pub fn handle_debug(&mut self, offset: U256, value: U256) -> Result<(), InternalError> {
+    /// Returns true if the call resulted in a debug operation. False otherwise.
+    pub fn handle_debug(&mut self, offset: U256, value: U256) -> Result<bool, InternalError> {
+        if !self.enabled {
+            return Ok(false);
+        }
+
         if offset == DEBUG_MEMORY_OFFSET {
             // Get the amount of chunks to print. Each chunk will have one MSTORE associated with it.
             let chunks_to_print = value
@@ -30,7 +35,7 @@ impl DebugMode {
                 .checked_add(chunks_to_print)
                 .ok_or(InternalError::Custom("Debug Mode error".to_string()))?;
 
-            return Ok(());
+            return Ok(true);
         }
 
         if self.chunks_left > 0 {
@@ -53,7 +58,9 @@ impl DebugMode {
                 }
                 self.print_buffer.clear();
             }
+            return Ok(true);
         }
-        Ok(())
+
+        Ok(false)
     }
 }
