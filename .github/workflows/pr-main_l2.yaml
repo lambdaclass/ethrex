@@ -130,6 +130,12 @@ jobs:
         run: |
           cargo test l2 --no-run --release
 
+      - name: Start Web3Signer
+        if: matrix.compose_target == 'docker-compose-l2-websigner.yaml'
+        run: |
+          cd crates/l2
+          docker compose -f ${{ matrix.compose_target }} up --detach web3signer
+
       - name: Start L1 & Deploy contracts
         run: |
           cd crates/l2
@@ -140,12 +146,6 @@ jobs:
           ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           docker compose -f docker-compose-l2.yaml up contract_deployer
-
-      - name: Start Web3Signer
-        if: matrix.compose_target == 'docker-compose-l2-websigner.yaml'
-        run: |
-          cd crates/l2
-          docker compose -f ${{ matrix.compose_target }} up --detach web3signer
 
       - name: Start Sequencer
         run: |
