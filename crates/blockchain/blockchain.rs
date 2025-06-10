@@ -148,9 +148,11 @@ impl Blockchain {
             receipts: vec![(block.hash(), execution_result.receipts)],
         };
 
-        update_batch.apply_to_store(self.storage.clone()).await?;
-
-        Ok(())
+        self.storage
+            .clone()
+            .store_block_updates(update_batch)
+            .await
+            .map_err(|e| e.into())
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {

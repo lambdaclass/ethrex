@@ -53,12 +53,6 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
 }
 
-impl UpdateBatch {
-    pub async fn apply_to_store(self, store: Store) -> Result<(), StoreError> {
-        store.store_block_updates(self).await
-    }
-}
-
 pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
     pub state_updates: Vec<(NodeHash, Vec<u8>)>,
