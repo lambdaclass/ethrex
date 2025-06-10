@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749585004661,
+  "lastUpdate": 1749585414526,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11965,6 +11965,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 175568284868,
             "range": "± 190731888",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6565532da2e7adfe63410f874f078aa3aa1cc0df",
+          "message": "ci(l1): fix missing space bug in yaml (#3099)\n\n**Motivation**\n\nCI tests weren't executing due to the extra spaces introduces by yaml\nmultiline.\n\n**Description**\n\n* Returned every engine test to a single line\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-10T19:07:24Z",
+          "tree_id": "4796db0bb5ced133022e64b5c05464676112b16a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6565532da2e7adfe63410f874f078aa3aa1cc0df"
+        },
+        "date": 1749585409084,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 176606645849,
+            "range": "± 524181419",
             "unit": "ns/iter"
           }
         ]
