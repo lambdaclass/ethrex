@@ -4,20 +4,22 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 mod smoke_test;
+pub mod tracing;
 pub mod vm;
 
-use constants::MAX_INITCODE_SIZE;
+use ::tracing::info;
+use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
 use ethrex_common::types::MempoolTransaction;
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_common::types::{
     compute_receipts_root, validate_block_header, validate_cancun_header_fields,
     validate_prague_header_fields, validate_pre_cancun_header_fields, AccountUpdate, Block,
     BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
-use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
 use ethrex_common::{Address, H256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
@@ -26,8 +28,11 @@ use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
-use tracing::info;
+
 use vm::StoreVmDatabase;
+
+#[cfg(feature = "c-kzg")]
+use ethrex_common::types::BlobsBundle;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -48,7 +53,6 @@ pub struct BatchBlockProcessingFailure {
     pub last_valid_hash: H256,
     pub failed_block_hash: H256,
 }
-
 impl Blockchain {
     pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
         Self {
@@ -74,19 +78,10 @@ impl Blockchain {
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
-        // Feda (#2831): We search for the entire block because during full/batch sync
-        // we can have the header without the body indicating it's still syncing.
-        let parent = self
-            .storage
-            .get_block_by_hash(block.header.parent_hash)
-            .await?;
-        let parent_header = match parent {
-            Some(parent_block) => parent_block.header,
-            None => {
-                // If the parent is not present, we store it as pending.
-                self.storage.add_pending_block(block.clone()).await?;
-                return Err(ChainError::ParentNotFound);
-            }
+        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            // If the parent is not present, we store it as pending.
+            self.storage.add_pending_block(block.clone()).await?;
+            return Err(ChainError::ParentNotFound);
         };
 
         let chain_config = self.storage.get_chain_config()?;
@@ -217,7 +212,14 @@ impl Blockchain {
             .get_chain_config()
             .map_err(|e| (e.into(), None))?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), first_block_header.parent_hash);
+        // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
+        let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
+
+        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
+            self.storage.clone(),
+            first_block_header.parent_hash,
+            block_hash_cache,
+        );
         let mut vm = Evm::new(self.evm_engine, vm_db);
 
         let blocks_len = blocks.len();
@@ -263,7 +265,7 @@ impl Blockchain {
                     ))
                 }
             };
-
+            info!("Processed block {} out of {}", i, blocks.len());
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
@@ -306,8 +308,8 @@ impl Blockchain {
         }
 
         info!(
-            "[METRICS] Executed and stored: Range: {}, Total transactions: {}, Throughput: {} Gigagas/s",
-            blocks_len, transactions_count, throughput
+            "[METRICS] Executed and stored: Range: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
+            blocks_len, transactions_count, total_gas_used, throughput
         );
 
         Ok(())
@@ -403,6 +405,7 @@ impl Blockchain {
         sender: Address,
     ) -> Result<(), MempoolError> {
         // TODO: Add validations here
+        let nonce = tx.nonce();
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
             return Ok(());
@@ -423,6 +426,10 @@ impl Blockchain {
             && tx.data().len() > MAX_INITCODE_SIZE
         {
             return Err(MempoolError::TxMaxInitCodeSizeError);
+        }
+
+        if !tx.is_contract_creation() && tx.data().len() >= MAX_TRANSACTION_DATA_SIZE {
+            return Err(MempoolError::TxMaxDataSizeError);
         }
 
         // Check gas limit is less than header's gas limit
@@ -451,7 +458,7 @@ impl Blockchain {
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if tx.nonce() < sender_acc_info.nonce {
+            if nonce < sender_acc_info.nonce || nonce == u64::MAX {
                 return Err(MempoolError::InvalidNonce);
             }
 
@@ -465,6 +472,11 @@ impl Blockchain {
         } else {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
+        }
+
+        // Check the nonce of pendings TXs in the mempool from the same sender
+        if self.mempool.contains_sender_nonce(sender, nonce)? {
+            return Err(MempoolError::InvalidNonce);
         }
 
         if let Some(chain_id) = tx.chain_id() {

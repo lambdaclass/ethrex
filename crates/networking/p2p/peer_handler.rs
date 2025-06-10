@@ -17,7 +17,7 @@ use crate::{
             blocks::{
                 BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, BLOCK_HEADER_LIMIT,
             },
-            receipts::{GetReceipts, Receipts},
+            receipts::GetReceipts,
         },
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES},
@@ -131,7 +131,7 @@ impl PeerHandler {
             .flatten()
             .and_then(|headers| (!headers.is_empty()).then_some(headers))
             {
-                if are_block_headers_chained(&block_headers) {
+                if are_block_headers_chained(&block_headers, &order) {
                     return Some(block_headers);
                 } else {
                     warn!("Received invalid headers from peer, discarding peer {peer_id} and retrying...");
@@ -280,10 +280,11 @@ impl PeerHandler {
             if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
-                        Some(RLPxMessage::Receipts(Receipts { id, receipts }))
-                            if id == request_id =>
-                        {
-                            return Some(receipts)
+                        Some(RLPxMessage::Receipts(receipts)) => {
+                            if receipts.get_id() == request_id {
+                                return Some(receipts.get_receipts());
+                            }
+                            return None;
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,
@@ -761,12 +762,9 @@ impl PeerHandler {
 
 /// Validates the block headers received from a peer by checking that the parent hash of each header
 /// matches the hash of the previous one, i.e. the headers are chained
-fn are_block_headers_chained(block_headers: &[BlockHeader]) -> bool {
-    block_headers
-        .iter()
-        .skip(1) // Skip the first, since we know the current head is valid
-        .zip(block_headers.iter())
-        .all(|(current_header, previous_header)| {
-            current_header.parent_hash == previous_header.hash()
-        })
+fn are_block_headers_chained(block_headers: &[BlockHeader], order: &BlockRequestOrder) -> bool {
+    block_headers.windows(2).all(|headers| match order {
+        BlockRequestOrder::OldToNew => headers[1].parent_hash == headers[0].hash(),
+        BlockRequestOrder::NewToOld => headers[0].parent_hash == headers[1].hash(),
+    })
 }

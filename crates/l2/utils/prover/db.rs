@@ -3,8 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{AccountUpdate, Block};
-use ethrex_common::{Address, H256};
-use ethrex_levm::db::error::DatabaseError;
+use ethrex_common::Address;
 use ethrex_storage::{hash_address, hash_key, Store};
 use ethrex_trie::{Node, PathRLP};
 use ethrex_trie::{NodeRLP, Trie, TrieError};
@@ -12,10 +11,14 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{DynVmDatabase, Evm, ProverDB, ProverDBError};
 
 pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, ProverDBError> {
-    let chain_config = store.get_chain_config()?;
-    let Some(first_block_parent_hash) = blocks.first().map(|e| e.header.parent_hash) else {
+    let chain_config = store
+        .get_chain_config()
+        .map_err(|e| ProverDBError::Store(e.to_string()))?;
+    let Some(first_block) = blocks.first() else {
         return Err(ProverDBError::Custom("Unable to get first block".into()));
     };
+    let first_block_parent_hash = first_block.header.parent_hash;
+
     let Some(last_block) = blocks.last() else {
         return Err(ProverDBError::Custom("Unable to get last block".into()));
     };
@@ -43,9 +46,7 @@ pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, P
 
         // Replace the store
         *logger.store.lock().map_err(|err| {
-            ProverDBError::Database(DatabaseError::Custom(format!(
-                "Failed to lock 'store' with error: {err}"
-            )))
+            ProverDBError::Database(format!("Failed to lock 'store' with error: {err}"))
         })? = Box::new(new_store);
     }
 
@@ -64,7 +65,11 @@ pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, P
             store
                 .get_account_info_by_hash(first_block_parent_hash, *address)
                 .transpose()
-                .map(|account| Ok((*address, account?)))
+                .map(|account| {
+                    account
+                        .map(|a| (*address, a))
+                        .map_err(|e| ProverDBError::Store(e.to_string()))
+                })
         })
         .collect::<Result<HashMap<_, _>, ProverDBError>>()?;
 
@@ -79,10 +84,11 @@ pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, P
         .map(|account| account.code_hash)
         .chain(code_accessed.into_iter())
         .filter_map(|hash| {
-            store
-                .get_account_code(hash)
-                .transpose()
-                .map(|account| Ok((hash, account?)))
+            store.get_account_code(hash).transpose().map(|account| {
+                account
+                    .map(|a| (hash, a))
+                    .map_err(|e| ProverDBError::Store(e.to_string()))
+            })
         })
         .collect::<Result<HashMap<_, _>, ProverDBError>>()?;
 
@@ -106,28 +112,43 @@ pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, P
                     store
                         .get_storage_at_hash(first_block_parent_hash, address, *key)
                         .transpose()
-                        .map(|value| Ok((*key, value?)))
+                        .map(|value| {
+                            value
+                                .map(|v| (*key, v))
+                                .map_err(|e| ProverDBError::Store(e.to_string()))
+                        })
                 })
                 .collect();
             Ok((address, keys?))
         })
         .collect::<Result<HashMap<_, _>, ProverDBError>>()?;
 
-    let block_hashes = logger
+    let mut block_headers = HashMap::new();
+    let oldest_required_block_number = logger
         .block_hashes_accessed
         .lock()
         .map_err(|_| ProverDBError::Store("Could not lock mutex".to_string()))?
         .clone()
-        .into_iter()
-        .map(|(num, hash)| (num, H256::from(hash.0)))
-        .collect();
+        .into_keys()
+        .min()
+        .unwrap_or(first_block.header.number - 1);
+    // from oldest required to parent:
+    for number in oldest_required_block_number..first_block.header.number {
+        let header = store
+            .get_block_header(number)
+            .map_err(|err| ProverDBError::Store(err.to_string()))?
+            .ok_or(ProverDBError::Store("block header not found".to_string()))?;
+        block_headers.insert(number, header);
+    }
 
     // get account proofs
     let state_trie = store
-        .state_trie(last_block.hash())?
+        .state_trie(last_block.hash())
+        .map_err(|e| ProverDBError::Store(e.to_string()))?
         .ok_or(ProverDBError::NewMissingStateTrie(last_block.hash()))?;
     let parent_state_trie = store
-        .state_trie(first_block_parent_hash)?
+        .state_trie(first_block_parent_hash)
+        .map_err(|e| ProverDBError::Store(e.to_string()))?
         .ok_or(ProverDBError::NewMissingStateTrie(first_block_parent_hash))?;
     let hashed_addresses: Vec<_> = state_accessed.keys().map(hash_address).collect();
     let initial_state_proofs = parent_state_trie.get_proofs(&hashed_addresses)?;
@@ -149,15 +170,21 @@ pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, P
     let mut storage_proofs = HashMap::new();
     let mut final_storage_proofs = HashMap::new();
     for (address, storage_keys) in state_accessed {
-        let Some(parent_storage_trie) = store.storage_trie(first_block_parent_hash, address)?
+        let Some(parent_storage_trie) = store
+            .storage_trie(first_block_parent_hash, address)
+            .map_err(|e| ProverDBError::Store(e.to_string()))?
         else {
             // the storage of this account was empty or the account is newly created, either
             // way the storage trie was initially empty so there aren't any proofs to add.
             continue;
         };
-        let storage_trie = store.storage_trie(last_block.hash(), address)?.ok_or(
-            ProverDBError::NewMissingStorageTrie(last_block.hash(), address),
-        )?;
+        let storage_trie = store
+            .storage_trie(last_block.hash(), address)
+            .map_err(|e| ProverDBError::Store(e.to_string()))?
+            .ok_or(ProverDBError::NewMissingStorageTrie(
+                last_block.hash(),
+                address,
+            ))?;
         let paths = storage_keys.iter().map(hash_key).collect::<Vec<_>>();
 
         let initial_proofs = parent_storage_trie.get_proofs(&paths)?;
@@ -188,7 +215,7 @@ pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, P
         accounts,
         code,
         storage,
-        block_hashes,
+        block_headers,
         chain_config,
         state_proofs,
         storage_proofs,

@@ -370,17 +370,17 @@ impl StoreEngine for Store {
         Ok(self.inner().chain_data.pending_block_number)
     }
 
-    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
+    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Result<Trie, StoreError> {
         let mut store = self.inner();
         let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
         let db = Arc::new(InMemoryTrieDB::new(trie_backend.clone()));
-        Trie::open(db, storage_root)
+        Ok(Trie::open(db, storage_root))
     }
 
-    fn open_state_trie(&self, state_root: H256) -> Trie {
+    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_backend = self.inner().state_trie_nodes.clone();
         let db = Arc::new(InMemoryTrieDB::new(trie_backend));
-        Trie::open(db, state_root)
+        Ok(Trie::open(db, state_root))
     }
 
     async fn get_block_body_by_hash(
@@ -683,6 +683,20 @@ impl StoreEngine for Store {
             .invalid_ancestors
             .insert(bad_block, latest_valid);
         Ok(())
+    }
+
+    fn get_block_number_sync(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        Ok(self.inner().block_numbers.get(&block_hash).copied())
+    }
+
+    fn get_canonical_block_hash_sync(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+         Ok(self.inner().canonical_hashes.get(&block_number).cloned())
     }
 }
 

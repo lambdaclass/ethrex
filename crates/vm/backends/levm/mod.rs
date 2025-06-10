@@ -1,4 +1,5 @@
 pub mod db;
+mod tracing;
 
 use super::BlockExecutionResult;
 use crate::constants::{
@@ -19,6 +20,7 @@ use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
+use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::restore_cache_state;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::{
@@ -44,21 +46,7 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
     ) -> Result<BlockExecutionResult, EvmError> {
-        cfg_if::cfg_if! {
-            if #[cfg(not(feature = "l2"))] {
-                let chain_config = db.store.get_chain_config()?;
-                let block_header = &block.header;
-                let fork = chain_config.fork(block_header.timestamp);
-                if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    Self::beacon_root_contract_call(block_header, db)?;
-                }
-
-                if fork >= Fork::Prague {
-                    //eip 2935: stores parent block hash in system contract
-                    Self::process_block_hash_history(block_header, db)?;
-                }
-            }
-        }
+        Self::prepare_block(block, db)?;
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
@@ -144,7 +132,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx);
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
 
         vm.execute().map_err(VMError::into)
     }
@@ -159,7 +147,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<(ExecutionReport, CallFrameBackup), EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx);
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
 
         let report_result = vm.execute().map_err(EvmError::from)?;
 
@@ -427,6 +415,24 @@ impl LEVM {
 
         Ok((report.into(), access_list))
     }
+
+    pub fn prepare_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
+        let chain_config = db.store.get_chain_config()?;
+        let block_header = &block.header;
+        let fork = chain_config.fork(block_header.timestamp);
+
+        if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
+            #[cfg(not(feature = "l2"))]
+            Self::beacon_root_contract_call(block_header, db)?;
+        }
+
+        if fork >= Fork::Prague {
+            //eip 2935: stores parent block hash in system contract
+            #[cfg(not(feature = "l2"))]
+            Self::process_block_hash_history(block_header, db)?;
+        }
+        Ok(())
+    }
 }
 
 pub fn generic_system_contract_levm(
@@ -464,7 +470,7 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
-    let mut vm = VM::new(env, db, tx);
+    let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -627,5 +633,5 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    Ok(VM::new(env, db, &tx))
+    Ok(VM::new(env, db, &tx, LevmCallTracer::disabled()))
 }

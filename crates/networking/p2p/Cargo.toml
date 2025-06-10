@@ -11,10 +11,10 @@ ethrex-blockchain.workspace = true
 ethrex-rlp.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
-
+ethereum-types.workspace = true
 tracing.workspace = true
-tokio.workspace = true
-tokio-util.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true, features = ["codec"] }
 bytes.workspace = true
 hex.workspace = true
 thiserror.workspace = true

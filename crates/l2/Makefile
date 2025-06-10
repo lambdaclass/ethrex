@@ -1,4 +1,4 @@
-.PHONY: help init down clean restart cli update-cli-contracts init-local-l1 init-l1 down-local-l1 \
+.PHONY: help init down clean restart cli init-local-l1 init-l1 down-local-l1 \
 		restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 \
 		init-l2-no-metrics down-l2 restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test \
 		init-testnet deploy-l1-testnet restart-testnet
@@ -27,21 +27,6 @@ restart: restart-local-l1 deploy-l1 purge_prover_state restart-l2 ## 🔄 Restar
 ## Same as restart but for testnet deployment. The local database is cleaned and the contracts are deployed again.
 restart-testnet:
 	down-l2 down-metrics rm-db-l2 update-system-contracts deploy-l1-testnet init-l2
-
-# CLI
-cli: ## 🛠️ Installs the L2 Lambda ethrex CLI
-	cd ${ethrex_PATH}/cmd/ethrex_l2 && \
-	cargo install --path . --force
-
-update-cli-contracts: ## 📜 Update the CLI's config contracts
-	@if [ -z "$$C" ]; then \
-		echo "Error: CONFIG_NAME (C) is missing.\nPlease provide it as an argument:\nmake update-cli-contracts C=<config_name>."; \
-		exit 1; \
-	fi && \
-	CB=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' .env | cut -d= -f2) && \
-	ethrex_l2 config edit --common-bridge $$CB $$C && \
-	OP=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' .env | cut -d= -f2) && \
-	ethrex_l2 config edit --on-chain-proposer $$OP $$C
 
 # Variables
 
@@ -114,17 +99,20 @@ restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for
 
 deploy-l1: ## 📜 Deploys the L1 contracts
 	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
-	--private-keys-file-path ../../test_data/private_keys_l1.txt \
-	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
-	--genesis-l2-path ../../test_data/genesis-l2.json \
+	--eth-rpc-url ${L1_RPC_URL} \
+	--private-key ${L1_PRIVATE_KEY} \
 	--contracts-path contracts \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--pico.verifier-address 0x00000000000000000000000000000000000000aa \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
+	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
+	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
 	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
-	--deposit-rich
+	--deposit-rich \
+	--private-keys-file-path ../../test_data/private_keys_l1.txt \
+	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
+	--genesis-l2-path ../../test_data/genesis-l2.json
 
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 deploy-l1-testnet: ## 📜 Deploys the L1 contracts
@@ -139,8 +127,8 @@ update-system-contracts:
 # L2
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
 
-BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
-ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
+DEFAULT_BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
+DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat .env | xargs); \
@@ -154,9 +142,13 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--evm levm \
 	--datadir ${ethrex_L2_DEV_LIBMDBX} \
-	--bridge-address ${BRIDGE_ADDRESS} \
-	--on-chain-proposer-address ${ON_CHAIN_PROPOSER_ADDRESS} \
-	--proof-coordinator-listen-ip ${PROOF_COORDINATOR_ADDRESS}
+	--l1.bridge-address ${DEFAULT_BRIDGE_ADDRESS} \
+	--l1.on-chain-proposer-address ${DEFAULT_ON_CHAIN_PROPOSER_ADDRESS} \
+	--eth.rpc-url ${L1_RPC_URL} \
+	--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS}
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
@@ -172,7 +164,11 @@ restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Clien
 PROVER_SRC_FILES := $(shell find prover/src -type f)
 
 init-prover: ../../target/release/ethrex_prover ## 🚀 Initializes the Prover
-	../../target/release/ethrex_prover
+	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
+	../../target/release/ethrex_prover \
+	--http.addr 127.0.0.1 \
+  	--http.port 3900 \
+	--log.level debug
 
 build-prover:
 	rm -f ../../target/release/ethrex_prover
@@ -208,7 +204,7 @@ integration-test: rm-db-l2 rm-db-l1# We create an empty .env file simply because
 	touch .env
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
-	ETHREX_COMMITTER_VALIDIUM=${ETHREX_COMMITTER_VALIDIUM} \
+	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
 	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & \
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
@@ -223,7 +219,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
-	ETHREX_PROPOSER_BLOCK_TIME_MS=${ETHREX_PROPOSER_BLOCK_TIME_MS} \
+	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
 	ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER} \
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
 
@@ -234,12 +230,16 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 # State reconstruction tests
 state-diff-test:
 	touch .env
-	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config create ci --default
-	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
-	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
+	cargo run --release --manifest-path ../../cmd/ethrex/Cargo.toml --features l2 --bin ethrex -- \
+	l2 reconstruct \
+	-g ../../test_data/genesis-l2.json \
+	-b ../../test_data/blobs/ \
+	-s $$PWD/store \
+	-c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	cargo b --manifest-path ../../Cargo.toml --release
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
+	ETHREX_WATCHER_BLOCK_DELAY=0 \
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
 
 	cargo test state_reconstruct --release

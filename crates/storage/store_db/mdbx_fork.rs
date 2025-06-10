@@ -725,13 +725,13 @@ impl StoreEngine for MDBXFork {
         Ok(Some(decoded))
     }
 
-    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
+    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Result<Trie, StoreError> {
         *(self.storage_trie.fixed_key.lock().unwrap()) = Some(hashed_address.0.as_slice().to_vec());
-        Trie::open(self.storage_trie.clone(), storage_root)
+        Ok(Trie::open(self.storage_trie.clone(), storage_root))
     }
 
-    fn open_state_trie(&self, state_root: H256) -> Trie {
-        Trie::open(self.state_trie.clone(), state_root)
+    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
+        Ok(Trie::open(self.state_trie.clone(), state_root))
     }
 
     async fn set_canonical_block(
@@ -840,7 +840,7 @@ impl StoreEngine for MDBXFork {
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         tx.put::<PendingBlocks>(
-            block.header.compute_block_hash().encode_to_vec(),
+            block.header.hash().encode_to_vec(),
             block.encode_to_vec(),
         )
         .unwrap();
@@ -984,23 +984,6 @@ impl StoreEngine for MDBXFork {
         for (k, v) in encoded {
             tx.put::<StorageHealPaths>(k, v).unwrap();
         }
-        Ok(())
-    }
-
-    async fn is_synced(&self) -> Result<bool, StoreError> {
-        let tx = self.env.tx().unwrap();
-        let sync_status = tx
-            .get::<ChainData>(ChainDataIndex::IsSynced as u8)
-            .unwrap()
-            .unwrap();
-        Ok(RLPDecode::decode(&sync_status).unwrap())
-    }
-
-    async fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
-        let tx = self.env.tx_mut().unwrap();
-        tx.put::<ChainData>(ChainDataIndex::IsSynced as u8, status.encode_to_vec())
-            .unwrap();
-        tx.commit().unwrap();
         Ok(())
     }
 
@@ -1249,5 +1232,19 @@ impl StoreEngine for MDBXFork {
             return Ok(None);
         };
         Ok(Some(BlockHash::decode(&result).unwrap()))
+    }
+
+    fn get_block_number_sync(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        todo!()
+    }
+
+    fn get_canonical_block_hash_sync(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        todo!()
     }
 }
