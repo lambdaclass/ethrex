@@ -30,8 +30,6 @@ use kzg_rs::{get_kzg_settings, Blob, Bytes48, KzgProof};
 pub enum StatelessExecutionError {
     #[error("ProverDB error: {0}")]
     ProverDBError(#[from] ProverDBError),
-    #[error("Trie error: {0}")]
-    TrieError(crate::trie::Error),
     #[error("Block validation error: {0}")]
     BlockValidationError(ChainError),
     #[error("Gas validation error: {0}")]
