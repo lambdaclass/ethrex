@@ -143,7 +143,7 @@ endif
 
 
 start_ethrex_hoodi: ## Start ethrex for hoodi
-	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
     		--http.addr 0.0.0.0 \
     		--http.port 8545 \
     		--authrpc.port 8551 \
@@ -158,7 +158,7 @@ start_ethrex_hoodi: ## Start ethrex for hoodi
     		--evm $(EVM)
 
 start_ethrex_holesky: ## Start ethrex for holesky
-	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
     		--http.addr 0.0.0.0 \
     		--http.port 8545 \
     		--authrpc.port 8551 \
