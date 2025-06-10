@@ -69,7 +69,7 @@ pub struct ExecutionWitnessResult {
 #[derive(thiserror::Error, Debug)]
 pub enum ExecutionWitnessError {
     #[error("Failed to rebuild tries: {0}")]
-    RebuilTrie(String),
+    RebuildTrie(String),
     #[error("Failed to apply account updates {0}")]
     ApplyAccountUpdates(String),
     #[error("DB error: {0}")]
@@ -88,7 +88,7 @@ impl ExecutionWitnessResult {
             self.state_trie_nodes.as_ref(),
             self.storage_trie_nodes.as_ref(),
         ) else {
-            return Err(ExecutionWitnessError::RebuilTrie(
+            return Err(ExecutionWitnessError::RebuildTrie(
                 "Tried to rebuild tries with empty nodes rebuilding the trie can only be done once"
                     .to_string(),
             ));
@@ -100,7 +100,7 @@ impl ExecutionWitnessResult {
 
         for node in state_trie_nodes.iter() {
             let x = Node::decode_raw(node).map_err(|_| {
-                ExecutionWitnessError::RebuilTrie("Invalid state trie node in witness".to_string())
+                ExecutionWitnessError::RebuildTrie("Invalid state trie node in witness".to_string())
             })?;
             let hash = x.compute_hash().finalize();
             if hash == initial_state_root {
@@ -111,7 +111,7 @@ impl ExecutionWitnessResult {
 
         let state_trie =
             Trie::from_nodes(initial_node.as_ref(), state_trie_nodes).map_err(|e| {
-                ExecutionWitnessError::RebuilTrie(format!("Failed to build state trie {e}"))
+                ExecutionWitnessError::RebuildTrie(format!("Failed to build state trie {e}"))
             })?;
 
         let mut storage_tries = HashMap::new();
@@ -143,7 +143,7 @@ impl ExecutionWitnessResult {
             }
 
             let Ok(storage_trie) = Trie::from_nodes(initial_node, nodes) else {
-                return Err(ExecutionWitnessError::RebuilTrie(
+                return Err(ExecutionWitnessError::RebuildTrie(
                     "Failed to rebuild storage trie".to_string(),
                 ));
             };
@@ -237,7 +237,7 @@ impl ExecutionWitnessResult {
         let state_trie = self
             .state_trie
             .as_ref()
-            .ok_or(ExecutionWitnessError::RebuilTrie(
+            .ok_or(ExecutionWitnessError::RebuildTrie(
                 "Tried to get state trie root before rebuilding tries".to_string(),
             ))?;
         let lock = state_trie.lock().map_err(|_| {

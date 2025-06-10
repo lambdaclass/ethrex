@@ -4,9 +4,12 @@ use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
 };
 use ethrex_common::types::AccountUpdate;
+use ethrex_common::types::{
+    block_execution_witness::ExecutionWitnessError, block_execution_witness::ExecutionWitnessResult,
+};
 use ethrex_common::Address;
 use ethrex_common::{
-    types::{block_execution_witness::ExecutionWitnessResult, Block, BlockHeader},
+    types::{Block, BlockHeader},
     H256,
 };
 use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDBError};
@@ -66,8 +69,8 @@ pub enum StatelessExecutionError {
     InvalidStateDiff,
     #[error("Batch has no blocks")]
     EmptyBatchError,
-    #[error("Invalid database")]
-    InvalidDatabase,
+    #[error("Execution witness error: {0}")]
+    ExecutionWitness(#[from] ExecutionWitnessError),
     #[error("Invalid initial state trie")]
     InvalidInitialStateTrie,
     #[error("Invalid final state trie")]
@@ -213,7 +216,7 @@ fn execute_stateless(
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
     db.rebuild_tries()
-        .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
+        .map_err(StatelessExecutionError::ExecutionWitness)?;
 
     // Validate block hashes, except parent block hash (latest block hash)
     if let Ok(Some(invalid_block_header)) = db.get_first_invalid_block_hash() {
@@ -231,7 +234,7 @@ fn execute_stateless(
                 .header
                 .number,
         )
-        .map_err(|_| StatelessExecutionError::NoHeadersRequired)?;
+        .map_err(StatelessExecutionError::ExecutionWitness)?;
     let first_block_header = &blocks
         .first()
         .ok_or(StatelessExecutionError::EmptyBatchError)?
@@ -243,7 +246,7 @@ fn execute_stateless(
     // Validate the initial state
     let initial_state_hash = db
         .state_trie_root()
-        .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
+        .map_err(StatelessExecutionError::ExecutionWitness)?;
 
     if initial_state_hash != parent_block_header.state_root {
         return Err(StatelessExecutionError::InvalidInitialStateTrie);
@@ -275,7 +278,7 @@ fn execute_stateless(
 
         // Update db for the next block
         db.apply_account_updates(&account_updates)
-            .map_err(|e| StatelessExecutionError::ApplyAccountUpdates(e.to_string()))?;
+            .map_err(StatelessExecutionError::ExecutionWitness)?;
 
         // Update acc_account_updates
         for account in account_updates {
@@ -307,7 +310,7 @@ fn execute_stateless(
     let last_block_hash = last_block.header.hash();
     let final_state_hash = db
         .state_trie_root()
-        .map_err(|_| StatelessExecutionError::InvalidDatabase)?;
+        .map_err(StatelessExecutionError::ExecutionWitness)?;
     if final_state_hash != last_block_state_root {
         return Err(StatelessExecutionError::InvalidFinalStateTrie);
     }
