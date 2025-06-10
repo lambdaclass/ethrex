@@ -17,6 +17,7 @@ use ethrex_vm::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
+use secp256k1::SecretKey;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
@@ -36,7 +37,6 @@ use crate::l2::L2Options;
 use ::{
     ethrex_common::Address,
     ethrex_storage_rollup::{EngineTypeRollup, StoreRollup},
-    secp256k1::SecretKey,
 };
 
 pub fn init_tracing(opts: &Options) {

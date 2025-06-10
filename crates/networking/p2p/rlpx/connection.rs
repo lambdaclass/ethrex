@@ -34,6 +34,7 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
+use lazy_static::lazy_static;
 use rand::random;
 use secp256k1::Message as SignedMessage;
 use secp256k1::{ecdsa::RecoveryId, SecretKey as SigningKeySecp256k1};
@@ -50,7 +51,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::{
     eth::transactions::NewPooledTransactionHashes, p2p::DisconnectReason, utils::log_peer_warn,
@@ -62,6 +63,11 @@ const PERIODIC_BLOCK_BROADCAST_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(500);
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
+
+lazy_static! {
+    pub static ref ADDRESS_LEAD_SEQUENCER: Address =
+        Address::from_slice(&hex::decode("3d1e15a1a55578f7c920884a9943b3b35d0d885b").unwrap());
+}
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
@@ -504,14 +510,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     )
                     .serialize_compact();
                 let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
-                // let a = secp256k1::SECP256K1
-                //     .recover_ecdsa(
-                //         &SignedMessage::from_digest(new_block.hash().to_fixed_bytes()),
-                //         &signature,
-                //     )
-                //     .unwrap();
-                // let hash = Keccak256::new_with_prefix(&a.serialize_uncompressed()[1..]).finalize();
-                // let address = Address::from_slice(&hash[12..]);
 
                 self.send(Message::NewBlock(NewBlockMessage {
                     block: new_block,
@@ -692,7 +690,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let hash =
                     Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
                 let recovered_lead_sequencer = Address::from_slice(&hash[12..]);
-                dbg!(recovered_lead_sequencer);
+
+                if recovered_lead_sequencer != *ADDRESS_LEAD_SEQUENCER {
+                    warn!(
+                        "Received block from wrong lead sequencer: {}. Expected: {}",
+                        recovered_lead_sequencer, *ADDRESS_LEAD_SEQUENCER
+                    );
+                    return Ok(());
+                }
 
                 let _ = self
                     .blockchain
