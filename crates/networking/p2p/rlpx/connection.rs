@@ -663,6 +663,17 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::TrieNodes(response)).await?
             }
             Message::NewBlock(req) if peer_supports_based => {
+                // This is to not send the same block to the one who sent it
+                if self.latest_broadcasted_block + 1 == req.block.header.number {
+                    self.latest_broadcasted_block = req.block.header.number;
+                } else {
+                    warn!(
+                        "Not received the immediate next block, expected {}, received {}",
+                        self.latest_broadcasted_block + 1,
+                        req.block.header.number
+                    );
+                    return Ok(());
+                }
                 if let Ok(Some(_)) = self.storage.get_block_body_by_hash(req.block.hash()).await {
                     info!(
                         "Block {} received by peer already stored, ignoring it",
@@ -718,6 +729,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     if !self.store_rollup.contains_batch(&req.batch_number).await?
                         && req.batch_number == self.batches_broadcasted + 1
                     {
+                        // This is to not sent the same batch to the one who sent it
+                        self.batches_broadcasted += 1;
+
                         let first_block_number =
                             req.block_numbers.first().ok_or(RLPxError::InternalError(
                                 "No block numbers found in BatchSealed message".to_string(),
