@@ -663,65 +663,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::TrieNodes(response)).await?
             }
             Message::NewBlock(req) if peer_supports_based => {
-                // This is to not send the same block to the one who sent it
-                if self.latest_broadcasted_block + 1 == req.block.header.number {
-                    self.latest_broadcasted_block = req.block.header.number;
-                } else {
-                    warn!(
-                        "Not received the immediate next block, expected {}, received {}",
-                        self.latest_broadcasted_block + 1,
-                        req.block.header.number
-                    );
-                    return Ok(());
+                if self.validate_new_block_received(&req).await? {
+                    self.process_new_block_message(&req).await?;
+                    self.broadcast_message(Message::NewBlock(req))?;
                 }
-                if let Ok(Some(_)) = self.storage.get_block_body_by_hash(req.block.hash()).await {
-                    info!(
-                        "Block {} received by peer already stored, ignoring it",
-                        req.block.header.number
-                    );
-                    return Ok(());
-                }
-                let block_hash = req.block.hash();
-
-                let recovery_id: i32 = i32::from_be_bytes(req.recovery_id);
-                let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
-                    &req.signature,
-                    RecoveryId::from_i32(recovery_id).unwrap(), // cannot fail
-                )
-                .unwrap();
-
-                // Recover public key
-                let public = secp256k1::SECP256K1
-                    .recover_ecdsa(
-                        &SignedMessage::from_digest(block_hash.to_fixed_bytes()),
-                        &signature,
-                    )
-                    .unwrap();
-                // Hash public key to obtain address
-                let hash =
-                    Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
-                let recovered_lead_sequencer = Address::from_slice(&hash[12..]);
-
-                if recovered_lead_sequencer != *ADDRESS_LEAD_SEQUENCER {
-                    warn!(
-                        "Received block from wrong lead sequencer: {}. Expected: {}",
-                        recovered_lead_sequencer, *ADDRESS_LEAD_SEQUENCER
-                    );
-                    return Ok(());
-                }
-
-                let _ = self
-                    .blockchain
-                    .add_block(&req.block)
-                    .await
-                    .inspect_err(|e| {
-                        log_peer_warn(&self.node, &format!("Error adding new block: {e}"));
-                    });
-
-                apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
-                    .await
-                    .map_err(|e| RLPxError::BadRequest(format!("Error adding new block: {e}")))?;
-                self.broadcast_message(Message::NewBlock(req))?;
             }
             Message::BatchSealed(req) => {
                 #[cfg(feature = "l2")]
@@ -797,6 +742,74 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 }
             }
         }
+        Ok(())
+    }
+
+    async fn validate_new_block_received(
+        &mut self,
+        msg: &NewBlockMessage,
+    ) -> Result<bool, RLPxError> {
+        // This is to not send the same block to the one who sent it
+        if self.latest_broadcasted_block + 1 == msg.block.header.number {
+            self.latest_broadcasted_block = msg.block.header.number;
+        } else {
+            debug!(
+                "Not received the immediate next block, expected {}, received {}, ignoring it",
+                self.latest_broadcasted_block + 1,
+                msg.block.header.number
+            );
+            return Ok(false);
+        }
+        if let Ok(Some(_)) = self.storage.get_block_body_by_hash(msg.block.hash()).await {
+            info!(
+                "Block {} received by peer already stored, ignoring it",
+                msg.block.header.number
+            );
+            return Ok(false);
+        }
+        let block_hash = msg.block.hash();
+
+        let recovery_id: i32 = i32::from_be_bytes(msg.recovery_id);
+        let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
+            &msg.signature,
+            RecoveryId::from_i32(recovery_id).unwrap(), // cannot fail
+        )
+        .unwrap();
+
+        // Recover public key
+        let public = secp256k1::SECP256K1
+            .recover_ecdsa(
+                &SignedMessage::from_digest(block_hash.to_fixed_bytes()),
+                &signature,
+            )
+            .unwrap();
+        // Hash public key to obtain address
+        let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
+        let recovered_lead_sequencer = Address::from_slice(&hash[12..]);
+
+        if recovered_lead_sequencer != *ADDRESS_LEAD_SEQUENCER {
+            warn!(
+                "Received block from wrong lead sequencer: {}. Expected: {}",
+                recovered_lead_sequencer, *ADDRESS_LEAD_SEQUENCER
+            );
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    async fn process_new_block_message(&mut self, msg: &NewBlockMessage) -> Result<(), RLPxError> {
+        let _ = self
+            .blockchain
+            .add_block(&msg.block)
+            .await
+            .inspect_err(|e| {
+                log_peer_warn(&self.node, &format!("Error adding new block: {e}"));
+            });
+        let block_hash = msg.block.hash();
+
+        apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
+            .await
+            .map_err(|e| RLPxError::BadRequest(format!("Error adding new block: {e}")))?;
         Ok(())
     }
 
