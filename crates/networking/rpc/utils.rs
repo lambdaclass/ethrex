@@ -412,7 +412,8 @@ pub mod test_utils {
             #[cfg(feature = "l2")]
             rollup_store,
         )
-        .await;
+        .await
+        .unwrap();
     }
 
     pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
