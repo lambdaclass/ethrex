@@ -427,7 +427,7 @@ impl Store {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
                     }
-                    account_state.storage_root = storage_trie.hash()?;
+                    account_state.storage_root = storage_trie.hash_no_commit();
                 }
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
             }
