@@ -15,7 +15,7 @@ pub struct ProgramInput {
     /// blocks to execute
     #[serde_as(as = "SerdeJSON")]
     pub blocks: Vec<Block>,
-    /// database containing only the data necessary to execute
+    /// database containing all the data necessary to execute
     pub db: ExecutionWitnessResult,
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
