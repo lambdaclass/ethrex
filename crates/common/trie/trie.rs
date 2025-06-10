@@ -230,10 +230,6 @@ impl Trie {
     /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
     ///   root node are considered dangling.
     pub fn from_nodes(root: Option<&NodeRLP>, nodes: &[NodeRLP]) -> Result<Self, TrieError> {
-        let Some(root) = root else {
-            return Ok(Trie::stateless());
-        };
-
         let mut storage = nodes
             .iter()
             .map(|node| {
@@ -243,6 +239,14 @@ impl Trie {
                 )
             })
             .collect::<HashMap<_, _>>();
+        let nodes = storage
+            .iter()
+            .map(|(node_hash, nodes)| (*node_hash, (*nodes).clone()))
+            .collect::<HashMap<_, _>>();
+        let Some(root) = root else {
+            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
+            return Ok(Trie::new(in_memory_trie));
+        };
 
         fn inner(
             storage: &mut HashMap<NodeHash, &Vec<u8>>,
