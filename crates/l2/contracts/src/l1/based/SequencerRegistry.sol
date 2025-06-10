@@ -15,7 +15,7 @@ contract SequencerRegistry is
 {
     uint256 public constant MIN_COLLATERAL = 1 ether;
 
-    uint256 public constant BATCHES_PER_SEQUENCER = 2;
+    uint256 public constant BATCHES_PER_SEQUENCER = 32;
 
     address public ON_CHAIN_PROPOSER;
 
@@ -68,11 +68,13 @@ contract SequencerRegistry is
     }
 
     function leaderSequencer() public view returns (address) {
-        return futureLeaderSequencer(0);
+        uint256 _currentBatch = IOnChainProposer(ON_CHAIN_PROPOSER)
+            .lastCommittedBatch() + 1;
+        return leadSequencerForBatch(_currentBatch);
     }
 
-    function futureLeaderSequencer(
-        uint256 nBatchesInTheFuture
+    function leadSequencerForBatch(
+        uint256 batchNumber
     ) public view returns (address) {
         uint256 _sequencers = sequencers.length;
 
@@ -80,12 +82,7 @@ contract SequencerRegistry is
             return address(0);
         }
 
-        uint256 _currentBatch = IOnChainProposer(ON_CHAIN_PROPOSER)
-            .lastCommittedBatch() + 1;
-
-        uint256 _targetBatch = _currentBatch + nBatchesInTheFuture;
-
-        uint256 _id = _targetBatch / BATCHES_PER_SEQUENCER;
+        uint256 _id = batchNumber / BATCHES_PER_SEQUENCER;
 
         address _leader = sequencers[_id % _sequencers];
 

@@ -17,7 +17,7 @@ interface ISequencerRegistry {
 
     function leaderSequencer() external view returns (address);
 
-    function futureLeaderSequencer(
-        uint256 nBatchesInTheFuture
+    function leadSequencerForBatch(
+        uint256 batchNumber
     ) external view returns (address);
 }
