@@ -106,7 +106,7 @@ pub(crate) struct RLPxConnection<S> {
     latest_block_sent: u64,
     latest_block_added: u64,
     blocks_on_queue: BTreeMap<u64, Block>,
-    batches_broadcasted: u64,
+    latest_batch_sent: u64,
     client_version: String,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
@@ -154,7 +154,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             latest_block_sent: 0,
             latest_block_added: 0,
             blocks_on_queue: BTreeMap::new(),
-            batches_broadcasted: 0,
+            latest_batch_sent: 0,
             client_version,
             connection_broadcast_send: connection_broadcast,
             #[cfg(feature = "l2")]
@@ -535,7 +535,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn send_sealed_batch(&mut self) -> Result<(), RLPxError> {
         #[cfg(feature = "l2")]
         {
-            let next_batch_to_send = self.batches_broadcasted + 1;
+            let next_batch_to_send = self.latest_batch_sent + 1;
             if !self
                 .store_rollup
                 .contains_batch(&next_batch_to_send)
@@ -545,7 +545,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             let block_numbers = self
                 .store_rollup
-                .get_block_numbers_by_batch(self.batches_broadcasted + 1)
+                .get_block_numbers_by_batch(self.latest_batch_sent + 1)
                 .await?
                 .ok_or(RLPxError::InternalError(
                     "No batch found after containing check".to_string(),
@@ -579,7 +579,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 recovery_id,
             });
             self.send(msg).await?;
-            self.batches_broadcasted += 1;
+            self.latest_batch_sent += 1;
             Ok(())
         }
         #[cfg(not(feature = "l2"))]
@@ -800,17 +800,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn validate_batch_sealed(&mut self, msg: &BatchSealedMessage) -> Result<bool, RLPxError> {
         #[cfg(feature = "l2")]
         {
-            if self.store_rollup.contains_batch(&msg.batch_number).await?
-                || msg.batch_number != self.batches_broadcasted + 1
-            {
+            if self.store_rollup.contains_batch(&msg.batch_number).await? {
                 info!("Batch {} already sealed, ignoring it", msg.batch_number);
                 return Ok(false);
             }
             if msg.block_numbers.is_empty() {
                 return Ok(false);
             }
-            // This is to not sent the same batch to the one who sent it
-            self.batches_broadcasted += 1;
 
             let hash =
                 get_hash_batch_sealed(msg.batch_number, &msg.block_numbers, &msg.withdrawal_hashes);
@@ -829,7 +825,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         #[cfg(not(feature = "l2"))]
         {
             Err(RLPxError::InternalError(
-                "Batch sealed message is not supported in this build".to_string(),
+                "This function cannot won't be called without the l2 feature flag".to_string(),
             ))
         }
     }
@@ -860,7 +856,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         #[cfg(not(feature = "l2"))]
         {
             Err(RLPxError::InternalError(
-                "Batch sealed message is not supported in this build".to_string(),
+                "This function cannot won't be called without the l2 feature flag".to_string(),
             ))
         }
     }
