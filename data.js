@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749567581163,
+  "lastUpdate": 1749571443531,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11875,6 +11875,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177786357455,
             "range": "± 881145360",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "dfb0efe11c6b6aad0ad742abacc1bd6a7f780f27",
+          "message": "fix(l1): client discarding repeated tx when received from different peers (#3092)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWe noticed that when the same tx was received from two different peers,\nthe first one will be OK but the second one will be discarded and no\nbeen broadcasted.\n\n**Description**\n\nThe fix is to check if the tx is the same when validating the nonce in\nthe mempool.\n\nAlso improves the error msg\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-10T15:14:56Z",
+          "tree_id": "ca8ebd15f60b8a7fe88ce9f4d8bfe72d4c2e8269",
+          "url": "https://github.com/lambdaclass/ethrex/commit/dfb0efe11c6b6aad0ad742abacc1bd6a7f780f27"
+        },
+        "date": 1749571437978,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178247997749,
+            "range": "± 372097052",
             "unit": "ns/iter"
           }
         ]
