@@ -7,7 +7,7 @@ use crate::store_db::libmdbx::Store as LibmdbxStoreRollup;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStoreRollup;
 use ethrex_common::{
-    types::{batch::Batch, Blob, BlobsBundle, BlockNumber},
+    types::{batch::Batch, AccountUpdate, Blob, BlobsBundle, BlockNumber},
     H256,
 };
 use ethrex_storage::error::StoreError;
@@ -218,7 +218,7 @@ impl Store {
         let withdrawal_hashes = self
             .get_withdrawal_hashes_by_batch(batch_number)
             .await?.ok_or(StoreError::Custom(
-            "Failed while trying to retrieve the withdrawal hashes of a known batch. This is a bug."
+            "Failed while trying to retrieve the wiShdrawal hashes of a known batch. This is a bug."
                 .to_owned(),
         ))?;
         let deposit_logs_hash = self
@@ -287,5 +287,26 @@ impl Store {
     /// Sets the lastest sent batch proof
     pub async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
         self.engine.set_lastest_sent_batch_proof(batch_number).await
+    }
+
+    /// Returns the account updates yielded from executing a block
+    pub async fn get_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Vec<AccountUpdate>>, StoreError> {
+        self.engine
+            .get_account_updates_by_block_number(block_number)
+            .await
+    }
+
+    /// Stores the account updates yielded from executing a block
+    pub async fn store_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+        account_updates: Vec<AccountUpdate>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .store_account_updates_by_block_number(block_number, account_updates)
+            .await
     }
 }

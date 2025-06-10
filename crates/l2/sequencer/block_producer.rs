@@ -11,6 +11,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::Address;
 use ethrex_storage::Store;
+use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
 use payload_builder::build_payload;
@@ -33,11 +34,14 @@ pub struct BlockProducer {
 
 pub async fn start_block_producer(
     store: Store,
+    rollup_store: StoreRollup,
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
 ) -> Result<(), SequencerError> {
     let proposer = BlockProducer::new_from_config(&cfg.block_producer);
-    proposer.run(store.clone(), blockchain).await;
+    proposer
+        .run(store.clone(), rollup_store.clone(), blockchain)
+        .await;
     Ok(())
 }
 
@@ -55,10 +59,10 @@ impl BlockProducer {
         }
     }
 
-    pub async fn run(&self, store: Store, blockchain: Arc<Blockchain>) {
+    pub async fn run(&self, store: Store, rollup_store: StoreRollup, blockchain: Arc<Blockchain>) {
         loop {
             let _ = self
-                .main_logic(store.clone(), blockchain.clone())
+                .main_logic(store.clone(), rollup_store.clone(), blockchain.clone())
                 .await
                 .inspect_err(|e| error!("Block Producer Error: {e}"));
 
@@ -69,6 +73,7 @@ impl BlockProducer {
     pub async fn main_logic(
         &self,
         store: Store,
+        rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
     ) -> Result<(), BlockProducerError> {
         let version = 3;
@@ -130,8 +135,10 @@ impl BlockProducer {
         info!("Stored new block {:x}", block.hash());
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
-        // Cache execution result
-        todo!("cache using the rollup store");
+        // Store execution result
+        rollup_store
+            .store_account_updates_by_block_number(block.header.number, account_updates)
+            .await?;
 
         // Make the new head be part of the canonical chain
         apply_fork_choice(&store, block.hash(), block.hash(), block.hash()).await?;

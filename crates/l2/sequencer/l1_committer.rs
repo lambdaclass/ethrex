@@ -25,7 +25,7 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmEngine};
 use secp256k1::SecretKey;
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, utils::random_duration};
@@ -266,10 +266,11 @@ async fn prepare_batch_from_block(
     info!("Preparing state diff from block {first_block_of_batch}");
 
     loop {
+        let block_to_commit_number = last_added_block_number + 1;
         // Get a block to add to the batch
         let Some(block_to_commit_body) = state
             .store
-            .get_block_body(last_added_block_number + 1)
+            .get_block_body(block_to_commit_number)
             .await
             .map_err(CommitterError::from)?
         else {
@@ -278,7 +279,7 @@ async fn prepare_batch_from_block(
         };
         let block_to_commit_header = state
             .store
-            .get_block_header(last_added_block_number + 1)
+            .get_block_header(block_to_commit_number)
             .map_err(CommitterError::from)?
             .ok_or(CommitterError::FailedToGetInformationFromStorage(
                 "Failed to get_block_header() after get_block_body()".to_owned(),
@@ -290,7 +291,7 @@ async fn prepare_batch_from_block(
         for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
             let receipt = state
                 .store
-                .get_receipt(last_added_block_number + 1, index.try_into()?)
+                .get_receipt(block_to_commit_number, index.try_into()?)
                 .await?
                 .ok_or(CommitterError::InternalError(
                     "Transactions in a block should have a receipt".to_owned(),
@@ -312,35 +313,36 @@ async fn prepare_batch_from_block(
 
         // Get block account updates.
         let block_to_commit = Block::new(block_to_commit_header.clone(), block_to_commit_body);
+        let account_updates = if let Some(account_updates) = state
+            .rollup_store
+            .get_account_updates_by_block_number(block_to_commit_number)
+            .await?
+        {
+            account_updates
+        } else {
+            warn!(
+                "Could not find execution cache result for block {}, falling back to re-execution",
+                last_added_block_number + 1
+            );
 
-        let account_updates = todo!("retrieve account updates using rollup store");
-        // let account_updates =
-        //     if let Some(account_updates) = state.execution_cache.get(block_to_commit.hash())? {
-        //         account_updates
-        //     } else {
-        //         warn!(
-        //         "Could not find execution cache result for block {}, falling back to re-execution",
-        //         last_added_block_number + 1
-        //     );
-
-        //         let vm_db =
-        //             StoreVmDatabase::new(state.store.clone(), block_to_commit.header.parent_hash);
-        //         let mut vm = Evm::new(EvmEngine::default(), vm_db);
-        //         vm.execute_block(&block_to_commit)?;
-        //         vm.get_state_transitions()?
-        //     };
+            let vm_db =
+                StoreVmDatabase::new(state.store.clone(), block_to_commit.header.parent_hash);
+            let mut vm = Evm::new(EvmEngine::default(), vm_db);
+            vm.execute_block(&block_to_commit)?;
+            vm.get_state_transitions()?
+        };
 
         // Accumulate block data with the rest of the batch.
         acc_withdrawals.extend(withdrawals.clone());
         acc_deposits.extend(deposits.clone());
-        // for account in account_updates {
-        //     let address = account.address;
-        //     if let Some(existing) = acc_account_updates.get_mut(&address) {
-        //         existing.merge(account);
-        //     } else {
-        //         acc_account_updates.insert(address, account);
-        //     }
-        // }
+        for account in account_updates {
+            let address = account.address;
+            if let Some(existing) = acc_account_updates.get_mut(&address) {
+                existing.merge(account);
+            } else {
+                acc_account_updates.insert(address, account);
+            }
+        }
 
         let parent_block_hash = state
             .store
