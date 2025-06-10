@@ -484,42 +484,44 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn send_new_block(&mut self) -> Result<(), RLPxError> {
-        if self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
-            let latest_block_number = self.storage.get_latest_block_number().await?;
-            for i in self.latest_broadcasted_block + 1..=latest_block_number {
-                debug!(
-                    "Broadcasting new block, current: {}, last broadcasted: {}",
-                    i, self.latest_broadcasted_block
-                );
-                let new_block_body = self.storage.get_block_body(i).await?.unwrap();
-                let new_block_header = self.storage.get_block_header(i)?.unwrap();
-                let new_block = Block {
-                    header: new_block_header,
-                    body: new_block_body,
-                };
-                let Some(secret_key) = self.secret_key else {
-                    return Err(RLPxError::InternalError(
-                        "Secret key is not set for based connection".to_string(),
-                    ));
-                };
-
-                let (recovery_id, signature) = secp256k1::SECP256K1
-                    .sign_ecdsa_recoverable(
-                        &SignedMessage::from_digest(new_block.hash().to_fixed_bytes()),
-                        &secret_key,
-                    )
-                    .serialize_compact();
-                let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
-
-                self.send(Message::NewBlock(NewBlockMessage {
-                    block: new_block,
-                    signature,
-                    recovery_id,
-                }))
-                .await?;
-            }
-            self.latest_broadcasted_block = latest_block_number;
+        if !self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
+            return Ok(());
         }
+        let latest_block_number = self.storage.get_latest_block_number().await?;
+        for i in self.latest_broadcasted_block + 1..=latest_block_number {
+            debug!(
+                "Broadcasting new block, current: {}, last broadcasted: {}",
+                i, self.latest_broadcasted_block
+            );
+            let new_block_body = self.storage.get_block_body(i).await?.unwrap();
+            let new_block_header = self.storage.get_block_header(i)?.unwrap();
+            let new_block = Block {
+                header: new_block_header,
+                body: new_block_body,
+            };
+            let Some(secret_key) = self.secret_key else {
+                return Err(RLPxError::InternalError(
+                    "Secret key is not set for based connection".to_string(),
+                ));
+            };
+
+            let (recovery_id, signature) = secp256k1::SECP256K1
+                .sign_ecdsa_recoverable(
+                    &SignedMessage::from_digest(new_block.hash().to_fixed_bytes()),
+                    &secret_key,
+                )
+                .serialize_compact();
+            let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+
+            self.send(Message::NewBlock(NewBlockMessage {
+                block: new_block,
+                signature,
+                recovery_id,
+            }))
+            .await?;
+        }
+        self.latest_broadcasted_block = latest_block_number;
+
         Ok(())
     }
 
@@ -527,33 +529,34 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         #[cfg(feature = "l2")]
         {
             let next_batch_to_send = self.batches_broadcasted + 1;
-            if self
+            if !self
                 .store_rollup
                 .contains_batch(&next_batch_to_send)
                 .await?
             {
-                let block_numbers = self
-                    .store_rollup
-                    .get_block_numbers_by_batch(self.batches_broadcasted + 1)
-                    .await?
-                    .ok_or(RLPxError::InternalError(
-                        "No batch found after containing check".to_string(),
-                    ))?;
-                let withdrawal_hashes = self
-                    .store_rollup
-                    .get_withdrawal_hashes_by_batch(next_batch_to_send)
-                    .await?
-                    .ok_or(RLPxError::InternalError(
-                        "No withdrawal hashes found for the batch".to_string(),
-                    ))?;
-                let msg = Message::BatchSealed(BatchSealedMessage {
-                    batch_number: next_batch_to_send,
-                    block_numbers,
-                    withdrawal_hashes,
-                });
-                self.send(msg).await?;
-                self.batches_broadcasted += 1;
+                return Ok(());
             }
+            let block_numbers = self
+                .store_rollup
+                .get_block_numbers_by_batch(self.batches_broadcasted + 1)
+                .await?
+                .ok_or(RLPxError::InternalError(
+                    "No batch found after containing check".to_string(),
+                ))?;
+            let withdrawal_hashes = self
+                .store_rollup
+                .get_withdrawal_hashes_by_batch(next_batch_to_send)
+                .await?
+                .ok_or(RLPxError::InternalError(
+                    "No withdrawal hashes found for the batch".to_string(),
+                ))?;
+            let msg = Message::BatchSealed(BatchSealedMessage {
+                batch_number: next_batch_to_send,
+                block_numbers,
+                withdrawal_hashes,
+            });
+            self.send(msg).await?;
+            self.batches_broadcasted += 1;
             Ok(())
         }
         #[cfg(not(feature = "l2"))]
@@ -671,35 +674,35 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::BatchSealed(req) => {
                 #[cfg(feature = "l2")]
                 {
-                    if !self.store_rollup.contains_batch(&req.batch_number).await?
-                        && req.batch_number == self.batches_broadcasted + 1
+                    if self.store_rollup.contains_batch(&req.batch_number).await?
+                        || req.batch_number != self.batches_broadcasted + 1
                     {
-                        // This is to not sent the same batch to the one who sent it
-                        self.batches_broadcasted += 1;
-
-                        let first_block_number =
-                            req.block_numbers.first().ok_or(RLPxError::InternalError(
-                                "No block numbers found in BatchSealed message".to_string(),
-                            ))?;
-                        let last_block_number =
-                            req.block_numbers.last().ok_or(RLPxError::InternalError(
-                                "No block numbers found in BatchSealed message".to_string(),
-                            ))?;
-                        self.store_rollup
-                            .seal_batch(
-                                req.batch_number,
-                                *first_block_number,
-                                *last_block_number,
-                                req.withdrawal_hashes,
-                            )
-                            .await?;
-                        info!(
-                            "Sealed batch {} with blocks from {} to {}",
-                            req.batch_number, first_block_number, last_block_number
-                        );
-                    } else {
                         info!("Batch {} already sealed, ignoring it", req.batch_number);
+                        return Ok(());
                     }
+                    // This is to not sent the same batch to the one who sent it
+                    self.batches_broadcasted += 1;
+
+                    let first_block_number =
+                        req.block_numbers.first().ok_or(RLPxError::InternalError(
+                            "No block numbers found in BatchSealed message".to_string(),
+                        ))?;
+                    let last_block_number =
+                        req.block_numbers.last().ok_or(RLPxError::InternalError(
+                            "No block numbers found in BatchSealed message".to_string(),
+                        ))?;
+                    self.store_rollup
+                        .seal_batch(
+                            req.batch_number,
+                            *first_block_number,
+                            *last_block_number,
+                            req.withdrawal_hashes,
+                        )
+                        .await?;
+                    info!(
+                        "Sealed batch {} with blocks from {} to {}",
+                        req.batch_number, first_block_number, last_block_number
+                    );
                 }
             }
 
