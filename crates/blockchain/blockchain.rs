@@ -299,7 +299,7 @@ impl Blockchain {
         };
 
         self.storage
-            .store_changes(update_batch)
+            .store_block_updates(update_batch)
             .await
             .map_err(|e| (e.into(), None))?;
 

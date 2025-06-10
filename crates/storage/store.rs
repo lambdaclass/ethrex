@@ -55,7 +55,7 @@ pub struct UpdateBatch {
 
 impl UpdateBatch {
     pub async fn apply_to_store(self, store: Store) -> Result<(), StoreError> {
-        store.store_changes(self).await
+        store.store_block_updates(self).await
     }
 }
 
@@ -66,7 +66,7 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
-    pub async fn store_changes(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.engine.store_changes_batch(update_batch).await
     }
 
