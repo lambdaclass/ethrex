@@ -686,6 +686,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::NewBlock(req) if peer_supports_based => {
                 if self.validate_new_block(&req).await? {
                     self.process_new_block(&req).await?;
+                    // for now we broadcast valid messages, but this should be reviewed
                     self.broadcast_message(Message::NewBlock(req))?;
                 }
             }
