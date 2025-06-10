@@ -782,6 +782,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
         let mut next_block_to_add = self.latest_block_added + 1;
         while let Some(block) = self.blocks_on_queue.remove(&next_block_to_add) {
+            // This check is necessary if a connection to another peer already applied the block but this connection
+            // did not register that update.
+            if let Ok(Some(_)) = self.storage.get_block_body(next_block_to_add).await {
+                self.latest_block_added = next_block_to_add;
+                next_block_to_add += 1;
+                continue;
+            }
             let _ = self.blockchain.add_block(&block).await.inspect_err(|e| {
                 log_peer_warn(&self.node, &format!("Error adding new block: {e}"));
             });
