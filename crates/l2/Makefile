@@ -209,18 +209,24 @@ rm-db-l2: ## 🛑 Removes the DB used by the L2
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
 	cargo test l2 --release -- --nocapture --test-threads=1 || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
 
-integration-test: rm-db-l2 rm-db-l1# We create an empty .env file simply because if the file
-	# does not exist, the container fails to write to it.
-	touch .env
+integration-test: rm-db-l2 rm-db-l1 build-prover# We create an empty .env file simply because if the file
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
-	ETHREX_COMMITTER_VALIDIUM=${ETHREX_COMMITTER_VALIDIUM} \
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
-	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & \
-	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
-	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
-	cargo test l2 --release -- --nocapture --test-threads=1
-	killall ethrex_prover -s SIGINT
+	mkdir -p prover/zkvm/interface/sp1/out && touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
+	cd ../../; cargo test l2 --no-run --release
+	rm .env
+	touch .env
+	CI_ETHREX_WORKDIR=/usr/local/bin \
+	ETHREX_DEPLOYER_DEPLOY_RICH=true \
+	ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+	ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+	ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up contract_deployer
+	CI_ETHREX_WORKDIR=/usr/local/bin \
+	ETHREX_COMMITTER_VALIDIUM=false \
+	ETHREX_WATCHER_BLOCK_DELAY=0 \
+	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach ethrex_l2
+	RUST_LOG=info,ethrex_prover_lib=debug ../../target/release/ethrex_prover & export SERVER_PID=$$!; PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1; kill $${SERVER_PID}
+
 
 integration-test-gpu: rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
