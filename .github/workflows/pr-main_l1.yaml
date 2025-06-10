@@ -202,7 +202,7 @@ jobs:
               |Syncing=False
               |Payload Build after New Invalid Payload
               |Invalid NewPayload
-              |Invalid Missing Ancestor" # Invalid Missing Ancestor Syncing ReOrG is flaky with high parallelism, tested with 8 and works
+              |Invalid Missing Ancestor ReOrg" # Invalid Missing Ancestor Syncing ReOrG is flaky
             ethrex_flags: ""
           - name: "Paris Engine tests"
             simulation: ethereum/engine
@@ -233,8 +233,7 @@ jobs:
             ethrex_flags: ""
           - name: "Engine withdrawal tests"
             simulation: ethereum/engine
-            test_pattern: "engine-withdrawals/
-              Corrupted Block Hash Payload
+            test_pattern: "engine-withdrawals/Corrupted Block Hash Payload
               |Empty Withdrawals
               |engine-withdrawals test loader
               |GetPayloadBodies
@@ -283,7 +282,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client-file test_data/hive_clients.yml --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 1
+        run: chmod +x hive && ./hive --client-file test_data/hive_clients.yml --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16
         # We use 8 here instead of 16 due to performance issues in some tests
         # Notably the tests "Invalid Missing Ancestor Syncing ReOrG" in engine cancun
 
