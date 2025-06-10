@@ -7,33 +7,41 @@ use std::sync::Arc;
 use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(cache: Cache) -> eyre::Result<()> {
-    let Cache {
-        blocks,
-        parent_block_header,
-        db,
-    } = cache;
+    let Cache { blocks, db } = cache;
     let input = ProgramInput {
         blocks,
-        parent_block_header,
         db,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        // The L2 specific fields (state_diff, blob_commitment, blob_proof)
+        // will be filled by Default::default() if the 'l2' feature of
+        // 'zkvm_interface' is active (due to workspace compilation).
+        // If 'zkvm_interface' is compiled without 'l2' (e.g. standalone build),
+        // these fields won't exist in ProgramInput, and ..Default::default()
+        // will correctly not try to fill them.
+        // A better solution would involve rethinking the `l2` feature or the
+        // inclusion of this crate in the workspace.
+        ..Default::default()
     };
     ethrex_prover_lib::execute(input).map_err(|e| eyre::Error::msg(e.to_string()))?;
     Ok(())
 }
 
 pub async fn prove(cache: Cache) -> eyre::Result<String> {
-    let Cache {
-        blocks,
-        parent_block_header,
-        db,
-    } = cache;
+    let Cache { blocks, db } = cache;
     let out = ethrex_prover_lib::prove(
         ProgramInput {
             blocks,
-            parent_block_header,
             db,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            // The L2 specific fields (blob_commitment, blob_proof)
+            // will be filled by Default::default() if the 'l2' feature of
+            // 'zkvm_interface' is active (due to workspace compilation).
+            // If 'zkvm_interface' is compiled without 'l2' (e.g. standalone build),
+            // these fields won't exist in ProgramInput, and ..Default::default()
+            // will correctly not try to fill them.
+            // A better solution would involve rethinking the `l2` feature or the
+            // inclusion of this crate in the workspace.
+            ..Default::default()
         },
         false,
     )

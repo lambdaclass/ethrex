@@ -7,8 +7,10 @@ use ethrex_common::Address;
 use ethrex_common::U256;
 use keccak_hash::H256;
 
+use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
+use crate::utils::restore_cache_state;
 use crate::vm::Substate;
 use crate::vm::VM;
 
@@ -21,6 +23,7 @@ pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub cache: CacheDB,
     pub immutable_cache: HashMap<Address, Account>,
+    pub tx_backup: Option<CallFrameBackup>,
 }
 
 impl GeneralizedDatabase {
@@ -29,6 +32,7 @@ impl GeneralizedDatabase {
             store,
             cache: cache.clone(),
             immutable_cache: cache,
+            tx_backup: None,
         }
     }
 
@@ -87,6 +91,21 @@ impl GeneralizedDatabase {
             }
         }
         Ok(value)
+    }
+
+    /// Gets the transaction backup, if it exists.
+    /// It only works if the `BackupHook` was enabled during the transaction execution.
+    pub fn get_tx_backup(&self) -> Result<CallFrameBackup, InternalError> {
+        self.tx_backup.clone().ok_or(InternalError::Custom(
+            "Transaction backup not found. Was BackupHook enabled?".to_string(),
+        ))
+    }
+
+    /// Undoes the last transaction by restoring the cache state to the state before the transaction.
+    pub fn undo_last_transaction(&mut self) -> Result<(), VMError> {
+        let tx_backup = self.get_tx_backup()?;
+        restore_cache_state(self, tx_backup)?;
+        Ok(())
     }
 }
 

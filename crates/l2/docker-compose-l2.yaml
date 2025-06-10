@@ -60,7 +60,7 @@ services:
     environment:
       # Default values are taken from cmd/ethrex/l2/options.rs defaults.
       - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
-      - ETHREX_COMMITTER_VALIDIUM=${ETHREX_COMMITTER_VALIDIUM:-false}
+      - ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM:-false}
       - ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME:-5000}
       - ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER:-false}
       - ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE:-true}
@@ -71,13 +71,13 @@ services:
       - ./config.toml:/config.toml:ro
     # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
-      l2 init 
-      --network /genesis-l2.json 
-      --http.addr 0.0.0.0 
-      --http.port 1729 
-      --authrpc.port 8552 
-      --evm levm 
-      --proof-coordinator.addr 0.0.0.0 
+      l2 init
+      --network /genesis-l2.json
+      --http.addr 0.0.0.0
+      --http.port 1729
+      --authrpc.port 8552
+      --evm levm
+      --proof-coordinator.addr 0.0.0.0
       --l1.bridge-address ${ETHREX_WATCHER_BRIDGE_ADDRESS}
       --l1.on-chain-proposer-address ${ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS}
       --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
