@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749549952873,
+  "lastUpdate": 1749562339720,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11785,6 +11785,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177285473216,
             "range": "± 696619815",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7109ac8f90ac5d6e1b6538bf9ff8df5ec3b35175",
+          "message": "feat(levm): add backup hook (#3069)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- Add a new Backup Hook that is specifically for restoring state. It\nallows us to do that cleanly in various parts of the code.\n\n**Description**\n\n- The goal is to make code cleaner and to utilize the backup hook in\n`stateless_execute`. Before we were cloning the whole cache and it was\npotentially expensive. With this solution we can seamlessly restore the\nstate 😄\n- Improve integration with L2 so that changes made by a transaction that\ndoesn't fit the blob are smoothly reversed from the cache. We don't need\n`execute_tx_l2` outside of the VM and our `execute` function in LEVM is\nnow cleaner.\n\nCloses #3068",
+          "timestamp": "2025-06-10T12:42:30Z",
+          "tree_id": "552fb2e9f4ec56ccf4143f303f1bc0a230a3ec51",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7109ac8f90ac5d6e1b6538bf9ff8df5ec3b35175"
+        },
+        "date": 1749562333110,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180057983323,
+            "range": "± 579244249",
             "unit": "ns/iter"
           }
         ]
