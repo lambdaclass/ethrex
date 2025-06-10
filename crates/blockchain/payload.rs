@@ -545,11 +545,13 @@ impl Blockchain {
     ) -> Result<(), ChainError> {
         let account_updates = context.vm.get_state_transitions()?;
 
-        let (state_root, _, _) = self
+        let ret_acount_updates_list = self
             .storage
             .apply_account_updates_batch(context.parent_hash(), &account_updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
+
+        let state_root = ret_acount_updates_list.state_trie_hash;
 
         context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =

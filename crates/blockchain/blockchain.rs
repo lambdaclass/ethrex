@@ -128,11 +128,15 @@ impl Blockchain {
         account_updates: &[AccountUpdate],
     ) -> Result<(), ChainError> {
         // Apply the account updates over the last block's state and compute the new state root
-        let (new_state_root, state_updates, accounts_updates) = self
+        let apply_updates_list = self
             .storage
             .apply_account_updates_batch(block.header.parent_hash, account_updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
+
+        let new_state_root = apply_updates_list.state_trie_hash;
+        let state_updates = apply_updates_list.state_updates;
+        let accounts_updates = apply_updates_list.storage_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
@@ -273,12 +277,16 @@ impl Blockchain {
             .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
 
         // Apply the account updates over all blocks and compute the new state root
-        let (new_state_root, state_updates, accounts_updates) = self
+        let account_updates_list = self
             .storage
             .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
+
+        let new_state_root = account_updates_list.state_trie_hash;
+        let state_updates = account_updates_list.state_updates;
+        let accounts_updates = account_updates_list.storage_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;

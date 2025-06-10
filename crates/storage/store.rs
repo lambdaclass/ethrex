@@ -59,6 +59,12 @@ impl UpdateBatch {
     }
 }
 
+pub struct AccountUpdatesList {
+    pub state_trie_hash: H256,
+    pub state_updates: Vec<(NodeHash, Vec<u8>)>,
+    pub storage_updates: Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
+}
+
 impl Store {
     pub async fn store_changes(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.engine.store_changes_batch(update_batch).await
@@ -338,38 +344,23 @@ impl Store {
         &self,
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
-    ) -> Result<
-        Option<(
-            H256,
-            Vec<(NodeHash, Vec<u8>)>,
-            Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
-        )>,
-        StoreError,
-    > {
+    ) -> Result<Option<AccountUpdatesList>, StoreError> {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
 
-        let (state_trie_hash, state_updates, storage_updates) = self
-            .apply_account_updates_from_trie_batch(state_trie, account_updates)
-            .await?;
-
-        Ok(Some((state_trie_hash, state_updates, storage_updates)))
+        Ok(Some(
+            self.apply_account_updates_from_trie_batch(state_trie, account_updates)
+                .await?,
+        ))
     }
 
     pub async fn apply_account_updates_from_trie_batch(
         &self,
         mut state_trie: Trie,
         account_updates: impl IntoIterator<Item = &AccountUpdate>,
-    ) -> Result<
-        (
-            H256,
-            Vec<(NodeHash, Vec<u8>)>,
-            Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
-        ),
-        StoreError,
-    > {
-        let mut ret_vec_account = Vec::new();
+    ) -> Result<AccountUpdatesList, StoreError> {
+        let mut ret_storage_updates = Vec::new();
         for update in account_updates {
             let hashed_address = hash_address(&update.address);
             if update.removed {
@@ -408,13 +399,17 @@ impl Store {
                 }
                 let (storage_hash, storage_updates) = storage_trie.hash_prepare_batch();
                 account_state.storage_root = storage_hash;
-                ret_vec_account.push((H256::from_slice(&hashed_address), storage_updates));
+                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
             }
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        let (state_hash, state_updates) = state_trie.hash_prepare_batch();
+        let (state_trie_hash, state_updates) = state_trie.hash_prepare_batch();
 
-        Ok((state_hash, state_updates, ret_vec_account))
+        Ok(AccountUpdatesList {
+            state_trie_hash,
+            state_updates,
+            storage_updates: ret_storage_updates,
+        })
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
