@@ -573,7 +573,7 @@ impl StoreEngine for MDBXFork {
         let tx = self.env.tx().unwrap();
         let mut cursor = tx.cursor_dup_read::<TransactionLocations>().unwrap();
         if cursor.seek_exact(key.clone()).unwrap().is_none() {
-            return Ok(None)
+            return Ok(None);
         }
         let walker = cursor.walk(Some(key)).unwrap();
         for elem in walker {
@@ -727,7 +727,11 @@ impl StoreEngine for MDBXFork {
         Ok(Some(decoded))
     }
 
-    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Result<Trie, StoreError> {
+    fn open_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
         *(self.storage_trie.fixed_key.lock().unwrap()) = Some(hashed_address.0.as_slice().to_vec());
         Ok(Trie::open(self.storage_trie.clone(), storage_root))
     }
@@ -841,11 +845,8 @@ impl StoreEngine for MDBXFork {
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
-        tx.put::<PendingBlocks>(
-            block.header.hash().encode_to_vec(),
-            block.encode_to_vec(),
-        )
-        .unwrap();
+        tx.put::<PendingBlocks>(block.header.hash().encode_to_vec(), block.encode_to_vec())
+            .unwrap();
         tx.commit().unwrap();
         Ok(())
     }
@@ -1240,13 +1241,24 @@ impl StoreEngine for MDBXFork {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        let encoded_key = block_hash.encode_to_vec();
+        let tx = self.env.tx().unwrap();
+        Ok(tx.get::<BlockNumbers>(encoded_key).unwrap())
     }
 
     fn get_canonical_block_hash_sync(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        let bytes = tx.get::<CanonicalBlockHashes>(block_number).unwrap();
+
+        match bytes {
+            Some(bytes) => {
+                let hash: BlockHash = RLPDecode::decode(bytes.as_ref()).unwrap();
+                Ok(Some(hash))
+            }
+            None => Ok(None),
+        }
     }
 }
