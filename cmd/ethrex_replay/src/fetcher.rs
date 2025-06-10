@@ -35,9 +35,9 @@ pub async fn get_blockdata(
     let witness = get_witness(rpc_url, block_number)
         .await
         .wrap_err("Failed to get execution witness")?;
-    if witness.chain_config != chain_config {
+    if witness.chain_config.chain_id != chain_config.chain_id {
         return Err(eyre::eyre!(
-            "Rpc endpoint returned a different chain config than the one set by --network"
+            "Rpc endpoint returned a different chain id than the one set by --network"
         ));
     }
 
@@ -76,9 +76,9 @@ pub async fn get_rangedata(
     let witness = get_witness_range(rpc_url, from, to)
         .await
         .wrap_err("Failed to get execution witness for range")?;
-    if witness.chain_config != chain_config {
+    if witness.chain_config.chain_id != chain_config.chain_id {
         return Err(eyre::eyre!(
-            "Rpc endpoint returned a different chain config than the one set by --network"
+            "Rpc endpoint returned a different chain id than the one set by --network"
         ));
     }
 
