@@ -1,0 +1,129 @@
+use crate::types::BlockChainExpectedException;
+use ef_tests_state::{
+    deserialize::deserialize_transaction_expected_exception, types::TransactionExpectedException,
+};
+use serde::{Deserialize, Deserializer};
+pub fn deserialize_block_expected_exception<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<BlockChainExpectedException>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let option: Option<String> = Option::deserialize(deserializer)?;
+
+    if let Some(value) = option {
+        let exceptions = value
+            .split('|')
+            .map(|s| match s.trim() {
+                "TransactionException.INITCODE_SIZE_EXCEEDED" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::InitcodeSizeExceeded,
+                    )
+                }
+                "TransactionException.NONCE_IS_MAX" => BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::NonceIsMax,
+                ),
+                "TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::Type3TxBlobCountExceeded,
+                    )
+                }
+                "TransactionException.TYPE_3_TX_ZERO_BLOBS" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::Type3TxZeroBlobs,
+                    )
+                }
+                "TransactionException.TYPE_3_TX_CONTRACT_CREATION" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::Type3TxContractCreation,
+                    )
+                }
+                "TransactionException.TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::Type3TxInvalidBlobVersionedHash,
+                    )
+                }
+                "TransactionException.INTRINSIC_GAS_TOO_LOW" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::IntrinsicGasTooLow,
+                    )
+                }
+                "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => BlockChainExpectedException(
+                    TransactionExpectedException::InsufficientAccountFunds,
+                ),
+                "TransactionException.SENDER_NOT_EOA" => BlockChainExpectedException::SenderNotEoa,
+                "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::PriorityGreaterThanMaxFeePerGas,
+                    )
+                }
+                "TransactionException.GAS_ALLOWANCE_EXCEEDED" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::GasAllowanceExceeded,
+                    )
+                }
+                "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::InsufficientMaxFeePerGas,
+                    )
+                }
+                "TransactionException.RLP_INVALID_VALUE" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::RlpInvalidValue,
+                    )
+                }
+                "TransactionException.GASLIMIT_PRICE_PRODUCT_OVERFLOW" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::GasLimitPriceProductOverflow,
+                    )
+                }
+                "TransactionException.TYPE_3_TX_PRE_FORK" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::Type3TxPreFork,
+                    )
+                }
+                "TransactionException.TYPE_4_TX_CONTRACT_CREATION" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::Type4TxContractCreation,
+                    )
+                }
+                "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::InsufficientMaxFeePerBlobGas,
+                    )
+                }
+
+                "BlockException.RLP_STRUCTURES_ENCODING" => {
+                    BlockChainExpectedException::BlockException(())
+                }
+                "BlockException.INCORRECT_BLOB_GAS_USED" => {
+                    BlockChainExpectedException::BlockException(())
+                }
+                "BlockException.BLOB_GAS_USED_ABOVE_LIMIT" => {
+                    BlockChainExpectedException::BlockException(())
+                }
+                "BlockException.INCORRECT_EXCESS_BLOB_GAS" => {
+                    BlockChainExpectedException::BlockException(())
+                }
+                "BlockException.INCORRECT_BLOCK_FORMAT" => {
+                    BlockChainExpectedException::BlockException(())
+                }
+                "BlockException.INVALID_REQUESTS" => {
+                    BlockChainExpectedException::BlockException(())
+                }
+                "BlockException.SYSTEM_CONTRACT_EMPTY" => {
+                    BlockChainExpectedException::BlockException(())
+                }
+                "BlockException.SYSTEM_CONTRACT_CALL_FAILED" => {
+                    BlockChainExpectedException::BlockException(())
+                }
+
+                _other => BlockChainExpectedException::Other, //TODO: Support exceptions that enter here.
+            })
+            .collect();
+
+        Ok(Some(exceptions))
+    } else {
+        Ok(None)
+    }
+}

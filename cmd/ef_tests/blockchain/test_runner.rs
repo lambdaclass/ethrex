@@ -64,6 +64,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
                     "Transaction execution unexpectedly failed on test: {}, with error {}",
                     test_key, error
                 );
+                assert_eq!(block_fixture.expect_exception.unwrap(), error);
                 return;
             }
             Ok(_) => {

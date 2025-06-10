@@ -16,6 +16,7 @@ bytes.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
 tokio = { workspace = true , features = ["full"] }
+ef_tests-state = { path = "../state" }
 
 [dev-dependencies]
 datatest-stable = "0.2.9"

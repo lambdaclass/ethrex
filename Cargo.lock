@@ -3115,6 +3115,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "datatest-stable",
+ "ef_tests-state",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-rlp",

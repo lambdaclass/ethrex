@@ -9,7 +9,9 @@ use ethrex_common::{types::BlockHeader, Address, Bloom, H256, H64, U256};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::deserialize::deserialize_block_expected_exception;
 use crate::network::Network;
+use ef_tests_state::types::TransactionExpectedException as TransactionExpectedExeption;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -176,7 +178,12 @@ pub struct BlockWithRLP {
     pub rlp: Bytes,
     #[serde(flatten)]
     inner: Option<BlockInner>,
-    pub expect_exception: Option<String>,
+    #[serde(
+        rename = "expectException",
+        default,
+        deserialize_with = "deserialize_block_expected_exception"
+    )]
+    pub expect_exception: Option<Vec<BlockExpectedException>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
@@ -477,4 +484,31 @@ impl From<Account> for GenesisAccount {
             nonce: val.nonce.as_u64(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub enum BlockChainExpectedException {
+    TxtException(TransactionExpectedExeption),
+    BlockException(BlockExpectedException),
+}
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+pub enum BlockExpectedException {
+    InitcodeSizeExceeded,
+    NonceIsMax,
+    Type3TxBlobCountExceeded,
+    Type3TxZeroBlobs,
+    Type3TxContractCreation,
+    Type3TxInvalidBlobVersionedHash,
+    Type4TxContractCreation,
+    IntrinsicGasTooLow,
+    InsufficientAccountFunds,
+    SenderNotEoa,
+    PriorityGreaterThanMaxFeePerGas,
+    GasAllowanceExceeded,
+    InsufficientMaxFeePerGas,
+    RlpInvalidValue,
+    GasLimitPriceProductOverflow,
+    Type3TxPreFork,
+    InsufficientMaxFeePerBlobGas,
+    Other, //TODO: Implement exceptions
 }
