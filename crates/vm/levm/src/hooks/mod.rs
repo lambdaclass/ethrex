@@ -1,3 +1,4 @@
+pub mod backup_hook;
 pub mod default_hook;
 pub mod hook;
 #[cfg(feature = "l2")]
