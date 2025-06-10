@@ -78,4 +78,5 @@ pub const PER_AUTH_BASE_COST: u64 = 12500;
 pub const PER_EMPTY_ACCOUNT_COST: u64 = 25000;
 
 /// Special constant for debugging. 0xFEDEBEBECAFEDECEBADA
+/// It has to match with the constant set in the Solidity contract for this purpose.
 pub const DEBUG_MEMORY_OFFSET: U256 = U256([0xBEBECAFEDECEBADA, 0xFEDE, 0, 0]);
