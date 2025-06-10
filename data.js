@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749574403477,
+  "lastUpdate": 1749585004661,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11935,6 +11935,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177925898876,
             "range": "± 397238838",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "acaf16238a184262bb1d525675ce21cb182f6973",
+          "message": "fix(core): deserialization of u128 (#3098)\n\n**Motivation**\nTrying codex: https://github.com/mpaulucci/ethrex/pull/1\n\n**Description**\n- fix incorrect radix when parsing u128 hex strings in serde_utils\n- avoid panics when parsing deposit logs by safely handling invalid byte\nslices",
+          "timestamp": "2025-06-10T19:00:36Z",
+          "tree_id": "242de3ebadf3c8cf7150d5189ed76fb9640a39de",
+          "url": "https://github.com/lambdaclass/ethrex/commit/acaf16238a184262bb1d525675ce21cb182f6973"
+        },
+        "date": 1749585000270,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 175568284868,
+            "range": "± 190731888",
             "unit": "ns/iter"
           }
         ]
