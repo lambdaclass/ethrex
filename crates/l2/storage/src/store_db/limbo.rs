@@ -6,7 +6,7 @@ use ethrex_common::{
     H256,
 };
 use ethrex_storage::error::StoreError;
-use limbo::{Builder, Connection, Row, Value};
+use limbo::{params::IntoParams, params::Params, Builder, Connection, Row, Value};
 
 pub struct LimboStore {
     conn: Connection,
@@ -20,10 +20,10 @@ impl Debug for LimboStore {
 
 const DB_SCHEMA: [&str; 9] = [
     "CREATE TABLE blocks (block_number INT PRIMARY KEY, batch INT)",
-    "CREATE TABLE withdrawals (batch INT, withdrawal_hash BLOB, PRIMARY KEY (batch, withdrawal_hash))",
+    "CREATE TABLE withdrawals (batch INT, idx INT, withdrawal_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE deposits (batch INT PRIMARY KEY, deposit_hash BLOB)",
     "CREATE TABLE state_roots (batch INT PRIMARY KEY, state_root BLOB)",
-    "CREATE TABLE blob_bundles (batch INT, blob_bundle BLOB, PRIMARY KEY (batch, blob_bundle))",
+    "CREATE TABLE blob_bundles (batch INT, idx INT, blob_bundle BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE operation_count (_id INT PRIMARY KEY, transactions INT, deposits INT, withdrawals INT)",
     "INSERT INTO operation_count VALUES (0, 0, 0, 0)",
     "CREATE TABLE latest_sent (_id INT PRIMARY KEY, batch INT)",
@@ -38,6 +38,14 @@ impl LimboStore {
             conn.execute(line, ()).await?;
         }
         Ok(LimboStore { conn })
+    }
+    async fn execute_in_tx(&self, queries: Vec<(&str, Params)>) -> Result<(), StoreError> {
+        self.conn.execute("BEGIN TRANSACTION", ()).await?;
+        for (query, params) in queries {
+            self.conn.execute(query, params).await?;
+        }
+        self.conn.execute("COMMIT TRANSACTION", ()).await?;
+        Ok(())
     }
 }
 
@@ -87,14 +95,17 @@ impl StoreEngineRollup for LimboStore {
         block_number: BlockNumber,
         batch_number: u64,
     ) -> Result<(), StoreError> {
-        self.conn.execute("DELETE FROM blocks WHERE block_number = ?1", vec![block_number]).await?;
-        self.conn
-            .execute(
+        self.execute_in_tx(vec![
+            (
+                "DELETE FROM blocks WHERE block_number = ?1",
+                vec![block_number].into_params()?,
+            ),
+            (
                 "INSERT INTO blocks VALUES (?1, ?2)",
-                vec![block_number, batch_number],
-            )
-            .await?;
-        Ok(())
+                vec![block_number, batch_number].into_params()?,
+            ),
+        ])
+        .await
     }
 
     /// Gets the withdrawal hashes by a given batch number.
@@ -106,12 +117,14 @@ impl StoreEngineRollup for LimboStore {
         let mut rows = self
             .conn
             .query(
-                "SELECT * from withdrawals WHERE batch = ?1",
+                "SELECT * from withdrawals WHERE batch = ?1 ORDER BY idx DESC",
                 vec![batch_number],
             )
             .await?;
         while let Some(row) = rows.next().await? {
-            let vec = read_from_row_blob(&row, 1)?;
+            let index = read_from_row_int(&row, 1)?;
+            let vec = read_from_row_blob(&row, 2)?;
+            println!("index={index}");
             hashes.push(H256::from_slice(&vec));
         }
         if hashes.is_empty() {
@@ -127,15 +140,17 @@ impl StoreEngineRollup for LimboStore {
         batch_number: u64,
         withdrawal_hashes: Vec<H256>,
     ) -> Result<(), StoreError> {
-        self.conn.execute("DELETE FROM withdrawals WHERE batch = ?1", vec![batch_number]).await?;
-        for hash in withdrawal_hashes {
-            self.conn
-                .execute(
-                    "INSERT INTO withdrawals VALUES (?1, ?2)",
-                    (batch_number, Vec::from(hash.to_fixed_bytes())),
-                )
-                .await?;
+        let mut queries = vec![(
+            "DELETE FROM withdrawals WHERE batch = ?1",
+            vec![batch_number].into_params()?,
+        )];
+        for (index, hash) in withdrawal_hashes.iter().enumerate() {
+            queries.push((
+                "INSERT INTO withdrawals VALUES (?1, ?2, ?3)",
+                (batch_number, index as u64, Vec::from(hash.to_fixed_bytes())).into_params()?,
+            ));
         }
+        self.execute_in_tx(queries).await?;
         Ok(())
     }
 
@@ -178,14 +193,17 @@ impl StoreEngineRollup for LimboStore {
         batch_number: u64,
         deposit_logs_hash: H256,
     ) -> Result<(), StoreError> {
-        self.conn.execute("DELETE FROM deposits WHERE batch = ?1", vec![batch_number]).await?;
-        self.conn
-            .execute(
+        self.execute_in_tx(vec![
+            (
+                "DELETE FROM deposits WHERE batch = ?1",
+                vec![batch_number].into_params()?,
+            ),
+            (
                 "INSERT INTO deposits VALUES (?1, ?2)",
-                (batch_number, Vec::from(deposit_logs_hash.to_fixed_bytes())),
-            )
-            .await?;
-        Ok(())
+                (batch_number, Vec::from(deposit_logs_hash.to_fixed_bytes())).into_params()?,
+            ),
+        ])
+        .await
     }
 
     async fn get_deposit_logs_hash_by_batch_number(
@@ -211,14 +229,17 @@ impl StoreEngineRollup for LimboStore {
         batch_number: u64,
         state_root: H256,
     ) -> Result<(), StoreError> {
-        self.conn.execute("DELETE FROM state_roots WHERE batch = ?1", vec![batch_number]).await?;
-        self.conn
-            .execute(
+        self.execute_in_tx(vec![
+            (
+                "DELETE FROM state_roots WHERE batch = ?1",
+                vec![batch_number].into_params()?,
+            ),
+            (
                 "INSERT INTO state_roots VALUES (?1, ?2)",
-                (batch_number, Vec::from(state_root.to_fixed_bytes())),
-            )
-            .await?;
-        Ok(())
+                (batch_number, Vec::from(state_root.to_fixed_bytes())).into_params()?,
+            ),
+        ])
+        .await
     }
 
     async fn get_state_root_by_batch_number(
@@ -228,7 +249,7 @@ impl StoreEngineRollup for LimboStore {
         let mut rows = self
             .conn
             .query(
-                "SELECT * from state_roots WHERE batch = ?1",
+                "SELECT * FROM state_roots WHERE batch = ?1",
                 vec![batch_number],
             )
             .await?;
@@ -244,15 +265,18 @@ impl StoreEngineRollup for LimboStore {
         batch_number: u64,
         state_diff: Vec<Blob>,
     ) -> Result<(), StoreError> {
-        self.conn.execute("DELETE FROM blob_bundles WHERE batch = ?1", vec![batch_number]).await?;
-        for blob in state_diff {
-            self.conn
-                .execute(
-                    "INSERT INTO blob_bundles VALUES (?1, ?2)",
-                    (batch_number, blob.to_vec()),
-                )
-                .await?;
+        let mut queries = vec![(
+            "DELETE FROM blob_bundles WHERE batch = ?1",
+            vec![batch_number].into_params()?,
+        )];
+        for (index, blob) in state_diff.iter().enumerate() {
+            println!("saving blob idx={index} to batch {batch_number}");
+            queries.push((
+                "INSERT INTO blob_bundles VALUES (?1, ?2, ?3)",
+                (batch_number, index as u64, blob.to_vec()).into_params()?,
+            ));
         }
+        self.execute_in_tx(queries).await?;
         Ok(())
     }
 
@@ -260,16 +284,22 @@ impl StoreEngineRollup for LimboStore {
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<Blob>>, StoreError> {
+        println!("get_blob_bundle_by_batch_number({batch_number})");
         let mut bundles = Vec::new();
         let mut rows = self
             .conn
             .query(
-                "SELECT * from blob_bundles WHERE batch = ?1",
+                "SELECT * from blob_bundles WHERE batch = ?1 ORDER BY idx DESC",
                 vec![batch_number],
             )
             .await?;
         while let Some(row) = rows.next().await? {
-            let val = read_from_row_blob(&row, 1)?;
+            println!("index_blob={}", read_from_row_int(&row, 1)?);
+            let val = read_from_row_blob(&row, 2)?;
+            println!(
+                "get_blob_bundle_by_batch_number({batch_number}) => {:?}",
+                &val[0..10]
+            );
             bundles.push(
                 Blob::try_from(val)
                     .map_err(|_| StoreError::Custom(format!("error converting to Blob")))?,
