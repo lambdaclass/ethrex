@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749593662459,
+  "lastUpdate": 1749594182995,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12025,6 +12025,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180055399009,
             "range": "± 304592380",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9a8a26efd0fab2a525fefb2a9506916098be0ae2",
+          "message": "feat(l1): improve hive CI and targets in makefile (#2975)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nThe CI was coupled with the makefile, and the commands couldn't be\nchanged. Some hive targets were outdated.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n- The CI now points s specific commit inside the CI, not in the makefile\n- The daily report points to the latest commit in order to notice when\nwe have test are failing.\n- The ethrex.flag is no longer needed so it was removed\n- the quiet mode wasn't been used a lot and looked messy.\n- Now, the clone command points to a branch instead of a specific\ncommit. This make easier to switch between hive versions.\n- New dockerfiles were added to hive to build from local files or from\ngithub.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2964 & #3003 \n\nRelates to https://github.com/lambdaclass/hive/pull/31/",
+          "timestamp": "2025-06-10T21:33:35Z",
+          "tree_id": "63c4cb062ce08dc10544ffd2ee8c96c0004c0796",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9a8a26efd0fab2a525fefb2a9506916098be0ae2"
+        },
+        "date": 1749594177410,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180650064070,
+            "range": "± 395624990",
             "unit": "ns/iter"
           }
         ]
