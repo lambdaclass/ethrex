@@ -173,6 +173,7 @@ impl Blockchain {
             let execution_time_per_gigagas = (execution_time / as_gigas).round() as u64;
             let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
             METRICS_BLOCKS.set_latest_gigagas(throughput);
+            METRICS_BLOCKS.set_blocks_per_second(interval);
             let base_log =
                 format!(
                 "[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {:.0} ms. #Txs: {}.",
@@ -290,7 +291,7 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
-        info!("New state root was applied");
+
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
@@ -303,8 +304,6 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?;
 
-        info!("Blocks were added to storage");
-
         let elapsed_total = interval.elapsed().as_millis();
         let mut throughput = 0.0;
         if elapsed_total != 0 && total_gas_used != 0 {
@@ -312,6 +311,8 @@ impl Blockchain {
             throughput = (as_gigas) / (elapsed_total as f64) * 1000_f64;
         }
 
+        let elapsed_seconds = elapsed_total / 1000;
+        METRICS_BLOCKS.set_blocks_per_second((blocks_len as f64) / (elapsed_seconds as f64));
         METRICS_BLOCKS.set_latest_gigagas(throughput);
 
         info!(
