@@ -50,6 +50,7 @@ impl TryFrom<String> for EvmEngine {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum Evm {
     REVM { state: EvmState },
@@ -144,44 +145,12 @@ impl Evm {
         }
     }
 
-    pub fn execute_tx_l2(
-        &mut self,
-        tx: &Transaction,
-        block_header: &BlockHeader,
-        remaining_gas: &mut u64,
-        sender: Address,
-    ) -> Result<(Receipt, u64, CallFrameBackup), EvmError> {
+    pub fn undo_last_tx(&mut self) -> Result<(), EvmError> {
         match self {
             Evm::REVM { .. } => Err(EvmError::InvalidEVM(
-                "L2 transactions are not supported in REVM".to_string(),
+                "Undoing transaction not supported in REVM".to_string(),
             )),
-            Evm::LEVM { db } => {
-                let (execution_report, transaction_backup) =
-                    LEVM::execute_tx_l2(tx, sender, block_header, db)?;
-
-                *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
-
-                let receipt = Receipt::new(
-                    tx.tx_type(),
-                    execution_report.is_success(),
-                    block_header.gas_limit - *remaining_gas,
-                    execution_report.logs.clone(),
-                );
-
-                Ok((receipt, execution_report.gas_used, transaction_backup))
-            }
-        }
-    }
-
-    pub fn restore_cache_state(
-        &mut self,
-        call_frame_backup: CallFrameBackup,
-    ) -> Result<(), EvmError> {
-        match self {
-            Evm::REVM { .. } => Err(EvmError::InvalidEVM(
-                "Cache state is not supported in REVM".to_string(),
-            )),
-            Evm::LEVM { db } => LEVM::restore_cache_state(db, call_frame_backup),
+            Evm::LEVM { db } => LEVM::undo_last_tx(db),
         }
     }
 

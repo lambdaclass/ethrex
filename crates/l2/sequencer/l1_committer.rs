@@ -1,6 +1,6 @@
 use crate::{
     based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::{blobs_bundle_cache::BlobsBundleCache, errors::CommitterError},
+    sequencer::errors::CommitterError,
     CommitterConfig, EthConfig, SequencerConfig,
 };
 
@@ -54,7 +54,6 @@ pub struct CommitterState {
     arbitrary_base_blob_gas_price: u64,
     execution_cache: Arc<ExecutionCache>,
     validium: bool,
-    blobs_bundle_cache: Arc<BlobsBundleCache>,
     based: bool,
     sequencer_state: SequencerState,
 }
@@ -67,7 +66,6 @@ impl CommitterState {
         store: Store,
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
-        blobs_bundle_cache: Arc<BlobsBundleCache>,
         based: bool,
         sequencer_state: SequencerState,
     ) -> Result<Self, CommitterError> {
@@ -90,7 +88,6 @@ impl CommitterState {
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
             validium: committer_config.validium,
-            blobs_bundle_cache,
             based,
             sequencer_state,
         })
@@ -116,7 +113,6 @@ impl L1Committer {
         store: Store,
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
-        blobs_bundle_cache: Arc<BlobsBundleCache>,
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
     ) -> Result<(), CommitterError> {
@@ -126,7 +122,6 @@ impl L1Committer {
             store.clone(),
             rollup_store.clone(),
             execution_cache.clone(),
-            blobs_bundle_cache.clone(),
             cfg.based.based,
             sequencer_state,
         )?;
@@ -209,7 +204,7 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                 withdrawal_hashes,
                 deposit_logs_hash,
                 last_block_of_batch,
-            ) = prepare_batch_from_block(state, *last_block, batch_to_commit).await?;
+            ) = prepare_batch_from_block(state, *last_block).await?;
 
             if *last_block == last_block_of_batch {
                 debug!("No new blocks to commit, skipping");
@@ -278,7 +273,6 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
 async fn prepare_batch_from_block(
     state: &mut CommitterState,
     mut last_added_block_number: BlockNumber,
-    batch_number: u64,
 ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
     let first_block_of_batch = last_added_block_number + 1;
     let mut blobs_bundle = BlobsBundle::default();
@@ -424,12 +418,6 @@ async fn prepare_batch_from_block(
             .hash_no_commit();
 
         last_added_block_number += 1;
-    }
-
-    if !state.validium {
-        state
-            .blobs_bundle_cache
-            .push(batch_number, blobs_bundle.clone())?;
     }
 
     metrics!(if let (Ok(deposits_count), Ok(withdrawals_count)) = (
