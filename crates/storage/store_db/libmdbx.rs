@@ -131,29 +131,30 @@ impl Store {
 impl StoreEngine for Store {
     async fn store_changes_batch(
         &self,
-        update_batch: UpdateBatch,
+        mut update_batch: UpdateBatch,
         account_updates: &[AccountUpdate],
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
-        let account_updates = account_updates.to_vec();
+        let mut account_updates = account_updates.to_vec();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
-            let mut cursor = tx
-                .cursor::<FlatAccountInfo>()
-                .map_err(StoreError::LibmdbxError)?;
-            let mut storage_cursor = tx
-                .cursor::<FlatAccountStorage>()
-                .map_err(StoreError::LibmdbxError)?;
+            let mut accounts_cursor = tx.cursor::<FlatAccountInfo>()?;
+            let mut storage_cursor = tx.cursor::<FlatAccountStorage>()?;
+            let mut locations_cursor = tx.cursor::<TransactionLocations>()?;
+            let mut bodies_cursor = tx.cursor::<Bodies>()?;
+            let mut headers_cursor = tx.cursor::<Headers>()?;
+            let mut blocknums_cursor = tx.cursor::<BlockNumbers>()?;
+            let mut receipts_cursor = tx.cursor::<Receipts>()?;
+            let mut state_trie_cursor = tx.cursor::<StateTrieNodes>()?;
+            let mut storage_tries_cursor = tx.cursor::<StorageTriesNodes>()?;
+
+            account_updates.sort_by_key(|u| u.address);
             for update in account_updates {
                 let key = AccountAddress(update.address);
                 if update.removed {
-                    if cursor
-                        .seek_exact(key)
-                        .map_err(StoreError::LibmdbxError)?
-                        .is_some()
-                    {
-                        cursor.delete_current().map_err(StoreError::LibmdbxError)?;
+                    if accounts_cursor.seek_exact(key)?.is_some() {
+                        accounts_cursor.delete_current()?;
                     }
                 } else {
                     if let Some(info_update) = update.info {
@@ -163,97 +164,92 @@ impl StoreEngine for Store {
                             info_update.nonce,
                         )
                             .into();
-                        cursor
-                            .upsert(key, value)
-                            .map_err(StoreError::LibmdbxError)?;
+                        accounts_cursor.upsert(key, value)?;
                     }
                 }
-                for (slot, value) in update.added_storage.iter() {
-                    let key = (update.address.into(), (*slot).into());
+                let addr = update.address;
+                let mut update: Vec<_> = update.added_storage.into_iter().collect();
+                update.sort_unstable_by_key(|(s, _)| *s);
+                for (slot, value) in update.iter() {
+                    let key = (addr.into(), (*slot).into());
                     if !value.is_zero() {
-                        storage_cursor
-                            .upsert(key, (*value).into())
-                            .map_err(StoreError::LibmdbxError)?;
-                    } else if storage_cursor
-                        .seek_exact(key)
-                        .map_err(StoreError::LibmdbxError)?
-                        .is_some()
-                    {
-                        storage_cursor
-                            .delete_current()
-                            .map_err(StoreError::LibmdbxError)?;
+                        storage_cursor.upsert(key, (*value).into())?;
+                    } else if storage_cursor.seek_exact(key)?.is_some() {
+                        storage_cursor.delete_current()?;
                     }
                 }
             }
 
             // store account updates
+            update_batch
+                .account_updates
+                .sort_by_key(|(h, _)| h.encode_to_vec());
             for (node_hash, node_data) in update_batch.account_updates {
-                tx.upsert::<StateTrieNodes>(node_hash, node_data)
-                    .map_err(StoreError::LibmdbxError)?;
+                state_trie_cursor.upsert(node_hash, node_data)?;
             }
 
-            for (hashed_address, nodes) in update_batch.storage_updates {
+            // TODO: write the froms for fixed size arrays of bytes
+            update_batch
+                .storage_updates
+                .sort_by_key(|(addr, _)| addr.encode_to_vec());
+            for (hashed_address, mut nodes) in update_batch.storage_updates {
+                nodes.sort_by_key(|(h, _)| h.encode_to_vec());
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
-                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
-                        .map_err(StoreError::LibmdbxError)?;
+                    storage_tries_cursor.upsert((key_1, key_2), node_data)?;
                 }
             }
+            update_batch.blocks.sort_by_key(|blk| blk.hash());
             for block in update_batch.blocks {
                 // store block
-                let number = block.header.number;
-                let hash = block.hash();
+                let block_number = block.header.number;
+                let block_hash = block.hash();
 
-                for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    tx.upsert::<TransactionLocations>(
-                        transaction.compute_hash().into(),
-                        (number, hash, index as u64).into(),
-                    )
-                    .map_err(StoreError::LibmdbxError)?;
+                // TODO: sort these
+                for (tx_hash, index) in block
+                    .body
+                    .transactions
+                    .iter()
+                    .enumerate()
+                    .map(|(index, transaction)| (transaction.compute_hash().into(), index as u64))
+                {
+                    locations_cursor.upsert(tx_hash, (block_number, block_hash, index).into())?;
                 }
 
-                tx.upsert::<Bodies>(
-                    hash.into(),
+                bodies_cursor.upsert(
+                    block_hash.into(),
                     BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
-                )
-                .map_err(StoreError::LibmdbxError)?;
+                )?;
 
-                tx.upsert::<Headers>(
-                    hash.into(),
+                headers_cursor.upsert(
+                    block_hash.into(),
                     BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
-                )
-                .map_err(StoreError::LibmdbxError)?;
+                )?;
 
-                tx.upsert::<BlockNumbers>(hash.into(), number)
-                    .map_err(StoreError::LibmdbxError)?;
+                blocknums_cursor.upsert(block_hash.into(), block_number)?;
             }
             for (block_hash, receipts) in update_batch.receipts {
                 // store receipts
-                let mut key_values = vec![];
                 for (index, receipt) in receipts.into_iter().enumerate() {
                     let key = (block_hash, index as u64).into();
                     let receipt_rlp = receipt.encode_to_vec();
-                    let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp)
-                    else {
+                    let Some(entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
                         continue;
                     };
 
-                    key_values.append(&mut entries);
-                }
-                let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-                for (key, value) in key_values {
-                    cursor
-                        .upsert(key, value)
-                        .map_err(StoreError::LibmdbxError)?;
+                    for (key, value) in entries {
+                        receipts_cursor.upsert(key, value)?;
+                    }
                 }
             }
 
-            tx.commit().map_err(StoreError::LibmdbxError)
+            tx.commit()
         })
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+        .map_err(StoreError::LibmdbxError)
     }
 
     async fn add_block_header(
