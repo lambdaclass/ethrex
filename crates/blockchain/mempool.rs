@@ -239,7 +239,7 @@ impl Mempool {
             .transaction_pool
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
-        
+
         Ok(pool_lock.len())
     }
 
