@@ -81,7 +81,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
     }
     check_poststate_against_db(test_key, test, &store).await;
     #[cfg(feature = "stateless")]
-    re_run_stateless(blockchain, test).await;
+    re_run_stateless(blockchain, test, test_key).await;
 }
 
 /// Tests the rlp decoding of a block
@@ -227,7 +227,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
 }
 
 #[cfg(feature = "stateless")]
-async fn re_run_stateless(blockchain: Blockchain, test: &TestUnit) {
+async fn re_run_stateless(blockchain: Blockchain, test: &TestUnit, test_key: &str) {
     let blocks = test
         .blocks
         .iter()
@@ -260,8 +260,14 @@ async fn re_run_stateless(blockchain: Blockchain, test: &TestUnit) {
     };
 
     if let Err(e) = ethrex_prover_lib::execute(program_input) {
-        assert!(test_should_fail, "Expected test to succeed failed with {e}")
+        assert!(
+            test_should_fail,
+            "Expected test: {test_key} to succeed but failed with {e}"
+        )
     } else {
-        assert!(!test_should_fail, "Expected test to fail succeeded")
+        assert!(
+            !test_should_fail,
+            "Expected test: {test_key} to fail but succeeded"
+        )
     }
 }
