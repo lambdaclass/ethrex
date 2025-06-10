@@ -21,6 +21,8 @@ use ethrex_common::types::{
     BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_common::{Address, H256};
+use ethrex_metrics::metrics;
+use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
 use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
@@ -186,6 +188,7 @@ impl Blockchain {
             } else {
                 "".to_string()
             };
+            metrics!(METRICS_BLOCKS.set_latest_gigagas(throughput));
             info!("{}{}", base_log, extra_log);
         }
     }
@@ -287,7 +290,7 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
-
+        info!("New state root was applied");
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
@@ -300,12 +303,16 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?;
 
+        info!("Blocks were added to storage");
+
         let elapsed_total = interval.elapsed().as_millis();
         let mut throughput = 0.0;
         if elapsed_total != 0 && total_gas_used != 0 {
             let as_gigas = (total_gas_used as f64).div(10_f64.powf(9_f64));
             throughput = (as_gigas) / (elapsed_total as f64) * 1000_f64;
         }
+
+        METRICS_BLOCKS.set_latest_gigagas(throughput);
 
         info!(
             "[METRICS] Executed and stored: Range: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",

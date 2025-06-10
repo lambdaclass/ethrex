@@ -1,0 +1,507 @@
+cd "../.." && RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+    		--http.port 8545 \
+    		--authrpc.port 8551 \
+    		--p2p.port 30303\
+    		--discovery.port 30303 \
+    		--network hoodi \
+    		--datadir "hoodi_data/ethrex/levm" \
+    		--authrpc.jwtsecret ~/Library/Application\ Support//hoodi_data/jwt.hex \
+    		--bootnodes enode://60203fcb3524e07c5df60a14ae1c9c5b24023ea5d47463dfae051d2c9f3219f309657537576090ca0ae641f73d419f53d8e8000d7a464319d4784acd7d2abc41@209.38.124.160:30303 \
+    		--evm levm
+[2m2025-06-04T15:45:38.500895Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Starting storage engine (Libmdbx)
+[2m2025-06-04T15:45:38.502381Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Started store engine
+[2m2025-06-04T15:45:38.502416Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Storing initial state from genesis
+[2m2025-06-04T15:45:38.518601Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Storing genesis block with number 0 and hash 0xbbe3…971b
+[2m2025-06-04T15:45:38.519591Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Key file not found, creating a new key and saving to "/Users/sofdart/Library/Application Support/hoodi_data/ethrex/levm/node.key"
+[2m2025-06-04T15:45:38.519917Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Node: enode://a5fd1befef4d07df2750fe6e4904376f384b00360b42e2141cc67b7cf6b356c3e6955bc5def388198684cbd0bc300bd91c6224a07e403f504b8a0efc7927cc96@10.0.10.138:30303
+[2m2025-06-04T15:45:38.522655Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Addig hoodi preset bootnodes
+[2m2025-06-04T15:45:38.522987Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Starting HTTP server at [::1]:8545
+[2m2025-06-04T15:45:38.524514Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Reading known peers from config file "/Users/sofdart/Library/Application Support/hoodi_data/ethrex/levm/node_config.json"
+[2m2025-06-04T15:45:38.524580Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Starting Auth-RPC server at [::1]:8551
+[2m2025-06-04T15:45:38.524583Z[0m [31mERROR[0m [2methrex::initializers[0m[2m:[0m Could not read from peers file: No config file found: No such file or directory (os error 2)
+[2m2025-06-04T15:45:38.524868Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Starting discovery service at 10.0.10.138:30303
+[2m2025-06-04T15:45:38.526005Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Running filter clean task
+[2m2025-06-04T15:45:38.526033Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Filter clean task complete
+[2m2025-06-04T15:45:38.526233Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Listening for requests at 10.0.10.138:30303
+[2m2025-06-04T15:45:38.526268Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 16
+[2m2025-06-04T15:45:38.527433Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 16
+[2m2025-06-04T15:46:08.445316Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 42
+[2m2025-06-04T15:46:38.445363Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 62
+[2m2025-06-04T15:47:08.444353Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 91
+[2m2025-06-04T15:47:38.443962Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 115
+[2m2025-06-04T15:48:08.442444Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 110
+[2m2025-06-04T15:48:38.442736Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 106
+[2m2025-06-04T15:49:08.442586Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 101
+[2m2025-06-04T15:49:38.442870Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 90
+[2m2025-06-04T15:50:06.880080Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Server shut down started...
+[2m2025-06-04T15:50:06.880186Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Storing config at "/Users/sofdart/Library/Application Support/hoodi_data/ethrex/levm/node_config.json"...
+[2m2025-06-04T15:50:07.883372Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Server shutting down!
+cd "../.." && RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+    		--http.port 8545 \
+    		--authrpc.port 8551 \
+    		--p2p.port 30303\
+    		--discovery.port 30303 \
+    		--network hoodi \
+    		--datadir "hoodi_data/ethrex/levm" \
+    		--authrpc.jwtsecret ~/Library/Application\ Support//hoodi_data/jwt.hex \
+    		--bootnodes enode://60203fcb3524e07c5df60a14ae1c9c5b24023ea5d47463dfae051d2c9f3219f309657537576090ca0ae641f73d419f53d8e8000d7a464319d4784acd7d2abc41@209.38.124.160:30303 \
+    		--evm levm
+[2m2025-06-04T15:50:31.137295Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Starting storage engine (Libmdbx)
+[2m2025-06-04T15:50:31.138669Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Started store engine
+[2m2025-06-04T15:50:31.138729Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Storing initial state from genesis
+[2m2025-06-04T15:50:31.141872Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Received genesis file matching a previously stored one, nothing to do
+[2m2025-06-04T15:50:31.143119Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Node: enode://a5fd1befef4d07df2750fe6e4904376f384b00360b42e2141cc67b7cf6b356c3e6955bc5def388198684cbd0bc300bd91c6224a07e403f504b8a0efc7927cc96@10.0.10.138:30303
+[2m2025-06-04T15:50:31.146693Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Addig hoodi preset bootnodes
+[2m2025-06-04T15:50:31.147230Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Starting HTTP server at [::1]:8545
+[2m2025-06-04T15:50:31.147270Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Starting Auth-RPC server at [::1]:8551
+[2m2025-06-04T15:50:31.148575Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Running filter clean task
+[2m2025-06-04T15:50:31.148606Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Filter clean task complete
+[2m2025-06-04T15:50:31.149087Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Reading known peers from config file "/Users/sofdart/Library/Application Support/hoodi_data/ethrex/levm/node_config.json"
+[2m2025-06-04T15:50:31.150004Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Starting discovery service at 10.0.10.138:30303
+[2m2025-06-04T15:50:31.151811Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Listening for requests at 10.0.10.138:30303
+[2m2025-06-04T15:50:31.151843Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 16
+[2m2025-06-04T15:50:31.153045Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 16
+[2m2025-06-04T15:51:01.152235Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 72
+[2m2025-06-04T15:51:31.151299Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 76
+[2m2025-06-04T15:52:01.151068Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 107
+[2m2025-06-04T15:52:25.180801Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Syncing from current head 0xbbe312868b376a3001692a646dd2d7d1e4406380dfd86b98aa8a34d1557c971b to sync_head 0xf0d433f3fb66d2beaa37fdee952ec54bf617a71502593b63f7d2602dc18f879e
+[2m2025-06-04T15:52:25.180965Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m get pending: 0xf0d4…879e
+[2m2025-06-04T15:52:29.920553Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x98f7b73d4ec84f98b2c257b428563b9d49291b6cf24f86408518528c0888a323
+[2m2025-06-04T15:52:29.920926Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x98f7b73d4ec84f98b2c257b428563b9d49291b6cf24f86408518528c0888a323
+[2m2025-06-04T15:52:29.920956Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x98f7…a323
+[2m2025-06-04T15:52:30.067991Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x11d2d4e473fe886ab6e17b4f5560ec61588c76ffac0d5d94635a99998f3b1e01
+[2m2025-06-04T15:52:30.068202Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x11d2d4e473fe886ab6e17b4f5560ec61588c76ffac0d5d94635a99998f3b1e01
+[2m2025-06-04T15:52:30.068219Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x11d2…1e01
+[2m2025-06-04T15:52:30.326236Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x59e20ca988dee37cd058194f24821d36d39c1dbaf526e130a69e772491d78329
+[2m2025-06-04T15:52:30.326398Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x59e20ca988dee37cd058194f24821d36d39c1dbaf526e130a69e772491d78329
+[2m2025-06-04T15:52:30.326418Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x59e2…8329
+[2m2025-06-04T15:52:30.419954Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x8b1f7a60005995c64ec99b9993142ecc2e71f728543edb035d92b8163af9c30a
+[2m2025-06-04T15:52:30.420312Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x8b1f7a60005995c64ec99b9993142ecc2e71f728543edb035d92b8163af9c30a
+[2m2025-06-04T15:52:30.420334Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x8b1f…c30a
+[2m2025-06-04T15:52:30.507194Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x13c227bfe5ecdefe88b16c62c6502fc46c0211bd637d9f8a659ead18613cffff
+[2m2025-06-04T15:52:30.507395Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x13c227bfe5ecdefe88b16c62c6502fc46c0211bd637d9f8a659ead18613cffff
+[2m2025-06-04T15:52:30.507416Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x13c2…ffff
+[2m2025-06-04T15:52:30.776980Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x11a8125ca7b2d74bcb994d32d4ad86f8848e6d706f1e12ac556c4c329e60d132
+[2m2025-06-04T15:52:30.777121Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x11a8125ca7b2d74bcb994d32d4ad86f8848e6d706f1e12ac556c4c329e60d132
+[2m2025-06-04T15:52:30.777139Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x11a8…d132
+[2m2025-06-04T15:52:30.856185Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x6d6334d9e3a0c4f56ad740359c5998722a8430083a1180f5a9b0e34bf10163d0
+[2m2025-06-04T15:52:30.856372Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x6d6334d9e3a0c4f56ad740359c5998722a8430083a1180f5a9b0e34bf10163d0
+[2m2025-06-04T15:52:30.856396Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x6d63…63d0
+[2m2025-06-04T15:52:30.943193Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x8448d2ee0abbeb59e98e2729ec6dcbf4b02bc84d0aa71eac8701889905f2b188
+[2m2025-06-04T15:52:30.943345Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x8448d2ee0abbeb59e98e2729ec6dcbf4b02bc84d0aa71eac8701889905f2b188
+[2m2025-06-04T15:52:30.943368Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x8448…b188
+[2m2025-06-04T15:52:31.150610Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 101
+[2m2025-06-04T15:52:31.161169Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x75177b908661180f2a63282a8c85cc1c06a0b04e68317beb773ae393281c71bd
+[2m2025-06-04T15:52:31.161357Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x75177b908661180f2a63282a8c85cc1c06a0b04e68317beb773ae393281c71bd
+[2m2025-06-04T15:52:31.161374Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x7517…71bd
+[2m2025-06-04T15:52:31.226008Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xc2ef9d8f0dadc73986423a546d3f08ce76cd7b8bef09a443fd3fab81c2916569
+[2m2025-06-04T15:52:31.226140Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xc2ef9d8f0dadc73986423a546d3f08ce76cd7b8bef09a443fd3fab81c2916569
+[2m2025-06-04T15:52:31.226160Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xc2ef…6569
+[2m2025-06-04T15:52:31.291329Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xbb50a104f8f1678cfe2512ccbb2228bb277b54756cb2c28fd33519f5cdfd67d8
+[2m2025-06-04T15:52:31.291493Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xbb50a104f8f1678cfe2512ccbb2228bb277b54756cb2c28fd33519f5cdfd67d8
+[2m2025-06-04T15:52:31.291508Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xbb50…67d8
+[2m2025-06-04T15:52:31.377443Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x4a226120af4df4a1bb8e1314221277dff635b72cd398f6176441f4030001fd50
+[2m2025-06-04T15:52:31.377567Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x4a226120af4df4a1bb8e1314221277dff635b72cd398f6176441f4030001fd50
+[2m2025-06-04T15:52:31.377583Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x4a22…fd50
+[2m2025-06-04T15:52:31.591362Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xa3b8ee426e0a40d86a62facc6f988636726758bb2e5efa5886b68e313bd22caf
+[2m2025-06-04T15:52:31.591554Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xa3b8ee426e0a40d86a62facc6f988636726758bb2e5efa5886b68e313bd22caf
+[2m2025-06-04T15:52:31.591575Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xa3b8…2caf
+[2m2025-06-04T15:52:31.676397Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x117af11a02c07932fb36e5162675b02c3b24cb4f38974c6187e806dfd5a9afac
+[2m2025-06-04T15:52:31.676594Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x117af11a02c07932fb36e5162675b02c3b24cb4f38974c6187e806dfd5a9afac
+[2m2025-06-04T15:52:31.676608Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x117a…afac
+[2m2025-06-04T15:52:31.886377Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x2dbf14713eb0a5ccb55d888c739d3710f3b1dc423ee458cf65e2b5d824d49201
+[2m2025-06-04T15:52:31.886486Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x2dbf14713eb0a5ccb55d888c739d3710f3b1dc423ee458cf65e2b5d824d49201
+[2m2025-06-04T15:52:31.886500Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x2dbf…9201
+[2m2025-06-04T15:52:31.960120Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xcfe2620b46643419a1d7dbb05e2ccffcb07b5ef749caad428e430296d012bcc4
+[2m2025-06-04T15:52:31.960282Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xcfe2620b46643419a1d7dbb05e2ccffcb07b5ef749caad428e430296d012bcc4
+[2m2025-06-04T15:52:31.960309Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xcfe2…bcc4
+[2m2025-06-04T15:52:32.034179Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xe9e3d69350e82ce3faf4519d5f721c0f9dd44fb2e0951d6662ebd87da13ecc58
+[2m2025-06-04T15:52:32.034303Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xe9e3d69350e82ce3faf4519d5f721c0f9dd44fb2e0951d6662ebd87da13ecc58
+[2m2025-06-04T15:52:32.034317Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xe9e3…cc58
+[2m2025-06-04T15:52:32.227406Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x55fe2f7ddb14eaf7908996e661758eff23852554d7a6ab7a8530c5a8b5bcbe3a
+[2m2025-06-04T15:52:32.227565Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x55fe2f7ddb14eaf7908996e661758eff23852554d7a6ab7a8530c5a8b5bcbe3a
+[2m2025-06-04T15:52:32.227581Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x55fe…be3a
+[2m2025-06-04T15:52:32.299143Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xd035be24201c15acb8f230a30e1390052f6a600cc91d3a27831e5c52c5367b1b
+[2m2025-06-04T15:52:32.299260Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xd035be24201c15acb8f230a30e1390052f6a600cc91d3a27831e5c52c5367b1b
+[2m2025-06-04T15:52:32.299275Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xd035…7b1b
+[2m2025-06-04T15:52:32.378947Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x05efeb39db96e71f0e1ec22d460ae2d607bb00f6112ebeec1dd10c204bfbeb54
+[2m2025-06-04T15:52:32.379130Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x05efeb39db96e71f0e1ec22d460ae2d607bb00f6112ebeec1dd10c204bfbeb54
+[2m2025-06-04T15:52:32.379153Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x05ef…eb54
+[2m2025-06-04T15:52:32.457371Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x58962e72a9877946e565c1ca6f7ae1d21a081d725e4eb7ade8353aac875f57a1
+[2m2025-06-04T15:52:32.457513Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x58962e72a9877946e565c1ca6f7ae1d21a081d725e4eb7ade8353aac875f57a1
+[2m2025-06-04T15:52:32.457525Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x5896…57a1
+[2m2025-06-04T15:52:32.654645Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x5c0b53887ef2ab160cd91b7e213f853ebfde643a5f2f8e4b35297bf3f48f80c5
+[2m2025-06-04T15:52:32.654836Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x5c0b53887ef2ab160cd91b7e213f853ebfde643a5f2f8e4b35297bf3f48f80c5
+[2m2025-06-04T15:52:32.654860Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x5c0b…80c5
+[2m2025-06-04T15:52:32.744924Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x3bd7e41d9bfa6f5dd57b600e2a00e351fba159027eaa0ac3e8510a342e66d96b
+[2m2025-06-04T15:52:32.745108Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x3bd7e41d9bfa6f5dd57b600e2a00e351fba159027eaa0ac3e8510a342e66d96b
+[2m2025-06-04T15:52:32.745129Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x3bd7…d96b
+[2m2025-06-04T15:52:32.838965Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x9e76d97e2725cb5b53cf30af4d551d391df442a4c42fa4156d3977ffbafc14df
+[2m2025-06-04T15:52:32.839076Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x9e76d97e2725cb5b53cf30af4d551d391df442a4c42fa4156d3977ffbafc14df
+[2m2025-06-04T15:52:32.839096Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x9e76…14df
+[2m2025-06-04T15:52:33.039234Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xd98d8401fa7d5961783f9c39c64ab8c34fb54a3c06093b98a46943282919d010
+[2m2025-06-04T15:52:33.039406Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xd98d8401fa7d5961783f9c39c64ab8c34fb54a3c06093b98a46943282919d010
+[2m2025-06-04T15:52:33.039423Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xd98d…d010
+[2m2025-06-04T15:52:33.168254Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x23e2564a455281645704a787386ace72177f4053f0d178f53c477974af834c94
+[2m2025-06-04T15:52:33.168401Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x23e2564a455281645704a787386ace72177f4053f0d178f53c477974af834c94
+[2m2025-06-04T15:52:33.168419Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x23e2…4c94
+[2m2025-06-04T15:52:33.268637Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x9bc55d0ee3a8e6e7b34ff5f66f9ca47d7dd5e7afac52a2aa9bd778e05a3bd18a
+[2m2025-06-04T15:52:33.268842Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x9bc55d0ee3a8e6e7b34ff5f66f9ca47d7dd5e7afac52a2aa9bd778e05a3bd18a
+[2m2025-06-04T15:52:33.268860Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x9bc5…d18a
+[2m2025-06-04T15:52:33.461537Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xfdf22236c38bec47206e673c0102df35c3e1f5991aa8a7e930af3a82d6ccf853
+[2m2025-06-04T15:52:33.461676Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xfdf22236c38bec47206e673c0102df35c3e1f5991aa8a7e930af3a82d6ccf853
+[2m2025-06-04T15:52:33.461694Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xfdf2…f853
+[2m2025-06-04T15:52:33.558620Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x73ce69c8d96acf428b335c62fc262c5765fd7b62344d97e8bdb09632d72354d6
+[2m2025-06-04T15:52:33.559051Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x73ce69c8d96acf428b335c62fc262c5765fd7b62344d97e8bdb09632d72354d6
+[2m2025-06-04T15:52:33.559077Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x73ce…54d6
+[2m2025-06-04T15:52:33.647664Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x3f5a3e5aa1bd42b1bae4f104eb1d5bdcd6af36a6a908114aa5ccf081ff668210
+[2m2025-06-04T15:52:33.647851Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x3f5a3e5aa1bd42b1bae4f104eb1d5bdcd6af36a6a908114aa5ccf081ff668210
+[2m2025-06-04T15:52:33.647869Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x3f5a…8210
+[2m2025-06-04T15:52:38.646006Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x7db93a404630bfaebbc6406c28f0c9c366c9e27f1089360962fb08fd2e0f096a
+[2m2025-06-04T15:52:38.646167Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x7db93a404630bfaebbc6406c28f0c9c366c9e27f1089360962fb08fd2e0f096a
+[2m2025-06-04T15:52:38.646187Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x7db9…096a
+[2m2025-06-04T15:52:39.600830Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x035dabbddb49b74cc9d1576782f7bebe93643f6a416d1b0a60b01142506bea80
+[2m2025-06-04T15:52:39.601039Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x035dabbddb49b74cc9d1576782f7bebe93643f6a416d1b0a60b01142506bea80
+[2m2025-06-04T15:52:39.601055Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x035d…ea80
+[2m2025-06-04T15:52:39.675749Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x6e06a89ba9f33c4ce59d8fbb32e6c5e29edb2e7298861303812ae22b1cef0473
+[2m2025-06-04T15:52:39.675890Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x6e06a89ba9f33c4ce59d8fbb32e6c5e29edb2e7298861303812ae22b1cef0473
+[2m2025-06-04T15:52:39.675904Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x6e06…0473
+[2m2025-06-04T15:52:39.937540Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xad2e722d6dfb9b4c4fcf6ca5d837efaae7672599d98278350f6aa7a560050401
+[2m2025-06-04T15:52:39.937715Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xad2e722d6dfb9b4c4fcf6ca5d837efaae7672599d98278350f6aa7a560050401
+[2m2025-06-04T15:52:39.937734Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xad2e…0401
+[2m2025-06-04T15:52:40.031689Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xc767b8f2d9013de5f1afb8b2ef985414ef22aeeaed73aeb079d308ffb6aa4b37
+[2m2025-06-04T15:52:40.031838Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xc767b8f2d9013de5f1afb8b2ef985414ef22aeeaed73aeb079d308ffb6aa4b37
+[2m2025-06-04T15:52:40.031853Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xc767…4b37
+[2m2025-06-04T15:52:40.125150Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x00246745a7779d1759c7685a5af5f10be476bb4169794b8e85dba5a4f36a48ad
+[2m2025-06-04T15:52:40.125337Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x00246745a7779d1759c7685a5af5f10be476bb4169794b8e85dba5a4f36a48ad
+[2m2025-06-04T15:52:40.125357Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x0024…48ad
+[2m2025-06-04T15:52:40.308050Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x949b8f9cc7a732682fdf5408f4084c8ea92f682ed374e421066b15fef08d49e9
+[2m2025-06-04T15:52:40.308175Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x949b8f9cc7a732682fdf5408f4084c8ea92f682ed374e421066b15fef08d49e9
+[2m2025-06-04T15:52:40.308197Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x949b…49e9
+[2m2025-06-04T15:52:40.368928Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x847806c75b8eaaf1969a658c16f9302c53e8063ac0f7b0bee70100382c7ab856
+[2m2025-06-04T15:52:40.369103Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x847806c75b8eaaf1969a658c16f9302c53e8063ac0f7b0bee70100382c7ab856
+[2m2025-06-04T15:52:40.369126Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x8478…b856
+[2m2025-06-04T15:52:40.426949Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x1639c7edd27e6850ee29486d13b50c0bbe61bcb6f46eae19fbd3bc49c69868fb
+[2m2025-06-04T15:52:40.427103Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x1639c7edd27e6850ee29486d13b50c0bbe61bcb6f46eae19fbd3bc49c69868fb
+[2m2025-06-04T15:52:40.427118Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x1639…68fb
+[2m2025-06-04T15:52:40.590519Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xebf40c0fd27b07519695c1f7b2229882b8097b56239ea058a2c736a353d86dad
+[2m2025-06-04T15:52:40.590642Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xebf40c0fd27b07519695c1f7b2229882b8097b56239ea058a2c736a353d86dad
+[2m2025-06-04T15:52:40.590659Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xebf4…6dad
+[2m2025-06-04T15:52:40.647542Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x03d92b7ff29bd17c2f15f3a2e12543f2bb3988e21e2876445ee7a045d4c37cc7
+[2m2025-06-04T15:52:40.647706Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x03d92b7ff29bd17c2f15f3a2e12543f2bb3988e21e2876445ee7a045d4c37cc7
+[2m2025-06-04T15:52:40.647723Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x03d9…7cc7
+[2m2025-06-04T15:52:40.702813Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x5d17c51dc9f9a04c4f0ff7785747e1921ccfbd6c14f8f97a036e05a9d76cecd1
+[2m2025-06-04T15:52:40.702929Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x5d17c51dc9f9a04c4f0ff7785747e1921ccfbd6c14f8f97a036e05a9d76cecd1
+[2m2025-06-04T15:52:40.702942Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x5d17…ecd1
+[2m2025-06-04T15:52:40.874782Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xed361139c55bdb71c8ef1a7a84eff71d81f90cec1a7d1d472c47ac71540dd323
+[2m2025-06-04T15:52:40.874947Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xed361139c55bdb71c8ef1a7a84eff71d81f90cec1a7d1d472c47ac71540dd323
+[2m2025-06-04T15:52:40.874965Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xed36…d323
+[2m2025-06-04T15:52:40.941063Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x9b930b2f08c2dbd1c5dee58636954cb9a2680fe8f6e569e51393b2d9270fc747
+[2m2025-06-04T15:52:40.941231Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x9b930b2f08c2dbd1c5dee58636954cb9a2680fe8f6e569e51393b2d9270fc747
+[2m2025-06-04T15:52:40.941246Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x9b93…c747
+[2m2025-06-04T15:52:41.014484Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x266244862621b7dfe6cb8455432388be5925f6e951a050a8fa62753978a2aa08
+[2m2025-06-04T15:52:41.014596Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x266244862621b7dfe6cb8455432388be5925f6e951a050a8fa62753978a2aa08
+[2m2025-06-04T15:52:41.014611Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x2662…aa08
+[2m2025-06-04T15:52:41.079781Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xa8355afaddc7f18467178a31a37128528385a0d85a0ece21b77fa607ed055f04
+[2m2025-06-04T15:52:41.079957Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xa8355afaddc7f18467178a31a37128528385a0d85a0ece21b77fa607ed055f04
+[2m2025-06-04T15:52:41.079975Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xa835…5f04
+[2m2025-06-04T15:52:41.262568Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x8e8cdbc682230ff4ad5cd030ea485407d32449cdf055bae42de32ba03060c3fa
+[2m2025-06-04T15:52:41.262695Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x8e8cdbc682230ff4ad5cd030ea485407d32449cdf055bae42de32ba03060c3fa
+[2m2025-06-04T15:52:41.262723Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x8e8c…c3fa
+[2m2025-06-04T15:52:41.331344Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x2ca1ad612f32ab23569ebb92c380ce876c3d973f95d0b94aefb1c8517ee91d0a
+[2m2025-06-04T15:52:41.331509Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x2ca1ad612f32ab23569ebb92c380ce876c3d973f95d0b94aefb1c8517ee91d0a
+[2m2025-06-04T15:52:41.331525Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x2ca1…1d0a
+[2m2025-06-04T15:52:41.388814Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x98bdc0732d3d99e6f3eb91df15be89d1d182e979e0d2b7bd54457f0308b79d4d
+[2m2025-06-04T15:52:41.388920Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x98bdc0732d3d99e6f3eb91df15be89d1d182e979e0d2b7bd54457f0308b79d4d
+[2m2025-06-04T15:52:41.388936Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x98bd…9d4d
+[2m2025-06-04T15:52:41.567151Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x8895b9e162f2798f5805175bc199b5562233a716bfabb48efe729b7cc558c4bb
+[2m2025-06-04T15:52:41.567316Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x8895b9e162f2798f5805175bc199b5562233a716bfabb48efe729b7cc558c4bb
+[2m2025-06-04T15:52:41.567332Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x8895…c4bb
+[2m2025-06-04T15:52:41.657494Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x96c3224884d23783e063696be7696c8a2bfdd5b6271125da819ec480aeab510c
+[2m2025-06-04T15:52:41.657625Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x96c3224884d23783e063696be7696c8a2bfdd5b6271125da819ec480aeab510c
+[2m2025-06-04T15:52:41.657639Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x96c3…510c
+[2m2025-06-04T15:52:41.726430Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xe0988239eade5809536553112745745789d1c3e135aac21519758d4bf3c0a6e6
+[2m2025-06-04T15:52:41.726588Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xe0988239eade5809536553112745745789d1c3e135aac21519758d4bf3c0a6e6
+[2m2025-06-04T15:52:41.726602Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xe098…a6e6
+[2m2025-06-04T15:52:41.894871Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x05baa9dcfb535b1ca4d9103a577d693e74c0f1c7885ae4cd105d746ef888a15e
+[2m2025-06-04T15:52:41.895059Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x05baa9dcfb535b1ca4d9103a577d693e74c0f1c7885ae4cd105d746ef888a15e
+[2m2025-06-04T15:52:41.895078Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x05ba…a15e
+[2m2025-06-04T15:52:41.969519Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xadc90d6af38a6f4d3f1df2de95d38e69404d54029d5727b0dbb40d06b3afc28d
+[2m2025-06-04T15:52:41.969644Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xadc90d6af38a6f4d3f1df2de95d38e69404d54029d5727b0dbb40d06b3afc28d
+[2m2025-06-04T15:52:41.969658Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xadc9…c28d
+[2m2025-06-04T15:52:42.031869Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x7cbaf8547852be56a5112c4fe825879da8fc8bb2066660d12e15179f504b407a
+[2m2025-06-04T15:52:42.032045Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x7cbaf8547852be56a5112c4fe825879da8fc8bb2066660d12e15179f504b407a
+[2m2025-06-04T15:52:42.032071Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x7cba…407a
+[2m2025-06-04T15:52:42.087784Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x0074ce1c3c712cb4e055b689a2c59509e09d9ae438c62b8ee2383e4ee43e9d28
+[2m2025-06-04T15:52:42.087951Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x0074ce1c3c712cb4e055b689a2c59509e09d9ae438c62b8ee2383e4ee43e9d28
+[2m2025-06-04T15:52:42.087969Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x0074…9d28
+[2m2025-06-04T15:52:42.266295Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xb0df732500f03c4b6971ade45347018be2012add12d11ecd02a53de1415b9984
+[2m2025-06-04T15:52:42.266493Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xb0df732500f03c4b6971ade45347018be2012add12d11ecd02a53de1415b9984
+[2m2025-06-04T15:52:42.266509Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xb0df…9984
+[2m2025-06-04T15:52:42.325765Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x7cbf928163c286e688d049049f7c0bb8afc74c82323827ab1114d69ed640e1fa
+[2m2025-06-04T15:52:42.325892Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x7cbf928163c286e688d049049f7c0bb8afc74c82323827ab1114d69ed640e1fa
+[2m2025-06-04T15:52:42.325909Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x7cbf…e1fa
+[2m2025-06-04T15:52:42.387173Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x7e49b9f366f2bd833736bdccacef5682cda5b65c2907ea1a6f619d0e9fd2ddd1
+[2m2025-06-04T15:52:42.387357Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x7e49b9f366f2bd833736bdccacef5682cda5b65c2907ea1a6f619d0e9fd2ddd1
+[2m2025-06-04T15:52:42.387370Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x7e49…ddd1
+[2m2025-06-04T15:52:42.565392Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xeb3e53a55378367755285af86dc421aacd8c3211b9501b7f4d7b15f921b0b42e
+[2m2025-06-04T15:52:42.565526Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xeb3e53a55378367755285af86dc421aacd8c3211b9501b7f4d7b15f921b0b42e
+[2m2025-06-04T15:52:42.565545Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xeb3e…b42e
+[2m2025-06-04T15:52:42.635836Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x875dbb7a9bf100ca9a51cf616738b0e1b22f8bf17c75e1734e42408331c67b16
+[2m2025-06-04T15:52:42.636011Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x875dbb7a9bf100ca9a51cf616738b0e1b22f8bf17c75e1734e42408331c67b16
+[2m2025-06-04T15:52:42.636027Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x875d…7b16
+[2m2025-06-04T15:52:46.284133Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xc3cfa20d1dc842e96ae7b5202452872536fa984c56a71f5e968936df7ab426cc
+[2m2025-06-04T15:52:46.284310Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xc3cfa20d1dc842e96ae7b5202452872536fa984c56a71f5e968936df7ab426cc
+[2m2025-06-04T15:52:46.284327Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xc3cf…26cc
+[2m2025-06-04T15:52:47.295991Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xc59ce37dec19f28cf41b4cdd8eacc2bf6c069c5c79ae4c1c46f5fc25f6ad6043
+[2m2025-06-04T15:52:47.296249Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xc59ce37dec19f28cf41b4cdd8eacc2bf6c069c5c79ae4c1c46f5fc25f6ad6043
+[2m2025-06-04T15:52:47.296285Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xc59c…6043
+[2m2025-06-04T15:52:47.391270Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xbc5e220d9ee7f783c3452955dce7681488de47567f858b24df46b4a5c07fd72e
+[2m2025-06-04T15:52:47.391417Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xbc5e220d9ee7f783c3452955dce7681488de47567f858b24df46b4a5c07fd72e
+[2m2025-06-04T15:52:47.391432Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xbc5e…d72e
+[2m2025-06-04T15:52:47.494305Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x4b4116106161bbfbb8a27014a181ea278a12ce45cdab315c914f91679bb419e0
+[2m2025-06-04T15:52:47.494491Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x4b4116106161bbfbb8a27014a181ea278a12ce45cdab315c914f91679bb419e0
+[2m2025-06-04T15:52:47.494505Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x4b41…19e0
+[2m2025-06-04T15:52:47.809535Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x866af9f27b9634135b4bf989247fa8982389bc85c775e46e787ee241be6e5288
+[2m2025-06-04T15:52:47.809670Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x866af9f27b9634135b4bf989247fa8982389bc85c775e46e787ee241be6e5288
+[2m2025-06-04T15:52:47.809684Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x866a…5288
+[2m2025-06-04T15:52:48.113415Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x0a74146369f79cefd3da5917e446c96da68a5fb2e7a9f7868ca67bf63b8eb9e8
+[2m2025-06-04T15:52:48.174089Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x0a74146369f79cefd3da5917e446c96da68a5fb2e7a9f7868ca67bf63b8eb9e8
+[2m2025-06-04T15:52:48.174107Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x0a74…b9e8
+[2m2025-06-04T15:52:48.255750Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x2f15541fa65118443551ef738c0771b349eca437aa1831383850790b09235904
+[2m2025-06-04T15:52:48.255940Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x2f15541fa65118443551ef738c0771b349eca437aa1831383850790b09235904
+[2m2025-06-04T15:52:48.255962Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x2f15…5904
+[2m2025-06-04T15:52:48.448790Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x5ad8e7d099775d117d3c8b693e2400fb6a33ee5979038890a5013955da5d7dbc
+[2m2025-06-04T15:52:48.448913Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x5ad8e7d099775d117d3c8b693e2400fb6a33ee5979038890a5013955da5d7dbc
+[2m2025-06-04T15:52:48.448928Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x5ad8…7dbc
+[2m2025-06-04T15:52:48.506504Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xabe167d973852c60b7c50df4985c14997196b8f2e7f3494bb6536013110afc98
+[2m2025-06-04T15:52:48.506659Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xabe167d973852c60b7c50df4985c14997196b8f2e7f3494bb6536013110afc98
+[2m2025-06-04T15:52:48.506671Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xabe1…fc98
+[2m2025-06-04T15:52:48.581036Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xb1861e24b8de4d014e6a844c401161d73b0b593b22e580e15c05db2d4bb173df
+[2m2025-06-04T15:52:48.581169Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xb1861e24b8de4d014e6a844c401161d73b0b593b22e580e15c05db2d4bb173df
+[2m2025-06-04T15:52:48.581183Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xb186…73df
+[2m2025-06-04T15:52:48.803696Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xb09555113966b5c8e727a78a7bd7e8193213bd52affa615c97a78a74808c7f2a
+[2m2025-06-04T15:52:48.803883Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xb09555113966b5c8e727a78a7bd7e8193213bd52affa615c97a78a74808c7f2a
+[2m2025-06-04T15:52:48.803902Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xb095…7f2a
+[2m2025-06-04T15:52:48.876657Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x39ee343e763108205bf32b0ce153504e745791a948fa6b1798615b9976a596d7
+[2m2025-06-04T15:52:48.876768Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x39ee343e763108205bf32b0ce153504e745791a948fa6b1798615b9976a596d7
+[2m2025-06-04T15:52:48.876780Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x39ee…96d7
+[2m2025-06-04T15:52:49.113245Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x22e57107fe51373c0a68abe0a50f88fe0984c78146db042f6674c4cf62190e5c
+[2m2025-06-04T15:52:49.113443Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x22e57107fe51373c0a68abe0a50f88fe0984c78146db042f6674c4cf62190e5c
+[2m2025-06-04T15:52:49.113458Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x22e5…0e5c
+[2m2025-06-04T15:52:49.213754Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x1a7f89fdf8ad19e56a360972be6dde70ff13c564e0ca625c58927a9e6aff34de
+[2m2025-06-04T15:52:49.213884Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x1a7f89fdf8ad19e56a360972be6dde70ff13c564e0ca625c58927a9e6aff34de
+[2m2025-06-04T15:52:49.213898Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x1a7f…34de
+[2m2025-06-04T15:52:49.304151Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x32dae6d29677348e73a90f376eec6c5d850ccb07b3246bee697c9fc8d52e8e99
+[2m2025-06-04T15:52:49.304307Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x32dae6d29677348e73a90f376eec6c5d850ccb07b3246bee697c9fc8d52e8e99
+[2m2025-06-04T15:52:49.304321Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x32da…8e99
+[2m2025-06-04T15:52:49.501426Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xcaf01498ec6d3b4e7e6709de55ebaccf76a152e33ab5c7ceea89a634868c26ec
+[2m2025-06-04T15:52:49.501569Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xcaf01498ec6d3b4e7e6709de55ebaccf76a152e33ab5c7ceea89a634868c26ec
+[2m2025-06-04T15:52:49.501583Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xcaf0…26ec
+[2m2025-06-04T15:52:49.563008Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x975363522395d61b283942fb9f7864d7b4822221d57bf8dd80a52dac961b6868
+[2m2025-06-04T15:52:49.563162Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x975363522395d61b283942fb9f7864d7b4822221d57bf8dd80a52dac961b6868
+[2m2025-06-04T15:52:49.563174Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x9753…6868
+[2m2025-06-04T15:52:49.625286Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x02a83d2214cc32274b4633d0035c405246f16051e70814fa1425b18b47eae00e
+[2m2025-06-04T15:52:49.625398Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x02a83d2214cc32274b4633d0035c405246f16051e70814fa1425b18b47eae00e
+[2m2025-06-04T15:52:49.625410Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x02a8…e00e
+[2m2025-06-04T15:52:49.839531Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x2b69f68162a22fb3aa31e8052ea7ffa0a53ad860bdeec417815f99e37fa2e623
+[2m2025-06-04T15:52:49.839708Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x2b69f68162a22fb3aa31e8052ea7ffa0a53ad860bdeec417815f99e37fa2e623
+[2m2025-06-04T15:52:49.839723Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x2b69…e623
+[2m2025-06-04T15:52:49.919604Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xc84599e4ad723c3793d4fb990bc1bab97c78a61f1de28408ff23b969aca5d105
+[2m2025-06-04T15:52:49.919765Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xc84599e4ad723c3793d4fb990bc1bab97c78a61f1de28408ff23b969aca5d105
+[2m2025-06-04T15:52:49.919779Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xc845…d105
+[2m2025-06-04T15:52:49.985766Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xf4584121c2aebbbd61f4cec18daffbdda4cdc58a8ea661c7e1185c14285597f0
+[2m2025-06-04T15:52:49.986307Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xf4584121c2aebbbd61f4cec18daffbdda4cdc58a8ea661c7e1185c14285597f0
+[2m2025-06-04T15:52:49.986321Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xf458…97f0
+[2m2025-06-04T15:52:52.408952Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x1396d034044ec8614c6cac594ae3559b51d36a6bbb7289e1c859995367462ad9
+[2m2025-06-04T15:52:52.409162Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x1396d034044ec8614c6cac594ae3559b51d36a6bbb7289e1c859995367462ad9
+[2m2025-06-04T15:52:52.409183Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x1396…2ad9
+[2m2025-06-04T15:52:52.567396Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x317c1d44b91edfd9487de889abc0eaa20acc6d01fe9f29dc6353832a9810af20
+[2m2025-06-04T15:52:52.567615Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x317c1d44b91edfd9487de889abc0eaa20acc6d01fe9f29dc6353832a9810af20
+[2m2025-06-04T15:52:52.567636Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x317c…af20
+[2m2025-06-04T15:53:01.149808Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 115
+[2m2025-06-04T15:53:18.440779Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x3b207c5f219cee81302e5b756f8ff3aa28edca122d584f1402076c56070b0b88
+[2m2025-06-04T15:53:18.441053Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x3b207c5f219cee81302e5b756f8ff3aa28edca122d584f1402076c56070b0b88
+[2m2025-06-04T15:53:18.441072Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x3b20…0b88
+[2m2025-06-04T15:53:18.681074Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x22e54f45f322744cd3054299ffb43f3a1536bb68310fc87da166b7c89fa93bf4
+[2m2025-06-04T15:53:18.681235Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x22e54f45f322744cd3054299ffb43f3a1536bb68310fc87da166b7c89fa93bf4
+[2m2025-06-04T15:53:18.681253Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x22e5…3bf4
+[2m2025-06-04T15:53:31.149641Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 105
+[2m2025-06-04T15:53:37.136945Z[0m [33m WARN[0m [2methrex_p2p::sync[0m[2m:[0m Sync cycle failed due to No bodies were found for the given headers, time elapsed: 71 secs 
+[2m2025-06-04T15:53:41.093528Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x374612b5e5a7692db2b809f4e80a5d53fbafc3ace9bdf8f62685be06de2a72b4
+[2m2025-06-04T15:53:41.093742Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x374612b5e5a7692db2b809f4e80a5d53fbafc3ace9bdf8f62685be06de2a72b4
+[2m2025-06-04T15:53:41.093767Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x3746…72b4
+[2m2025-06-04T15:53:41.094671Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Syncing from current head 0xbbe312868b376a3001692a646dd2d7d1e4406380dfd86b98aa8a34d1557c971b to sync_head 0x374612b5e5a7692db2b809f4e80a5d53fbafc3ace9bdf8f62685be06de2a72b4
+[2m2025-06-04T15:53:41.094694Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m get pending: 0x3746…72b4
+[2m2025-06-04T15:53:43.794360Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Server shut down started...
+[2m2025-06-04T15:53:43.794661Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Storing config at "/Users/sofdart/Library/Application Support/hoodi_data/ethrex/levm/node_config.json"...
+[2m2025-06-04T15:53:44.796107Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Server shutting down!
+cd "../.." && RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+    		--http.port 8545 \
+    		--authrpc.port 8551 \
+    		--p2p.port 30303\
+    		--discovery.port 30303 \
+    		--network hoodi \
+    		--datadir "hoodi_data/ethrex/levm" \
+    		--authrpc.jwtsecret ~/Library/Application\ Support/hoodi_data/jwt.hex \
+    		--bootnodes enode://60203fcb3524e07c5df60a14ae1c9c5b24023ea5d47463dfae051d2c9f3219f309657537576090ca0ae641f73d419f53d8e8000d7a464319d4784acd7d2abc41@209.38.124.160:30303 \
+    		--evm levm
+[2m2025-06-04T15:53:47.426864Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Starting storage engine (Libmdbx)
+[2m2025-06-04T15:53:47.428731Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Started store engine
+[2m2025-06-04T15:53:47.428810Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Storing initial state from genesis
+[2m2025-06-04T15:53:47.431798Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Received genesis file matching a previously stored one, nothing to do
+[2m2025-06-04T15:53:47.433180Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Node: enode://a5fd1befef4d07df2750fe6e4904376f384b00360b42e2141cc67b7cf6b356c3e6955bc5def388198684cbd0bc300bd91c6224a07e403f504b8a0efc7927cc96@10.0.10.138:30303
+[2m2025-06-04T15:53:47.440001Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Addig hoodi preset bootnodes
+[2m2025-06-04T15:53:47.440527Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Starting HTTP server at [::1]:8545
+[2m2025-06-04T15:53:47.440567Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Starting Auth-RPC server at [::1]:8551
+[2m2025-06-04T15:53:47.441807Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Running filter clean task
+[2m2025-06-04T15:53:47.441844Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Filter clean task complete
+[2m2025-06-04T15:53:47.442218Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Reading known peers from config file "/Users/sofdart/Library/Application Support/hoodi_data/ethrex/levm/node_config.json"
+[2m2025-06-04T15:53:47.443247Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Starting discovery service at 10.0.10.138:30303
+[2m2025-06-04T15:53:47.445074Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Listening for requests at 10.0.10.138:30303
+[2m2025-06-04T15:53:47.445108Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 16
+[2m2025-06-04T15:53:47.446330Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 16
+[2m2025-06-04T15:53:47.650893Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x354c7d3b15a2f7dc978384851a86474c6b5e3639d23301860aaf8973671cd9dd
+[2m2025-06-04T15:53:47.651113Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x354c7d3b15a2f7dc978384851a86474c6b5e3639d23301860aaf8973671cd9dd
+[2m2025-06-04T15:53:47.651130Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x354c…d9dd
+[2m2025-06-04T15:53:47.652046Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Syncing from current head 0xbbe312868b376a3001692a646dd2d7d1e4406380dfd86b98aa8a34d1557c971b to sync_head 0x354c7d3b15a2f7dc978384851a86474c6b5e3639d23301860aaf8973671cd9dd
+[2m2025-06-04T15:53:47.652072Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m get pending: 0x354c…d9dd
+[2m2025-06-04T15:53:47.652126Z[0m [32m INFO[0m [2methrex_p2p::peer_handler[0m[2m:[0m [Sync] No peers available, retrying in 10 sec
+[2m2025-06-04T15:53:52.096325Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xfadd546c7c920c5a5fabff12bdbbc82fdbd136e25c016190f02cb4280ad2665b
+[2m2025-06-04T15:53:52.096535Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xfadd546c7c920c5a5fabff12bdbbc82fdbd136e25c016190f02cb4280ad2665b
+[2m2025-06-04T15:53:52.096554Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xfadd…665b
+[2m2025-06-04T15:54:04.019419Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x2a7cb3ea1cd6ef90114ef5f18810569b9b89bcc428785d76dc40e6c9ae169adc
+[2m2025-06-04T15:54:04.019612Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x2a7cb3ea1cd6ef90114ef5f18810569b9b89bcc428785d76dc40e6c9ae169adc
+[2m2025-06-04T15:54:04.019632Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x2a7c…9adc
+[2m2025-06-04T15:54:16.083786Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x52d62628d510c05c36f0269a349ec772890fea0e1736aaa7c45409cb07ae9863
+[2m2025-06-04T15:54:16.083962Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x52d62628d510c05c36f0269a349ec772890fea0e1736aaa7c45409cb07ae9863
+[2m2025-06-04T15:54:16.083979Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x52d6…9863
+[2m2025-06-04T15:54:17.446256Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 1 / Active Peers 1 / Total Peers: 42
+[2m2025-06-04T15:54:22.118417Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Server shut down started...
+[2m2025-06-04T15:54:22.118452Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Storing config at "/Users/sofdart/Library/Application Support/hoodi_data/ethrex/levm/node_config.json"...
+[2m2025-06-04T15:54:23.120382Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Server shutting down!
+[2m2025-06-04T15:54:23.320094Z[0m [33m WARN[0m [2methrex_p2p::sync[0m[2m:[0m Failed to add block during FullSync: DB error: task panicked: task 286 was cancelled
+[2m2025-06-04T15:54:23.320240Z[0m [33m WARN[0m [2methrex_p2p::sync[0m[2m:[0m Sync cycle failed due to DB error: task panicked: task 286 was cancelled, time elapsed: 35 secs 
+cd "../.." && RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+    		--http.port 8545 \
+    		--authrpc.port 8551 \
+    		--p2p.port 30303\
+    		--discovery.port 30303 \
+    		--network hoodi \
+    		--datadir "hoodi_data/ethrex/levm" \
+    		--authrpc.jwtsecret ~/Library/Application\ Support/hoodi_data/jwt.hex \
+    		--bootnodes enode://60203fcb3524e07c5df60a14ae1c9c5b24023ea5d47463dfae051d2c9f3219f309657537576090ca0ae641f73d419f53d8e8000d7a464319d4784acd7d2abc41@209.38.124.160:30303 \
+    		--evm levm
+[2m2025-06-04T15:54:34.300617Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Starting storage engine (Libmdbx)
+[2m2025-06-04T15:54:34.302287Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Started store engine
+[2m2025-06-04T15:54:34.302348Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Storing initial state from genesis
+[2m2025-06-04T15:54:34.304306Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Received genesis file matching a previously stored one, nothing to do
+[2m2025-06-04T15:54:34.305715Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Node: enode://a5fd1befef4d07df2750fe6e4904376f384b00360b42e2141cc67b7cf6b356c3e6955bc5def388198684cbd0bc300bd91c6224a07e403f504b8a0efc7927cc96@10.0.10.138:30303
+[2m2025-06-04T15:54:34.309857Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Addig hoodi preset bootnodes
+[2m2025-06-04T15:54:34.310527Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Starting HTTP server at [::1]:8545
+[2m2025-06-04T15:54:34.310575Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Starting Auth-RPC server at [::1]:8551
+[2m2025-06-04T15:54:34.311844Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Running filter clean task
+[2m2025-06-04T15:54:34.311891Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Filter clean task complete
+[2m2025-06-04T15:54:34.312281Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Reading known peers from config file "/Users/sofdart/Library/Application Support/hoodi_data/ethrex/levm/node_config.json"
+[2m2025-06-04T15:54:34.313149Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Starting discovery service at 10.0.10.138:30303
+[2m2025-06-04T15:54:34.314941Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Listening for requests at 10.0.10.138:30303
+[2m2025-06-04T15:54:34.315029Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 16
+[2m2025-06-04T15:54:34.316210Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 16
+[2m2025-06-04T15:55:04.315941Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 72
+[2m2025-06-04T15:55:16.294105Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Server shut down started...
+[2m2025-06-04T15:55:16.294184Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Storing config at "/Users/sofdart/Library/Application Support/hoodi_data/ethrex/levm/node_config.json"...
+[2m2025-06-04T15:55:17.296702Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Server shutting down!
+cd "../.." && RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+    		--http.port 8545 \
+    		--authrpc.port 8551 \
+    		--p2p.port 30303\
+    		--discovery.port 30303 \
+    		--network hoodi \
+    		--datadir "hoodi_data/ethrex/levm" \
+    		--authrpc.jwtsecret ~/Library/Application\ Support/hoodi_data/jwt.hex \
+    		--bootnodes enode://60203fcb3524e07c5df60a14ae1c9c5b24023ea5d47463dfae051d2c9f3219f309657537576090ca0ae641f73d419f53d8e8000d7a464319d4784acd7d2abc41@209.38.124.160:30303 \
+    		--evm levm
+[2m2025-06-04T15:56:19.885273Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Starting storage engine (Libmdbx)
+[2m2025-06-04T15:56:19.887904Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Started store engine
+[2m2025-06-04T15:56:19.887979Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Storing initial state from genesis
+[2m2025-06-04T15:56:19.906171Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Storing genesis block with number 0 and hash 0xbbe3…971b
+[2m2025-06-04T15:56:19.907489Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Key file not found, creating a new key and saving to "/Users/sofdart/Library/Application Support/hoodi_data/ethrex/levm/node.key"
+[2m2025-06-04T15:56:19.908009Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Node: enode://856f1c36e2ac206397240015446ec838f92cdae5f4f4c6684af122d799aa7052f091e1296c7525218310ad91d54c23d1004cc018d7980377a02abbfab54d61b0@10.0.10.138:30303
+[2m2025-06-04T15:56:19.911102Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Addig hoodi preset bootnodes
+[2m2025-06-04T15:56:19.911623Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Starting HTTP server at [::1]:8545
+[2m2025-06-04T15:56:19.911659Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Starting Auth-RPC server at [::1]:8551
+[2m2025-06-04T15:56:19.912903Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Running filter clean task
+[2m2025-06-04T15:56:19.912940Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Filter clean task complete
+[2m2025-06-04T15:56:19.912960Z[0m [32m INFO[0m [2methrex::initializers[0m[2m:[0m Reading known peers from config file "/Users/sofdart/Library/Application Support/hoodi_data/ethrex/levm/node_config.json"
+[2m2025-06-04T15:56:19.912979Z[0m [31mERROR[0m [2methrex::initializers[0m[2m:[0m Could not read from peers file: No config file found: No such file or directory (os error 2)
+[2m2025-06-04T15:56:19.913234Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Starting discovery service at 10.0.10.138:30303
+[2m2025-06-04T15:56:19.914756Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Listening for requests at 10.0.10.138:30303
+[2m2025-06-04T15:56:19.914779Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 16
+[2m2025-06-04T15:56:19.915935Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 0 / Active Peers 0 / Total Peers: 16
+[2m2025-06-04T15:56:49.915349Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 43
+[2m2025-06-04T15:57:19.915168Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 49
+[2m2025-06-04T15:57:49.915207Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 64
+[2m2025-06-04T15:58:19.914551Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 56
+[2m2025-06-04T15:58:49.913881Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 63
+[2m2025-06-04T15:59:19.912976Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 86
+[2m2025-06-04T15:59:49.911671Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 89
+[2m2025-06-04T16:00:19.911868Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 97
+[2m2025-06-04T16:00:46.813788Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m Syncing from current head 0xbbe312868b376a3001692a646dd2d7d1e4406380dfd86b98aa8a34d1557c971b to sync_head 0x7db93a404630bfaebbc6406c28f0c9c366c9e27f1089360962fb08fd2e0f096a
+[2m2025-06-04T16:00:46.813819Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m get pending: 0x7db9…096a
+[2m2025-06-04T16:00:49.911072Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 98
+[2m2025-06-04T16:01:16.757618Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x951a71fc7e9d68eda9e87a02307bf50db2b10c19f948ab9a6cd86692c823926f
+[2m2025-06-04T16:01:16.757919Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x951a71fc7e9d68eda9e87a02307bf50db2b10c19f948ab9a6cd86692c823926f
+[2m2025-06-04T16:01:16.757971Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x951a…926f
+[2m2025-06-04T16:01:16.915722Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xe773511a6ac1aa8eee63eb0107c2d1ab0bedca71253e6b9add8c0ed9436c341c
+[2m2025-06-04T16:01:16.915906Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xe773511a6ac1aa8eee63eb0107c2d1ab0bedca71253e6b9add8c0ed9436c341c
+[2m2025-06-04T16:01:16.915923Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xe773…341c
+[2m2025-06-04T16:01:19.908047Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Running filter clean task
+[2m2025-06-04T16:01:19.908143Z[0m [32m INFO[0m [2methrex_rpc::rpc[0m[2m:[0m Filter clean task complete
+[2m2025-06-04T16:01:19.910517Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 100
+[2m2025-06-04T16:01:37.558031Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x9692e1674cc8276b87b4b63c8efefbfdf388ec8febf25e25eeb17a7231b0c952
+[2m2025-06-04T16:01:37.558212Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x9692e1674cc8276b87b4b63c8efefbfdf388ec8febf25e25eeb17a7231b0c952
+[2m2025-06-04T16:01:37.558236Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x9692…c952
+[2m2025-06-04T16:01:48.022361Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRICS] Executed and stored: Range: 1023, Total transactions: 9881, Throughput: 1.526919662196963 Gigagas/s
+[2m2025-06-04T16:01:48.039284Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m [SYNCING] Requested, stored, and executed 1023 blocks in 50.055 seconds.
+Started at block with hash 0xc629…7996 (number 1).
+Finished at block with hash 0x2421…203d (number 1023).
+Blocks per second: 20.438
+[2m2025-06-04T16:01:49.910336Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 98
+[2m2025-06-04T16:01:50.184140Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x2bf26ddc0a09a8e021ccfb52c656f82f6dc46843e3c2588b7976148acd2eb4bc
+[2m2025-06-04T16:01:50.184290Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x2bf26ddc0a09a8e021ccfb52c656f82f6dc46843e3c2588b7976148acd2eb4bc
+[2m2025-06-04T16:01:50.184310Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x2bf2…b4bc
+[2m2025-06-04T16:02:01.380668Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x1580bf86fa6881a36aebcd38c797586e2b88286b318443904e395a8c51b8efe8
+[2m2025-06-04T16:02:01.380873Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x1580bf86fa6881a36aebcd38c797586e2b88286b318443904e395a8c51b8efe8
+[2m2025-06-04T16:02:01.380895Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x1580…efe8
+[2m2025-06-04T16:02:12.934749Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xbb6de4c6d40d3c5a91fb65ddadda25a910620e6ccdf9c35bd588b73d7191b812
+[2m2025-06-04T16:02:12.934953Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xbb6de4c6d40d3c5a91fb65ddadda25a910620e6ccdf9c35bd588b73d7191b812
+[2m2025-06-04T16:02:12.934973Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xbb6d…b812
+[2m2025-06-04T16:02:19.909868Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 101
+[2m2025-06-04T16:02:34.602417Z[0m [32m INFO[0m [2methrex_blockchain[0m[2m:[0m [METRICS] Executed and stored: Range: 1023, Total transactions: 5207, Throughput: 0.7683305223531377 Gigagas/s
+[2m2025-06-04T16:02:34.615975Z[0m [32m INFO[0m [2methrex_p2p::sync[0m[2m:[0m [SYNCING] Requested, stored, and executed 1023 blocks in 40.017 seconds.
+Started at block with hash 0x5fd8…e8ce (number 1024).
+Finished at block with hash 0x5446…2df4 (number 2046).
+Blocks per second: 25.564
+[2m2025-06-04T16:02:37.422031Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xe0b79344b6d2bec616f38c18eb2bb6980cabbcf68d7798d612b0d3274d13e058
+[2m2025-06-04T16:02:37.422220Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xe0b79344b6d2bec616f38c18eb2bb6980cabbcf68d7798d612b0d3274d13e058
+[2m2025-06-04T16:02:37.422243Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xe0b7…e058
+[2m2025-06-04T16:02:49.212979Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x86f951b1bde6fd23addcfa101fe53dfeb045bf9dd31cd2a94a99f3fb33861449
+[2m2025-06-04T16:02:49.213184Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x86f951b1bde6fd23addcfa101fe53dfeb045bf9dd31cd2a94a99f3fb33861449
+[2m2025-06-04T16:02:49.213204Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x86f9…1449
+[2m2025-06-04T16:02:49.909508Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 101
+[2m2025-06-04T16:03:02.175748Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0xc601259d788703ebbe3672e2549002379b54c6045c81895fb4a61ab2205b796b
+[2m2025-06-04T16:03:02.175957Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0xc601259d788703ebbe3672e2549002379b54c6045c81895fb4a61ab2205b796b
+[2m2025-06-04T16:03:02.175983Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0xc601…796b
+[2m2025-06-04T16:03:12.807961Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x4575a4fd27f29b3a9b774dbf153fdd673174d2fb0463f665cf20faad869f7ba3
+[2m2025-06-04T16:03:12.808186Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x4575a4fd27f29b3a9b774dbf153fdd673174d2fb0463f665cf20faad869f7ba3
+[2m2025-06-04T16:03:12.808208Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x4575…7ba3
+[2m2025-06-04T16:03:19.908817Z[0m [32m INFO[0m [2methrex_p2p::network[0m[2m:[0m Snap Peers: 2 / Active Peers 2 / Total Peers: 93
+[2m2025-06-04T16:03:25.477396Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x47698f27891400b2d3c8e4511b9d737565d44c2d0c16bc7ef38bbc71d607d7dd
+[2m2025-06-04T16:03:25.477560Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x47698f27891400b2d3c8e4511b9d737565d44c2d0c16bc7ef38bbc71d607d7dd
+[2m2025-06-04T16:03:25.477578Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x4769…d7dd
+[2m2025-06-04T16:03:38.035978Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Received new payload with block hash: 0x57f211a4720c311b78f52d37179eb1ea715207480a4ceaeff7cfb338fb1d660e
+[2m2025-06-04T16:03:38.036256Z[0m [32m INFO[0m [2methrex_rpc::engine::payload[0m[2m:[0m Executing payload with block hash: 0x57f211a4720c311b78f52d37179eb1ea715207480a4ceaeff7cfb338fb1d660e
+[2m2025-06-04T16:03:38.036278Z[0m [32m INFO[0m [2methrex_storage::store[0m[2m:[0m Adding block to pending: 0x57f2…660e
+[2m2025-06-04T16:03:47.377260Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Server shut down started...
+[2m2025-06-04T16:03:47.377337Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Storing config at "/Users/sofdart/Library/Application Support/hoodi_data/ethrex/levm/node_config.json"...
+[2m2025-06-04T16:03:48.380431Z[0m [32m INFO[0m [2methrex[0m[2m:[0m Server shutting down!
