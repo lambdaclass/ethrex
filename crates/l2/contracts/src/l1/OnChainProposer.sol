@@ -14,7 +14,7 @@ import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
-contract OnChainProposer2 is
+contract OnChainProposer is
     IOnChainProposer,
     Initializable,
     UUPSUpgradeable,
