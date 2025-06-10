@@ -402,7 +402,7 @@ pub mod test_utils {
             jwt_secret,
             local_p2p_node,
             example_local_node_record(),
-            SyncManager::dummy().unwrap(),
+            SyncManager::dummy(),
             PeerHandler::dummy(),
             "ethrex/test".to_string(),
             #[cfg(feature = "l2")]
@@ -421,7 +421,7 @@ pub mod test_utils {
             storage,
             blockchain,
             active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy().unwrap()),
+            syncer: Arc::new(SyncManager::dummy()),
             peer_handler: PeerHandler::dummy(),
             node_data: NodeData {
                 jwt_secret: Default::default(),

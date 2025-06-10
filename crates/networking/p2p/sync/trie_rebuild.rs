@@ -24,7 +24,6 @@ use super::{
     SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, SHOW_PROGRESS_INTERVAL_DURATION,
     STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
 };
-use ethrex_storage::error::StoreError;
 /// The storage root used to indicate that the storage to be rebuilt is not complete
 /// This will tell the rebuilder to skip storage root validations for this trie
 /// The storage should be queued for rebuilding by the sender
@@ -236,12 +235,9 @@ async fn rebuild_storage_trie_in_background(
             if pending_storages.is_empty() {
                 break;
             }
-            let (account_hash, expected_root) =
-                pending_storages
-                    .pop()
-                    .ok_or(SyncError::Store(StoreError::Custom(
-                        "Pending storage to rebuild is None".to_string(),
-                    )))?;
+            let (account_hash, expected_root) = pending_storages
+                .pop()
+                .expect("Unreachable code, pending_storages can't be empty in this point");
             let store = store.clone();
             rebuild_tasks.spawn(rebuild_storage_trie(
                 account_hash,

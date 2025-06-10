@@ -108,19 +108,18 @@ impl Syncer {
 
     /// Creates a dummy Syncer for tests where syncing is not needed
     /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub fn dummy() -> Result<Self, SyncError> {
-        Ok(Self {
+    pub fn dummy() -> Self {
+        Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
             peers: PeerHandler::dummy(),
             last_snap_pivot: 0,
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
-            blockchain: Arc::new(Blockchain::default_with_store(Store::new(
-                "",
-                EngineType::InMemory,
-            )?)),
-        })
+            blockchain: Arc::new(Blockchain::default_with_store(
+                Store::new("", EngineType::InMemory).expect("Failed to start Sotre Engine"),
+            )),
+        }
     }
 
     /// Starts a sync cycle, updating the state with all blocks between the current head and the sync head
@@ -709,7 +708,7 @@ fn seconds_to_readable(seconds: U512) -> String {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum SyncError {
+enum SyncError {
     #[error(transparent)]
     Chain(#[from] ChainError),
     #[error(transparent)]

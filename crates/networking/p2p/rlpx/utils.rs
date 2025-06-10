@@ -13,18 +13,8 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     use k256::sha2::Digest;
     k256::sha2::Sha256::digest(data).into()
 }
+use crate::rlpx::error::CryptographyError;
 use std::array::TryFromSliceError;
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum CryptographyError {
-    #[error("Invalid key: {0}")]
-    InvalidKey(String),
-    #[error("Invalid generated secret: {0}")]
-    InvalidGeneratedSecret(String),
-    #[error("Couldn't get keys from shared secret: {0}")]
-    CouldNotGetKeyFromSecret(String),
-}
 
 pub fn sha256_hmac(
     key: &[u8],
