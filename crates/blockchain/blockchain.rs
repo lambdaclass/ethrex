@@ -404,7 +404,6 @@ impl Blockchain {
         tx: &Transaction,
         sender: Address,
     ) -> Result<(), MempoolError> {
-        // TODO: Add validations here
         let nonce = tx.nonce();
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
@@ -475,7 +474,10 @@ impl Blockchain {
         }
 
         // Check the nonce of pendings TXs in the mempool from the same sender
-        if self.mempool.contains_sender_nonce(sender, nonce, tx)? {
+        if self
+            .mempool
+            .contains_sender_nonce(sender, nonce, tx.compute_hash())?
+        {
             return Err(MempoolError::InvalidNonce);
         }
 

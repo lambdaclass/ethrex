@@ -236,7 +236,7 @@ impl Mempool {
         &self,
         sender: Address,
         nonce: u64,
-        received_tx: &Transaction,
+        received_hash: H256,
     ) -> Result<bool, MempoolError> {
         let pooled_transactions = self
             .transaction_pool
@@ -246,7 +246,7 @@ impl Mempool {
         let count = pooled_transactions
             .iter()
             .filter(|(hash, tx)| {
-                tx.sender() == sender && tx.nonce() == nonce && *hash != &received_tx.compute_hash()
+                tx.sender() == sender && tx.nonce() == nonce && *hash != &received_hash
             })
             .count();
 
