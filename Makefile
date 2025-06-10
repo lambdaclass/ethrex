@@ -92,15 +92,6 @@ setup-hive: ## 🐝 Set up Hive testing framework
 		go build .; \
 	fi
 
-setup-hive-local: setup-hive ## 🐝 Set up Hive testing framework with local files
-	- mkdir hive/clients/ethrex/ethrex && \ 
-	cp -R cmd/ hive/clients/ethrex/ethrex/cmd/ && \
-	cp -R crates/ hive/clients/ethrex/ethrex/crates/ && \
-	cp -R tooling/ hive/clients/ethrex/ethrex/tooling/ && \
-	cp -R test_data/ hive/clients/ethrex/ethrex/test_data/ && \
-	cp Cargo.toml hive/clients/ethrex/ethrex/ && \
-	cp Makefile hive/clients/ethrex/ethrex/ 
-
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 1
 SIM_PARALLELISM ?= 16
@@ -122,14 +113,6 @@ run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ".*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) 
-	$(MAKE) view-hive
-
-run-hive-local: setup-hive-local
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE_LOCAL) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)"  --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM)
-	$(MAKE) view-hive
-
-run-hive-local-all: setup-hive-local
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE_LOCAL) --client ethrex --sim ".*" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM)
 	$(MAKE) view-hive
 
 clean-hive-logs: ## 🧹 Clean Hive logs
