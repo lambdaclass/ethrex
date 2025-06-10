@@ -14,6 +14,7 @@ pragma solidity ^0.8.0;
 //   Example: print("Value sent in transaction: ", msg.value);
 
 // Note: uint256 is printed as decimal. If hexadecimal is preferred, wrap it in bytes32. Example: print(bytes32(number))
+// Note 2: When doing print("something") Solidity can't infer if it is bytes32 or string, so we should clarify it by casting into string.
 
 uint256 constant MAGIC_PRINT_OFFSET = 0xFEDEBEBECAFEDECEBADA;
 
