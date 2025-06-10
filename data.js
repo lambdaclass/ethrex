@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749571443531,
+  "lastUpdate": 1749574403477,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -11905,6 +11905,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178247997749,
             "range": "± 372097052",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ffb0ad4cab51a55688739d23a9ba31308609570d",
+          "message": "ci(l2): add Codeowners to L2 contracts (#3100)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nChanges to L2 contracts are sensible and can break already deployed\nnetworks.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAdded members that are currently actively working on L2 deployments to\nrequest their approval before merging.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-06-10T16:03:39Z",
+          "tree_id": "7dad799ee0d4d03bdad8dba19373ed9856e5dedd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ffb0ad4cab51a55688739d23a9ba31308609570d"
+        },
+        "date": 1749574397899,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177925898876,
+            "range": "± 397238838",
             "unit": "ns/iter"
           }
         ]
