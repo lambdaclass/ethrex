@@ -116,13 +116,13 @@ impl MDBXFork {
             Default::default(),
         )
         .unwrap();
-        let account_trie = Arc::new(MDBXTrieDupsort::new(env_account_trie));
-        let storage_trie = Arc::new(MDBXTrieDB::new(env_storage_trie));
+        let storage_trie = Arc::new(MDBXTrieDupsort::new(env_storage_trie));
+        let state_trie = Arc::new(MDBXTrieDB::new(env_account_trie));
 
         Ok(Self {
             env,
-            storage_trie: account_trie,
-            state_trie: storage_trie,
+            storage_trie,
+            state_trie,
         })
     }
 }
