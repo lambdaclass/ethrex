@@ -20,6 +20,8 @@ services:
       - ./provisioning/prometheus/prometheus_l1_sync_docker.yaml:/etc/prometheus/prometheus.yaml
     ports:
       - "9091:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   grafana:
     ports:
