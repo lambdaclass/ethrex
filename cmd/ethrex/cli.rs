@@ -7,7 +7,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{error::ChainError, fork_choice::apply_fork_choice};
-use ethrex_common::types::{Fork, Genesis};
+use ethrex_common::types::{Genesis};
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -304,14 +304,16 @@ impl Subcommand {
                 }
 
                 let network = &opts.network;
-                import_blocks(&path, &opts.datadir, network.get_genesis(), opts.evm).await?;
+                let genesis = network.get_genesis()?;
+                import_blocks(&path, &opts.datadir,genesis, opts.evm).await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
-                let state_root = Network::from(genesis_path)
-                    .get_genesis()
+                let genesis = Network::from(genesis_path)
+                .get_genesis()?;
+                let state_root = genesis
                     .compute_state_root();
                 println!("{:#x}", state_root);
             }
@@ -355,14 +357,6 @@ pub async fn import_blocks(
     genesis: Genesis,
     evm: EvmEngine,
 ) -> Result<(), ChainError> {
-    // If the genesis.json file is pre-Paris return a custom error
-    let fork = genesis.config.fork(genesis.timestamp, 0); // The genesis block number is always 0
-    if fork < Fork::Paris {
-        return Err(ChainError::Custom(format!(
-            "Fork {:?} is not supported. Only post-merge networks are supported",
-            fork
-        )));
-    }
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
     let blockchain = init_blockchain(evm, store.clone());

@@ -57,7 +57,7 @@ async fn main() -> eyre::Result<()> {
 
     let network = get_network(&opts);
 
-    let genesis = network.get_genesis();
+    let genesis = network.get_genesis()?;
     let store = init_store(&data_dir, genesis).await;
 
     #[cfg(feature = "sync-test")]

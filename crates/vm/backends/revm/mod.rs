@@ -56,8 +56,7 @@ impl REVM {
         let block_header = &block.header;
         let spec_id: SpecId = spec_id(
             &state.inner.database.get_chain_config()?,
-            block_header.timestamp,
-            block_header.number,
+            block_header.timestamp
         );
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
@@ -588,8 +587,7 @@ pub(crate) fn generic_system_contract_revm(
     let state = &mut state.inner;
     let spec_id = spec_id(
         &state.database.get_chain_config()?,
-        block_header.timestamp,
-        block_header.number,
+        block_header.timestamp
     );
     let tx_env = TxEnv {
         caller: RevmAddress::from_slice(system_address.as_bytes()),
@@ -629,7 +627,7 @@ pub fn extract_all_requests(
     header: &BlockHeader,
 ) -> Result<Vec<Requests>, EvmError> {
     let config = state.inner.database.get_chain_config()?;
-    let spec_id = spec_id(&config, header.timestamp, header.number);
+    let spec_id = spec_id(&config, header.timestamp);
 
     if spec_id < SpecId::PRAGUE {
         return Ok(Default::default());

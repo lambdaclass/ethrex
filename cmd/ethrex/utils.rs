@@ -1,7 +1,8 @@
 use crate::decode;
 use bytes::Bytes;
 use directories::ProjectDirs;
-use ethrex_common::types::{Block, Genesis};
+use ethrex_blockchain::error::ChainError;
+use ethrex_common::types::{Block, Fork, Genesis};
 use ethrex_p2p::{
     kademlia::KademliaTable,
     sync::SyncMode,
@@ -81,9 +82,15 @@ pub fn read_block_file(block_file_path: &str) -> Block {
         .unwrap_or_else(|_| panic!("Failed to decode block file {}", block_file_path))
 }
 
-pub fn read_genesis_file(genesis_file_path: &Path) -> Genesis {
+pub fn read_genesis_file(genesis_file_path: &Path) -> Result<Genesis,ChainError> {
     let genesis_file = std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
-    decode::genesis_file(genesis_file).expect("Failed to decode genesis file")
+    let genesis = decode::genesis_file(genesis_file).expect("Failed to decode genesis file");
+    // If the genesis.json file is pre-Paris return a custom error
+    let fork = genesis.config.fork(genesis.timestamp); // The genesis block number is always 0
+    if fork < Fork::Paris {
+        return Err(ChainError::Custom(String::from("Fork not supported. Only post-merge networks are supported.")));
+    }
+    Ok(genesis)
 }
 
 pub fn parse_evm_engine(s: &str) -> eyre::Result<EvmEngine> {

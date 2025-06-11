@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Genesis;
 use ethrex_p2p::types::Node;
 use lazy_static::lazy_static;
@@ -98,7 +99,7 @@ impl Network {
             Network::GenesisPath(s) => s,
         }
     }
-    pub fn get_genesis(&self) -> Genesis {
+    pub fn get_genesis(&self) -> Result<Genesis,ChainError> {
         utils::read_genesis_file(self.get_genesis_path())
     }
 }

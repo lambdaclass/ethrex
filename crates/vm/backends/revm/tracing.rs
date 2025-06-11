@@ -27,8 +27,7 @@ impl REVM {
     ) -> Result<CallTrace, EvmError> {
         let spec_id: SpecId = spec_id(
             &state.chain_config()?,
-            block_header.timestamp,
-            block_header.number,
+            block_header.timestamp
         );
         let block_env = block_env(block_header, spec_id);
         let tx_env = tx_env(tx, tx.sender());
@@ -46,8 +45,7 @@ impl REVM {
     ) -> Result<(), EvmError> {
         let spec_id: SpecId = spec_id(
             &state.chain_config()?,
-            block.header.timestamp,
-            block.header.number,
+            block.header.timestamp
         );
         let block_env = block_env(&block.header, spec_id);
         cfg_if::cfg_if! {
