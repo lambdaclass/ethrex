@@ -22,8 +22,7 @@ use ethrex_common::types::{
     BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 use ethrex_common::{Address, TrieLogger, H256};
-use ethrex_storage::error::StoreError;
-use ethrex_storage::{hash_address, hash_key, Store};
+use ethrex_storage::{error::StoreError, hash_address, hash_key, Store, UpdateBatch};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
 use mempool::Mempool;
@@ -323,23 +322,31 @@ impl Blockchain {
         account_updates: &[AccountUpdate],
     ) -> Result<(), ChainError> {
         // Apply the account updates over the last block's state and compute the new state root
-        let new_state_root = self
+        let apply_updates_list = self
             .storage
-            .apply_account_updates(block.header.parent_hash, account_updates)
+            .apply_account_updates_batch(block.header.parent_hash, account_updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
+
+        let new_state_root = apply_updates_list.state_trie_hash;
+        let state_updates = apply_updates_list.state_updates;
+        let accounts_updates = apply_updates_list.storage_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
 
+        let update_batch = UpdateBatch {
+            account_updates: state_updates,
+            storage_updates: accounts_updates,
+            blocks: vec![block.clone()],
+            receipts: vec![(block.hash(), execution_result.receipts)],
+        };
+
         self.storage
-            .add_block(block.clone())
+            .clone()
+            .store_block_updates(update_batch)
             .await
-            .map_err(ChainError::StoreError)?;
-        self.storage
-            .add_receipts(block.hash(), execution_result.receipts)
-            .await
-            .map_err(ChainError::StoreError)
+            .map_err(|e| e.into())
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
@@ -416,7 +423,7 @@ impl Blockchain {
         let mut vm = Evm::new(self.evm_engine, vm_db);
 
         let blocks_len = blocks.len();
-        let mut all_receipts: HashMap<BlockHash, Vec<Receipt>> = HashMap::new();
+        let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
 
@@ -424,72 +431,71 @@ impl Blockchain {
         for (i, block) in blocks.iter().enumerate() {
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
-                match find_parent_header(&block.header, &self.storage) {
-                    Ok(parent_header) => parent_header,
-                    Err(error) => {
-                        return Err((
-                            error,
-                            Some(BatchBlockProcessingFailure {
-                                failed_block_hash: block.hash(),
-                                last_valid_hash,
-                            }),
-                        ))
-                    }
-                }
-            } else {
-                // for the subsequent ones, the parent is the previous block
-                blocks[i - 1].header.clone()
-            };
-
-            let BlockExecutionResult { receipts, .. } = match self.execute_block_from_state(
-                &parent_header,
-                block,
-                &chain_config,
-                &mut vm,
-            ) {
-                Ok(result) => result,
-                Err(err) => {
-                    return Err((
+                find_parent_header(&block.header, &self.storage).map_err(|err| {
+                    (
                         err,
                         Some(BatchBlockProcessingFailure {
                             failed_block_hash: block.hash(),
                             last_valid_hash,
                         }),
-                    ))
-                }
+                    )
+                })?
+            } else {
+                // for the subsequent ones, the parent is the previous block
+                blocks[i - 1].header.clone()
             };
+
+            let BlockExecutionResult { receipts, .. } = self
+                .execute_block_from_state(&parent_header, block, &chain_config, &mut vm)
+                .map_err(|err| {
+                    (
+                        err,
+                        Some(BatchBlockProcessingFailure {
+                            failed_block_hash: block.hash(),
+                            last_valid_hash,
+                        }),
+                    )
+                })?;
+
             info!("Processed block {} out of {}", i, blocks.len());
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
-            all_receipts.insert(block.hash(), receipts);
+            all_receipts.push((block.hash(), receipts));
         }
 
         let account_updates = vm
             .get_state_transitions()
             .map_err(|err| (ChainError::EvmError(err), None))?;
 
-        let Some(last_block) = blocks.last() else {
-            return Err((ChainError::Custom("Last block not found".into()), None));
-        };
+        let last_block = blocks
+            .last()
+            .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
 
         // Apply the account updates over all blocks and compute the new state root
-        let new_state_root = self
+        let account_updates_list = self
             .storage
-            .apply_account_updates(first_block_header.parent_hash, &account_updates)
+            .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
 
+        let new_state_root = account_updates_list.state_trie_hash;
+        let state_updates = account_updates_list.state_updates;
+        let accounts_updates = account_updates_list.storage_updates;
+
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
+        let update_batch = UpdateBatch {
+            account_updates: state_updates,
+            storage_updates: accounts_updates,
+            blocks,
+            receipts: all_receipts,
+        };
+
         self.storage
-            .add_blocks(blocks)
-            .await
-            .map_err(|e| (e.into(), None))?;
-        self.storage
-            .add_receipts_for_blocks(all_receipts)
+            .store_block_updates(update_batch)
             .await
             .map_err(|e| (e.into(), None))?;
 
