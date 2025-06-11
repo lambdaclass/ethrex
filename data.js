@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749657296848,
+  "lastUpdate": 1749665149540,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12115,6 +12115,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178250151496,
             "range": "± 567020749",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "pdeymon@fi.uba.ar",
+            "name": "Pablo Deymonnaz",
+            "username": "pablodeymo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b85c1d435b4b5a1bbe1025c7eac77df683ad8492",
+          "message": "feat(l1, l2): storage commit change (#3043)\n\n**Motivation**\n\nThis PR modifies the insert strategy to make the commits at the end of\nthe block instead of doing them on every transaction.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Juan Bono <juanbono94@gmail.com>\nCo-authored-by: Mario Rugiero <mrugiero@gmail.com>\nCo-authored-by: Lucas Fiegl <iovoid@users.noreply.github.com>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-06-11T17:15:38Z",
+          "tree_id": "80c0b45c5fc361cebc367859ecc117a58a1b85ef",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b85c1d435b4b5a1bbe1025c7eac77df683ad8492"
+        },
+        "date": 1749665143852,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 186844195639,
+            "range": "± 371730248",
             "unit": "ns/iter"
           }
         ]
