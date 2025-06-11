@@ -163,6 +163,7 @@ impl Blockchain {
         let interval = stored.duration_since(since).as_millis() as f64;
         if interval != 0f64 {
             let as_gigas = block.header.gas_used as f64 / 10_f64.powf(9_f64);
+            info!("Gas used: {}", block.header.gas_used);
             let throughput = as_gigas / interval * 1000_f64;
             let execution_time = executed.duration_since(since).as_millis() as f64;
             let storage_time = stored.duration_since(executed).as_millis() as f64;
