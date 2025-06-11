@@ -1,7 +1,7 @@
 pub mod db;
 pub mod error;
 mod nibbles;
-mod node;
+pub mod node;
 mod node_hash;
 mod rlp;
 #[cfg(test)]

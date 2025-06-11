@@ -1230,6 +1230,7 @@ impl StoreEngine for Store {
     }
 
     async fn invalidate_and_recreate_snapshot(&self, state_root: H256) -> Result<(), StoreError> {
+        use ethrex_trie::node::Node;
         let tx = self
             .db
             .begin_readwrite()
@@ -1262,9 +1263,55 @@ impl StoreEngine for Store {
             .ok_or_else(|| StoreError::Custom("State root not found".to_string()))?;
 
         // decode the node and push it to the state_trie_nodes vector
-        //let node: TrieNode = RLPDecode::decode(&node).map_err(StoreError::RLPDecode)?;
+        let node_decoded: TrieNode = RLPDecode::decode(&node).map_err(StoreError::RLPDecode)?;
 
-        state_trie_nodes.push(node);
+        let mut current_node = node_decoded.clone().1;
+        state_trie_nodes.push(node_decoded);
+
+        // accumulate the full path in a vector of paths
+        let mut path = Vec::<u8>::new();
+        let mut path_vec = Vec::<Vec<u8>>::new();
+        // We will use a DFS-like approach to traverse the trie
+        // and collect all paths to the leaf nodes
+        loop {
+            // get the current node
+            current_node = current_node.clone();
+            // decode the current node
+            let current_node_decoded: TrieNode =
+                RLPDecode::decode(&current_node).map_err(StoreError::RLPDecode)?;
+
+            let current_node: Node =
+                RLPDecode::decode(&current_node_decoded.1).map_err(StoreError::RLPDecode)?;
+
+            match &current_node {
+                Node::Branch(branch_node) => {
+                    // If it's a branch node, we need to continue down the path
+                    // TODO!!!!! path.extend(branch_node.partial);
+                }
+                Node::Leaf(leaf_node) => {
+                    // If it's a leaf node, we can finalize the path
+                    path.append(leaf_node);
+                    path_vec.push(path.clone());
+                }
+                Node::Extension(extension_node) => {
+                    // If it's an extension node, we need to continue down the path
+                    current_node = extension_node;
+                    paths.push(current_node);
+                }
+                Node::Branch(children) => {
+                    // If it's a branch node, we need to iterate through the children
+                    for child in children {
+                        if let Some(child_node) = child {
+                            current_node = child_node.clone();
+                            // decode the child node
+                            let child_node_decoded: TrieNode =
+                                RLPDecode::decode(&current_node).map_err(StoreError::RLPDecode)?;
+                            state_trie_nodes.push(child_node_decoded);
+                        }
+                    }
+                }
+            }
+        }
 
         // Iterate through all state trie nodes and store them in the flat storage
         // we want to create a DFS-like structure
