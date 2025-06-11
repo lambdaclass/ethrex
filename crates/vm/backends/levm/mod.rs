@@ -1,4 +1,5 @@
 pub mod db;
+mod tracing;
 
 use super::BlockExecutionResult;
 use crate::constants::{
@@ -18,8 +19,8 @@ use ethrex_common::{
 use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-use ethrex_levm::errors::TxValidationError;
-use ethrex_levm::utils::restore_cache_state;
+use ethrex_levm::errors::{InternalError, TxValidationError};
+use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
@@ -130,7 +131,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx);
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
 
         vm.execute().map_err(VMError::into)
     }
@@ -145,7 +146,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<(ExecutionReport, CallFrameBackup), EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx);
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
 
         let report_result = vm.execute().map_err(EvmError::from)?;
 
@@ -155,17 +156,14 @@ impl LEVM {
         let call_frame_backup = vm
             .call_frames
             .pop()
-            .ok_or(VMError::OutOfBounds)?
+            .ok_or(VMError::Internal(InternalError::CallFrame))?
             .call_frame_backup;
 
         Ok((report_result, call_frame_backup))
     }
 
-    pub fn restore_cache_state(
-        db: &mut GeneralizedDatabase,
-        call_frame_backup: CallFrameBackup,
-    ) -> Result<(), EvmError> {
-        restore_cache_state(db, call_frame_backup).map_err(VMError::from)?;
+    pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
+        db.undo_last_transaction()?;
         Ok(())
     }
 
@@ -468,7 +466,7 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
-    let mut vm = VM::new(env, db, tx);
+    let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -604,7 +602,9 @@ fn vm_from_generic<'a>(
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
                 TxKind::Call(to) => to,
-                TxKind::Create => return Err(VMError::InvalidTransaction),
+                TxKind::Create => {
+                    return Err(InternalError::msg("Generic Tx cannot be create type").into())
+                }
             },
             value: tx.value,
             data: tx.input.clone(),
@@ -631,5 +631,5 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    Ok(VM::new(env, db, &tx))
+    Ok(VM::new(env, db, &tx, LevmCallTracer::disabled()))
 }

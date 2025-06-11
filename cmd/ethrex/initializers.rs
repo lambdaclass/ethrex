@@ -20,7 +20,6 @@ use rand::rngs::OsRng;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
-    future::IntoFuture,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
@@ -36,7 +35,6 @@ use crate::l2::L2Options;
 use ::{
     ethrex_common::Address,
     ethrex_storage_rollup::{EngineTypeRollup, StoreRollup},
-    secp256k1::SecretKey,
 };
 
 pub fn init_tracing(opts: &Options) {
@@ -62,9 +60,20 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
+/// Opens a New or Pre-exsisting Store and loads the initial state provided by the network
 pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
+    let store = open_store(data_dir);
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("Failed to create genesis block");
+    store
+}
+
+/// Opens a Pre-exsisting Store or creates a new one
+pub fn open_store(data_dir: &str) -> Store {
     let path = PathBuf::from(data_dir);
-    let store = if path.ends_with("memory") {
+    if path.ends_with("memory") {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
@@ -78,12 +87,7 @@ pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
             }
         }
         Store::new(data_dir, engine_type).expect("Failed to create Store")
-    };
-    store
-        .add_initial_state(genesis.clone())
-        .await
-        .expect("Failed to create genesis block");
-    store
+    }
 }
 
 #[cfg(feature = "l2")]
@@ -149,11 +153,10 @@ pub async fn init_rpc_api(
         #[cfg(feature = "l2")]
         get_valid_delegation_addresses(l2_opts),
         #[cfg(feature = "l2")]
-        get_sponsor_pk(l2_opts),
+        l2_opts.sponsor_private_key,
         #[cfg(feature = "l2")]
         rollup_store,
-    )
-    .into_future();
+    );
 
     tracker.spawn(rpc_api);
 }
@@ -381,12 +384,4 @@ pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
         warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
     }
     addresses
-}
-
-#[cfg(feature = "l2")]
-pub fn get_sponsor_pk(opts: &L2Options) -> SecretKey {
-    if let Some(pk) = opts.sponsor_private_key {
-        return pk;
-    }
-    opts.sequencer_opts.watcher_opts.l2_proposer_private_key
 }

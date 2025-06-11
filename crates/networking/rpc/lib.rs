@@ -7,6 +7,7 @@ pub mod l2;
 mod mempool;
 mod net;
 mod rpc;
+mod tracing;
 
 pub mod clients;
 pub mod types;

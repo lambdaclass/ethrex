@@ -43,6 +43,8 @@ pub type PathRLP = Vec<u8>;
 pub type ValueRLP = Vec<u8>;
 /// RLP-encoded trie node
 pub type NodeRLP = Vec<u8>;
+/// Represents a node in the Merkle Patricia Trie.
+pub type TrieNode = (NodeHash, NodeRLP);
 
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
@@ -112,19 +114,17 @@ impl Trie {
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: PathRLP) -> Result<Option<ValueRLP>, TrieError> {
-        let value;
-        (self.root, value) = if self.root.is_valid() {
-            // If the trie is not empty, call the root node's removal logic.
-            let (node, value) = self
-                .root
-                .get_node(self.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?
-                .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
+        if !self.root.is_valid() {
+            return Ok(None);
+        }
 
-            (node.map(Into::into).unwrap_or_default(), value)
-        } else {
-            (NodeRef::default(), None)
-        };
+        // If the trie is not empty, call the root node's removal logic.
+        let (node, value) = self
+            .root
+            .get_node(self.db.as_ref())?
+            .ok_or(TrieError::InconsistentTree)?
+            .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
+        self.root = node.map(Into::into).unwrap_or_default();
 
         Ok(value)
     }
@@ -147,6 +147,17 @@ impl Trie {
         }
     }
 
+    /// Returns a list of changes in a TrieNode format since last root hash processed.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing the hash and the list of changes.
+    pub fn collect_changes_since_last_hash(&mut self) -> (H256, Vec<TrieNode>) {
+        let updates = self.commit_without_storing();
+        let ret_hash = self.hash_no_commit();
+        (ret_hash, updates)
+    }
+
     /// Compute the hash of the root node and flush any changes into the database.
     ///
     /// This method will also compute the hash of all internal nodes indirectly. It will not clear
@@ -155,10 +166,21 @@ impl Trie {
         if self.root.is_valid() {
             let mut acc = Vec::new();
             self.root.commit(&mut acc);
-            self.db.put_batch(acc)?;
+            self.db.put_batch(acc)?; // we'll try to avoid calling this for every commit
         }
 
         Ok(())
+    }
+
+    /// Computes the nodes that would be added if updating the trie.
+    /// Nodes are given with their hash pre-calculated.
+    pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
+        let mut acc = Vec::new();
+        if self.root.is_valid() {
+            self.root.commit(&mut acc);
+        }
+
+        acc
     }
 
     /// Obtain a merkle proof for the given path.
@@ -305,11 +327,7 @@ impl Trie {
                 Ok(None)
             }
 
-            fn put(&self, _key: NodeHash, _value: Vec<u8>) -> Result<(), TrieError> {
-                Ok(())
-            }
-
-            fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+            fn put_batch(&self, _key_values: Vec<TrieNode>) -> Result<(), TrieError> {
                 Ok(())
             }
         }

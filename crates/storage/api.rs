@@ -4,8 +4,9 @@ use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt, Transaction,
 };
-use std::{collections::HashMap, fmt::Debug, panic::RefUnwindSafe};
+use std::{fmt::Debug, panic::RefUnwindSafe};
 
+use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
@@ -13,6 +14,9 @@ use ethrex_trie::{Nibbles, Trie};
 // (i.e. dyn StoreEngine)
 #[async_trait::async_trait]
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
+    /// Store changes in a batch from a vec of blocks
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
+
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError>;
@@ -129,12 +133,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError>;
 
-    /// Adds receipts for a batch of blocks
-    async fn add_receipts_for_blocks(
-        &self,
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-    ) -> Result<(), StoreError>;
-
     /// Obtain receipt for a canonical block represented by the block number.
     async fn get_receipt(
         &self,
@@ -185,6 +183,16 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
             None => return Ok(None),
         };
         Ok(Some(Block::new(header, body)))
+    }
+
+    async fn get_block_by_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Block>, StoreError> {
+        let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
+            return Ok(None);
+        };
+        self.get_block_by_hash(block_hash).await
     }
 
     // Get the canonical block hash for a given block number.
@@ -243,12 +251,16 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Obtain a storage trie from the given address and storage_root
     /// Doesn't check if the account is stored
     /// Used for internal store operations
-    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie;
+    fn open_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError>;
 
     /// Obtain a state trie from the given state root
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
-    fn open_state_trie(&self, state_root: H256) -> Trie;
+    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError>;
 
     /// Set the canonical block hash for a given block number.
     async fn set_canonical_block(

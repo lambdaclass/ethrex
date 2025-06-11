@@ -18,9 +18,9 @@ use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, Gen
 use spawned_rt::mpsc::Sender;
 use tracing::{debug, error, info};
 
-use crate::{BlockProducerConfig, SequencerConfig};
+use crate::{sequencer::execution_cache::ExecutionCache, BlockProducerConfig, SequencerConfig};
 
-use super::{errors::BlockProducerError, execution_cache::ExecutionCache};
+use super::errors::BlockProducerError;
 
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
@@ -64,11 +64,9 @@ pub enum InMessage {
     Produce,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, PartialEq)]
 pub enum OutMessage {
     Done,
-    Error,
 }
 
 pub struct BlockProducer;
@@ -188,7 +186,7 @@ pub async fn produce_block(state: &BlockProducerState) -> Result<(), BlockProduc
 
     state
         .blockchain
-        .store_block(&block, execution_result.clone(), &account_updates)
+        .store_block(&block, execution_result, &account_updates)
         .await?;
     info!("Stored new block {:x}", block.hash());
     // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
