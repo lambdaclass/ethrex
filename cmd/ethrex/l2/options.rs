@@ -131,7 +131,11 @@ impl From<SequencerOptions> for SequencerConfig {
             based: BasedConfig {
                 based: opts.based,
                 state_updater: StateUpdaterConfig {
-                    sequencer_registry: opts.based_opts.state_updater_opts.sequencer_registry,
+                    sequencer_registry: opts
+                        .based_opts
+                        .state_updater_opts
+                        .sequencer_registry
+                        .unwrap_or_default(),
                     check_interval_ms: opts.based_opts.state_updater_opts.check_interval_ms,
                 },
                 block_fetcher: BlockFetcherConfig {
@@ -509,9 +513,10 @@ pub struct StateUpdaterOptions {
         long = "state-updater.sequencer-registry",
         value_name = "ADDRESS",
         env = "ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY",
+        required_if_eq("based", "true"),
         help_heading = "Based options"
     )]
-    pub sequencer_registry: Address,
+    pub sequencer_registry: Option<Address>,
     #[arg(
         long = "state-updater.check-interval",
         default_value = "1000",
