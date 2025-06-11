@@ -223,7 +223,7 @@ fn exception_is_expected(
 
 /// Tests the rlp decoding of a block
 fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
-    let decoding_exception_cases = [
+    /*let decoding_exception_cases = [
         "BlockException.RLP_",
         // NOTE: There is a test which validates that an EIP-7702 transaction is not allowed to
         // have the "to" field set to null (create).
@@ -242,17 +242,14 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         // That test also allows for a "BlockException.RLP_..." error to happen, and that's what is being
         // caught.
         "TransactionException.TYPE_4_TX_CONTRACT_CREATION",
-    ];
+    ];*/
 
     let expects_rlp_exception = block_fixture
         .expect_exception
         .as_ref()
         .unwrap_or(&Vec::new())
-        .into_iter()
-        .any(|case| match case {
-            BlockChainExpectedException::RLPException => true,
-            _ => false,
-        });
+        .iter()
+        .any(|case| matches!(case, BlockChainExpectedException::RLPException));
 
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
