@@ -4115,6 +4115,7 @@ dependencies = [
  "bincode",
  "ethereum-types 0.15.1",
  "ethrex-common",
+ "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-storage",
  "libmdbx",
