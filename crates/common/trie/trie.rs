@@ -423,6 +423,9 @@ impl Trie {
     }
 
     pub fn root_node(&self) -> Result<Option<Node>, TrieError> {
+        if self.hash_no_commit() == *EMPTY_TRIE_HASH {
+            return Ok(None);
+        }
         self.root.get_node(self.db.as_ref())
     }
 

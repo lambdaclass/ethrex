@@ -181,6 +181,14 @@ impl Blockchain {
                 })?
                 .clone();
             block_hashes.extend(logger_block_hashes);
+            // Access all the accounts needed for withdrawals
+            if let Some(withdrawals) = block.body.withdrawals.as_ref() {
+                for withdrawal in withdrawals {
+                    trie.get(&hash_address(&withdrawal.address)).map_err(|_e| {
+                        ChainError::Custom("Failed to access account from trie".to_string())
+                    })?;
+                }
+            }
 
             // Access all the accounts from the initial trie
             // Record all the storage nodes for the initial state

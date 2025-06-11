@@ -1,19 +1,24 @@
 use crate::io::{ProgramInput, ProgramOutput};
 use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::types::block_execution_witness::ExecutionWitnessError;
-use ethrex_common::types::{
-    block_execution_witness::ExecutionWitnessResult, AccountUpdate, Block, BlockHeader, Proof,
-    Receipt, Transaction,
+use ethrex_blockchain::{
+    validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
 };
-use ethrex_common::{Address, H256};
+use ethrex_common::types::AccountUpdate;
+use ethrex_common::types::{
+    block_execution_witness::ExecutionWitnessError, block_execution_witness::ExecutionWitnessResult,
+};
+use ethrex_common::Address;
+use ethrex_common::{
+    types::{Block, BlockHeader},
+    H256,
+};
 use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDBError};
 use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
     blob_from_bytes, kzg_commitment_to_versioned_hash, BlobsBundleError, Commitment,
-    PrivilegedL2Transaction,
+    PrivilegedL2Transaction, Proof, Receipt, Transaction,
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
@@ -35,6 +40,10 @@ pub enum StatelessExecutionError {
     BlockValidationError(ChainError),
     #[error("Gas validation error: {0}")]
     GasValidationError(ChainError),
+    #[error("Withdrawals validation error: {0}")]
+    RequestsRootValidationError(ChainError),
+    #[error("Receipts validation error: {0}")]
+    ReceiptsRootValidationError(ChainError),
     #[error("EVM error: {0}")]
     EvmError(EvmError),
     #[cfg(feature = "l2")]
@@ -283,6 +292,11 @@ fn execute_stateless(
 
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
+        validate_receipts_root(&block.header, &receipts)
+            .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
+        // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (withdrawals, deposits and consolidations)
+        validate_requests_hash(&block.header, &db.chain_config, &result.requests)
+            .map_err(StatelessExecutionError::RequestsRootValidationError)?;
         parent_block_header = &block.header;
         acc_receipts.push(receipts);
     }
