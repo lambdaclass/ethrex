@@ -292,6 +292,7 @@ pub enum Subcommand {
         )]
         archive_node_url: String,
         #[arg(
+            required = true,
             default_value = "jwt.hex",
             value_name = "JWTSECRET_PATH",
             help = "Path to the jwt secret path of the archive node."
