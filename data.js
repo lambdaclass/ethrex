@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749673680433,
+  "lastUpdate": 1749681753593,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12265,6 +12265,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 185480408573,
             "range": "± 792303252",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8476368a8e4e41c513bfdbd1b59a3b8b35fca646",
+          "message": "feat(l1, l2): implement debug_executionWitness (#3026)\n\n**Motivation**\n\nWe want to add stateless execution to ethrex, for this reason we want to\nadd an rpc endpoint that returns all the needed data to perform\nstateless execution.\n\n**Description**\n\n- Add a new rpc endpoint `debug_executionWitness` that returns\n   - Used evm bytecode\n   - All the state trie nodes accessed\n   - All storage trie nodes accessed\n- All the blocks needed for the `BLOCKHASH` opcode + the parent header\nbecause we need to know the initial state root\n- Add new struct `TrieLogger` that implements `TrieDB` that records all\nget operations in a `HashSet`\n\n\nCloses #2938\n\n---------\n\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>\nCo-authored-by: Lucas Fiegl <iovoid@users.noreply.github.com>",
+          "timestamp": "2025-06-11T21:51:56Z",
+          "tree_id": "f4c816670c495cd9236af9af55b691adf08a6c41",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8476368a8e4e41c513bfdbd1b59a3b8b35fca646"
+        },
+        "date": 1749681747935,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183886141652,
+            "range": "± 337532933",
             "unit": "ns/iter"
           }
         ]
