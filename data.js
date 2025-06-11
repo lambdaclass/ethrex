@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749681753593,
+  "lastUpdate": 1749684007564,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12295,6 +12295,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183886141652,
             "range": "± 337532933",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5134815edf74f6d46cea9efe7dd1fd7ae7d3b530",
+          "message": "feat(l1, l2): blockchain tests stateless execution (#3076)\n\n**Motivation**\n\nWe want to run the ef state tests with our prover with stateless\nexecution\n\n**Description**\n\n- Add feature flag stateless for cmd/ef_tests/blockchain\n- With stateless enabled\n- after running the tests statefully once, call\ngenerate_witness_for_blocks then use this witness for stateless\nexecution\n- in case the test should fail debug_executionWitness returns an error\nwe execute with an empty ExecutionWitness\n\nFixes:\n- When the trie is empty return `Ok(None)` for `Trie::root_node`\n- Add `validate_receipts` and `validate_requests_hash` to stateless\nexecution\n- Get accounts in `block.body.withdrawals` when generating the witness\n\n**How to test**\n```shell\ncd cmd/ef_tests/blockchain\n```\n```\nmake test-levm\n```\n\n---------\n\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>",
+          "timestamp": "2025-06-11T22:26:06Z",
+          "tree_id": "ffd60c34534f9e76c7ecebf9baa9ae80dc53c079",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5134815edf74f6d46cea9efe7dd1fd7ae7d3b530"
+        },
+        "date": 1749684000839,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184163311227,
+            "range": "± 390904277",
             "unit": "ns/iter"
           }
         ]
