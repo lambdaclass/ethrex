@@ -9,8 +9,8 @@ ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
 ethrex-vm.workspace = true
-ethrex-prover = { path = "../../../crates/l2/prover", default-features = false, optional = true }
-zkvm_interface = { path = "../../../crates/l2/prover/zkvm/interface", default-features = false, optional = true }
+ethrex-prover = { path = "../../../crates/l2/prover", default-features = false }
+zkvm_interface = { path = "../../../crates/l2/prover/zkvm/interface", default-features = false }
 
 serde.workspace = true
 serde_json.workspace = true
@@ -30,7 +30,6 @@ default = ["c-kzg", "blst"]
 blst = ["ethrex-vm/blst"]
 c-kzg = ["ethrex-blockchain/c-kzg"]
 levm = []
-stateless = ["dep:ethrex-prover", "dep:zkvm_interface"]
 
 [[test]]
 name = "cancun"

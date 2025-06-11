@@ -11,7 +11,6 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
-#[cfg(feature = "stateless")]
 use zkvm_interface::io::ProgramInput;
 
 pub fn parse_and_execute(path: &Path, evm: EvmEngine, skipped_tests: Option<&[&str]>) {
@@ -80,7 +79,6 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
         }
     }
     check_poststate_against_db(test_key, test, &store).await;
-    #[cfg(feature = "stateless")]
     re_run_stateless(blockchain, test, test_key).await;
 }
 
@@ -226,7 +224,6 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
     // State root was alredy validated by `add_block``
 }
 
-#[cfg(feature = "stateless")]
 async fn re_run_stateless(blockchain: Blockchain, test: &TestUnit, test_key: &str) {
     let blocks = test
         .blocks
