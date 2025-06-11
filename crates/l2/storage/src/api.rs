@@ -59,4 +59,26 @@ pub trait StoreEngineRollup: Debug + Send + Sync + RefUnwindSafe {
 
     /// Returns whether the batch with the given number is present.
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError>;
+
+    async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: [u8; 68],
+    ) -> Result<(), StoreError>;
+
+    async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<[u8; 68]>, StoreError>;
+
+    async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: [u8; 68],
+    ) -> Result<(), StoreError>;
+
+    async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<[u8; 68]>, StoreError>;
 }

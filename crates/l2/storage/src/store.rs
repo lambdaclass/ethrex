@@ -151,4 +151,38 @@ impl Store {
     pub async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
         self.engine.contains_batch(batch_number).await
     }
+
+    pub async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: [u8; 68],
+    ) -> Result<(), StoreError> {
+        self.engine
+            .store_signature_by_block(block_hash, signature)
+            .await
+    }
+
+    pub async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<[u8; 68]>, StoreError> {
+        self.engine.get_signature_by_block(block_hash).await
+    }
+
+    pub async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: [u8; 68],
+    ) -> Result<(), StoreError> {
+        self.engine
+            .store_signature_by_batch(batch_number, signature)
+            .await
+    }
+
+    pub async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<[u8; 68]>, StoreError> {
+        self.engine.get_signature_by_batch(batch_number).await
+    }
 }
