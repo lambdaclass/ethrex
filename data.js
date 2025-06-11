@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749667667058,
+  "lastUpdate": 1749673680433,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12235,6 +12235,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184124849878,
             "range": "± 537481982",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ede57d146d90e5a8306db74bcde3606a551f35e5",
+          "message": "fix(l2): fix make down-l2 killing ethrex-prover (#3108)\n\n**Motivation**\n\nchanges the pkill command to exactly match (-x) the `ethrex` process\nname",
+          "timestamp": "2025-06-11T19:38:18Z",
+          "tree_id": "70cf4f61dda6b4a000a06c4f07d352ad9ed934ed",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ede57d146d90e5a8306db74bcde3606a551f35e5"
+        },
+        "date": 1749673674144,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 185480408573,
+            "range": "± 792303252",
             "unit": "ns/iter"
           }
         ]
