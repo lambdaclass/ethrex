@@ -4,8 +4,8 @@ use super::{
     utils::{get_latest_sent_batch, random_duration, send_verify_tx},
 };
 use crate::{
-    sequencer::errors::ProofSenderError,
-    CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
+    sequencer::errors::ProofSenderError, CommitterConfig, EthConfig, ProofCoordinatorConfig,
+    SequencerConfig,
 };
 use aligned_sdk::{
     common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
@@ -281,7 +281,8 @@ pub async fn send_proof_to_contract(
     // the structure has to match the one defined in the OnChainProposer.sol contract.
     // It may cause some issues, but the ethrex_prover_lib cannot be imported,
     // this approach is straight-forward for now.
-    let mut proofs: HashMap<ProverType, Vec<Value>> = HashMap::with_capacity(state.needed_proof_types.len());
+    let mut proofs: HashMap<ProverType, Vec<Value>> =
+        HashMap::with_capacity(state.needed_proof_types.len());
     for prover_type in state.needed_proof_types.iter() {
         // let proof = read_proof(batch_number, StateFileType::BatchProof(*prover_type))?;
         let proof = todo!();
