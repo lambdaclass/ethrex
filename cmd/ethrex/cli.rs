@@ -6,7 +6,6 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{error::ChainError, fork_choice::apply_fork_choice};
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
@@ -398,12 +397,11 @@ pub async fn import_blocks(
             .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
     }
 
-    if let Some(last_block) = blocks.last() {
-        let hash = last_block.hash();
-        let _ = apply_fork_choice(&store, hash, hash, hash)
-            .await
-            .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
-    }
+    _ = store
+        .mark_chain_as_canonical(&blocks)
+        .await
+        .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
+
     info!("Added {size} blocks to blockchain");
     Ok(())
 }
