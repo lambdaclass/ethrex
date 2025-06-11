@@ -29,7 +29,7 @@ use tracing::{debug, error, info};
 use ethers::signers::{Signer, Wallet};
 
 const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
+    "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub struct L1ProofSenderState {
