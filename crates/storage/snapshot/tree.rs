@@ -90,7 +90,11 @@ impl SnapshotTree {
     }
 
     fn get_snapshot(&self, block_hash: H256) -> Option<Layer> {
-        self.layers.read().unwrap().get(&block_hash).cloned()
+        self.layers
+            .read()
+            .expect("should get the read lock")
+            .get(&block_hash)
+            .cloned()
     }
 
     /// Adds a new snapshot into the tree.
@@ -144,7 +148,7 @@ impl SnapshotTree {
     ///
     /// Mainly used for logging.
     pub fn len(&self) -> usize {
-        self.layers.read().unwrap().len()
+        self.layers.read().expect("should get the read lock").len()
     }
 
     /// "Caps" the amount of layers, traversing downwards the snapshot tree
@@ -173,7 +177,7 @@ impl SnapshotTree {
             let base = {
                 Self::flatten_diff(head_block_hash, &mut layers)?
                     .read()
-                    .unwrap()
+                    .expect("should get the read lock")
                     .save_to_disk(&layers)?
             };
             layers.clear();
@@ -354,7 +358,12 @@ impl SnapshotTree {
         }
 
         // Persist the bottom most layer
-        let base = { parent.read().unwrap().save_to_disk(layers)? };
+        let base = {
+            parent
+                .read()
+                .expect("should get the read lock")
+                .save_to_disk(layers)?
+        };
         layers.insert(base.block_hash, Layer::DiskLayer(base.clone()));
         let mut diff_value = diff
             .write()
