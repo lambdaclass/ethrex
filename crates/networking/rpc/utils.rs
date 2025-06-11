@@ -114,6 +114,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                     data: None,
                     message: "Auth failed: Missing authentication header".to_string(),
                 },
+                AuthenticationError::TokenEncodingError => RpcErrorMetadata {
+                    code: -32000,
+                    data: None,
+                    message: "Auth failed: Failed to generate token".to_string(),
+                },
             },
             RpcErr::InvalidForkChoiceState(data) => RpcErrorMetadata {
                 code: -38002,

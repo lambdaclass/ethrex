@@ -4,7 +4,9 @@ use axum_extra::{
     TypedHeader,
 };
 use bytes::Bytes;
-use jsonwebtoken::{decode, Algorithm, DecodingKey, TokenData, Validation};
+use jsonwebtoken::{
+    decode, encode, Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation,
+};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -13,6 +15,7 @@ pub enum AuthenticationError {
     InvalidIssuedAtClaim,
     TokenDecodingError,
     MissingAuthentication,
+    TokenEncodingError,
 }
 
 pub fn authenticate(
@@ -36,6 +39,22 @@ struct Claims {
     iat: usize,
     id: Option<String>,
     clv: Option<String>,
+}
+
+/// Generate a jwt token based on the secret key
+/// This should be used to perform authenticated requests to a node with known jwt secret
+pub fn generate_jwt_token<'a>(secret: &Bytes) -> Result<String, AuthenticationError> {
+    let claims = Claims {
+        iat: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as usize,
+        id: None,
+        clv: None,
+    };
+    let header = Header::new(Algorithm::HS256);
+    let key = EncodingKey::from_secret(secret);
+    encode(&header, &claims, &key).map_err(|_| AuthenticationError::TokenEncodingError)
 }
 
 /// Authenticates bearer jwt to check that authrpc calls are sent by the consensus layer
@@ -63,4 +82,24 @@ fn invalid_issued_at_claim(token_data: TokenData<Claims>) -> bool {
         .unwrap()
         .as_secs() as usize;
     (now as isize - token_data.claims.iat as isize).abs() > 60
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn generate_jwt_secret() -> Bytes {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let mut secret = [0u8; 32];
+        rng.fill(&mut secret);
+        Bytes::from(secret.to_vec())
+    }
+
+    #[test]
+    fn generated_token_is_valid() {
+        let jwt_secret = Bytes::from(generate_jwt_secret());
+        let jwt_token = generate_jwt_token(&jwt_secret).unwrap();
+        assert!(validate_jwt_authentication(&jwt_token, &jwt_secret).is_ok())
+    }
 }
