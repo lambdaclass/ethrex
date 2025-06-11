@@ -189,6 +189,7 @@ impl Blockchain {
                     })?;
                 }
             }
+
             // Access all the accounts from the initial trie
             // Record all the storage nodes for the initial state
             for (account, keys) in logger

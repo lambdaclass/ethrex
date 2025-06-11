@@ -89,7 +89,7 @@ impl ExecutionWitnessResult {
             self.storage_trie_nodes.as_ref(),
         ) else {
             return Err(ExecutionWitnessError::RebuildTrie(
-                "Tried to rebuild tries with empty nodes rebuilding the trie can only be done once"
+                "Tried to rebuild tries with empty nodes, rebuilding the trie can only be done once"
                     .to_string(),
             ));
         };
@@ -154,7 +154,7 @@ impl ExecutionWitnessResult {
         self.state_trie = Some(Arc::new(Mutex::new(state_trie)));
         self.storage_tries = Some(Arc::new(Mutex::new(storage_tries)));
         self.state_trie_nodes = None;
-        self.state_trie_nodes = None;
+        self.storage_trie_nodes = None;
 
         Ok(())
     }
