@@ -6,7 +6,7 @@ use thiserror::Error;
 
 // TODO improve errors
 #[derive(Debug, Error)]
-pub enum StoreError {
+pub enum RollupStoreError {
     #[error("DecodeError")]
     DecodeError,
     #[cfg(feature = "libmdbx")]
@@ -30,6 +30,12 @@ pub enum StoreError {
     #[error("Redb Cast error")]
     #[cfg(feature = "redb")]
     RedbCastError,
+    #[cfg(feature = "sql")]
+    #[error("Limbo Query error: {0}")]
+    SQLQueryError(#[from] libsql::Error),
+    #[cfg(feature = "sql")]
+    #[error("SQL Query error: unexpected type found while querying DB")]
+    SQLInvalidTypeError,
     #[error("{0}")]
     Custom(String),
     #[error(transparent)]

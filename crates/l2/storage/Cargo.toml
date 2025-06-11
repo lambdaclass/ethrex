@@ -7,11 +7,13 @@ edition.workspace = true
 [dependencies]
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
+ethrex-trie.workspace = true
 ethrex-rlp.workspace = true
 ethereum-types.workspace = true
 
 async-trait.workspace = true
 anyhow = "1.0.86"
+thiserror.workspace = true
 tracing.workspace = true
 libmdbx = { workspace = true, optional = true }
 redb = { workspace = true, optional = true }
@@ -24,7 +26,7 @@ tokio = { version = "1.41.1", optional = true, default-features = false, feature
 default = []
 libmdbx = ["dep:libmdbx", "dep:tokio"]
 redb = ["dep:redb", "dep:tokio"]
-sql = ["dep:libsql", "dep:tokio", "ethrex-storage/sql"]
+sql = ["dep:libsql", "dep:tokio"]
 l2 = []
 
 [lib]

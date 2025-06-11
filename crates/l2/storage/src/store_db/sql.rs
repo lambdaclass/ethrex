@@ -1,11 +1,11 @@
 use std::fmt::Debug;
 
 use crate::api::StoreEngineRollup;
+use crate::error::RollupStoreError;
 use ethrex_common::{
     types::{Blob, BlockNumber},
     H256,
 };
-use ethrex_storage::error::StoreError;
 
 use libsql::{
     params::{IntoParams, Params},
@@ -35,23 +35,23 @@ const DB_SCHEMA: [&str; 9] = [
 ];
 
 impl SQLStore {
-    pub async fn new(path: &str) -> Result<Self, StoreError> {
+    pub async fn new(path: &str) -> Result<Self, RollupStoreError> {
         let db = Builder::new_local(path).build().await?;
         let conn = db.connect()?;
         let store = SQLStore { conn };
         store.init_db().await?;
         Ok(store)
     }
-    async fn execute<T: IntoParams>(&self, sql: &str, params: T) -> Result<(), StoreError> {
+    async fn execute<T: IntoParams>(&self, sql: &str, params: T) -> Result<(), RollupStoreError> {
         println!("executing: {sql}");
         self.conn.execute(sql, params).await?;
         Ok(())
     }
-    async fn query<T: IntoParams>(&self, sql: &str, params: T) -> Result<Rows, StoreError> {
+    async fn query<T: IntoParams>(&self, sql: &str, params: T) -> Result<Rows, RollupStoreError> {
         println!("querying: {sql}");
         Ok(self.conn.query(sql, params).await?)
     }
-    async fn init_db(&self) -> Result<(), StoreError> {
+    async fn init_db(&self) -> Result<(), RollupStoreError> {
         let mut rows = self
             .query(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='blocks'",
@@ -68,7 +68,7 @@ impl SQLStore {
         }
         Ok(())
     }
-    async fn execute_in_tx(&self, queries: Vec<(&str, Params)>) -> Result<(), StoreError> {
+    async fn execute_in_tx(&self, queries: Vec<(&str, Params)>) -> Result<(), RollupStoreError> {
         self.execute("BEGIN TRANSACTION", ()).await?;
         for (query, params) in queries {
             self.execute(query, params).await?;
@@ -78,22 +78,22 @@ impl SQLStore {
     }
 }
 
-fn read_from_row_int(row: &Row, index: i32) -> Result<u64, StoreError> {
+fn read_from_row_int(row: &Row, index: i32) -> Result<u64, RollupStoreError> {
     match row.get_value(index)? {
         Value::Integer(i) => {
             let val = i
                 .try_into()
-                .map_err(|e| StoreError::Custom(format!("conversion error: {e}")))?;
+                .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
             Ok(val)
         }
-        _ => Err(StoreError::SQLInvalidTypeError)
+        _ => Err(RollupStoreError::SQLInvalidTypeError),
     }
 }
 
-fn read_from_row_blob(row: &Row, index: i32) -> Result<Vec<u8>, StoreError> {
+fn read_from_row_blob(row: &Row, index: i32) -> Result<Vec<u8>, RollupStoreError> {
     match row.get_value(index)? {
         Value::Blob(vec) => Ok(vec),
-        _ => Err(StoreError::SQLInvalidTypeError)
+        _ => Err(RollupStoreError::SQLInvalidTypeError),
     }
 }
 
@@ -102,7 +102,7 @@ impl StoreEngineRollup for SQLStore {
     async fn get_batch_number_by_block(
         &self,
         block_number: BlockNumber,
-    ) -> Result<Option<u64>, StoreError> {
+    ) -> Result<Option<u64>, RollupStoreError> {
         let mut rows = self
             .query(
                 "SELECT * from blocks WHERE block_number = ?1",
@@ -120,7 +120,7 @@ impl StoreEngineRollup for SQLStore {
         &self,
         block_number: BlockNumber,
         batch_number: u64,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         self.execute_in_tx(vec![
             (
                 "DELETE FROM blocks WHERE block_number = ?1",
@@ -138,7 +138,7 @@ impl StoreEngineRollup for SQLStore {
     async fn get_withdrawal_hashes_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<Vec<H256>>, StoreError> {
+    ) -> Result<Option<Vec<H256>>, RollupStoreError> {
         let mut hashes = vec![];
         let mut rows = self
             .query(
@@ -162,13 +162,14 @@ impl StoreEngineRollup for SQLStore {
         &self,
         batch_number: u64,
         withdrawal_hashes: Vec<H256>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         let mut queries = vec![(
             "DELETE FROM withdrawals WHERE batch = ?1",
             vec![batch_number].into_params()?,
         )];
         for (index, hash) in withdrawal_hashes.iter().enumerate() {
-            let index = u64::try_from(index).map_err(|e| StoreError::Custom(format!("conversion error: {e}")))?;
+            let index = u64::try_from(index)
+                .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
             queries.push((
                 "INSERT INTO withdrawals VALUES (?1, ?2, ?3)",
                 (batch_number, index, Vec::from(hash.to_fixed_bytes())).into_params()?,
@@ -183,7 +184,7 @@ impl StoreEngineRollup for SQLStore {
         &self,
         batch_number: u64,
         block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         for block_number in block_numbers {
             self.store_batch_number_by_block(block_number, batch_number)
                 .await?;
@@ -195,7 +196,7 @@ impl StoreEngineRollup for SQLStore {
     async fn get_block_numbers_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
+    ) -> Result<Option<Vec<BlockNumber>>, RollupStoreError> {
         let mut blocks = Vec::new();
         let mut rows = self
             .query("SELECT * from blocks WHERE batch = ?1", vec![batch_number])
@@ -215,7 +216,7 @@ impl StoreEngineRollup for SQLStore {
         &self,
         batch_number: u64,
         deposit_logs_hash: H256,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         self.execute_in_tx(vec![
             (
                 "DELETE FROM deposits WHERE batch = ?1",
@@ -232,7 +233,7 @@ impl StoreEngineRollup for SQLStore {
     async fn get_deposit_logs_hash_by_batch_number(
         &self,
         batch_number: u64,
-    ) -> Result<Option<H256>, StoreError> {
+    ) -> Result<Option<H256>, RollupStoreError> {
         let mut rows = self
             .query(
                 "SELECT * from deposits WHERE batch = ?1",
@@ -250,7 +251,7 @@ impl StoreEngineRollup for SQLStore {
         &self,
         batch_number: u64,
         state_root: H256,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         self.execute_in_tx(vec![
             (
                 "DELETE FROM state_roots WHERE batch = ?1",
@@ -267,7 +268,7 @@ impl StoreEngineRollup for SQLStore {
     async fn get_state_root_by_batch_number(
         &self,
         batch_number: u64,
-    ) -> Result<Option<H256>, StoreError> {
+    ) -> Result<Option<H256>, RollupStoreError> {
         let mut rows = self
             .query(
                 "SELECT * FROM state_roots WHERE batch = ?1",
@@ -285,13 +286,14 @@ impl StoreEngineRollup for SQLStore {
         &self,
         batch_number: u64,
         state_diff: Vec<Blob>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         let mut queries = vec![(
             "DELETE FROM blob_bundles WHERE batch = ?1",
             vec![batch_number].into_params()?,
         )];
         for (index, blob) in state_diff.iter().enumerate() {
-            let index = u64::try_from(index).map_err(|e| StoreError::Custom(format!("conversion error: {e}")))?;
+            let index = u64::try_from(index)
+                .map_err(|e| RollupStoreError::Custom(format!("conversion error: {e}")))?;
             queries.push((
                 "INSERT INTO blob_bundles VALUES (?1, ?2, ?3)",
                 (batch_number, index, blob.to_vec()).into_params()?,
@@ -304,7 +306,7 @@ impl StoreEngineRollup for SQLStore {
     async fn get_blob_bundle_by_batch_number(
         &self,
         batch_number: u64,
-    ) -> Result<Option<Vec<Blob>>, StoreError> {
+    ) -> Result<Option<Vec<Blob>>, RollupStoreError> {
         let mut bundles = Vec::new();
         let mut rows = self
             .query(
@@ -315,8 +317,9 @@ impl StoreEngineRollup for SQLStore {
         while let Some(row) = rows.next().await? {
             let val = read_from_row_blob(&row, 2)?;
             bundles.push(
-                Blob::try_from(val)
-                    .map_err(|_| StoreError::Custom("error converting to Blob".to_string()))?,
+                Blob::try_from(val).map_err(|_| {
+                    RollupStoreError::Custom("error converting to Blob".to_string())
+                })?,
             );
         }
         if bundles.is_empty() {
@@ -331,14 +334,14 @@ impl StoreEngineRollup for SQLStore {
         transaction_inc: u64,
         deposits_inc: u64,
         withdrawals_inc: u64,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         self.execute(
             "UPDATE operation_count SET transactions = transactions + ?1, deposits = deposits + ?2, withdrawals = withdrawals + ?3", 
             (transaction_inc, deposits_inc, withdrawals_inc)).await?;
         Ok(())
     }
 
-    async fn get_operations_count(&self) -> Result<[u64; 3], StoreError> {
+    async fn get_operations_count(&self) -> Result<[u64; 3], RollupStoreError> {
         let mut rows = self.query("SELECT * from operation_count", ()).await?;
         if let Some(row) = rows.next().await? {
             return Ok([
@@ -347,30 +350,33 @@ impl StoreEngineRollup for SQLStore {
                 read_from_row_int(&row, 3)?,
             ]);
         }
-        Err(StoreError::Custom(
+        Err(RollupStoreError::Custom(
             "missing operation_count row".to_string(),
         ))
     }
 
     /// Returns whether the batch with the given number is present.
-    async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
+    async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError> {
         let mut row = self
             .query("SELECT * from blocks WHERE batch = ?1", vec![*batch_number])
             .await?;
         Ok(row.next().await?.is_some())
     }
 
-    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
+    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         let mut rows = self.query("SELECT * from latest_sent", ()).await?;
         if let Some(row) = rows.next().await? {
             return read_from_row_int(&row, 1);
         }
-        Err(StoreError::Custom(
+        Err(RollupStoreError::Custom(
             "missing operation_count row".to_string(),
         ))
     }
 
-    async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
+    async fn set_lastest_sent_batch_proof(
+        &self,
+        batch_number: u64,
+    ) -> Result<(), RollupStoreError> {
         self.execute("UPDATE latest_sent SET batch = ?1", (0, batch_number))
             .await?;
         Ok(())
