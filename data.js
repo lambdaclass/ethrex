@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749654817879,
+  "lastUpdate": 1749657296848,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12085,6 +12085,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178147820413,
             "range": "± 1081619056",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3149195aa70e2a2ee08ca49b72c2157e66ce18a7",
+          "message": "refactor(levm): improve errors (#3055)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- The error structure that we had before was messy and it needed to be\nrefactored. Created some extra issue for tackling some particular\nchanges that weren't handled in this PR.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nI propose a new structure for our errors, before we had a lot of stuff\ninside VMError and it was very cluttered.\nThe new structure of VMError is:\n```rust\n#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize, Display)]\npub enum VMError {\n    /// Errors that break execution, they shouldn't ever happen. Contains subcategory `DatabaseError`.\n    Internal(#[from] InternalError),\n    /// Returned when a transaction doesn't pass all validations before executing.\n    TxValidation(#[from] TxValidationError),\n    /// Errors contemplated by the EVM, they revert and consume all gas of the current context.\n    ExceptionalHalt(#[from] ExceptionalHalt),\n    /// Revert Opcode called. It behaves like ExceptionalHalt, except it doesn't consume all gas left.\n    RevertOpcode,\n}\n```\nThis PR also:\n- Deletes a lot of errors that we weren't using\n- Renames some errors to shorter or more accurate names, changing it's\ndescriptions if necessary\n- Removes `OutOfGasError` enum (that had multiple confusing variants)\nand replaces it for a simple `OutOfGas` value.\n- Transform some errors into Internal because they should've been that\nkind in the first place. Like `NonceOverflow` for example (this\nshouldn't revert execution because it shouldn't even happen, we do\nvalidations before incrementing it) or `MemorySizeOverflow`.\n- We had multiple types of errors for the same thing sometimes, this\nhappened for example with `AccountNotFound` and\n`AccountShouldHaveBeenCached`, I opted to remove the latter.\n- Now functions/methods are more precise about what kind of error they\nreturn. If a function only returns Internal Errors I changed it's error\ntype to `InternalError` so that it's behavior is clear (This is useful\nwhen the programmer wants to see if a method could revert execution or\nnot).\n- Removes (alongside other errors) `UndefinedState` from\n`InternalError`. This was an error type that we used when we didn't know\nwhat kind of error to return.\n- Makes usage of `thiserror` crate, that lets us return just the error\nthat we want to return without needing to wrap it into the error that\nthe function returns. It handles conversions for us when using `?`,\notherwise we use `.into()`.\n\nOpened issues #3062 and #3063 for improving even more the error\nhandling.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2886\n\n---------\n\nCo-authored-by: fmoletta <fedemoletta@hotmail.com>\nCo-authored-by: fmoletta <99273364+fmoletta@users.noreply.github.com>\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>",
+          "timestamp": "2025-06-11T15:05:34Z",
+          "tree_id": "04d31098b4978b0dfc3339d1118f2ef988eecb72",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3149195aa70e2a2ee08ca49b72c2157e66ce18a7"
+        },
+        "date": 1749657290280,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178250151496,
+            "range": "± 567020749",
             "unit": "ns/iter"
           }
         ]
