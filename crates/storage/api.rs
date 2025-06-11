@@ -445,4 +445,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError>;
+
+    async fn invalidate_and_recreate_snapshot(&self, state_root: H256) -> Result<(), StoreError>;
 }

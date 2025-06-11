@@ -606,6 +606,21 @@ impl Store {
         self.set_chain_config(&genesis.config).await
     }
 
+    /// Clears the current snapshot tables and re-creates them starting from
+    /// a guven state_root hash.
+    ///
+    /// # Arguments
+    ///
+    /// * `state_root`: The state root hash to start the snapshot from.
+    pub async fn invalidate_and_recreate_snapshot(
+        &self,
+        state_root: H256,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .invalidate_and_recreate_snapshot(state_root)
+            .await
+    }
+
     pub async fn get_transaction_by_hash(
         &self,
         transaction_hash: H256,

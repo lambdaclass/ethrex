@@ -785,6 +785,10 @@ impl StoreEngine for Store {
             .insert(bad_block, latest_valid);
         Ok(())
     }
+
+    async fn invalidate_and_recreate_snapshot(&self, _state_root: H256) -> Result<(), StoreError> {
+        todo!();
+    }
 }
 
 impl Debug for Store {

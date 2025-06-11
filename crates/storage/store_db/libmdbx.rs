@@ -23,7 +23,7 @@ use ethrex_common::H160;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::{Nibbles, NodeHash, Trie};
+use ethrex_trie::{Nibbles, NodeHash, Trie, TrieNode};
 use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
 use libmdbx::{
     dupsort,
@@ -1227,6 +1227,49 @@ impl StoreEngine for Store {
             .get::<FlatAccountInfo>(address.into())
             .map_err(StoreError::LibmdbxError)?;
         Ok(res.map(|i| i.0))
+    }
+
+    async fn invalidate_and_recreate_snapshot(&self, state_root: H256) -> Result<(), StoreError> {
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+
+        let _ = tx
+            .clear_table::<FlatAccountStorage>()
+            .map_err(StoreError::LibmdbxError)?;
+
+        let _ = tx
+            .clear_table::<FlatAccountInfo>()
+            .map_err(StoreError::LibmdbxError)?;
+
+        let mut cursor_state_trie_nodes = tx
+            .cursor::<StateTrieNodes>()
+            .map_err(StoreError::LibmdbxError)?;
+
+        let mut cursor_storage_trie_nodes = tx
+            .cursor::<StorageTriesNodes>()
+            .map_err(StoreError::LibmdbxError)?;
+
+        let mut state_trie_nodes = Vec::new();
+        //let storage_trie_nodes = Vec::new();
+
+        let trie_node_state_root = cursor_state_trie_nodes
+            .seek_exact(state_root.into())
+            .map_err(|e| StoreError::LibmdbxError(e))?;
+
+        let (_, node) = trie_node_state_root
+            .ok_or_else(|| StoreError::Custom("State root not found".to_string()))?;
+
+        // decode the node and push it to the state_trie_nodes vector
+        //let node: TrieNode = RLPDecode::decode(&node).map_err(StoreError::RLPDecode)?;
+
+        state_trie_nodes.push(node);
+
+        // Iterate through all state trie nodes and store them in the flat storage
+        // we want to create a DFS-like structure
+
+        todo!();
     }
 }
 
