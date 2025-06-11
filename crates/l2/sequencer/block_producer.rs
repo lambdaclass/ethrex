@@ -18,9 +18,9 @@ use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, Gen
 use spawned_rt::mpsc::Sender;
 use tracing::{debug, error, info};
 
-use crate::{sequencer::execution_cache::{self, ExecutionCache}, BlockProducerConfig, SequencerConfig};
+use crate::{sequencer::execution_cache::ExecutionCache, BlockProducerConfig, SequencerConfig};
 
-use super::errors::{BlockProducerError, SequencerError};
+use super::errors::BlockProducerError;
 
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
@@ -41,7 +41,7 @@ impl BlockProducerState {
         config: &BlockProducerConfig,
         store: Store,
         blockchain: Arc<Blockchain>,
-        execution_cache: Arc<ExecutionCache>
+        execution_cache: Arc<ExecutionCache>,
     ) -> Self {
         let BlockProducerConfig {
             block_time_ms,
