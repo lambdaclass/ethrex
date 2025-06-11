@@ -154,7 +154,7 @@ impl ExecutionWitnessResult {
         self.state_trie = Some(Arc::new(Mutex::new(state_trie)));
         self.storage_tries = Some(Arc::new(Mutex::new(storage_tries)));
         self.state_trie_nodes = None;
-        self.state_trie_nodes = None;
+        self.storage_trie_nodes = None;
 
         Ok(())
     }
