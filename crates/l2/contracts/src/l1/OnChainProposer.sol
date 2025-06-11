@@ -458,8 +458,8 @@ contract OnChainProposer is
     function revertBatch(
         uint256 batchNumber
     ) external override onlySequencer whenPaused {
-        require(batchNumber > lastVerifiedBatch, "OnChainProposer: can't revert verified batch");
-        require(batchNumber > lastCommittedBatch, "OnChainProposer: no batches are being reverted");
+        require(batchNumber >= lastVerifiedBatch, "OnChainProposer: can't revert verified batch");
+        require(batchNumber >= lastCommittedBatch, "OnChainProposer: no batches are being reverted");
 
         // Remove old batches
         for (uint256 i = batchNumber; i < lastCommittedBatch; i++) {
