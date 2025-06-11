@@ -96,12 +96,8 @@ async fn fetch_storage_batch(
     large_storage_sender: Sender<Vec<LargeStorageRequest>>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
-    let batch_first = batch
-        .first()
-        .ok_or(ethrex_trie::TrieError::InconsistentTree)?;
-    let batch_last = batch
-        .last()
-        .ok_or(ethrex_trie::TrieError::InconsistentTree)?;
+    let batch_first = batch.first().ok_or(SyncError::InvalidRangeReceived)?;
+    let batch_last = batch.last().ok_or(SyncError::InvalidRangeReceived)?;
     debug!(
         "Requesting storage ranges for addresses {}..{}",
         batch_first.0, batch_last.0

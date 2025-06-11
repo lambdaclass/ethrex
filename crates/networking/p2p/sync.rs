@@ -727,7 +727,7 @@ enum SyncError {
     CorruptDB,
     #[error("No bodies were found for the given headers")]
     BodiesNotFound,
-    #[error("Storage range received is invalid")]
+    #[error("Range received is invalid")]
     InvalidRangeReceived,
 }
 
