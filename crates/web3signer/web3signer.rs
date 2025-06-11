@@ -22,7 +22,7 @@ pub async fn web3sign(
         url,
         hex::encode(&public_key.serialize_uncompressed()[1..]),
     );
-    let body = format!("{{\"data\": \"0x{}\"}}", hex::encode(data.clone()));
+    let body = format!("{{\"data\": \"0x{}\"}}", hex::encode(data));
 
     let client = Client::new();
     client

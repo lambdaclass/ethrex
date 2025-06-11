@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
-web3signer = { path = "../web3signer", optional = true }
+web3signer = { workspace = true, optional = true }
 
 tracing.workspace = true
 tinyvec = "1.6.0"
