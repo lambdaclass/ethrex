@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
-    errors::{ExceptionalHalt, ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
+    errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     utils::{address_to_word, word_to_address, *},
@@ -793,20 +793,20 @@ impl<'a> VM<'a> {
         self.backup_substate();
 
         if self.is_precompile(&code_address) && !is_delegation_7702 {
-            let report = self.execute_precompile()?;
-            self.handle_return(&report)?;
+            let ctx_result = self.execute_precompile()?;
+            self.handle_return(&ctx_result)?;
         }
 
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
     /// Pop backup from stack and restore substate and cache if transaction reverted.
-    pub fn handle_state_backup(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
+    pub fn handle_state_backup(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
         let backup = self
             .substate_backups
             .pop()
             .ok_or(InternalError::CallFrame)?;
-        if !tx_report.is_success() {
+        if !ctx_result.is_success() {
             self.substate = backup;
             self.restore_cache_state()?;
         }
@@ -814,15 +814,15 @@ impl<'a> VM<'a> {
     }
 
     /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
-    pub fn handle_return(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
-        self.handle_state_backup(tx_report)?;
+    pub fn handle_return(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
+        self.handle_state_backup(ctx_result)?;
         let executed_call_frame = self.pop_call_frame()?;
 
         // Here happens the interaction between child (executed) and parent (caller) callframe.
         if executed_call_frame.create_op_called {
-            self.handle_return_create(executed_call_frame, tx_report)?;
+            self.handle_return_create(executed_call_frame, ctx_result)?;
         } else {
-            self.handle_return_call(executed_call_frame, tx_report)?;
+            self.handle_return_call(executed_call_frame, ctx_result)?;
         }
 
         // Increment PC of the parent callframe after execution of the child.
@@ -834,7 +834,7 @@ impl<'a> VM<'a> {
     pub fn handle_return_call(
         &mut self,
         executed_call_frame: CallFrame,
-        tx_report: &ExecutionReport,
+        ctx_result: &ContextResult,
     ) -> Result<(), VMError> {
         let CallFrame {
             gas_limit,
@@ -847,7 +847,7 @@ impl<'a> VM<'a> {
 
         // Return gas left from subcontext
         let child_unused_gas = gas_limit
-            .checked_sub(tx_report.gas_used)
+            .checked_sub(ctx_result.gas_used)
             .ok_or(InternalError::Underflow)?;
         parent_call_frame.gas_used = parent_call_frame
             .gas_used
@@ -859,12 +859,12 @@ impl<'a> VM<'a> {
             &mut parent_call_frame.memory,
             ret_offset,
             ret_size,
-            &tx_report.output,
+            &ctx_result.output,
         )?;
-        parent_call_frame.sub_return_data = tx_report.output.clone();
+        parent_call_frame.sub_return_data = ctx_result.output.clone();
 
         // What to do, depending on TxResult
-        match &tx_report.result {
+        match &ctx_result.result {
             TxResult::Success => {
                 self.current_call_frame_mut()?.stack.push(SUCCESS)?;
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
@@ -874,14 +874,14 @@ impl<'a> VM<'a> {
             }
         };
 
-        self.tracer.exit_report(tx_report, false)?;
+        self.tracer.exit_context(ctx_result, false)?;
         Ok(())
     }
 
     pub fn handle_return_create(
         &mut self,
         executed_call_frame: CallFrame,
-        tx_report: &ExecutionReport,
+        ctx_result: &ContextResult,
     ) -> Result<(), VMError> {
         let CallFrame {
             gas_limit,
@@ -893,7 +893,7 @@ impl<'a> VM<'a> {
 
         // Return unused gas
         let unused_gas = gas_limit
-            .checked_sub(tx_report.gas_used)
+            .checked_sub(ctx_result.gas_used)
             .ok_or(InternalError::Underflow)?;
         parent_call_frame.gas_used = parent_call_frame
             .gas_used
@@ -901,7 +901,7 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Underflow)?;
 
         // What to do, depending on TxResult
-        match tx_report.result.clone() {
+        match ctx_result.result.clone() {
             TxResult::Success => {
                 parent_call_frame.stack.push(address_to_word(to))?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
@@ -909,14 +909,14 @@ impl<'a> VM<'a> {
             TxResult::Revert(err) => {
                 // If revert we have to copy the return_data
                 if err == VMError::RevertOpcode {
-                    parent_call_frame.sub_return_data = tx_report.output.clone();
+                    parent_call_frame.sub_return_data = ctx_result.output.clone();
                 }
 
                 parent_call_frame.stack.push(FAIL)?;
             }
         };
 
-        self.tracer.exit_report(tx_report, false)?;
+        self.tracer.exit_context(ctx_result, false)?;
         Ok(())
     }
 

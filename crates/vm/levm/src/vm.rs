@@ -2,7 +2,7 @@ use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
-    errors::{ExecutionReport, OpcodeResult, VMError},
+    errors::{ContextResult, ExecutionReport, OpcodeResult, VMError},
     hooks::{
         backup_hook::BackupHook,
         hook::{get_hooks, Hook},
@@ -135,22 +135,22 @@ impl<'a> VM<'a> {
 
         if self.is_create() {
             // Create contract, reverting the Tx if address is already occupied.
-            if let Some(mut report) = self.handle_create_transaction()? {
-                self.finalize_execution(&mut report)?;
+            if let Some(mut context_result) = self.handle_create_transaction()? {
+                let report = self.finalize_execution(&mut context_result)?;
                 return Ok(report);
             }
         }
 
         self.backup_substate();
-        let mut report = self.run_execution()?;
+        let mut context_result = self.run_execution()?;
 
-        self.finalize_execution(&mut report)?;
+        let report = self.finalize_execution(&mut context_result)?;
 
         Ok(report)
     }
 
     /// Main execution loop.
-    pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
+    pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
         if self.is_precompile(&self.current_call_frame()?.to) {
             return self.execute_precompile();
         }
@@ -181,7 +181,7 @@ impl<'a> VM<'a> {
     }
 
     /// Executes precompile and handles the output that it returns, generating a report.
-    pub fn execute_precompile(&mut self) -> Result<ExecutionReport, VMError> {
+    pub fn execute_precompile(&mut self) -> Result<ContextResult, VMError> {
         let callframe = self.current_call_frame_mut()?;
 
         let precompile_result = {
@@ -193,9 +193,9 @@ impl<'a> VM<'a> {
             )
         };
 
-        let report = self.handle_precompile_result(precompile_result)?;
+        let ctx_result = self.handle_precompile_result(precompile_result)?;
 
-        Ok(report)
+        Ok(ctx_result)
     }
 
     /// True if external transaction is a contract creation
@@ -221,13 +221,25 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    fn finalize_execution(&mut self, report: &mut ExecutionReport) -> Result<(), VMError> {
+    fn finalize_execution(
+        &mut self,
+        ctx_result: &mut ContextResult,
+    ) -> Result<ExecutionReport, VMError> {
         for hook in self.hooks.clone() {
-            hook.borrow_mut().finalize_execution(self, report)?;
+            hook.borrow_mut().finalize_execution(self, ctx_result)?;
         }
 
-        self.tracer.exit_report(report, true)?;
+        self.tracer.exit_context(&ctx_result, true)?;
 
-        Ok(())
+        //TODO: Maybe do mem take instead of cloning
+        let report = ExecutionReport {
+            result: ctx_result.result.clone(),
+            gas_used: ctx_result.gas_used,
+            gas_refunded: self.substate.refunded_gas,
+            output: ctx_result.output.clone(),
+            logs: self.substate.logs.clone(),
+        };
+
+        Ok(report)
     }
 }

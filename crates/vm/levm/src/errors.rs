@@ -198,3 +198,16 @@ impl ExecutionReport {
         matches!(self.result, TxResult::Success)
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextResult {
+    pub result: TxResult,
+    pub gas_used: u64,
+    pub output: Bytes,
+}
+
+impl ContextResult {
+    pub fn is_success(&self) -> bool {
+        matches!(self.result, TxResult::Success)
+    }
+}

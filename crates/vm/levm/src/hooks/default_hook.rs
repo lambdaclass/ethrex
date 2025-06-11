@@ -1,6 +1,6 @@
 use crate::{
     constants::*,
-    errors::{ExecutionReport, InternalError, TxValidationError, VMError},
+    errors::{ContextResult, InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
     utils::*,
@@ -121,15 +121,15 @@ impl Hook for DefaultHook {
     fn finalize_execution(
         &mut self,
         vm: &mut VM<'_>,
-        report: &mut ExecutionReport,
+        ctx_result: &mut ContextResult,
     ) -> Result<(), VMError> {
-        if !report.is_success() {
+        if !ctx_result.is_success() {
             undo_value_transfer(vm)?;
         }
 
-        let gas_refunded: u64 = compute_gas_refunded(report)?;
-        let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, report.gas_used)?;
-        refund_sender(vm, report, gas_refunded, actual_gas_used)?;
+        let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
+        let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
+        refund_sender(vm, ctx_result, gas_refunded, actual_gas_used)?;
 
         pay_coinbase(vm, actual_gas_used)?;
 
@@ -155,13 +155,13 @@ pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
 
 pub fn refund_sender(
     vm: &mut VM<'_>,
-    report: &mut ExecutionReport,
+    ctx_result: &mut ContextResult,
     refunded_gas: u64,
     actual_gas_used: u64,
 ) -> Result<(), VMError> {
-    // c. Update gas used and refunded in the Execution Report.
-    report.gas_used = actual_gas_used;
-    report.gas_refunded = refunded_gas;
+    // c. Update gas used and refunded.
+    ctx_result.gas_used = actual_gas_used;
+    vm.substate.refunded_gas = refunded_gas;
 
     // d. Finally, return unspent gas to the sender.
     let gas_to_return = vm
@@ -182,9 +182,10 @@ pub fn refund_sender(
 }
 
 // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-pub fn compute_gas_refunded(report: &ExecutionReport) -> Result<u64, VMError> {
-    Ok(report
-        .gas_refunded
+pub fn compute_gas_refunded(vm: &VM<'_>, report: &ContextResult) -> Result<u64, VMError> {
+    Ok(vm
+        .substate
+        .refunded_gas
         .min(report.gas_used / MAX_REFUND_QUOTIENT))
 }
 

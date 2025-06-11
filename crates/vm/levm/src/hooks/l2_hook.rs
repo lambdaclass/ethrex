@@ -1,5 +1,5 @@
 use crate::{
-    errors::{ExecutionReport, InternalError, TxValidationError, VMError},
+    errors::{ContextResult, InternalError, TxValidationError, VMError},
     hooks::{default_hook, hook::Hook},
     vm::VM,
 };
@@ -109,10 +109,10 @@ impl Hook for L2Hook {
 
     fn finalize_execution(
         &mut self,
-        vm: &mut crate::vm::VM<'_>,
-        report: &mut crate::errors::ExecutionReport,
+        vm: &mut VM<'_>,
+        ctx_result: &mut ContextResult,
     ) -> Result<(), crate::errors::VMError> {
-        if !report.is_success() {
+        if !ctx_result.is_success() {
             if vm.env.is_privileged {
                 undo_value_transfer(vm)?;
             } else {
@@ -124,13 +124,13 @@ impl Hook for L2Hook {
         // 2. Return unused gas + gas refunds to the sender.
 
         if vm.env.is_privileged {
-            let gas_to_pay_coinbase = compute_coinbase_fee(vm, report)?;
+            let gas_to_pay_coinbase = compute_coinbase_fee(vm, ctx_result)?;
             default_hook::pay_coinbase(vm, gas_to_pay_coinbase)?;
         } else {
-            let gas_refunded = default_hook::compute_gas_refunded(report)?;
+            let gas_refunded = default_hook::compute_gas_refunded(vm, ctx_result)?;
             let actual_gas_used =
-                default_hook::compute_actual_gas_used(vm, gas_refunded, report.gas_used)?;
-            default_hook::refund_sender(vm, report, gas_refunded, actual_gas_used)?;
+                default_hook::compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
+            default_hook::refund_sender(vm, ctx_result, gas_refunded, actual_gas_used)?;
             default_hook::pay_coinbase(vm, actual_gas_used)?;
         }
 
@@ -150,11 +150,14 @@ pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
     Ok(())
 }
 
-pub fn compute_coinbase_fee(vm: &mut VM<'_>, report: &mut ExecutionReport) -> Result<u64, VMError> {
-    let mut gas_refunded = default_hook::compute_gas_refunded(report)?;
-    let mut gas_consumed = report.gas_used;
+pub fn compute_coinbase_fee(
+    vm: &mut VM<'_>,
+    ctx_result: &mut ContextResult,
+) -> Result<u64, VMError> {
+    let mut gas_refunded = default_hook::compute_gas_refunded(vm, ctx_result)?;
+    let mut gas_consumed = ctx_result.gas_used;
 
-    report.gas_refunded = gas_refunded;
+    vm.substate.refunded_gas = gas_refunded;
 
     if vm.env.config.fork >= Fork::Prague {
         let floor_gas_price = vm.get_min_gas_used()?;

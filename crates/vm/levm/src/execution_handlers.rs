@@ -1,6 +1,6 @@
 use crate::{
     constants::*,
-    errors::{ExceptionalHalt, ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
+    errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
     utils::*,
@@ -13,26 +13,22 @@ impl<'a> VM<'a> {
     pub fn handle_precompile_result(
         &mut self,
         precompile_result: Result<Bytes, VMError>,
-    ) -> Result<ExecutionReport, VMError> {
+    ) -> Result<ContextResult, VMError> {
         match precompile_result {
-            Ok(output) => Ok(ExecutionReport {
+            Ok(output) => Ok(ContextResult {
                 result: TxResult::Success,
                 gas_used: self.current_call_frame()?.gas_used,
-                gas_refunded: self.substate.refunded_gas,
                 output,
-                logs: vec![],
             }),
             Err(error) => {
                 if error.should_propagate() {
                     return Err(error);
                 }
 
-                Ok(ExecutionReport {
+                Ok(ContextResult {
                     result: TxResult::Revert(error),
                     gas_used: self.current_call_frame()?.gas_limit,
-                    gas_refunded: self.substate.refunded_gas,
                     output: Bytes::new(),
-                    logs: vec![],
                 })
             }
         }
@@ -144,7 +140,7 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub fn handle_opcode_result(&mut self) -> Result<ExecutionReport, VMError> {
+    pub fn handle_opcode_result(&mut self) -> Result<ContextResult, VMError> {
         // On successful create check output validity
         if (self.is_create() && self.current_call_frame()?.depth == 0)
             || self.current_call_frame()?.create_op_called
@@ -189,33 +185,24 @@ impl<'a> VM<'a> {
                 Err(error) => {
                     // Revert if error
                     self.current_call_frame_mut()?.gas_used = self.current_call_frame()?.gas_limit;
-                    let gas_refunded = self
-                        .substate_backups
-                        .last()
-                        .ok_or(InternalError::CallFrame)?
-                        .refunded_gas;
 
-                    return Ok(ExecutionReport {
+                    return Ok(ContextResult {
                         result: TxResult::Revert(error.into()),
                         gas_used: self.current_call_frame()?.gas_used,
-                        gas_refunded,
                         output: Bytes::new(),
-                        logs: vec![],
                     });
                 }
             }
         }
 
-        Ok(ExecutionReport {
+        Ok(ContextResult {
             result: TxResult::Success,
             gas_used: self.current_call_frame()?.gas_used,
-            gas_refunded: self.substate.refunded_gas,
             output: std::mem::take(&mut self.current_call_frame_mut()?.output),
-            logs: self.substate.logs.clone(),
         })
     }
 
-    pub fn handle_opcode_error(&mut self, error: VMError) -> Result<ExecutionReport, VMError> {
+    pub fn handle_opcode_error(&mut self, error: VMError) -> Result<ContextResult, VMError> {
         if error.should_propagate() {
             return Err(error);
         }
@@ -230,33 +217,24 @@ impl<'a> VM<'a> {
                 self.current_call_frame()?.gas_used.saturating_add(left_gas);
         }
 
-        let gas_refunded = self
-            .substate_backups
-            .last()
-            .ok_or(InternalError::CallFrame)?
-            .refunded_gas;
         let output = std::mem::take(&mut self.current_call_frame_mut()?.output); // Bytes::new() if error is not RevertOpcode
         let gas_used = self.current_call_frame()?.gas_used;
 
-        Ok(ExecutionReport {
+        Ok(ContextResult {
             result: TxResult::Revert(error),
             gas_used,
-            gas_refunded,
             output,
-            logs: vec![],
         })
     }
 
-    pub fn handle_create_transaction(&mut self) -> Result<Option<ExecutionReport>, VMError> {
+    pub fn handle_create_transaction(&mut self) -> Result<Option<ContextResult>, VMError> {
         let new_contract_address = self.current_call_frame()?.to;
         let new_account = self.get_account_mut(new_contract_address)?;
 
         if new_account.has_code_or_nonce() {
-            return Ok(Some(ExecutionReport {
+            return Ok(Some(ContextResult {
                 result: TxResult::Revert(ExceptionalHalt::AddressAlreadyOccupied.into()),
                 gas_used: self.env.gas_limit,
-                gas_refunded: 0,
-                logs: vec![],
                 output: Bytes::new(),
             }));
         }
