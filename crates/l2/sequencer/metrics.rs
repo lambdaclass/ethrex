@@ -51,12 +51,12 @@ pub struct MetricsGatherer;
 
 impl MetricsGatherer {
     pub async fn spawn(
-        cfg: SequencerConfig,
+        cfg: &SequencerConfig,
         rollup_store: StoreRollup,
         l2_url: String,
     ) -> Result<(), MetricsGathererError> {
         let state =
-            MetricsGathererState::new(rollup_store, &cfg.l1_committer, &cfg.eth, l2_url).await?;
+            MetricsGathererState::new(rollup_store, &(cfg.l1_committer.clone()), &cfg.eth, l2_url).await?;
         let mut metrics = MetricsGatherer::start(state);
         metrics
             .cast(InMessage::Gather)

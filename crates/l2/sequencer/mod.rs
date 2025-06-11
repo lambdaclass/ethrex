@@ -15,6 +15,7 @@ use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
+use tokio::task::JoinSet;
 
 pub mod block_producer;
 mod l1_committer;
@@ -105,7 +106,7 @@ pub async fn start_l2(
     });
 
     #[cfg(feature = "metrics")]
-    let _ = MetricsGatherer::spawn(cfg, rollup_store, l2_url)
+    let _ = MetricsGatherer::spawn(&cfg, rollup_store, l2_url)
         .await
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");
@@ -113,7 +114,7 @@ pub async fn start_l2(
 
     let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     if needed_proof_types.contains(&ProverType::Aligned) {
-        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(cfg.clone()));
+        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(cfg));
     }
 
     while let Some(res) = task_set.join_next().await {
