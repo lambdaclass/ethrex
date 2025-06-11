@@ -882,14 +882,13 @@ impl RLPDecode for PrivilegedL2Transaction {
 impl Signable for Transaction {
     fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
         match self {
-            Transaction::LegacyTransaction(tx) => tx.sign_inplace(private_key)?,
-            Transaction::EIP2930Transaction(tx) => tx.sign_inplace(private_key)?,
-            Transaction::EIP1559Transaction(tx) => tx.sign_inplace(private_key)?,
-            Transaction::EIP4844Transaction(tx) => tx.sign_inplace(private_key)?,
-            Transaction::EIP7702Transaction(tx) => tx.sign_inplace(private_key)?,
-            Transaction::PrivilegedL2Transaction(_) => (), // Privileged Transactions are not signed
+            Transaction::LegacyTransaction(tx) => tx.sign_inplace(private_key),
+            Transaction::EIP2930Transaction(tx) => tx.sign_inplace(private_key),
+            Transaction::EIP1559Transaction(tx) => tx.sign_inplace(private_key),
+            Transaction::EIP4844Transaction(tx) => tx.sign_inplace(private_key),
+            Transaction::EIP7702Transaction(tx) => tx.sign_inplace(private_key),
+            Transaction::PrivilegedL2Transaction(_) => Ok(()), // Privileged Transactions are not signed
         }
-        Ok(())
     }
 }
 

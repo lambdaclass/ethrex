@@ -226,9 +226,9 @@ impl EthClient {
         tx: &EIP1559Transaction,
         private_key: &SecretKey,
     ) -> Result<H256, EthClientError> {
-        let signed_tx = tx.sign(private_key).map_err(|_| {
-            EthClientError::InternalError("Invalid transaction payload".to_string())
-        })?;
+        let signed_tx = tx
+            .sign(private_key)
+            .map_err(|error| EthClientError::FailedToSignPayload(error.to_string()))?;
 
         let mut encoded_tx = signed_tx.encode_to_vec();
         encoded_tx.insert(0, TxType::EIP1559.into());
