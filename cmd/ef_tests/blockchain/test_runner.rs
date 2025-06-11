@@ -104,75 +104,75 @@ fn exception_is_expected(
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::IntrinsicGasTooLow
                 ),
-                ChainError::EvmError(EvmError::Transaction(_)) //??
+                ChainError::EvmError(EvmError::Transaction(_))
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::InsufficientAccountFunds
                 ),
-                ChainError::EvmError(EvmError::Transaction(_)) //??
+                ChainError::EvmError(EvmError::Transaction(_))
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::PriorityGreaterThanMaxFeePerGas
                 ),
-                ChainError::EvmError(EvmError::Transaction(_)) //??
+                ChainError::EvmError(EvmError::Transaction(_))
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::GasLimitPriceProductOverflow
                 ),
-                ChainError::EvmError(EvmError::Transaction(_)) //??
+                ChainError::EvmError(EvmError::Transaction(_))
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::SenderNotEoa
                 ),
-                ChainError::EvmError(EvmError::Transaction(_)) //??
+                ChainError::EvmError(EvmError::Transaction(_))
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::InsufficientMaxFeePerGas
                 ),
-                ChainError::EvmError(EvmError::Transaction(_)) //??
+                ChainError::EvmError(EvmError::Transaction(_))
             ) | (
                 BlockChainExpectedException::TxtException(TransactionExpectedException::NonceIsMax),
-                ChainError::EvmError(EvmError::Transaction(_)) //??
+                ChainError::EvmError(EvmError::Transaction(_))
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::GasAllowanceExceeded
                 ),
-                ChainError::EvmError(EvmError::Transaction(_)) //??
+                ChainError::EvmError(EvmError::Transaction(_))
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::Type3TxPreFork
                 ),
-                ChainError::EvmError(EvmError::Transaction(_)) //??
+                ChainError::EvmError(EvmError::Transaction(_))
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::Type3TxBlobCountExceeded
                 ),
-                ChainError::InvalidBlock(InvalidBlockError::ExceededMaxBlobGasPerBlock) //??
+                ChainError::InvalidBlock(InvalidBlockError::ExceededMaxBlobGasPerBlock)
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::Type3TxZeroBlobs
                 ),
-                ChainError::EvmError(EvmError::Transaction(_)) //??
+                ChainError::EvmError(EvmError::Transaction(_))
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::Type3TxContractCreation
                 ),
-                ChainError::EvmError(EvmError::Transaction(_)) //??
+                ChainError::EvmError(EvmError::Transaction(_))
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::Type3TxInvalidBlobVersionedHash
                 ),
-                ChainError::EvmError(EvmError::Transaction(_)) //??
+                ChainError::EvmError(EvmError::Transaction(_))
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::InsufficientMaxFeePerBlobGas
                 ),
-                ChainError::EvmError(EvmError::Transaction(_)) //??
+                ChainError::EvmError(EvmError::Transaction(_))
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::InitcodeSizeExceeded
                 ),
-                ChainError::EvmError(EvmError::Transaction(_)) //??
+                ChainError::EvmError(EvmError::Transaction(_))
             ) | (
                 BlockChainExpectedException::BlockException(
                     BlockExpectedException::IncorrectBlobGasUsed
@@ -196,7 +196,7 @@ fn exception_is_expected(
                 BlockChainExpectedException::BlockException(
                     BlockExpectedException::IncorrectBlockFormat
                 ),
-                ChainError::InvalidBlock(_) //??
+                ChainError::InvalidBlock(_)
             ) | (
                 BlockChainExpectedException::BlockException(BlockExpectedException::InvalidRequest),
                 ChainError::InvalidBlock(InvalidBlockError::RequestsHashMismatch)
@@ -220,26 +220,26 @@ fn exception_is_expected(
 
 /// Tests the rlp decoding of a block
 fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
-    /*let decoding_exception_cases = [
-        "BlockException.RLP_",
-        // NOTE: There is a test which validates that an EIP-7702 transaction is not allowed to
-        // have the "to" field set to null (create).
-        // This test expects an exception to be thrown AFTER the Block RLP decoding, when the
-        // transaction is validated. This would imply allowing the "to" field of the
-        // EIP-7702 transaction to be null and validating it on the `prepare_execution` LEVM hook.
-        //
-        // Instead, this approach is taken, which allows for the exception to be thrown on
-        // RLPDecoding, so the data type EIP7702Transaction correctly describes the requirement of
-        // "to" field to be an Address
-        // For more information, please read:
-        // - https://eips.ethereum.org/EIPS/eip-7702
-        // - https://github.com/lambdaclass/ethrex/pull/2425
-        //
-        // There is another test which validates the same exact thing, but for an EIP-4844 tx.
-        // That test also allows for a "BlockException.RLP_..." error to happen, and that's what is being
-        // caught.
-        "TransactionException.TYPE_4_TX_CONTRACT_CREATION",
-    ];*/
+    // NOTE: There is a test which validates that an EIP-7702 transaction is not allowed to
+    // have the "to" field set to null (create).
+    // This test expects an exception to be thrown AFTER the Block RLP decoding, when the
+    // transaction is validated. This would imply allowing the "to" field of the
+    // EIP-7702 transaction to be null and validating it on the `prepare_execution` LEVM hook.
+    //
+    // Instead, this approach is taken, which allows for the exception to be thrown on
+    // RLPDecoding, so the data type EIP7702Transaction correctly describes the requirement of
+    // "to" field to be an Address
+    // For more information, please read:
+    // - https://eips.ethereum.org/EIPS/eip-7702
+    // - https://github.com/lambdaclass/ethrex/pull/2425
+    //
+    // There is another test which validates the same exact thing, but for an EIP-4844 tx.
+    // That test also allows for a "BlockException.RLP_..." error to happen, and that's what is being
+    // caught.
+
+    // Decoding_exception_cases = [
+    // "BlockException.RLP_",
+    // "TransactionException.TYPE_4_TX_CONTRACT_CREATION", ];
 
     let expects_rlp_exception = block_fixture
         .expect_exception
