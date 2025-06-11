@@ -656,7 +656,7 @@ impl<'a> VM<'a> {
         };
 
         // Touch new contract
-        self.substate.touched_accounts.insert(new_address);
+        self.substate.accessed_addresses.insert(new_address);
 
         // Log CREATE in tracer
         let call_type = match salt {

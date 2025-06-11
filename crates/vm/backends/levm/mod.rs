@@ -545,7 +545,7 @@ fn adjust_disabled_base_fee(env: &mut Environment) {
 
 pub fn build_access_list(substate: &Substate) -> AccessList {
     let access_list: AccessList = substate
-        .touched_storage_slots
+        .accessed_storage_slots
         .iter()
         .map(|(address, slots)| (*address, slots.iter().cloned().collect::<Vec<H256>>()))
         .collect();
