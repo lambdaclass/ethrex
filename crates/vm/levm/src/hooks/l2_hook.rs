@@ -14,9 +14,7 @@ impl Hook for L2Hook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
         if vm.env.is_privileged {
             let Some(recipient) = self.recipient else {
-                return Err(VMError::Internal(
-                    InternalError::RecipientNotFoundForPrivilegeTransaction,
-                ));
+                return Err(InternalError::RecipientNotFoundForPrivilegedTransaction.into());
             };
             vm.increase_account_balance(recipient, vm.current_call_frame()?.msg_value)?;
             vm.current_call_frame_mut()?.msg_value = U256::from(0);
@@ -38,9 +36,7 @@ impl Hook for L2Hook {
                 .env
                 .gas_price
                 .checked_mul(vm.env.gas_limit.into())
-                .ok_or(VMError::TxValidation(
-                    TxValidationError::GasLimitPriceProductOverflow,
-                ))?;
+                .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
             default_hook::validate_sender_balance(vm, sender_balance)?;
 
@@ -49,14 +45,15 @@ impl Hook for L2Hook {
 
             // (7) NONCE_IS_MAX
             vm.increment_account_nonce(sender_address)
-                .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
+                .map_err(|_| TxValidationError::NonceIsMax)?;
 
             // check for nonce mismatch
             if sender_nonce != vm.env.tx_nonce {
-                return Err(VMError::TxValidation(TxValidationError::NonceMismatch {
+                return Err(TxValidationError::NonceMismatch {
                     expected: sender_nonce,
                     actual: vm.env.tx_nonce,
-                }));
+                }
+                .into());
             }
 
             // (9) SENDER_NOT_EOA
@@ -85,9 +82,7 @@ impl Hook for L2Hook {
             vm.env.tx_max_fee_per_gas,
         ) {
             if tx_max_priority_fee > tx_max_fee_per_gas {
-                return Err(VMError::TxValidation(
-                    TxValidationError::PriorityGreaterThanMaxFeePerGas,
-                ));
+                return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas.into());
             }
         }
 
@@ -172,5 +167,5 @@ pub fn compute_coinbase_fee(vm: &mut VM<'_>, report: &mut ExecutionReport) -> Re
 
     gas_consumed
         .checked_sub(gas_refunded)
-        .ok_or(VMError::Internal(InternalError::UndefinedState(2)))
+        .ok_or(InternalError::Underflow.into())
 }
