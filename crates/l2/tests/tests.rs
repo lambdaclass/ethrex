@@ -123,7 +123,7 @@ async fn test_deposit_with_contract_call(
     let init_code = hex::decode("6080604052348015600e575f5ffd5b506101008061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063f15d140b14602a575b5f5ffd5b60406004803603810190603c919060a4565b6042565b005b807f9ec8254969d1974eac8c74afb0c03595b4ffe0a1d7ad8a7f82ed31b9c854259160405160405180910390a250565b5f5ffd5b5f819050919050565b6086816076565b8114608f575f5ffd5b50565b5f81359050609e81607f565b92915050565b5f6020828403121560b65760b56072565b5b5f60c1848285016092565b9150509291505056fea26469706673582212206f6d360696127c56e2d2a456f3db4a61e30eae0ea9b3af3c900c81ea062e8fe464736f6c634300081c0033")?;
 
     let deployed_contract_address =
-        test_deploy(&init_code, &rich_wallet_private_key, &proposer_client).await?;
+        test_deploy(&init_code, &rich_wallet_private_key, proposer_client).await?;
 
     let number_to_emit = U256::from(424242);
     let calldata_to_contract: Bytes =
@@ -136,8 +136,8 @@ async fn test_deposit_with_contract_call(
         deployed_contract_address,
         calldata_to_contract,
         &rich_wallet_private_key,
-        &proposer_client,
-        &eth_client,
+        proposer_client,
+        eth_client,
         deposit_recipient_address,
     )
     .await?;
