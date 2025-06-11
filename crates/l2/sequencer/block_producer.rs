@@ -18,7 +18,7 @@ use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, Gen
 use spawned_rt::mpsc::Sender;
 use tracing::{debug, error, info};
 
-use crate::{sequencer::execution_cache::ExecutionCache, BlockProducerConfig, SequencerConfig};
+use crate::{sequencer::execution_cache::{self, ExecutionCache}, BlockProducerConfig, SequencerConfig};
 
 use super::errors::{BlockProducerError, SequencerError};
 
@@ -30,6 +30,7 @@ use ethrex_metrics::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRI
 pub struct BlockProducerState {
     store: Store,
     blockchain: Arc<Blockchain>,
+    execution_cache: Arc<ExecutionCache>,
     block_time_ms: u64,
     coinbase_address: Address,
     elasticity_multiplier: u64,
@@ -40,6 +41,7 @@ impl BlockProducerState {
         config: &BlockProducerConfig,
         store: Store,
         blockchain: Arc<Blockchain>,
+        execution_cache: Arc<ExecutionCache>
     ) -> Self {
         let BlockProducerConfig {
             block_time_ms,
@@ -49,6 +51,7 @@ impl BlockProducerState {
         Self {
             store,
             blockchain,
+            execution_cache,
             block_time_ms: *block_time_ms,
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
@@ -76,7 +79,7 @@ impl BlockProducer {
         cfg: SequencerConfig,
     ) -> Result<(), BlockProducerError> {
         let state =
-            BlockProducerState::new(&cfg.block_producer, store, blockchain);
+            BlockProducerState::new(&cfg.block_producer, store, blockchain, execution_cache);
         let mut block_producer = BlockProducer::start(state);
         block_producer
             .cast(InMessage::Produce)
