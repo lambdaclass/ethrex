@@ -848,7 +848,7 @@ impl StoreEngine for RedBStore {
         hashed_address: ethrex_common::H256,
         storage_root: ethrex_common::H256,
     ) -> Result<ethrex_trie::Trie, StoreError> {
-        let db = Box::new(RedBMultiTableTrieDB::new(self.db.clone(), hashed_address.0));
+        let db = Arc::new(RedBMultiTableTrieDB::new(self.db.clone(), hashed_address.0));
         Ok(Trie::open(db, storage_root))
     }
 
@@ -856,7 +856,7 @@ impl StoreEngine for RedBStore {
         &self,
         state_root: ethrex_common::H256,
     ) -> Result<ethrex_trie::Trie, StoreError> {
-        let db = Box::new(RedBTrie::new(self.db.clone()));
+        let db = Arc::new(RedBTrie::new(self.db.clone()));
         Ok(Trie::open(db, state_root))
     }
 

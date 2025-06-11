@@ -25,7 +25,7 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db).map_err(EvmError::from)?;
+            Self::execute_tx(tx, sender, &block.header, db)?;
         }
 
         // Process withdrawals only if the whole block has been executed.

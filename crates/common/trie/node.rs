@@ -132,6 +132,7 @@ impl From<NodeHash> for ValueOrHash {
 }
 
 /// A Node in an Ethereum Compatible Patricia Merkle Trie
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     Branch(BranchNode),

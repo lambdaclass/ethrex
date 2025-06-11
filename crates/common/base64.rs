@@ -4,7 +4,6 @@
 ///
 /// Encoding is implementing with padding at the end (add 1 or 2 '=' if necessary to make the data a multiple of 4)
 /// Decoding does not require the data to be padded, that is it makes no difference if padding is present or not
-
 fn byte_to_alphabet(byte: u8) -> char {
     match byte {
         0..=25 => (b'A' + byte) as char,         // A-Z

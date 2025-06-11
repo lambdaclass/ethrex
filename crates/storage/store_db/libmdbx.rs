@@ -20,28 +20,20 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, NodeHash, Trie};
 use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
+use libmdbx::TransactionKind;
 use libmdbx::{
     dupsort,
     orm::{table, Database},
-    table_info,
 };
-use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
-use std::path::Path;
 use std::sync::Arc;
 
 pub struct Store {
     db: Arc<Database>,
 }
 impl Store {
-    pub fn new(path: &str) -> Result<Self, StoreError> {
-        Ok(Self {
-            db: Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?),
-        })
-    }
-
     // Helper method to write into a libmdbx table
     async fn write<T: Table>(&self, key: T::Key, value: T::Value) -> Result<(), StoreError> {
         let db = self.db.clone();
@@ -1306,51 +1298,7 @@ impl Encodable for SnapStateIndex {
     }
 }
 
-/// default page size recommended by libmdbx
-///
-/// - See here: https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
-/// - and here: https://libmdbx.dqdkfa.ru/structmdbx_1_1env_1_1geometry.html#a45048bf2de9120d01dae2151c060d459
-const DB_PAGE_SIZE: usize = 4096;
-/// For a default page size of 4096, the max value size is roughly 1/2 page size.
 const DB_MAX_VALUE_SIZE: usize = 2022;
-// Maximum DB size, set to 2 TB
-const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 2; // 2 TB
-
-/// Initializes a new database with the provided path. If the path is `None`, the database
-/// will be temporary.
-pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
-    let tables = [
-        table_info!(BlockNumbers),
-        table_info!(Headers),
-        table_info!(Bodies),
-        table_info!(AccountCodes),
-        table_info!(Receipts),
-        table_info!(TransactionLocations),
-        table_info!(ChainData),
-        table_info!(StateTrieNodes),
-        table_info!(StorageTriesNodes),
-        table_info!(CanonicalBlockHashes),
-        table_info!(Payloads),
-        table_info!(PendingBlocks),
-        table_info!(SnapState),
-        table_info!(StateSnapShot),
-        table_info!(StorageSnapShot),
-        table_info!(StorageHealPaths),
-        table_info!(InvalidAncestors),
-    ]
-    .into_iter()
-    .collect();
-    let path = path.map(|p| p.as_ref().to_path_buf());
-    let options = DatabaseOptions {
-        page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
-        mode: Mode::ReadWrite(ReadWriteOptions {
-            max_size: Some(MAX_MAP_SIZE),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    Database::create_with_options(path, options, &tables)
-}
 
 #[cfg(test)]
 mod tests {
@@ -1361,6 +1309,17 @@ mod tests {
         types::{BlockHash, Index, Log, TxType},
         Address, H256,
     };
+    use libmdbx::{table_info, DatabaseOptions, Mode, PageSize, ReadWriteOptions};
+
+    /// default page size recommended by libmdbx
+    ///
+    /// - See here: https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
+    /// - and here: https://libmdbx.dqdkfa.ru/structmdbx_1_1env_1_1geometry.html#a45048bf2de9120d01dae2151c060d459
+    ///
+    /// For a default page size of 4096, the max value size is roughly 1/2 page size.
+    const DB_PAGE_SIZE: usize = 4096;
+    // Maximum DB size, set to 2 TB
+    const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 2; // 2 TB
 
     #[test]
     fn mdbx_smoke_test() {
@@ -1685,16 +1644,16 @@ mod tests {
         topics_size: usize,
     ) -> Receipt {
         let large_data: Bytes = Bytes::from(vec![1u8; data_size_in_bytes]);
-        let large_topics: Vec<H256> = std::iter::repeat(H256::random())
-            .take(topics_size)
-            .collect();
+        let large_topics: Vec<H256> = std::iter::repeat_n(H256::random(), topics_size).collect();
 
-        let logs = std::iter::repeat(Log {
-            address: Address::random(),
-            topics: large_topics.clone(),
-            data: large_data.clone(),
-        })
-        .take(logs_size)
+        let logs = std::iter::repeat_n(
+            Log {
+                address: Address::random(),
+                topics: large_topics.clone(),
+                data: large_data.clone(),
+            },
+            logs_size,
+        )
         .collect();
 
         Receipt {

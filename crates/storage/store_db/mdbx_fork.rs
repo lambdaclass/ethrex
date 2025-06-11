@@ -36,7 +36,6 @@ use reth_db::{
 use reth_db_api::cursor::DbCursorRO;
 use reth_db_api::cursor::DbCursorRW;
 use reth_db_api::cursor::DbDupCursorRO;
-use reth_db_api::cursor::DbDupCursorRW;
 
 static DB_DUPSORT_MAX_SIZE: OnceLock<usize> = OnceLock::new();
 
@@ -313,26 +312,26 @@ impl MDBXFork {
     }
 
     // Helper method to read from a libmdbx table
-    async fn read_bulk<T: RethTable>(
-        &self,
-        keys: Vec<T::Key>,
-    ) -> Result<Vec<T::Value>, StoreError> {
-        let db = self.env.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut res = Vec::new();
-            let tx = db.tx()?;
-            for key in keys {
-                let val = tx.get::<T>(key)?;
-                match val {
-                    Some(val) => res.push(val),
-                    None => Err(StoreError::ReadError)?,
-                }
-            }
-            Ok(res)
-        })
-        .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
-    }
+    // async fn read_bulk<T: RethTable>(
+    //     &self,
+    //     keys: Vec<T::Key>,
+    // ) -> Result<Vec<T::Value>, StoreError> {
+    //     let db = self.env.clone();
+    //     tokio::task::spawn_blocking(move || {
+    //         let mut res = Vec::new();
+    //         let tx = db.tx()?;
+    //         for key in keys {
+    //             let val = tx.get::<T>(key)?;
+    //             match val {
+    //                 Some(val) => res.push(val),
+    //                 None => Err(StoreError::ReadError)?,
+    //             }
+    //         }
+    //         Ok(res)
+    //     })
+    //     .await
+    //     .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    // }
 
     // Helper method to read from a libmdbx table
     fn read_sync<T: RethTable>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
@@ -1264,7 +1263,7 @@ impl StoreEngine for MDBXFork {
 
     async fn read_storage_snapshot(
         &self,
-        account_hash: H256,
+        _account_hash: H256,
         start: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError> {
         let key = start.encode_to_vec();

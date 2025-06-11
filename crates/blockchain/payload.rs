@@ -313,10 +313,7 @@ impl Blockchain {
             .withdrawals
             .as_ref()
             .unwrap_or(&binding);
-        context
-            .vm
-            .process_withdrawals(withdrawals)
-            .map_err(EvmError::from)
+        context.vm.process_withdrawals(withdrawals)
     }
 
     // This function applies system level operations:

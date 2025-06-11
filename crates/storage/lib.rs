@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 mod api;
 
 #[cfg(any(feature = "libmdbx", feature = "redb"))]

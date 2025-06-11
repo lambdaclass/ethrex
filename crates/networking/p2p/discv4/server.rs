@@ -610,7 +610,7 @@ impl Discv4Server {
     /// - If the node is **not found** in the table and there is enough space, it will be added,
     ///   and a ping message will be sent to verify connectivity.
     /// - If the node is **already present**, no action is taken.
-    async fn try_add_peer_and_ping<'a>(&self, node: Node) -> Result<(), DiscoveryError> {
+    async fn try_add_peer_and_ping(&self, node: Node) -> Result<(), DiscoveryError> {
         // sanity check to make sure we are not storing ourselves
         // a case that may happen in a neighbor message for example
         if node.node_id() == self.ctx.local_node.node_id() {
@@ -629,7 +629,7 @@ impl Discv4Server {
         Ok(())
     }
 
-    async fn ping<'a>(&self, node: &Node) -> Result<(), DiscoveryError> {
+    async fn ping(&self, node: &Node) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
         let expiration: u64 = get_msg_expiration_from_seconds(20);
         let from = Endpoint {

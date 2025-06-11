@@ -1217,8 +1217,7 @@ impl EthClient {
             return Ok(gas_fee);
         }
         self.get_gas_price()
-            .await
-            .map_err(EthClientError::from)?
+            .await?
             .try_into()
             .map_err(|_| EthClientError::Custom("Failed to get gas for fee".to_owned()))
     }

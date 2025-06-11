@@ -51,8 +51,7 @@ impl LEVM {
         let mut cumulative_gas_used = 0;
 
         for (tx, tx_sender) in block.body.get_transactions_with_sender() {
-            let report =
-                Self::execute_tx(tx, tx_sender, &block.header, db).map_err(EvmError::from)?;
+            let report = Self::execute_tx(tx, tx_sender, &block.header, db)?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -111,7 +110,7 @@ impl LEVM {
             tx_blob_hashes: tx.blob_versioned_hashes(),
             tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
             tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
-            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
+            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas(),
             tx_nonce: tx.nonce(),
             block_gas_limit: block_header.gas_limit,
             difficulty: block_header.difficulty,

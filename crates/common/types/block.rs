@@ -708,11 +708,7 @@ pub fn calc_excess_blob_gas(
 ) -> u64 {
     let excess_blob_gas = parent_excess_blob_gas + parent_blob_gas_used;
     let target_blob_gas_per_block = target * GAS_PER_BLOB;
-    if excess_blob_gas < target_blob_gas_per_block {
-        0
-    } else {
-        excess_blob_gas - target_blob_gas_per_block
-    }
+    excess_blob_gas.saturating_sub(target_blob_gas_per_block)
 }
 
 #[cfg(test)]
