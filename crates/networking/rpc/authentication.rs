@@ -15,7 +15,6 @@ pub enum AuthenticationError {
     InvalidIssuedAtClaim,
     TokenDecodingError,
     MissingAuthentication,
-    TokenEncodingError,
 }
 
 pub fn authenticate(
@@ -43,7 +42,7 @@ struct Claims {
 
 /// Generate a jwt token based on the secret key
 /// This should be used to perform authenticated requests to a node with known jwt secret
-pub fn generate_jwt_token<'a>(secret: &Bytes) -> Result<String, AuthenticationError> {
+pub fn generate_jwt_token<'a>(secret: &Bytes) -> Result<String, jsonwebtoken::errors::Error> {
     let claims = Claims {
         iat: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -54,7 +53,7 @@ pub fn generate_jwt_token<'a>(secret: &Bytes) -> Result<String, AuthenticationEr
     };
     let header = Header::new(Algorithm::HS256);
     let key = EncodingKey::from_secret(secret);
-    encode(&header, &claims, &key).map_err(|_| AuthenticationError::TokenEncodingError)
+    encode(&header, &claims, &key)
 }
 
 /// Authenticates bearer jwt to check that authrpc calls are sent by the consensus layer

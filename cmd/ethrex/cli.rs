@@ -18,7 +18,7 @@ use crate::{
     archive_sync::archive_sync,
     initializers::{init_blockchain, init_store, open_store},
     networks::{Network, PublicNetwork},
-    utils::{self, get_client_version, set_datadir},
+    utils::{self, get_client_version, read_jwtsecret_file, set_datadir},
     DEFAULT_DATADIR,
 };
 
@@ -292,6 +292,12 @@ pub enum Subcommand {
         )]
         archive_node_url: String,
         #[arg(
+            default_value = "jwt.hex",
+            value_name = "JWTSECRET_PATH",
+            help = "Path to the jwt secret path of the archive node."
+        )]
+        archive_node_jwt: String,
+        #[arg(
             required = true,
             value_name = "NUMBER",
             help = "Block number to sync to"
@@ -337,7 +343,11 @@ impl Subcommand {
             Self::ArchiveSync {
                 archive_node_url,
                 block_number,
-            } => archive_sync(&archive_node_url, block_number).await?,
+                archive_node_jwt,
+            } => {
+                let jwt_secret = read_jwtsecret_file(&archive_node_jwt);
+                archive_sync(&archive_node_url, &jwt_secret, block_number).await?
+            }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
         }
