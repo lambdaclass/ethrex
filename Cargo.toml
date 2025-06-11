@@ -92,3 +92,4 @@ clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
 rustc-hex = "2.1.0"
+url = "2.5.4"

@@ -3104,6 +3104,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
+ "url",
  "vergen 9.0.6",
 ]
 
@@ -3151,6 +3152,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tinyvec",
  "tracing",
+ "url",
  "web3signer",
 ]
 
