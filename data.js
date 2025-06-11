@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749594182995,
+  "lastUpdate": 1749654817879,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12055,6 +12055,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180650064070,
             "range": "± 395624990",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8b4f00ae8c9e084b9d38abecb967994e4d85520b",
+          "message": "ci(core): fix Makefile space (#3116)\n\n**Motivation**\n\nCurrently prove-sp1-gpu-ci does nothing: `make: Nothing to be done for\n`prove-sp1-gpu-ci'`\n\n**Description**\n\nThe Makefile had incorrect spacing, so it didn't recognize the contents\nof the target.",
+          "timestamp": "2025-06-11T14:23:11Z",
+          "tree_id": "628cee917bf9515ee264909e7af83bddf5cc12bb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8b4f00ae8c9e084b9d38abecb967994e4d85520b"
+        },
+        "date": 1749654812462,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178147820413,
+            "range": "± 1081619056",
             "unit": "ns/iter"
           }
         ]
