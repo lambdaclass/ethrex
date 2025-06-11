@@ -146,7 +146,7 @@ impl EFTestPost {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 pub enum TransactionExpectedException {
     InitcodeSizeExceeded,
     NonceIsMax,

@@ -183,7 +183,7 @@ pub struct BlockWithRLP {
         default,
         deserialize_with = "deserialize_block_expected_exception"
     )]
-    pub expect_exception: Option<Vec<BlockExpectedException>>,
+    pub expect_exception: Option<Vec<BlockChainExpectedException>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
@@ -486,29 +486,22 @@ impl From<Account> for GenesisAccount {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 pub enum BlockChainExpectedException {
     TxtException(TransactionExpectedExeption),
     BlockException(BlockExpectedException),
+    Other,
 }
+
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 pub enum BlockExpectedException {
-    InitcodeSizeExceeded,
-    NonceIsMax,
-    Type3TxBlobCountExceeded,
-    Type3TxZeroBlobs,
-    Type3TxContractCreation,
-    Type3TxInvalidBlobVersionedHash,
-    Type4TxContractCreation,
-    IntrinsicGasTooLow,
-    InsufficientAccountFunds,
-    SenderNotEoa,
-    PriorityGreaterThanMaxFeePerGas,
-    GasAllowanceExceeded,
-    InsufficientMaxFeePerGas,
-    RlpInvalidValue,
-    GasLimitPriceProductOverflow,
-    Type3TxPreFork,
-    InsufficientMaxFeePerBlobGas,
+    RLPStructuresEncoding,
+    IncorrectBlobGasUsed,
+    BlobGasUsedAboveLimit,
+    IncorrectExcessBlobGas,
+    IncorrectBlockFormat,
+    InvalidRequest,
+    SystemContractEmpty,
+    SystemContractCallFailed,
     Other, //TODO: Implement exceptions
 }

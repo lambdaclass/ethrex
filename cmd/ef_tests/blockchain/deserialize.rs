@@ -1,8 +1,7 @@
-use crate::types::BlockChainExpectedException;
-use ef_tests_state::{
-    deserialize::deserialize_transaction_expected_exception, types::TransactionExpectedException,
-};
+use crate::types::{BlockChainExpectedException, BlockExpectedException};
+use ef_tests_state::types::TransactionExpectedException;
 use serde::{Deserialize, Deserializer};
+
 pub fn deserialize_block_expected_exception<'de, D>(
     deserializer: D,
 ) -> Result<Option<Vec<BlockChainExpectedException>>, D::Error>
@@ -48,10 +47,14 @@ where
                         TransactionExpectedException::IntrinsicGasTooLow,
                     )
                 }
-                "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => BlockChainExpectedException(
-                    TransactionExpectedException::InsufficientAccountFunds,
+                "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
+                    BlockChainExpectedException::TxtException(
+                        TransactionExpectedException::InsufficientAccountFunds,
+                    )
+                }
+                "TransactionException.SENDER_NOT_EOA" => BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::SenderNotEoa,
                 ),
-                "TransactionException.SENDER_NOT_EOA" => BlockChainExpectedException::SenderNotEoa,
                 "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS" => {
                     BlockChainExpectedException::TxtException(
                         TransactionExpectedException::PriorityGreaterThanMaxFeePerGas,
@@ -92,33 +95,45 @@ where
                         TransactionExpectedException::InsufficientMaxFeePerBlobGas,
                     )
                 }
-
                 "BlockException.RLP_STRUCTURES_ENCODING" => {
-                    BlockChainExpectedException::BlockException(())
+                    BlockChainExpectedException::BlockException(
+                        BlockExpectedException::RLPStructuresEncoding,
+                    )
                 }
                 "BlockException.INCORRECT_BLOB_GAS_USED" => {
-                    BlockChainExpectedException::BlockException(())
+                    BlockChainExpectedException::BlockException(
+                        BlockExpectedException::IncorrectBlobGasUsed,
+                    )
                 }
                 "BlockException.BLOB_GAS_USED_ABOVE_LIMIT" => {
-                    BlockChainExpectedException::BlockException(())
+                    BlockChainExpectedException::BlockException(
+                        BlockExpectedException::BlobGasUsedAboveLimit,
+                    )
                 }
                 "BlockException.INCORRECT_EXCESS_BLOB_GAS" => {
-                    BlockChainExpectedException::BlockException(())
+                    BlockChainExpectedException::BlockException(
+                        BlockExpectedException::IncorrectExcessBlobGas,
+                    )
                 }
                 "BlockException.INCORRECT_BLOCK_FORMAT" => {
-                    BlockChainExpectedException::BlockException(())
+                    BlockChainExpectedException::BlockException(
+                        BlockExpectedException::IncorrectBlockFormat,
+                    )
                 }
-                "BlockException.INVALID_REQUESTS" => {
-                    BlockChainExpectedException::BlockException(())
-                }
+                "BlockException.INVALID_REQUESTS" => BlockChainExpectedException::BlockException(
+                    BlockExpectedException::InvalidRequest,
+                ),
                 "BlockException.SYSTEM_CONTRACT_EMPTY" => {
-                    BlockChainExpectedException::BlockException(())
+                    BlockChainExpectedException::BlockException(
+                        BlockExpectedException::SystemContractEmpty,
+                    )
                 }
                 "BlockException.SYSTEM_CONTRACT_CALL_FAILED" => {
-                    BlockChainExpectedException::BlockException(())
+                    BlockChainExpectedException::BlockException(
+                        BlockExpectedException::SystemContractCallFailed,
+                    )
                 }
-
-                _other => BlockChainExpectedException::Other, //TODO: Support exceptions that enter here.
+                _ => BlockChainExpectedException::Other,
             })
             .collect();
 
