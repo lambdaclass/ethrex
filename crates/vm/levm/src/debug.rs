@@ -1,5 +1,9 @@
-use crate::{constants::DEBUG_MEMORY_OFFSET, errors::InternalError};
+use crate::errors::InternalError;
 use ethrex_common::U256;
+
+/// Special constant for debugging. 0xFEDEBEBECAFEDECEBADA
+/// It has to match with the constant set in the Solidity contract for this purpose.
+pub const MAGIC_PRINT_OFFSET: U256 = U256([0xBEBECAFEDECEBADA, 0xFEDE, 0, 0]);
 
 #[derive(Default)]
 pub struct DebugMode {
@@ -24,7 +28,7 @@ impl DebugMode {
             return Ok(false);
         }
 
-        if offset == DEBUG_MEMORY_OFFSET {
+        if offset == MAGIC_PRINT_OFFSET {
             if !self.print_mode {
                 self.print_mode = true;
             } else {
