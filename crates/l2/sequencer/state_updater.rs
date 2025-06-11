@@ -160,9 +160,6 @@ impl StateUpdater {
                 "No blocks found for the last committed batch {last_l2_committed_batch}"
             )));
         };
-        self.store
-            .update_latest_block_number(*last_l2_committed_batch_block_number)
-            .await?;
 
         debug!("Last committed batch block number: {last_l2_committed_batch_block_number}");
 
@@ -198,7 +195,12 @@ impl StateUpdater {
         )
         .await
         {
-            Ok(_) | Err(InvalidForkChoice::NewHeadAlreadyCanonical) => Ok(()),
+            Ok(_) | Err(InvalidForkChoice::NewHeadAlreadyCanonical) => {
+                self.store
+                    .update_latest_block_number(*last_l2_committed_batch_block_number)
+                    .await?;
+                Ok(())
+            }
             Err(err) => Err(err.into()),
         }
     }
