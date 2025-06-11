@@ -3,9 +3,6 @@ use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_latest_sent_batch;
 use crate::utils::prover::db::to_prover_db;
 use crate::utils::prover::proving_systems::{BatchProof, ProverType};
-use crate::utils::prover::save_state::{
-    batch_number_has_state_file, write_state, StateFileType, StateType,
-};
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
@@ -460,14 +457,15 @@ async fn handle_submit(
     info!("ProofSubmit received for batch number: {batch_number}");
 
     // Check if we have the proof for that ProverType
-    if batch_number_has_state_file(
-        StateFileType::BatchProof(batch_proof.prover_type()),
-        batch_number,
-    )? {
-        debug!("Already known proof. Skipping");
-    } else {
-        write_state(batch_number, &StateType::BatchProof(batch_proof))?;
-    }
+    todo!();
+    // if batch_number_has_state_file(
+    //     StateFileType::BatchProof(batch_proof.prover_type()),
+    //     batch_number,
+    // )? {
+    //     debug!("Already known proof. Skipping");
+    // } else {
+    //     write_state(batch_number, &StateType::BatchProof(batch_proof))?;
+    // }
 
     let response = ProofData::proof_submit_ack(batch_number);
 

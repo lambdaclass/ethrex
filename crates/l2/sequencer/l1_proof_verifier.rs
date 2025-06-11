@@ -10,10 +10,7 @@ use tracing::{error, info};
 
 use crate::{
     sequencer::errors::ProofVerifierError,
-    utils::prover::{
-        proving_systems::ProverType,
-        save_state::{batch_number_has_all_needed_proofs, read_proof, StateFileType},
-    },
+    utils::prover::proving_systems::{BatchProof, ProverType},
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 
@@ -86,12 +83,13 @@ impl L1ProofVerifier {
             .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
 
-        if !batch_number_has_all_needed_proofs(batch_to_verify, &[ProverType::Aligned])
-            .is_ok_and(|has_all_proofs| has_all_proofs)
-        {
-            info!("Missing proofs for batch {batch_to_verify}, skipping verification");
-            return Ok(());
-        }
+        todo!();
+        // if !batch_number_has_all_needed_proofs(batch_to_verify, &[ProverType::Aligned])
+        //     .is_ok_and(|has_all_proofs| has_all_proofs)
+        // {
+        //     info!("Missing proofs for batch {batch_to_verify}, skipping verification");
+        //     return Ok(());
+        // }
 
         match self.verify_proof_aggregation(batch_to_verify).await? {
             Some(verify_tx_hash) => {
@@ -111,7 +109,8 @@ impl L1ProofVerifier {
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, ProofVerifierError> {
-        let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
+        // let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
+        let proof: BatchProof = todo!();
         let public_inputs = proof.public_values();
         // TODO: use a hardcoded vk
         let vk = proof.vk();

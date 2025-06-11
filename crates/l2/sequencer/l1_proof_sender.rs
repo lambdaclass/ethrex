@@ -7,7 +7,6 @@ use crate::{
     sequencer::errors::ProofSenderError,
     utils::prover::{
         proving_systems::ProverType,
-        save_state::{batch_number_has_all_needed_proofs, read_proof, StateFileType},
     },
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
@@ -189,16 +188,17 @@ async fn verify_and_send_proof(state: &L1ProofSenderState) -> Result<(), ProofSe
         return Ok(());
     }
 
-    if batch_number_has_all_needed_proofs(batch_to_send, &state.needed_proof_types)
-        .inspect_err(|_| info!("Missing proofs for batch {batch_to_send}, skipping sending"))
-        .unwrap_or_default()
-    {
-        send_proof(state, batch_to_send).await?;
-        state
-            .rollup_storage
-            .set_lastest_sent_batch_proof(batch_to_send)
-            .await?;
-    }
+    todo!();
+    // if batch_number_has_all_needed_proofs(batch_to_send, &state.needed_proof_types)
+    //     .inspect_err(|_| info!("Missing proofs for batch {batch_to_send}, skipping sending"))
+    //     .unwrap_or_default()
+    // {
+    //     send_proof(state, batch_to_send).await?;
+    //     state
+    //         .rollup_storage
+    //         .set_lastest_sent_batch_proof(batch_to_send)
+    //         .await?;
+    // }
 
     Ok(())
 }
@@ -217,13 +217,14 @@ async fn send_proof_to_aligned(
     state: &L1ProofSenderState,
     batch_number: u64,
 ) -> Result<(), ProofSenderError> {
-    let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
+    // let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
+    let proof: Vec<u8> = todo!();
     let elf = std::fs::read(state.aligned_sp1_elf_path.clone())
         .map_err(|e| ProofSenderError::InternalError(format!("Failed to read ELF file: {e}")))?;
 
     let verification_data = VerificationData {
         proving_system: ProvingSystemId::SP1,
-        proof: proof.proof(),
+        proof,
         proof_generator_addr: state.l1_address.0.into(),
         vm_program_code: Some(elf),
         verification_key: None,
@@ -282,13 +283,14 @@ pub async fn send_proof_to_contract(
     // the structure has to match the one defined in the OnChainProposer.sol contract.
     // It may cause some issues, but the ethrex_prover_lib cannot be imported,
     // this approach is straight-forward for now.
-    let mut proofs = HashMap::with_capacity(state.needed_proof_types.len());
+    let mut proofs: HashMap<ProverType, Vec<Value>> = HashMap::with_capacity(state.needed_proof_types.len());
     for prover_type in state.needed_proof_types.iter() {
-        let proof = read_proof(batch_number, StateFileType::BatchProof(*prover_type))?;
-        if proof.prover_type() != *prover_type {
-            return Err(ProofSenderError::ProofNotPresent(*prover_type));
-        }
-        proofs.insert(prover_type, proof.calldata());
+        // let proof = read_proof(batch_number, StateFileType::BatchProof(*prover_type))?;
+        let proof = todo!();
+        // if proof.prover_type() != *prover_type {
+        //     return Err(ProofSenderError::ProofNotPresent(*prover_type));
+        // }
+        // proofs.insert(prover_type, proof.calldata());
     }
 
     debug!("Sending proof for batch number: {batch_number}");

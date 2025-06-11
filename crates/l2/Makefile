@@ -1,6 +1,6 @@
 .PHONY: help init down clean restart cli init-local-l1 init-l1 down-local-l1 \
 		restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 \
-		init-l2-no-metrics down-l2 restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test \
+		init-l2-no-metrics down-l2 restart-l2 init-prover rm-db-l2 ci_test test \
 		init-testnet deploy-l1-testnet restart-testnet
 
 .DEFAULT_GOAL := help
@@ -22,7 +22,7 @@ down: down-local-l1 down-l2 down-metrics## 🛑 Shuts down the localnet
 clean: clean-contract-deps ## 🧹 Cleans the localnet
 	rm -rf out/
 
-restart: restart-local-l1 deploy-l1 purge_prover_state restart-l2 ## 🔄 Restarts the localnet
+restart: restart-local-l1 deploy-l1 restart-l2 ## 🔄 Restarts the localnet
 
 ## Same as restart but for testnet deployment. The local database is cleaned and the contracts are deployed again.
 restart-testnet:
@@ -243,20 +243,3 @@ state-diff-test:
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
 
 	cargo test state_reconstruct --release
-
-# Purge L2's state
-UNAME_S:=$(shell uname -s)
-# This directory is set by crates/l2/utils/prover/save_state.rs -> const DEFAULT_DATADIR
-PROJECT_NAME:=ethrex_l2_state
-
-ifeq ($(UNAME_S),Linux)
-    PROJECT_PATH := $(HOME)/.local/share/${PROJECT_NAME}
-else ifeq ($(UNAME_S),Darwin)
-    PROJECT_PATH := $(HOME)/Library/Application\ Support/${PROJECT_NAME}
-else
-    $(error Unsupported platform: $(UNAME_S))
-endif
-
-purge_prover_state: ## 🧹 Removes the L2 state, only use to start fresh.
-	rm -rf $(PROJECT_PATH); \
-	echo "Directory deleted."
