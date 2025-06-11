@@ -1,5 +1,6 @@
 use aligned_sdk::common::types::Network;
 use ethrex_common::{Address, H160, H256};
+use ethrex_l2_common::prover::ProverType;
 use ethrex_rpc::{
     clients::{eth::WrappedTransaction, EthClientError, Overrides},
     EthClient,
@@ -17,8 +18,6 @@ const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0xAA,
 ]);
-
-use crate::utils::prover::proving_systems::ProverType;
 
 use super::errors::SequencerError;
 

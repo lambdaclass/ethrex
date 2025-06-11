@@ -5,9 +5,6 @@ use super::{
 };
 use crate::{
     sequencer::errors::ProofSenderError,
-    utils::prover::{
-        proving_systems::ProverType,
-    },
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use aligned_sdk::{
@@ -15,6 +12,7 @@ use aligned_sdk::{
     verification_layer::{estimate_fee, get_nonce_from_batcher, submit},
 };
 use ethrex_common::{Address, U256};
+use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;

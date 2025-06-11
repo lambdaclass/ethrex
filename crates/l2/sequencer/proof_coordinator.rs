@@ -2,13 +2,13 @@ use crate::sequencer::errors::ProverServerError;
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_latest_sent_batch;
 use crate::utils::prover::db::to_prover_db;
-use crate::utils::prover::proving_systems::{BatchProof, ProverType};
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use bytes::Bytes;
 use ethrex_common::types::{BlobsBundle, Block};
 use ethrex_common::Address;
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
