@@ -157,18 +157,17 @@ jobs:
             #|BlobViolations
             #|AccountRange
             #|GetTrieNodes
-            # Findnode/UnsolicitedNeighbors flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
+            #|Findnode/UnsolicitedNeighbors flaky in CI very occasionally. When fixed replace all "Findnode/<test>" with "Findnode"
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
             test_pattern: engine-(auth|exchange-capabilities)/
           - name: "Cancun Engine tests"
             simulation: ethereum/engine
             test_pattern: "engine-cancun/Blob Transactions On Block 1|Blob Transaction Ordering|Parallel Blob Transactions|ForkchoiceUpdatedV3|ForkchoiceUpdatedV2|ForkchoiceUpdated Version|GetPayload|NewPayloadV3 After Cancun|NewPayloadV3 Before Cancun|NewPayloadV3 Versioned Hashes|Incorrect BlobGasUsed|ParentHash equals BlockHash|RPC:|in ForkchoiceState|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique|Re-Execute Payload|Multiple New Payloads|NewPayload with|Build Payload with|Re-org to Previously|Safe Re-Org to Side Chain|Transaction Re-Org|Re-Org Back into Canonical Chain|Suggested Fee Recipient Test|PrevRandao Opcode|Fork ID: *|Request Blob Pooled Transactions|Invalid NewPayload, Incomplete Transactions|Re-Org Back to Canonical Chain*|Invalid PayloadAttributes*|Invalid NewPayload, VersionedHashes|Invalid NewPayload, Incomplete VersionedHashes|Invalid NewPayload, Extra VersionedHashes|Bad Hash on NewPayload|Unknown HeadBlockHash|In-Order Consecutive Payload Execution|Valid NewPayload->ForkchoiceUpdated|Invalid NewPayload, ParentHash|Syncing=False|Payload Build after New Invalid Payload|Invalid NewPayload|Invalid Missing Ancestor ReOrg" 
-            # Invalid Missing Ancestor Syncing ReOrG is flaky
+            #|Invalid Missing Ancestor Syncing ReOrG is flaky
           - name: "Paris Engine tests"
             simulation: ethereum/engine
-            test_pattern: "engine-api/RPC|Bad Hash on NewPayload|Build Payload|Fork ID|In-Order Consecutive Payload Execution|Inconsistent|Invalid Missing Ancestor ReOrg|Invalid NewPayload|Invalid PayloadAttributes|Multiple New Payloads|NewPayload with|ParentHash equals BlockHash on NewPayload|Payload Build|PrevRandao Opcode Transactions|Re-Execute Payload|Re-Org Back|Re-org to Previously Validated Sidechain Payload|RPC:|Safe Re-Org|Suggested Fee|Transaction Re-Org|Unique Payload ID|Unknown|Valid NewPayload->ForkchoiceUpdated" 
-            # |Invalid P9 -> flaky
+            test_pattern: "engine-api/RPC|Bad Hash on NewPayload|Build Payload|Fork ID|In-Order Consecutive Payload Execution|Inconsistent|Invalid Missing Ancestor ReOrg|Invalid NewPayload|Invalid PayloadAttributes|Multiple New Payloads|NewPayload with|ParentHash equals BlockHash on NewPayload|Payload Build|PrevRandao Opcode Transactions|Re-Execute Payload|Re-Org Back|Re-org to Previously Validated Sidechain Payload|RPC:|Safe Re-Org|Suggested Fee|Transaction Re-Org|Unique Payload ID|Unknown|Valid NewPayload->ForkchoiceUpdated|Invalid P9"
             ethrex_flags: ""
           - name: "Engine withdrawal tests"
             simulation: ethereum/engine
@@ -196,7 +195,9 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 
+        run: |
+          chmod +x hive
+          ./hive --client ethrex --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
