@@ -217,17 +217,6 @@ impl RpcDB {
         self.fetch_accounts(accounts, false).await
     }
 
-    async fn fetch_account(
-        &self,
-        address: Address,
-        storage_keys: &[H256],
-        from_child: bool,
-    ) -> eyre::Result<Account> {
-        self.fetch_accounts(&[(address, storage_keys.to_vec())], from_child)
-            .await
-            .map(|mut hashmap| hashmap.remove(&address).expect("account not present"))
-    }
-
     fn fetch_accounts_blocking(
         &self,
         index: &[(Address, Vec<H256>)],
@@ -235,18 +224,6 @@ impl RpcDB {
     ) -> eyre::Result<HashMap<Address, Account>> {
         let handle = tokio::runtime::Handle::current();
         tokio::task::block_in_place(|| handle.block_on(self.fetch_accounts(index, from_child)))
-    }
-
-    fn fetch_account_blocking(
-        &self,
-        address: Address,
-        storage_keys: &[H256],
-        from_child: bool,
-    ) -> eyre::Result<Account> {
-        let handle = tokio::runtime::Handle::current();
-        tokio::task::block_in_place(|| {
-            handle.block_on(self.fetch_account(address, storage_keys, from_child))
-        })
     }
 
     pub fn to_exec_db(&self, block: &Block) -> Result<ethrex_vm::ProverDB, ProverDBError> {
