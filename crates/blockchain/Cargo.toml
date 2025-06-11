@@ -25,7 +25,7 @@ ethrex-metrics = { path = "./metrics", default-features = false }
 [dev-dependencies]
 serde_json.workspace = true
 hex = "0.4.3"
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 
 [lib]
 path = "./blockchain.rs"
@@ -35,3 +35,6 @@ default = []
 l2 = []
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
+
+[lints.clippy]
+unwrap_used = "deny"

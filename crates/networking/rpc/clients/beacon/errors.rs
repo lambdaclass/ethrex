@@ -6,6 +6,8 @@ pub enum BeaconClientError {
     RpcError(u64, String),
     #[error("Response deserialization error: {0}")]
     DeserializeError(#[from] serde_json::Error),
+    #[error("Failed to set url endpoint: {0}")]
+    FailedToSetURLEndpointError(String),
     #[error("Error: {0}")]
     Custom(String),
 }

@@ -2,8 +2,8 @@ name: Daily Reports
 
 on:
   schedule:
-    # Every day at UTC midnight
-    - cron: "0 0 * * 1,2,3,4,5"
+    # Every day at UTC 03:00
+    - cron: "0 3 * * 1,2,3,4,5"
   workflow_dispatch:
 
 jobs:
@@ -11,7 +11,6 @@ jobs:
     name: Run Hive tests
     uses: ./.github/workflows/common_hive_reports.yaml
     with:
-      evm: levm
       job_type: daily
 
   post-daily-report:

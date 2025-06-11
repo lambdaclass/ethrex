@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use crate::{utils::prover::proving_systems::ProverType, SequencerConfig};
+use crate::utils::prover::proving_systems::ProverType;
+use crate::SequencerConfig;
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -22,7 +23,6 @@ mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
-pub mod state_diff;
 
 pub mod execution_cache;
 
