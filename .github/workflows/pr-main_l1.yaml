@@ -158,6 +158,8 @@ jobs:
             #|AccountRange #1997
             #|GetTrieNodes #1997
             #|Findnode/UnsolicitedNeighbors #2818
+            #|TestBlobTxWithMismatchedSidecar #3122
+            #|TestBlobTxWithoutSidecar #3123
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
             test_pattern: engine-(auth|exchange-capabilities)/
