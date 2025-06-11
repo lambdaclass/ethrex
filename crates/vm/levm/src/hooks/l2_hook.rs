@@ -1,5 +1,5 @@
 use crate::{
-    errors::{ExecutionReport, InternalError, TxValidationError, VMError},
+    errors::{InternalError, TxValidationError, VMError},
     hooks::{default_hook, hook::Hook},
     vm::VM,
 };
@@ -128,13 +128,10 @@ impl Hook for L2Hook {
 
         // 2. Return unused gas + gas refunds to the sender.
 
-        if vm.env.is_privileged {
-            let gas_to_pay_coinbase = compute_coinbase_fee(vm, report)?;
-            default_hook::pay_coinbase(vm, gas_to_pay_coinbase)?;
-        } else {
-            let gas_refunded = default_hook::compute_gas_refunded(report)?;
-            let actual_gas_used =
-                default_hook::compute_actual_gas_used(vm, gas_refunded, report.gas_used)?;
+        let gas_refunded = default_hook::compute_gas_refunded(report)?;
+        let actual_gas_used =
+            default_hook::compute_actual_gas_used(vm, gas_refunded, report.gas_used)?;
+        if !vm.env.is_privileged {
             default_hook::refund_sender(vm, report, gas_refunded, actual_gas_used)?;
             default_hook::pay_coinbase(vm, actual_gas_used)?;
         }
@@ -153,24 +150,4 @@ pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
         )?;
     }
     Ok(())
-}
-
-pub fn compute_coinbase_fee(vm: &mut VM<'_>, report: &mut ExecutionReport) -> Result<u64, VMError> {
-    let mut gas_refunded = default_hook::compute_gas_refunded(report)?;
-    let mut gas_consumed = report.gas_used;
-
-    report.gas_refunded = gas_refunded;
-
-    if vm.env.config.fork >= Fork::Prague {
-        let floor_gas_price = vm.get_min_gas_used()?;
-        let execution_gas_used = gas_consumed.saturating_sub(gas_refunded);
-        if floor_gas_price > execution_gas_used {
-            gas_consumed = floor_gas_price;
-            gas_refunded = 0;
-        }
-    }
-
-    gas_consumed
-        .checked_sub(gas_refunded)
-        .ok_or(VMError::Internal(InternalError::UndefinedState(2)))
 }
