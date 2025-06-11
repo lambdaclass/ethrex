@@ -30,9 +30,7 @@ use secp256k1::{
     Message,
 };
 use sha3::{Digest, Keccak256};
-use std::{
-    collections::{BTreeSet, HashMap, HashSet},
-};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use ExceptionalHalt::OutOfGas;
 pub type Storage = HashMap<U256, H256>;
 
