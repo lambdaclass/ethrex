@@ -245,6 +245,26 @@ impl ChainConfig {
         self.eip155_block.is_some_and(|num| num <= block_number)
     }
 
+    pub fn is_eip158_activated(&self, block_number: BlockNumber) -> bool {
+        self.eip158_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_eip150_activated(&self, block_number: BlockNumber) -> bool {
+        self.eip150_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_spurious_dragon_activated(&self,block_number: BlockNumber) -> bool {
+        self.is_eip155_activated(block_number) && self.is_eip158_activated(block_number)
+    }
+
+    pub fn is_dao_fork_activated(&self,block_number: BlockNumber) -> bool {
+        self.dao_fork_block.is_some_and(|num| num <= block_number)
+    }
+
+    pub fn is_homestead_activated(&self,block_number: BlockNumber) -> bool {
+        self.homestead_block.is_some_and(|num| num <= block_number)
+    }
+
     pub fn get_fork(&self, block_timestamp: u64,block_number: BlockNumber) -> Fork {
         if self.is_prague_activated(block_timestamp) {
             Fork::Prague
@@ -252,7 +272,7 @@ impl ChainConfig {
             Fork::Cancun
         } else if self.is_shanghai_activated(block_timestamp) {
             Fork::Shanghai
-        } else if self.terminal_total_difficulty_passed{ // If the terminal total difficulty flase then we are pre-merge
+        } else if self.terminal_total_difficulty_passed || self.terminal_total_difficulty >= Some(58750000000000000000000){ // If the TTDP flag is true or the TTD was passed then we are in Paris
             Fork::Paris
         } else if self.is_gray_glacier_activated(block_number){
             Fork::GrayGlacier
@@ -272,7 +292,15 @@ impl ChainConfig {
             Fork::Constantinople
         } else if self.is_byzantium_activated(block_number){
             Fork::Byzantium
-        } else { // Missing Supurious Dragon DaoFork HomeStead
+        } else if self.is_spurious_dragon_activated(block_number){
+            Fork::SpuriousDragon
+        } else if self.is_eip150_activated(block_number){
+            Fork::Tangerine
+        } else if self.is_byzantium_activated(block_number){
+            Fork::Byzantium
+        } else if self.is_dao_fork_activated(block_number){
+            Fork::DaoFork
+        } else {
             Fork::FrontierThawing
         }
     }

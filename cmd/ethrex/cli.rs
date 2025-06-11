@@ -355,16 +355,10 @@ pub async fn import_blocks(
     genesis: Genesis,
     evm: EvmEngine,
 ) -> Result<(), ChainError> {
-    // Check if the genesis.json file received is post merge or not
-    if !genesis.config.terminal_total_difficulty_passed{
-        let fork = genesis.config.fork(genesis.timestamp, genesis.get_block().header.number);
-        match fork { // If the fork is post-merge do nothing if it's pre merge return an error
-            Fork::Prague => {},
-            Fork::Cancun => {},
-            Fork::Shanghai => {},
-            Fork::Paris => {},
-            f => return Err(ChainError::Custom(format!("Fork {:?} is not supported. Only post-merge networks are supported",f)))
-        }
+    // If the genesis.json file is pre-Paris return a custom error
+    let fork = genesis.config.fork(genesis.timestamp, 0); // The genesis block number is always 0
+    if fork < Fork::Paris{
+        return Err(ChainError::Custom(format!("Fork {:?} is not supported. Only post-merge networks are supported",fork)))
     }
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
