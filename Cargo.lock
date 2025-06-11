@@ -3104,6 +3104,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
+ "url",
  "vergen 9.0.6",
 ]
 
@@ -3151,7 +3152,8 @@ dependencies = [
  "thiserror 2.0.12",
  "tinyvec",
  "tracing",
- "websigner",
+ "url",
+ "web3signer",
 ]
 
 [[package]]
@@ -10901,16 +10903,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "webpki-roots"
-version = "0.26.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2210b291f7ea53617fbafcc4939f10914214ec15aace5ba62293a668f322c5c9"
-dependencies = [
- "rustls-pki-types",
-]
-
-[[package]]
-name = "websigner"
+name = "web3signer"
 version = "0.1.0"
 dependencies = [
  "bytes",
@@ -10920,6 +10913,15 @@ dependencies = [
  "rustc-hex",
  "secp256k1",
  "thiserror 2.0.12",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2210b291f7ea53617fbafcc4939f10914214ec15aace5ba62293a668f322c5c9"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]

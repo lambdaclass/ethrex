@@ -2,8 +2,9 @@ use bytes::Bytes;
 use ethereum_types::{Address, Signature};
 use keccak_hash::keccak;
 use secp256k1::{Message, PublicKey, SecretKey, SECP256K1};
-#[cfg(feature = "websign")]
-use websigner::{web3sign, WebsignError};
+use url::Url;
+#[cfg(feature = "web3sign")]
+use web3signer::{web3sign, WebsignError};
 
 #[derive(Clone, Debug)]
 pub enum Signer {
@@ -86,21 +87,21 @@ impl RemoteSigner {
 
     #[allow(unused_variables)]
     pub async fn sign(&self, data: Bytes) -> Result<Signature, SignerError> {
-        #[cfg(feature = "websign")]
+        #[cfg(feature = "web3sign")]
         return web3sign(data, self.url.clone(), self.public_key)
             .await
             .map_err(SignerError::WebsignError);
-        #[cfg(not(feature = "websign"))]
+        #[cfg(not(feature = "web3sign"))]
         Err(SignerError::MissingWebsignError())
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum SignerError {
-    #[cfg(feature = "websign")]
+    #[cfg(feature = "web3sign")]
     #[error("Failed with a reqwest error: {0}")]
     WebsignError(#[from] WebsignError),
-    #[error("Tried to websign transaction without the websign flag.")]
+    #[error("Tried to web3sign transaction without the web3sign flag.")]
     MissingWebsignError(),
     #[error("Failed to parse value: {0}")]
     ParseError(String),
