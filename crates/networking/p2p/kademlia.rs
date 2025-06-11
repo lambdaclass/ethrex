@@ -463,6 +463,12 @@ impl PeerData {
     /// Simple scoring: +1 for success
     pub fn reward_peer(&mut self) {
         self.score += 1;
+
+        debug!(
+            "[PEERS] Rewarding peer with node_id {:?}, new score: {}",
+            self.node.node_id(),
+            self.score,
+        );
     }
 
     /// Simple scoring: -5 for critical failure, -1 for non-critical
@@ -471,7 +477,13 @@ impl PeerData {
             self.score -= 5;
         } else {
             self.score -= 1;
-        }
+        };
+
+        debug!(
+            "[PEERS] Penalizing peer with node_id {:?}, new score: {}",
+            self.node.node_id(),
+            self.score,
+        );
     }
 }
 
