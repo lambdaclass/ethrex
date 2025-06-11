@@ -171,22 +171,11 @@ impl StoreEngine for Store {
                 let mut update: Vec<_> = update.added_storage.into_iter().collect();
                 update.sort_unstable_by_key(|(s, _)| *s);
                 for (slot, value) in update.iter() {
-                    let key: AccountAddress = addr.into();
-                    let old_value = storage_cursor.seek_value(key.clone(), (*slot).into())?;
-                    match old_value {
-                        Some((old_slot, _)) => {
-                            if Into::<H256>::into(old_slot) == *slot {
-                                storage_cursor.delete_current()?;
-                            }
-                            if !value.is_zero() {
-                                storage_cursor.upsert(key, ((*slot).into(), (*value).into()))?;
-                            }
-                        }
-                        None => {
-                            if !value.is_zero() {
-                                storage_cursor.upsert(key, ((*slot).into(), (*value).into()))?;
-                            }
-                        }
+                    let key = (addr.into(), (*slot).into());
+                    if !value.is_zero() {
+                        storage_cursor.upsert(key, (*value).into())?;
+                    } else if storage_cursor.seek_exact(key)?.is_some() {
+                        storage_cursor.delete_current()?;
                     }
                 }
             }
@@ -194,7 +183,7 @@ impl StoreEngine for Store {
             // store account updates
             update_batch
                 .account_updates
-                .sort_unstable_by_key(|(h, _)| node_hash_to_fixed_size(*h));
+                .sort_by_key(|(h, _)| h.encode_to_vec());
             for (node_hash, node_data) in update_batch.account_updates {
                 state_trie_cursor.upsert(node_hash, node_data)?;
             }
@@ -202,9 +191,9 @@ impl StoreEngine for Store {
             // TODO: write the froms for fixed size arrays of bytes
             update_batch
                 .storage_updates
-                .sort_unstable_by_key(|(addr, _)| Into::<[u8; 32]>::into(*addr));
+                .sort_by_key(|(addr, _)| addr.encode_to_vec());
             for (hashed_address, mut nodes) in update_batch.storage_updates {
-                nodes.sort_unstable_by_key(|(h, _)| node_hash_to_fixed_size(*h));
+                nodes.sort_by_key(|(h, _)| h.encode_to_vec());
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
@@ -212,7 +201,7 @@ impl StoreEngine for Store {
                     storage_tries_cursor.upsert((key_1, key_2), node_data)?;
                 }
             }
-            update_batch.blocks.sort_unstable_by_key(|blk| blk.hash());
+            update_batch.blocks.sort_by_key(|blk| blk.hash());
             for block in update_batch.blocks {
                 // store block
                 let block_number = block.header.number;
@@ -247,7 +236,7 @@ impl StoreEngine for Store {
                     let key = (block_hash, index as u64).into();
                     let receipt_rlp = receipt.encode_to_vec();
                     let Some(entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
-                        anyhow::bail!("receipt too big to store as indexed chunks");
+                        continue;
                     };
 
                     for (key, value) in entries {
@@ -1160,28 +1149,17 @@ impl StoreEngine for Store {
             .cursor::<FlatAccountStorage>()
             .map_err(StoreError::LibmdbxError)?;
         for (addr, slot, value) in updates.iter().cloned() {
-            let key: AccountAddress = addr.into();
-            let old_value = cursor
-                .seek_value(key.clone(), slot.into())
-                .map_err(StoreError::LibmdbxError)?;
-            match old_value {
-                Some((old_slot, _)) => {
-                    if Into::<H256>::into(old_slot) == slot {
-                        cursor.delete_current().map_err(StoreError::LibmdbxError)?;
-                    }
-                    if !value.is_zero() {
-                        cursor
-                            .upsert(key, (slot.into(), value.into()))
-                            .map_err(StoreError::LibmdbxError)?;
-                    }
-                }
-                None => {
-                    if !value.is_zero() {
-                        cursor
-                            .upsert(key, (slot.into(), value.into()))
-                            .map_err(StoreError::LibmdbxError)?;
-                    }
-                }
+            let key = (addr.into(), slot.into());
+            if !value.is_zero() {
+                cursor
+                    .upsert(key, value.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            } else if cursor
+                .seek_exact(key)
+                .map_err(StoreError::LibmdbxError)?
+                .is_some()
+            {
+                cursor.delete_current().map_err(StoreError::LibmdbxError)?;
             }
         }
         tx.commit().map_err(StoreError::LibmdbxError)
@@ -1228,20 +1206,10 @@ impl StoreEngine for Store {
     fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
         // tracing::info!("called get_current_storage");
         let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let mut cursor = tx
-            .cursor::<FlatAccountStorage>()
+        let res = tx
+            .get::<FlatAccountStorage>((address.into(), key.into()))
             .map_err(StoreError::LibmdbxError)?;
-        // TODO: check if seek_value is exact or we need to check the slot as well
-        let res = cursor
-            .seek_value(address.into(), key.into())
-            .map_err(StoreError::LibmdbxError)?;
-        let Some((old_key, value)) = res else {
-            return Ok(None);
-        };
-        if Into::<H256>::into(old_key) != key {
-            return Ok(None);
-        }
-        Ok(Some(value.into()))
+        Ok(res.map(Into::into))
     }
 
     fn get_current_account_info(
@@ -1386,12 +1354,10 @@ table!(
     ( BlockNumbers ) BlockHashRLP => BlockNumber
 );
 
-// TODO: prefix with block number
 table!(
     /// Block headers table.
     ( Headers ) BlockHashRLP => BlockHeaderRLP
 );
-// TODO: prefix with block number
 table!(
     /// Block bodies table.
     ( Bodies ) BlockHashRLP => BlockBodyRLP
@@ -1443,7 +1409,6 @@ table!(
     ( Payloads ) u64 => PayloadBundleRLP
 );
 
-// TODO: prefix with block number
 table!(
     /// Stores blocks that are pending validation.
     ( PendingBlocks ) BlockHashRLP => BlockRLP
@@ -1464,15 +1429,14 @@ table!(
     ( StorageHealPaths ) AccountHashRLP => TriePathsRLP
 );
 
-// TODO: prefix with block number?
 table!(
     /// Stores invalid ancestors
     ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
 );
 
-dupsort!(
+table!(
     /// Account storage as a flat mapping from (AccountAddress, Slot) to (Value)
-    ( FlatAccountStorage ) AccountAddress => (AccountStorageKeyBytes, AccountStorageValueBytes) [AccountStorageKeyBytes]
+    ( FlatAccountStorage ) (AccountAddress, AccountStorageKeyBytes) [AccountAddress] => AccountStorageValueBytes
 );
 table!(
     /// Account state as a flat mapping from (AccountAddress) to (State)
