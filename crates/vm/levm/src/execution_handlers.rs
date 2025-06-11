@@ -211,7 +211,7 @@ impl<'a> VM<'a> {
             gas_used: self.current_call_frame()?.gas_used,
             gas_refunded: self.substate.refunded_gas,
             output: std::mem::take(&mut self.current_call_frame_mut()?.output),
-            logs: std::mem::take(&mut self.current_call_frame_mut()?.logs),
+            logs: self.substate.logs.clone(),
         })
     }
 

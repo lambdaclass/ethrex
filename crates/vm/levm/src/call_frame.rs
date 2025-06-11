@@ -7,10 +7,7 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{
-    types::{Account, Log},
-    Address, U256,
-};
+use ethrex_common::{types::Account, Address, U256};
 use keccak_hash::H256;
 use std::collections::{HashMap, HashSet};
 
@@ -86,7 +83,6 @@ pub struct CallFrame {
     pub sub_return_data: Bytes,
     /// Indicates if current context is static (if it is, it can't alter state)
     pub is_static: bool,
-    pub logs: Vec<Log>,
     /// Call stack current depth
     pub depth: usize,
     /// Set of valid jump destinations (where a JUMP or JUMPI can jump to)

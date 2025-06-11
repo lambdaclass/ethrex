@@ -14,7 +14,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{
     tracing::CallType,
-    types::{Transaction, TxKind},
+    types::{Log, Transaction, TxKind},
     Address, H256, U256,
 };
 use std::{
@@ -34,6 +34,7 @@ pub struct Substate {
     pub created_accounts: HashSet<Address>,
     pub refunded_gas: u64,
     pub transient_storage: TransientStorage,
+    pub logs: Vec<Log>,
 }
 
 pub struct VM<'a> {

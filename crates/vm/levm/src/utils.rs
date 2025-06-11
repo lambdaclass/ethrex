@@ -625,6 +625,7 @@ impl<'a> VM<'a> {
             created_accounts: HashSet::new(),
             refunded_gas: 0,
             transient_storage: HashMap::new(),
+            logs: Vec::new(),
         };
 
         Ok(())

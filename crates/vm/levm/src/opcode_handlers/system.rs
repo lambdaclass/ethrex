@@ -854,9 +854,6 @@ impl<'a> VM<'a> {
             .checked_sub(child_unused_gas)
             .ok_or(InternalError::Underflow)?;
 
-        // Append logs
-        parent_call_frame.logs.extend(tx_report.logs.clone());
-
         // Store return data of sub-context
         memory::try_store_range(
             &mut parent_call_frame.memory,
@@ -902,9 +899,6 @@ impl<'a> VM<'a> {
             .gas_used
             .checked_sub(unused_gas)
             .ok_or(InternalError::Underflow)?;
-
-        // Append logs
-        parent_call_frame.logs.extend(tx_report.logs.clone());
 
         // What to do, depending on TxResult
         match tx_report.result.clone() {
