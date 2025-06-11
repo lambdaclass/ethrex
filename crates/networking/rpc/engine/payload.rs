@@ -685,6 +685,10 @@ async fn try_execute_payload(
             error!("{e} for block {block_hash}");
             Err(RpcErr::Internal(e.to_string()))
         }
+        Err(ChainError::InvalidFork(e)) => {
+            error!("{e} for block {block_hash}");
+            Err(RpcErr::Internal(e.to_string()))
+        }
         Err(ChainError::Genesis(e)) => {
             error!(e);
             Err(RpcErr::Internal(e))
@@ -737,7 +741,9 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
 fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(), RpcErr> {
     // Check timestamp matches valid fork
     let chain_config = &context.storage.get_chain_config()?;
-    let current_fork = chain_config.get_fork(block.header.timestamp);
+    let current_fork = chain_config
+        .get_fork(block.header.timestamp)
+        .map_err(|error| RpcErr::Internal(error.to_string()))?;
 
     if current_fork != fork {
         return Err(RpcErr::UnsuportedFork(format!("{current_fork:?}")));

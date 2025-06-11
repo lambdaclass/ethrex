@@ -22,6 +22,8 @@ pub enum ChainError {
     InvalidTransaction(String),
     #[error("Genesis error: {0}")]
     Genesis(String),
+    #[error("Invalid fork: {0}")]
+    InvalidFork(String),
     #[error("{0}")]
     Custom(String),
 }

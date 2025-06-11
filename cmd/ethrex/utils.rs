@@ -2,7 +2,7 @@ use crate::decode;
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_blockchain::error::ChainError;
-use ethrex_common::types::{Block, Fork, Genesis};
+use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
     kademlia::KademliaTable,
     sync::SyncMode,
@@ -85,12 +85,10 @@ pub fn read_block_file(block_file_path: &str) -> Block {
 pub fn read_genesis_file(genesis_file_path: &Path) -> Result<Genesis, ChainError> {
     let genesis_file = std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
     let genesis = decode::genesis_file(genesis_file).expect("Failed to decode genesis file");
-    let fork = genesis.config.fork(genesis.timestamp);
-    if fork < Fork::Paris {
-        return Err(ChainError::Genesis(String::from(
-            "Fork not supported. Only post-merge networks are supported.",
-        )));
-    }
+    let _fork = genesis
+        .config
+        .get_fork(genesis.timestamp)
+        .map_err(|error| ChainError::Genesis(error.to_string()))?;
     Ok(genesis)
 }
 
