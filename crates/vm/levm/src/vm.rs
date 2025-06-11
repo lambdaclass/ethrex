@@ -135,16 +135,16 @@ impl<'a> VM<'a> {
 
         if self.is_create() {
             // Create contract, reverting the Tx if address is already occupied.
-            if let Some(mut context_result) = self.handle_create_transaction()? {
-                let report = self.finalize_execution(&mut context_result)?;
+            if let Some(context_result) = self.handle_create_transaction()? {
+                let report = self.finalize_execution(context_result)?;
                 return Ok(report);
             }
         }
 
         self.backup_substate();
-        let mut context_result = self.run_execution()?;
+        let context_result = self.run_execution()?;
 
-        let report = self.finalize_execution(&mut context_result)?;
+        let report = self.finalize_execution(context_result)?;
 
         Ok(report)
     }
@@ -223,20 +223,20 @@ impl<'a> VM<'a> {
 
     fn finalize_execution(
         &mut self,
-        ctx_result: &mut ContextResult,
+        mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
         for hook in self.hooks.clone() {
-            hook.borrow_mut().finalize_execution(self, ctx_result)?;
+            hook.borrow_mut()
+                .finalize_execution(self, &mut ctx_result)?;
         }
 
         self.tracer.exit_context(&ctx_result, true)?;
 
-        //TODO: Maybe do mem take instead of cloning
         let report = ExecutionReport {
             result: ctx_result.result.clone(),
             gas_used: ctx_result.gas_used,
             gas_refunded: self.substate.refunded_gas,
-            output: ctx_result.output.clone(),
+            output: std::mem::take(&mut ctx_result.output),
             logs: self.substate.logs.clone(),
         };
 
