@@ -113,7 +113,7 @@ impl RpcHandler for CallRequest {
             _ => return Ok(Value::Null),
         };
         let chain_config = context.storage.get_chain_config()?;
-        let fork = chain_config.get_fork(header.timestamp,header.number);
+        let fork = chain_config.get_fork(header.timestamp, header.number);
         // Run transaction
         let result = simulate_tx(
             &self.transaction,
@@ -354,7 +354,7 @@ impl RpcHandler for CreateAccessListRequest {
         let vm_db = StoreVmDatabase::new(context.storage.clone(), header.hash());
         let mut vm = Evm::new(context.blockchain.evm_engine, vm_db);
         let chain_config = context.storage.get_chain_config()?;
-        let fork = chain_config.get_fork(header.timestamp,header.number);
+        let fork = chain_config.get_fork(header.timestamp, header.number);
 
         // Run transaction and obtain access list
         let (gas_used, access_list, error) =
@@ -462,7 +462,7 @@ impl RpcHandler for EstimateGasRequest {
         };
 
         let chain_config = storage.get_chain_config()?;
-        let fork = chain_config.get_fork(block_header.timestamp,block_header.number);
+        let fork = chain_config.get_fork(block_header.timestamp, block_header.number);
 
         // If the transaction is a plain value transfer, short circuit estimation.
         if let TxKind::Call(address) = transaction.to {

@@ -357,8 +357,11 @@ pub async fn import_blocks(
 ) -> Result<(), ChainError> {
     // If the genesis.json file is pre-Paris return a custom error
     let fork = genesis.config.fork(genesis.timestamp, 0); // The genesis block number is always 0
-    if fork < Fork::Paris{
-        return Err(ChainError::Custom(format!("Fork {:?} is not supported. Only post-merge networks are supported",fork)))
+    if fork < Fork::Paris {
+        return Err(ChainError::Custom(format!(
+            "Fork {:?} is not supported. Only post-merge networks are supported",
+            fork
+        )));
     }
     let data_dir = set_datadir(data_dir);
     let store = init_store(&data_dir, genesis).await;
