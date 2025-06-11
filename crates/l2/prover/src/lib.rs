@@ -1,5 +1,5 @@
 pub mod backends;
-mod prover;
+pub mod prover;
 
 pub mod config;
 use config::ProverConfig;
