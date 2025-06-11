@@ -6,7 +6,6 @@ pub mod payload;
 mod smoke_test;
 pub mod tracing;
 pub mod vm;
-
 use ::tracing::info;
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
@@ -181,7 +180,9 @@ impl Blockchain {
             let execution_time_per_gigagas = (execution_time / as_gigas).round() as u64;
             let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
             metrics!(
+                let elapsed_seconds = interval/1000.0;
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
+                METRICS_BLOCKS.set_latest_time_per_block(elapsed_seconds);
             );
             let base_log =
                 format!(
@@ -312,15 +313,16 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?;
 
-        let elapsed_seconds = interval.elapsed().as_millis() / 1000;
+        let elapsed_seconds = (interval.elapsed().as_millis() / 1000) as f64;
         let mut throughput = 0.0;
-        if elapsed_seconds != 0 && total_gas_used != 0 {
+        if elapsed_seconds != 0.0 && total_gas_used != 0 {
             let as_gigas = (total_gas_used as f64).div(10_f64.powf(9_f64));
             throughput = (as_gigas) / (elapsed_seconds as f64);
         }
 
         metrics!(
             METRICS_BLOCKS.set_latest_gigagas(throughput);
+            METRICS_BLOCKS.set_latest_time_per_block(elapsed_seconds / (blocks_len as f64));
         );
 
         info!(
