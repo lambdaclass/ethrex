@@ -113,7 +113,11 @@ impl Evm {
                     tx,
                     block_header,
                     state,
-                    spec_id(&chain_config, block_header.timestamp),
+                    spec_id(
+                        &chain_config,
+                        block_header.timestamp,
+                        block_header.difficulty,
+                    ),
                     sender,
                 )?;
 
@@ -161,7 +165,11 @@ impl Evm {
         match self {
             Evm::REVM { state } => {
                 let chain_config = state.chain_config()?;
-                let spec_id = spec_id(&chain_config, block_header.timestamp);
+                let spec_id = spec_id(
+                    &chain_config,
+                    block_header.timestamp,
+                    block_header.difficulty,
+                );
                 if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
                     REVM::beacon_root_contract_call(block_header, state)?;
                 }
@@ -174,7 +182,7 @@ impl Evm {
             }
             Evm::LEVM { db } => {
                 let chain_config = db.store.get_chain_config()?;
-                let fork = chain_config.fork(block_header.timestamp);
+                let fork = chain_config.fork(block_header.timestamp, block_header.difficulty);
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                     LEVM::beacon_root_contract_call(block_header, db)?;

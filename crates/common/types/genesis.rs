@@ -213,16 +213,14 @@ impl ChainConfig {
         self.eip155_block.is_some_and(|num| num <= block_number)
     }
 
-    pub fn get_fork(&self, block_timestamp: u64) -> Result<Fork, String> {
+    pub fn get_fork(&self, block_timestamp: u64, block_difficulty: U256) -> Result<Fork, String> {
         if self.is_prague_activated(block_timestamp) {
             Ok(Fork::Prague)
         } else if self.is_cancun_activated(block_timestamp) {
             Ok(Fork::Cancun)
         } else if self.is_shanghai_activated(block_timestamp) {
             Ok(Fork::Shanghai)
-        } else if self.terminal_total_difficulty_passed
-            || self.terminal_total_difficulty >= Some(58750000000000000000000)
-        {
+        } else if self.terminal_total_difficulty_passed || block_difficulty.is_zero() {
             // If the TTDP flag is true or the TTD was passed then we are in Paris
             Ok(Fork::Paris)
         } else {
@@ -243,8 +241,8 @@ impl ChainConfig {
         }
     }
 
-    pub fn fork(&self, block_timestamp: u64) -> Fork {
-        self.get_fork(block_timestamp)
+    pub fn fork(&self, block_timestamp: u64, block_difficulty: U256) -> Fork {
+        self.get_fork(block_timestamp, block_difficulty)
             .expect("Received a pre-merge fork")
     }
 

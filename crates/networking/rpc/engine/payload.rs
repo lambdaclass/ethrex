@@ -208,7 +208,7 @@ impl RpcHandler for NewPayloadV4Request {
         if !chain_config.is_prague_activated(block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!(
                 "{:?}",
-                chain_config.get_fork(block.header.timestamp)
+                chain_config.get_fork(block.header.timestamp, block.header.difficulty)
             )));
         }
         // We use v3 since the execution payload remains the same.
@@ -339,7 +339,10 @@ impl RpcHandler for GetPayloadV4Request {
         if !chain_config.is_prague_activated(payload.block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!(
                 "{:?}",
-                chain_config.get_fork(payload.block.header.timestamp)
+                chain_config.get_fork(
+                    payload.block.header.timestamp,
+                    payload.block.header.difficulty
+                )
             )));
         }
 
@@ -742,7 +745,7 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
     // Check timestamp matches valid fork
     let chain_config = &context.storage.get_chain_config()?;
     let current_fork = chain_config
-        .get_fork(block.header.timestamp)
+        .get_fork(block.header.timestamp, block.header.difficulty)
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
 
     if current_fork != fork {
