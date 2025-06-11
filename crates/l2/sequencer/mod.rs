@@ -13,9 +13,9 @@ use l1_watcher::L1Watcher;
 #[cfg(feature = "metrics")]
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
+use tokio::task::JoinSet;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
-use tokio::task::JoinSet;
 
 pub mod block_producer;
 mod l1_committer;
