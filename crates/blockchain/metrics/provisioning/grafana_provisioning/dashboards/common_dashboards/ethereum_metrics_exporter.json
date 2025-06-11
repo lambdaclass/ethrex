@@ -2370,7 +2370,7 @@
       },
       "gridPos": {
         "h": 6,
-        "w": 5,
+        "w": 3,
         "x": 5,
         "y": 31
       },
@@ -2468,7 +2468,7 @@
       "gridPos": {
         "h": 6,
         "w": 5,
-        "x": 10,
+        "x": 8,
         "y": 31
       },
       "id": 39,
@@ -2558,17 +2558,17 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 6,
-        "w": 5,
-        "x": 15,
+        "w": 6,
+        "x": 13,
         "y": 31
       },
-      "id": 45,
+      "id": 47,
       "options": {
         "legend": {
           "calcs": [],
@@ -2589,14 +2589,20 @@
             "type": "prometheus",
             "uid": "prom-001"
           },
-          "exemplar": true,
-          "expr": "eth_exe_net_peer_count{instance=~\"$instance\"}",
-          "interval": "",
-          "legendFormat": "{{ instance }}",
-          "refId": "A"
+          "disableTextWrap": false,
+          "editorMode": "builder",
+          "expr": "gigagas",
+          "fullMetaSearch": false,
+          "hide": false,
+          "includeNullMetadata": true,
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "B",
+          "useBackend": false
         }
       ],
-      "title": "Peers",
+      "title": "Throughput (gigagas/s)",
       "type": "timeseries"
     },
     {
@@ -2654,18 +2660,17 @@
                 "value": 80
               }
             ]
-          },
-          "unit": "short"
+          }
         },
         "overrides": []
       },
       "gridPos": {
         "h": 6,
-        "w": 4,
-        "x": 20,
+        "w": 5,
+        "x": 19,
         "y": 31
       },
-      "id": 47,
+      "id": 49,
       "options": {
         "legend": {
           "calcs": [],
@@ -2686,20 +2691,16 @@
             "type": "prometheus",
             "uid": "prom-001"
           },
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "gigagas",
-          "fullMetaSearch": false,
-          "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
-          "legendFormat": "__auto",
+          "editorMode": "code",
+          "exemplar": true,
+          "expr": "sum by (instance)(\n    increase(\n        eth_exe_block_head_transactions_in_block{instance=~\"$instance\"}[1m]\n    )\n)",
+          "interval": "1m",
+          "legendFormat": "{{ instance }}",
           "range": true,
-          "refId": "B",
-          "useBackend": false
+          "refId": "A"
         }
       ],
-      "title": "Throughput (gigagas/s)",
+      "title": "Transactions per block",
       "type": "timeseries"
     },
     {
@@ -2861,7 +2862,7 @@
       },
       "gridPos": {
         "h": 6,
-        "w": 5,
+        "w": 3,
         "x": 5,
         "y": 37
       },
@@ -2958,8 +2959,8 @@
       },
       "gridPos": {
         "h": 6,
-        "w": 5,
-        "x": 10,
+        "w": 7,
+        "x": 8,
         "y": 37
       },
       "id": 38,
@@ -3254,7 +3255,7 @@
         "x": 0,
         "y": 43
       },
-      "id": 49,
+      "id": 45,
       "options": {
         "legend": {
           "calcs": [],
@@ -3275,16 +3276,14 @@
             "type": "prometheus",
             "uid": "prom-001"
           },
-          "editorMode": "code",
           "exemplar": true,
-          "expr": "sum by (instance)(\n    increase(\n        eth_exe_block_head_transactions_in_block{instance=~\"$instance\"}[1m]\n    )\n)",
-          "interval": "1m",
+          "expr": "eth_exe_net_peer_count{instance=~\"$instance\"}",
+          "interval": "",
           "legendFormat": "{{ instance }}",
-          "range": true,
           "refId": "A"
         }
       ],
-      "title": "Transactions per block",
+      "title": "Peers",
       "type": "timeseries"
     },
     {
