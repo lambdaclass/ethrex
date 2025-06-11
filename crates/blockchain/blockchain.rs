@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{error, info};
+use ::tracing::info;
 use constants::MAX_INITCODE_SIZE;
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -145,13 +145,15 @@ impl Blockchain {
             .await
             .map_err(ChainError::StoreError)?;
 
-        if let Err(error) = self
-            .storage
+        self.storage
             .add_block_snapshot(block.clone(), account_updates.to_vec())
             .await
-        {
-            error!("Error adding block snapshot: {}", error);
-        }
+            .map_err(|error| {
+                ChainError::StoreError(StoreError::Custom(format!(
+                    "Snapshot layers: Error adding block snapshot: {}",
+                    error
+                )))
+            })?;
 
         Ok(())
     }
