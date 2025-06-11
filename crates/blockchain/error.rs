@@ -20,6 +20,8 @@ pub enum ChainError {
     EvmError(#[from] EvmError),
     #[error("Invalid Transaction: {0}")]
     InvalidTransaction(String),
+    #[error("Genesis error: {0}")]
+    Genesis(String),
     #[error("{0}")]
     Custom(String),
 }

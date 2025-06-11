@@ -85,10 +85,9 @@ pub fn read_block_file(block_file_path: &str) -> Block {
 pub fn read_genesis_file(genesis_file_path: &Path) -> Result<Genesis, ChainError> {
     let genesis_file = std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
     let genesis = decode::genesis_file(genesis_file).expect("Failed to decode genesis file");
-    // If the genesis.json file is pre-Paris return a custom error
-    let fork = genesis.config.fork(genesis.timestamp); // The genesis block number is always 0
+    let fork = genesis.config.fork(genesis.timestamp);
     if fork < Fork::Paris {
-        return Err(ChainError::Custom(String::from(
+        return Err(ChainError::Genesis(String::from(
             "Fork not supported. Only post-merge networks are supported.",
         )));
     }
