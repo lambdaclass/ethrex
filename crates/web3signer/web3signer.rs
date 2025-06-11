@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::Signature;
-use reqwest::Client;
+use reqwest::{Client, Url};
 use rustc_hex::FromHexError;
 use secp256k1::PublicKey;
 
@@ -14,7 +14,7 @@ pub enum WebsignError {
 
 pub async fn web3sign(
     data: Bytes,
-    url: String,
+    url: Url,
     public_key: PublicKey,
 ) -> Result<Signature, WebsignError> {
     let url = format!(

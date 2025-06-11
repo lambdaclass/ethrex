@@ -60,7 +60,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
     fn try_from(opts: SequencerOptions) -> Result<Self, Self::Error> {
         let committer_signer = match opts.committer_opts.committer_remote_signer_url {
             Some(url) => RemoteSigner::new(
-                url.to_string(),
+                url,
                 opts.committer_opts
                     .committer_remote_signer_public_key
                     .ok_or(SequencerOptionsError::RemoteUrlWithoutPubkey)?,
@@ -76,7 +76,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
 
         let proof_coordinator_signer = match opts.proof_coordinator_opts.remote_signer_url {
             Some(url) => RemoteSigner::new(
-                url.to_string(),
+                url,
                 opts.proof_coordinator_opts
                     .remote_signer_public_key
                     .ok_or(SequencerOptionsError::RemoteUrlWithoutPubkey)?,
