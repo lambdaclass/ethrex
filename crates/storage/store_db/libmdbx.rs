@@ -13,11 +13,11 @@ use crate::utils::{ChainDataIndex, SnapStateIndex};
 use crate::UpdateBatch;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
-use ethrex_common::types::AccountInfo;
 use ethrex_common::types::{
     payload::PayloadBundle, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
     BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
+use ethrex_common::types::{Account, AccountInfo};
 use ethrex_common::Address;
 use ethrex_common::H160;
 use ethrex_rlp::decode::RLPDecode;
@@ -1371,6 +1371,106 @@ table!(
     /// Account codes table.
     ( AccountCodes ) AccountCodeHashRLP => AccountCodeRLP
 );
+
+pub struct BlockNumHash(pub BlockNumber, pub BlockHash);
+impl From<(BlockNumber, BlockHash)> for BlockNumHash {
+    fn from(value: (BlockNumber, BlockHash)) -> Self {
+        Self(value.0, value.1)
+    }
+}
+
+pub struct AccountInfoLogEntry {
+    pub address: AccountAddress,
+    pub info: AccountInfo,
+    pub previous_info: AccountInfo,
+}
+pub struct StorageWriteLogEntry {
+    pub address: AccountAddress,
+    pub slot: H256,
+    pub previous_value: U256,
+    pub new_value: U256,
+}
+pub struct StorageWriteLog(pub Vec<StorageWriteLogEntry>);
+pub struct AccountInfoWriteLog(pub Vec<AccountInfoLogEntry>);
+
+impl Encodable for AccountInfoWriteLog {
+    type Encoded = Vec<u8>;
+    fn encode(self) -> Self::Encoded {
+        let mut encoded =
+            Vec::with_capacity(8 + std::mem::size_of::<AccountInfoLogEntry>() * self.0.len());
+        encoded.extend(self.0.len().to_be_bytes());
+        for entry in self.0.into_iter() {
+            encoded.extend(entry.address.encode());
+
+            // TODO (for thursday): write `Encodable` for `AccountInfo`
+            encoded.extend(Encodable::encode(entry.info.balance));
+            encoded.extend(Encodable::encode(entry.info.nonce));
+            encoded.extend(Encodable::encode(entry.info.code_hash));
+            encoded.extend(Encodable::encode(entry.previous_info.balance));
+            encoded.extend(entry.previous_info.nonce.to_be_bytes());
+            encoded.extend(entry.previous_info.code_hash.as_fixed_bytes());
+        }
+        encoded
+    }
+}
+
+impl Decodable for AccountInfoWriteLog {
+    fn decode(b: &[u8]) -> anyhow::Result<Self> {
+        if b.len() < 8 {
+            anyhow::bail!("Invalid length for AccountInfoLog");
+        }
+        let len = u64::from_be_bytes(b[0..8].try_into()?);
+        let mut entries = Vec::with_capacity(len as usize);
+        let mut offset = 8;
+        for _ in 0..len {
+            if b.len() < offset + 72 {
+                anyhow::bail!("Invalid length for AccountInfoLogEntry");
+            }
+            let address = AccountAddress::decode(&b[offset..offset + 20])?;
+            let info = AccountInfo::decode(&b[offset + 20..offset + 52])?;
+            let previous_info = AccountInfo::decode(&b[offset + 52..offset + 72])?;
+            entries.push(AccountInfoLogEntry {
+                address,
+                info,
+                previous_info,
+            });
+            offset += 72;
+        }
+        Ok(AccountInfoWriteLog(entries))
+    }
+}
+
+table!(
+    /// Account codes table.
+    ( AccountsStateWriteLog ) BlockNumHash => AccountInfoWriteLog
+);
+
+table!(
+    /// Storage write log table.
+    ( StorageStateWriteLog ) BlockNumHash => Vec<(AccountAddress, H256, U256, U256)>
+);
+
+impl Encodable for BlockNumHash {
+    type Encoded = [u8; 40];
+
+    fn encode(self) -> Self::Encoded {
+        let mut encoded = [0u8; 40];
+        encoded[0..8].copy_from_slice(&self.0.to_be_bytes());
+        encoded[8..40].copy_from_slice(&self.1 .0);
+        encoded
+    }
+}
+
+impl Decodable for BlockNumHash {
+    fn decode(b: &[u8]) -> anyhow::Result<Self> {
+        if b.len() != 40 {
+            anyhow::bail!("Invalid length for (BlockNumber, BlockHash)");
+        }
+        let block_number = BlockNumber::from_be_bytes(b[0..8].try_into()?);
+        let block_hash = H256::from_slice(&b[8..40]);
+        Ok((block_number, block_hash).into())
+    }
+}
 
 dupsort!(
     /// Receipts table.
