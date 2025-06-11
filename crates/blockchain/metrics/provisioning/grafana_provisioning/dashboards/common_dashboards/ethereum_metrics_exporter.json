@@ -2912,7 +2912,6 @@
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
-            "axisWidth": -3,
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
@@ -2926,7 +2925,7 @@
             "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
-            "pointSize": 5,
+            "pointSize": 1,
             "scaleDistribution": {
               "type": "linear"
             },
@@ -2952,7 +2951,8 @@
                 "value": 80
               }
             ]
-          }
+          },
+          "unit": "Gwei"
         },
         "overrides": []
       },
@@ -2962,7 +2962,7 @@
         "x": 10,
         "y": 37
       },
-      "id": 73,
+      "id": 38,
       "options": {
         "legend": {
           "calcs": [],
@@ -2979,18 +2979,18 @@
       "pluginVersion": "12.0.1",
       "targets": [
         {
-          "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "blocks_per_second",
-          "fullMetaSearch": false,
-          "includeNullMetadata": true,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A",
-          "useBackend": false
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "exemplar": true,
+          "expr": "eth_exe_gas_price_gwei{instance=~\"$instance\"}",
+          "interval": "",
+          "legendFormat": "{{ instance }}",
+          "refId": "A"
         }
       ],
-      "title": "Blocks per second",
+      "title": "Suggested Gas Price",
       "type": "timeseries"
     },
     {
@@ -3055,7 +3055,7 @@
       },
       "gridPos": {
         "h": 6,
-        "w": 5,
+        "w": 9,
         "x": 15,
         "y": 37
       },
@@ -3345,7 +3345,7 @@
               }
             ]
           },
-          "unit": "Gwei"
+          "unit": "none"
         },
         "overrides": []
       },
@@ -3355,7 +3355,7 @@
         "x": 10,
         "y": 43
       },
-      "id": 38,
+      "id": 55,
       "options": {
         "legend": {
           "calcs": [],
@@ -3376,14 +3376,16 @@
             "type": "prometheus",
             "uid": "prom-001"
           },
+          "editorMode": "code",
           "exemplar": true,
-          "expr": "eth_exe_gas_price_gwei{instance=~\"$instance\"}",
+          "expr": "eth_exe_txpool_transactions{instance=~\"$instance\"}",
           "interval": "",
-          "legendFormat": "{{ instance }}",
+          "legendFormat": "{{ status }}",
+          "range": true,
           "refId": "A"
         }
       ],
-      "title": "Suggested Gas Price",
+      "title": "Transaction Pool",
       "type": "timeseries"
     },
     {
@@ -3539,7 +3541,7 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "short"
         },
         "overrides": []
       },
@@ -3549,7 +3551,7 @@
         "x": 20,
         "y": 43
       },
-      "id": 55,
+      "id": 52,
       "options": {
         "legend": {
           "calcs": [],
@@ -3570,16 +3572,14 @@
             "type": "prometheus",
             "uid": "prom-001"
           },
-          "editorMode": "code",
           "exemplar": true,
-          "expr": "eth_exe_txpool_transactions{instance=~\"$instance\"}",
+          "expr": "eth_exe_block_head_gas_limit{instance=~\"$instance\"}",
           "interval": "",
-          "legendFormat": "{{ status }}",
-          "range": true,
+          "legendFormat": "{{ instance }}",
           "refId": "A"
         }
       ],
-      "title": "Transaction Pool",
+      "title": "Gas limit",
       "type": "timeseries"
     },
     {
@@ -3700,5 +3700,5 @@
   "timezone": "",
   "title": "Ethereum Metrics Exporter (Single)",
   "uid": "M2TT9Su7z",
-  "version": 26
+  "version": 13
 }

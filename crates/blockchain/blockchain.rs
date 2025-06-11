@@ -182,7 +182,6 @@ impl Blockchain {
             let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
             metrics!(
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
-                METRICS_BLOCKS.set_latest_blocks_per_second(1_f64 / (interval / 1000_f64))
             );
             let base_log =
                 format!(
@@ -321,7 +320,6 @@ impl Blockchain {
         }
 
         metrics!(
-            METRICS_BLOCKS.set_latest_blocks_per_second((blocks_len as f64) / (elapsed_seconds as f64));
             METRICS_BLOCKS.set_latest_gigagas(throughput);
         );
 
