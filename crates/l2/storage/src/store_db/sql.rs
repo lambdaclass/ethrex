@@ -84,18 +84,16 @@ fn read_from_row_int(row: &Row, index: i32) -> Result<u64, StoreError> {
             let val = i
                 .try_into()
                 .map_err(|e| StoreError::Custom(format!("conversion error: {e}")))?;
-            return Ok(val);
+            Ok(val)
         }
-        _ => return Err(StoreError::SQLInvalidTypeError),
+        _ => Err(StoreError::SQLInvalidTypeError)
     }
 }
 
 fn read_from_row_blob(row: &Row, index: i32) -> Result<Vec<u8>, StoreError> {
     match row.get_value(index)? {
-        Value::Blob(vec) => {
-            return Ok(vec);
-        }
-        _ => return Err(StoreError::SQLInvalidTypeError),
+        Value::Blob(vec) => Ok(vec),
+        _ => Err(StoreError::SQLInvalidTypeError)
     }
 }
 
@@ -111,7 +109,7 @@ impl StoreEngineRollup for SQLStore {
                 vec![block_number],
             )
             .await?;
-        while let Some(row) = rows.next().await? {
+        if let Some(row) = rows.next().await? {
             return Ok(Some(read_from_row_int(&row, 1)?));
         }
         Ok(None)
@@ -170,9 +168,10 @@ impl StoreEngineRollup for SQLStore {
             vec![batch_number].into_params()?,
         )];
         for (index, hash) in withdrawal_hashes.iter().enumerate() {
+            let index = u64::try_from(index).map_err(|e| StoreError::Custom(format!("conversion error: {e}")))?;
             queries.push((
                 "INSERT INTO withdrawals VALUES (?1, ?2, ?3)",
-                (batch_number, index as u64, Vec::from(hash.to_fixed_bytes())).into_params()?,
+                (batch_number, index, Vec::from(hash.to_fixed_bytes())).into_params()?,
             ));
         }
         self.execute_in_tx(queries).await?;
@@ -240,7 +239,7 @@ impl StoreEngineRollup for SQLStore {
                 vec![batch_number],
             )
             .await?;
-        while let Some(row) = rows.next().await? {
+        if let Some(row) = rows.next().await? {
             let vec = read_from_row_blob(&row, 1)?;
             return Ok(Some(H256::from_slice(&vec)));
         }
@@ -275,7 +274,7 @@ impl StoreEngineRollup for SQLStore {
                 vec![batch_number],
             )
             .await?;
-        while let Some(row) = rows.next().await? {
+        if let Some(row) = rows.next().await? {
             let vec = read_from_row_blob(&row, 1)?;
             return Ok(Some(H256::from_slice(&vec)));
         }
@@ -292,9 +291,10 @@ impl StoreEngineRollup for SQLStore {
             vec![batch_number].into_params()?,
         )];
         for (index, blob) in state_diff.iter().enumerate() {
+            let index = u64::try_from(index).map_err(|e| StoreError::Custom(format!("conversion error: {e}")))?;
             queries.push((
                 "INSERT INTO blob_bundles VALUES (?1, ?2, ?3)",
-                (batch_number, index as u64, blob.to_vec()).into_params()?,
+                (batch_number, index, blob.to_vec()).into_params()?,
             ));
         }
         self.execute_in_tx(queries).await?;
@@ -316,7 +316,7 @@ impl StoreEngineRollup for SQLStore {
             let val = read_from_row_blob(&row, 2)?;
             bundles.push(
                 Blob::try_from(val)
-                    .map_err(|_| StoreError::Custom(format!("error converting to Blob")))?,
+                    .map_err(|_| StoreError::Custom("error converting to Blob".to_string()))?,
             );
         }
         if bundles.is_empty() {
@@ -363,7 +363,7 @@ impl StoreEngineRollup for SQLStore {
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
         let mut rows = self.query("SELECT * from latest_sent", ()).await?;
         if let Some(row) = rows.next().await? {
-            return Ok(read_from_row_int(&row, 1)?);
+            return read_from_row_int(&row, 1);
         }
         Err(StoreError::Custom(
             "missing operation_count row".to_string(),

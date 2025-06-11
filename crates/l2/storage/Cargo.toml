@@ -21,7 +21,7 @@ libsql = { workspace = true, optional = true }
 tokio = { version = "1.41.1", optional = true, default-features = false, features = ["rt"] }
 
 [features]
-default = ["sql"]
+default = []
 libmdbx = ["dep:libmdbx", "dep:tokio"]
 redb = ["dep:redb", "dep:tokio"]
 sql = ["dep:libsql", "dep:tokio", "ethrex-storage/sql"]

@@ -1,6 +1,6 @@
 // Storage API for L2
 
-use std::{fmt::Debug, panic::RefUnwindSafe};
+use std::fmt::Debug;
 
 use ethrex_common::{
     types::{Blob, BlockNumber},
