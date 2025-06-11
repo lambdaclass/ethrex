@@ -20,6 +20,8 @@ pub enum ChainError {
     EvmError(#[from] EvmError),
     #[error("Invalid Transaction: {0}")]
     InvalidTransaction(String),
+    #[error("Failed to generate witness: {0}")]
+    WitnessGeneration(String),
     #[error("{0}")]
     Custom(String),
 }

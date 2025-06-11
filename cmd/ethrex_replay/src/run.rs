@@ -7,7 +7,10 @@ use std::sync::Arc;
 use zkvm_interface::io::ProgramInput;
 
 pub async fn exec(cache: Cache) -> eyre::Result<()> {
-    let Cache { blocks, db } = cache;
+    let Cache {
+        blocks,
+        witness: db,
+    } = cache;
     let input = ProgramInput {
         blocks,
         db,
@@ -27,7 +30,10 @@ pub async fn exec(cache: Cache) -> eyre::Result<()> {
 }
 
 pub async fn prove(cache: Cache) -> eyre::Result<String> {
-    let Cache { blocks, db } = cache;
+    let Cache {
+        blocks,
+        witness: db,
+    } = cache;
     let out = ethrex_prover_lib::prove(
         ProgramInput {
             blocks,
@@ -58,7 +64,8 @@ pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<Acc
         .first()
         .ok_or(eyre::Error::msg("missing block data"))?;
     let mut remaining_gas = block.header.gas_limit;
-    let mut prover_db = cache.db;
+    let mut prover_db = cache.witness;
+    prover_db.rebuild_tries()?;
 
     let changes = {
         let store: Arc<DynVmDatabase> = Arc::new(Box::new(prover_db.clone()));
@@ -66,13 +73,13 @@ pub async fn run_tx(cache: Cache, tx_id: &str) -> eyre::Result<(Receipt, Vec<Acc
         LEVM::prepare_block(block, &mut db)?;
         LEVM::get_state_transitions(&mut db)?
     };
-    prover_db.apply_account_updates(&changes);
+    prover_db.apply_account_updates(&changes)?;
 
     for (tx, tx_sender) in block.body.get_transactions_with_sender() {
         let mut vm = Evm::new(EvmEngine::LEVM, prover_db.clone());
         let (receipt, _) = vm.execute_tx(tx, &block.header, &mut remaining_gas, tx_sender)?;
         let account_updates = vm.get_state_transitions()?;
-        prover_db.apply_account_updates(&account_updates);
+        prover_db.apply_account_updates(&account_updates)?;
         if format!("0x{:x}", tx.compute_hash()) == tx_id {
             return Ok((receipt, account_updates));
         }

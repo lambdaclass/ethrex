@@ -30,6 +30,7 @@ lazy_static.workspace = true
 cfg-if.workspace = true
 tracing.workspace = true
 serde.workspace = true
+sha3.workspace = true
 
 bincode = "1"
 dyn-clone = "1.0"

@@ -2398,6 +2398,7 @@ dependencies = [
  "revm-inspectors",
  "revm-primitives",
  "serde",
+ "sha3",
  "thiserror 2.0.12",
  "tracing",
 ]
