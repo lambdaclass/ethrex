@@ -68,6 +68,7 @@ services:
       - ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE:-true}
       - ETHREX_WATCHER_BLOCK_DELAY=${ETHREX_WATCHER_BLOCK_DELAY:-0}
       - ETHREX_BASED=${ETHREX_BASED:-false}
+      - ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS=${ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS:-0x0000000000000000000000000000000000000000}
     volumes:
       - ../../test_data/genesis-l2.json:/genesis-l2.json
       - ./.env:/.env:ro
@@ -86,4 +87,3 @@ services:
       --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
       --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
       --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
-      --state-updater.sequencer-registry ${ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS}
