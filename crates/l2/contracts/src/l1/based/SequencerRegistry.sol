@@ -15,12 +15,13 @@ contract SequencerRegistry is
 {
     uint256 public constant MIN_COLLATERAL = 1 ether;
 
-    uint256 public constant BATCHES_PER_SEQUENCER = 32;
+    uint256 public constant BATCHES_PER_SEQUENCER = 3;
 
     address public ON_CHAIN_PROPOSER;
 
     mapping(address => uint256) public collateral;
     address[] public sequencers;
+    mapping(uint256 => address) public sequencerForBatch;
 
     function initialize(
         address owner,
@@ -34,6 +35,14 @@ contract SequencerRegistry is
 
         _validateOwner(owner);
         OwnableUpgradeable.__Ownable_init(owner);
+    }
+
+    function pushSequencer(uint256 batchNumber, address sequencer) external {
+        require(
+            msg.sender == ON_CHAIN_PROPOSER,
+            "SequencerRegistry: Only onChainProposer can push sequencer"
+        );
+        sequencerForBatch[batchNumber] = sequencer;
     }
 
     function register(address sequencer) public payable {
@@ -76,6 +85,11 @@ contract SequencerRegistry is
     function leadSequencerForBatch(
         uint256 batchNumber
     ) public view returns (address) {
+        uint256 _currentBatch = IOnChainProposer(ON_CHAIN_PROPOSER)
+            .lastCommittedBatch() + 1;
+        if (batchNumber < _currentBatch) {
+            return sequencerForBatch[batchNumber];
+        }
         uint256 _sequencers = sequencers.length;
 
         if (_sequencers == 0) {
