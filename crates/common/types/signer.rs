@@ -1,8 +1,10 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Signature};
 use keccak_hash::keccak;
-use reqwest::{Client, Url};
 use secp256k1::{Message, PublicKey, SecretKey, SECP256K1};
+use url::Url;
+#[cfg(feature = "web3sign")]
+use web3signer::{web3sign, WebsignError};
 
 #[derive(Clone, Debug)]
 pub enum Signer {
@@ -71,7 +73,6 @@ pub struct RemoteSigner {
     pub url: Url,
     pub public_key: PublicKey,
     pub address: Address,
-    pub client: Client,
 }
 
 impl RemoteSigner {
@@ -81,35 +82,27 @@ impl RemoteSigner {
             url,
             public_key,
             address,
-            client: Client::new(),
         }
     }
 
+    #[allow(unused_variables)]
     pub async fn sign(&self, data: Bytes) -> Result<Signature, SignerError> {
-        let url = format!(
-            "{}api/v1/eth1/sign/{}",
-            self.url,
-            hex::encode(&self.public_key.serialize_uncompressed()[1..])
-        );
-        let body = format!("{{\"data\": \"0x{}\"}}", hex::encode(data.clone()));
-
-        self.client
-            .post(url)
-            .body(body)
-            .header("content-type", "application/json")
-            .send()
-            .await?
-            .text()
-            .await?
-            .parse::<Signature>()
-            .map_err(|e| SignerError::ParseError(e.to_string()))
+        #[cfg(feature = "web3sign")]
+        return web3sign(data, self.url.clone(), self.public_key)
+            .await
+            .map_err(SignerError::WebsignError);
+        #[cfg(not(feature = "web3sign"))]
+        Err(SignerError::MissingWebsignError())
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum SignerError {
+    #[cfg(feature = "web3sign")]
     #[error("Failed with a reqwest error: {0}")]
-    ReqwestError(#[from] reqwest::Error),
+    WebsignError(#[from] WebsignError),
+    #[error("Tried to web3sign transaction without the web3sign flag.")]
+    MissingWebsignError(),
     #[error("Failed to parse value: {0}")]
     ParseError(String),
     #[error("Tried to sign Privileged L2 transaction")]

@@ -3104,6 +3104,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
+ "url",
  "vergen 9.0.6",
 ]
 
@@ -3144,7 +3145,6 @@ dependencies = [
  "lazy_static",
  "once_cell",
  "rayon",
- "reqwest",
  "secp256k1",
  "serde",
  "serde_json",
@@ -3152,6 +3152,8 @@ dependencies = [
  "thiserror 2.0.12",
  "tinyvec",
  "tracing",
+ "url",
+ "web3signer",
 ]
 
 [[package]]
@@ -10898,6 +10900,19 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "web3signer"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "ethereum-types",
+ "hex",
+ "reqwest",
+ "rustc-hex",
+ "secp256k1",
+ "thiserror 2.0.12",
 ]
 
 [[package]]

@@ -58,11 +58,11 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
     type Error = SequencerOptionsError;
 
     fn try_from(opts: SequencerOptions) -> Result<Self, Self::Error> {
-        let committer_signer = match opts.committer_opts.remote_signer_url {
+        let committer_signer = match opts.committer_opts.committer_remote_signer_url {
             Some(url) => RemoteSigner::new(
                 url,
                 opts.committer_opts
-                    .remote_signer_public_key
+                    .committer_remote_signer_public_key
                     .ok_or(SequencerOptionsError::RemoteUrlWithoutPubkey)?,
             )
             .into(),
@@ -296,8 +296,8 @@ pub struct CommitterOptions {
         env = "ETHREX_COMMITTER_L1_PRIVATE_KEY",
         help_heading = "L1 Committer options",
         help = "Private key of a funded account that the sequencer will use to send commit txs to the L1.",
-        conflicts_with_all = &["remote_signer_url", "remote_signer_public_key"],
-        required_unless_present = "remote_signer_url",
+        conflicts_with_all = &["committer_remote_signer_url", "committer_remote_signer_public_key"],
+        required_unless_present = "committer_remote_signer_url",
     )]
     pub committer_l1_private_key: Option<SecretKey>,
     #[arg(
@@ -306,10 +306,10 @@ pub struct CommitterOptions {
         env = "ETHREX_COMMITTER_REMOTE_SIGNER_URL",
         help_heading = "L1 Committer options",
         help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
-        requires = "remote_signer_public_key",
+        requires = "committer_remote_signer_public_key",
         required_unless_present = "committer_l1_private_key"
     )]
-    pub remote_signer_url: Option<Url>,
+    pub committer_remote_signer_url: Option<Url>,
     #[arg(
         long = "committer.remote-signer-public-key",
         value_name = "PUBLIC_KEY",
@@ -317,9 +317,9 @@ pub struct CommitterOptions {
         env = "ETHREX_COMMITTER_REMOTE_SIGNER_PUBLIC_KEY",
         help_heading = "L1 Committer options",
         help = "Public key to request the remote signature from.",
-        requires = "remote_signer_url",
+        requires = "committer_remote_signer_url",
     )]
-    pub remote_signer_public_key: Option<PublicKey>,
+    pub committer_remote_signer_public_key: Option<PublicKey>,
     #[arg(
         long,
         value_name = "ADDRESS",
@@ -368,8 +368,8 @@ impl Default for CommitterOptions {
             commit_time_ms: 1000,
             arbitrary_base_blob_gas_price: 1_000_000_000,
             validium: false,
-            remote_signer_url: None,
-            remote_signer_public_key: None,
+            committer_remote_signer_url: None,
+            committer_remote_signer_public_key: None,
         }
     }
 }

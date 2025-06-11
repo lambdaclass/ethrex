@@ -24,7 +24,8 @@ members = [
   "crates/storage",
   "crates/vm",
   "crates/vm/levm",
-  "crates/vm/levm/bench/revm_comparison"
+  "crates/vm/levm/bench/revm_comparison", 
+  "crates/web3signer"
 ]
 resolver = "2"
 
@@ -52,6 +53,7 @@ ethrex-l2 = { path = "./crates/l2" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
+web3signer = { path = "./crates/web3signer" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
@@ -89,3 +91,5 @@ libsecp256k1 = "0.7.2"
 clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
+rustc-hex = "2.1.0"
+url = "2.5.4"

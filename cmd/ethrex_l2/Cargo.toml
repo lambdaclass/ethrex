@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 ethrex-l2.workspace = true
 ethrex-sdk.workspace = true
-ethrex-common.workspace = true
+ethrex-common = { workspace = true, features = ["web3sign"] }
 ethrex-blockchain = { workspace = true, features = ["l2"] }
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
