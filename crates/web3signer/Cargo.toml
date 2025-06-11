@@ -1,5 +1,5 @@
 [package]
-name = "websigner"
+name = "web3signer"
 version.workspace = true
 edition.workspace = true
 
@@ -17,4 +17,4 @@ thiserror = "2.0.9"
 rustc-hex = "2.1.0"
 
 [lib]
-path = "./websigner.rs"
+path = "./web3signer.rs"

@@ -25,7 +25,7 @@ members = [
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/bench/revm_comparison", 
-  "crates/websigner"
+  "crates/web3signer"
 ]
 resolver = "2"
 
