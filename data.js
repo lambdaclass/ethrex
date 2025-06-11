@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749666508162,
+  "lastUpdate": 1749666654167,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12175,6 +12175,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183587753739,
             "range": "± 312696693",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6449db501fa83ed16cbda16c6440a4a5029dc2a2",
+          "message": "refactor(l2): implement block_producer using spawned library (#3033)\n\n**Motivation**\n\n[spawned](https://github.com/lambdaclass/spawned) goal is to simplify\nconcurrency implementations and decouple any runtime implementation from\nthe code.\nOn this PR we aim to replace the BlockProducer with a spawned\nimplementation to learn if this approach is beneficial.\n\n**Description**\n\nReplaces BlockProducer task spawn with a series of spawned gen_server\nimplementation.\n\n---------\n\nCo-authored-by: Esteban Dimitroff Hodi <esteban.dimitroff@lambdaclass.com>",
+          "timestamp": "2025-06-11T17:40:08Z",
+          "tree_id": "6e8152ec3c0e81919e2f65463f040478bf1a1164",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6449db501fa83ed16cbda16c6440a4a5029dc2a2"
+        },
+        "date": 1749666647384,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 188251011080,
+            "range": "± 788976414",
             "unit": "ns/iter"
           }
         ]
