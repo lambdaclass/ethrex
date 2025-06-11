@@ -451,7 +451,9 @@ async fn initialize_contracts(
         info!("Initializing SequencerRegistry");
         let initialize_tx_hash = {
             let calldata_values = vec![
-                Value::Address(opts.sequencer_registry_owner),
+                Value::Address(opts.sequencer_registry_owner.ok_or(
+                    DeployerError::ConfigValueNotSet("--sequencer-registry-owner".to_string()),
+                )?),
                 Value::Address(contract_addresses.on_chain_proposer_address),
             ];
             let sequencer_registry_initialization_calldata =
