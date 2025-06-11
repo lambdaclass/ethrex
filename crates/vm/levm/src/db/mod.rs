@@ -1,13 +1,12 @@
+use crate::errors::DatabaseError;
 use bytes::Bytes;
-use error::DatabaseError;
+pub use cache::CacheDB;
 use ethrex_common::{
     types::{Account, ChainConfig},
     Address, H256, U256,
 };
 
 pub mod cache;
-pub use cache::CacheDB;
-pub mod error;
 pub mod gen_db;
 
 pub trait Database: Send + Sync {
