@@ -19,7 +19,7 @@ use futures_util::future::join_all;
 use tokio_utils::RateLimiter;
 
 use super::{Account, NodeRLP};
-use ethrex_levm::db::error::DatabaseError;
+use ethrex_levm::errors::DatabaseError;
 use secp256k1;
 use std::sync::Arc;
 use std::sync::Mutex;
