@@ -87,7 +87,7 @@ jobs:
             compose_target: docker-compose-l2.yaml
           - name: "Vanilla with Web3signer"
             validium: false
-            compose_target: docker-compose-l2-websigner.yaml
+            compose_target: docker-compose-l2-web3signer.yaml
     needs: [docker-bake]
     steps:
       - name: Checkout sources
@@ -131,7 +131,7 @@ jobs:
           cargo test l2 --no-run --release
 
       - name: Start Web3Signer
-        if: matrix.compose_target == 'docker-compose-l2-websigner.yaml'
+        if: matrix.compose_target == 'docker-compose-l2-web3signer.yaml'
         run: |
           cd crates/l2
           docker compose -f ${{ matrix.compose_target }} up --detach web3signer

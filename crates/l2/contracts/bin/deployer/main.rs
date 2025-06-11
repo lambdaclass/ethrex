@@ -43,7 +43,7 @@ async fn main() -> Result<(), DeployerError> {
     let opts = DeployerOptions::parse();
     let signer = match &opts.remote_signer_url {
         Some(url) => RemoteSigner::new(
-            url.to_string().clone(),
+            url.clone(),
             opts.remote_signer_public_key
                 .ok_or(DeployerError::RemoteUrlWithoutPubkey)?,
         )

@@ -70,13 +70,13 @@ impl LocalSigner {
 
 #[derive(Clone, Debug)]
 pub struct RemoteSigner {
-    pub url: String,
+    pub url: Url,
     pub public_key: PublicKey,
     pub address: Address,
 }
 
 impl RemoteSigner {
-    pub fn new(url: String, public_key: PublicKey) -> Self {
+    pub fn new(url: Url, public_key: PublicKey) -> Self {
         let address = Address::from(keccak(&public_key.serialize_uncompressed()[1..]));
         Self {
             url,
