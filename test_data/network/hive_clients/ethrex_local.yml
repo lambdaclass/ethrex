@@ -1,2 +1,6 @@
 - client: ethrex
   dockerfile: local
+- client: ethrex-revm
+  dockerfile: local
+- client: ethrex-snap
+  dockerfile: local

@@ -100,19 +100,22 @@ SIM_PARALLELISM ?= 16
 # The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
-# The evm can be selected by using seting HIVE_ETHREX_FLAGS='--evm revm' (the default is levm)
+# The evm can be selected by selecting HIVE_CLIENT with ethrex for levm or ethrex-revm for revm
 # The log level can be selected by switching SIM_LOG_LEVEL from 1 up to 4
+# The syncmode can be changed to snap by usint HIVE_CLIENT=ethrex-snap
 
 HIVE_CLIENT_FILE := ../test_data/network/hive_clients/ethrex.yml
 HIVE_CLIENT_FILE_GIT := ../test_data/network/hive_clients/ethrex_git.yml
 HIVE_CLIENT_FILE_LOCAL := ../test_data/network/hive_clients/ethrex_local.yml
 
+HIVE_CLIENT ?= ethrex # or ethrex-revm or ethrex-snap
+
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
+	- cd hive && HIVE_NODETYPE="snap" ./hive --client-file $(HIVE_CLIENT_FILE) --client $(HIVE_CLIENT) --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
 	$(MAKE) view-hive
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ".*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) 
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client $(HIVE_CLIENT) --sim ".*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) 
 	$(MAKE) view-hive
 
 clean-hive-logs: ## 🧹 Clean Hive logs
