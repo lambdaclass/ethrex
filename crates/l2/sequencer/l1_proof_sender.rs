@@ -304,10 +304,6 @@ pub async fn send_proof_to_contract(
             .unwrap_or(&ProverType::SP1.empty_calldata())
             .as_slice(),
         proofs
-            .get(&ProverType::Pico)
-            .unwrap_or(&ProverType::Pico.empty_calldata())
-            .as_slice(),
-        proofs
             .get(&ProverType::TDX)
             .unwrap_or(&ProverType::TDX.empty_calldata())
             .as_slice(),
