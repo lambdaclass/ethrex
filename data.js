@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749665149540,
+  "lastUpdate": 1749666508162,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12145,6 +12145,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 186844195639,
             "range": "± 371730248",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "69e5116497c5d37ab7a75ca1d21af3125f0167d8",
+          "message": "ci(l1): Updated CI to include spamoor and new version of ethereum-package (#2627)\n\n**Motivation**\n\nWe are updating the kurtosis ethereum package to include spamoor. I'm\nusing this pr to test the CI changes.\n\n**Description**\n\n- Changes ethereum package version.\n- Adds spamoor to tx_networ_param\n\nCloses #2480\n\n---------\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>",
+          "timestamp": "2025-06-11T17:38:09Z",
+          "tree_id": "6f03458e0be96b8fde5ece456e4be0ef341286ad",
+          "url": "https://github.com/lambdaclass/ethrex/commit/69e5116497c5d37ab7a75ca1d21af3125f0167d8"
+        },
+        "date": 1749666501856,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183587753739,
+            "range": "± 312696693",
             "unit": "ns/iter"
           }
         ]
