@@ -104,78 +104,75 @@ fn exception_is_expected(
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::IntrinsicGasTooLow
                 ),
-                ChainError::InvalidTransaction(_) //??
+                ChainError::EvmError(EvmError::Transaction(_)) //??
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::InsufficientAccountFunds
                 ),
-                ChainError::InvalidTransaction(_) //??
+                ChainError::EvmError(EvmError::Transaction(_)) //??
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::PriorityGreaterThanMaxFeePerGas
                 ),
-                ChainError::InvalidTransaction(_) //??
+                ChainError::EvmError(EvmError::Transaction(_)) //??
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::GasLimitPriceProductOverflow
                 ),
-                ChainError::InvalidTransaction(_) //??
+                ChainError::EvmError(EvmError::Transaction(_)) //??
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::SenderNotEoa
                 ),
-                ChainError::InvalidTransaction(_) //??
+                ChainError::EvmError(EvmError::Transaction(_)) //??
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::InsufficientMaxFeePerGas
                 ),
-                ChainError::InvalidTransaction(_) //??
+                ChainError::EvmError(EvmError::Transaction(_)) //??
             ) | (
                 BlockChainExpectedException::TxtException(TransactionExpectedException::NonceIsMax),
-                ChainError::InvalidTransaction(_) //??
+                ChainError::EvmError(EvmError::Transaction(_)) //??
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::GasAllowanceExceeded
                 ),
-                ChainError::InvalidTransaction(_) //??
+                ChainError::EvmError(EvmError::Transaction(_)) //??
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::Type3TxPreFork
                 ),
-                ChainError::InvalidTransaction(_) //??
+                ChainError::EvmError(EvmError::Transaction(_)) //??
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::Type3TxBlobCountExceeded
                 ),
-                ChainError::InvalidTransaction(_) //??
+                ChainError::InvalidBlock(InvalidBlockError::ExceededMaxBlobGasPerBlock) //??
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::Type3TxZeroBlobs
                 ),
-                ChainError::InvalidTransaction(_) //??
+                ChainError::EvmError(EvmError::Transaction(_)) //??
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::Type3TxContractCreation
                 ),
-                ChainError::InvalidTransaction(_) //??
+                ChainError::EvmError(EvmError::Transaction(_)) //??
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::Type3TxInvalidBlobVersionedHash
                 ),
-                ChainError::InvalidTransaction(_) //??
+                ChainError::EvmError(EvmError::Transaction(_)) //??
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::InsufficientMaxFeePerBlobGas
                 ),
-                ChainError::InvalidTransaction(_) //??
+                ChainError::EvmError(EvmError::Transaction(_)) //??
             ) | (
                 BlockChainExpectedException::TxtException(
                     TransactionExpectedException::InitcodeSizeExceeded
                 ),
-                ChainError::InvalidTransaction(_) //??
-            ) | (
-                BlockChainExpectedException::TxtException(TransactionExpectedException::Other),
-                _ //TODO: Decide whether to support more specific errors.
+                ChainError::EvmError(EvmError::Transaction(_)) //??
             ) | (
                 BlockChainExpectedException::BlockException(
                     BlockExpectedException::IncorrectBlobGasUsed
@@ -210,11 +207,11 @@ fn exception_is_expected(
                 ChainError::EvmError(EvmError::SystemContractEmpty(_))
             ) | (
                 BlockChainExpectedException::BlockException(
-                    BlockExpectedException::SystemContractEmpty
+                    BlockExpectedException::SystemContractCallFailed
                 ),
                 ChainError::EvmError(EvmError::SystemContractCallFailed(_))
             ) | (
-                BlockChainExpectedException::BlockException(BlockExpectedException::Other),
+                BlockChainExpectedException::Other,
                 _ //TODO: Decide whether to support more specific errors.
             ),
         )
