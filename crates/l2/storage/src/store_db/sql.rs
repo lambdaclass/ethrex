@@ -43,12 +43,10 @@ impl SQLStore {
         Ok(store)
     }
     async fn execute<T: IntoParams>(&self, sql: &str, params: T) -> Result<(), RollupStoreError> {
-        println!("executing: {sql}");
         self.conn.execute(sql, params).await?;
         Ok(())
     }
     async fn query<T: IntoParams>(&self, sql: &str, params: T) -> Result<Rows, RollupStoreError> {
-        println!("querying: {sql}");
         Ok(self.conn.query(sql, params).await?)
     }
     async fn init_db(&self) -> Result<(), RollupStoreError> {
