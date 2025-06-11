@@ -86,9 +86,7 @@ where
                     )
                 }
                 "TransactionException.TYPE_4_TX_CONTRACT_CREATION" => {
-                    BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::Type4TxContractCreation,
-                    )
+                    BlockChainExpectedException::RLPException
                 }
                 "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
                     BlockChainExpectedException::TxtException(
@@ -96,9 +94,7 @@ where
                     )
                 }
                 "BlockException.RLP_STRUCTURES_ENCODING" => {
-                    BlockChainExpectedException::BlockException(
-                        BlockExpectedException::RLPStructuresEncoding,
-                    )
+                    BlockChainExpectedException::RLPException
                 }
                 "BlockException.INCORRECT_BLOB_GAS_USED" => {
                     BlockChainExpectedException::BlockException(

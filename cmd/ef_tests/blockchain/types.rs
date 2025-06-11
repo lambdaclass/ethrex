@@ -490,6 +490,7 @@ impl From<Account> for GenesisAccount {
 pub enum BlockChainExpectedException {
     TxtException(TransactionExpectedExeption),
     BlockException(BlockExpectedException),
+    RLPException,
     Other,
 }
 

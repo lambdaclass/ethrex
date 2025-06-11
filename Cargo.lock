@@ -3118,6 +3118,7 @@ dependencies = [
  "ef_tests-state",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-levm",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",

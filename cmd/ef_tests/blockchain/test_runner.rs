@@ -2,15 +2,21 @@ use std::{collections::HashMap, path::Path};
 
 use crate::{
     network::Network,
-    types::{BlockWithRLP, TestUnit},
+    types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
-use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
+use ef_tests_state::types::TransactionExpectedException;
+use ethrex_blockchain::{
+    error::{ChainError, InvalidBlockError},
+    fork_choice::apply_fork_choice,
+    Blockchain,
+};
 use ethrex_common::types::{
-    Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader, EMPTY_KECCACK_HASH,
+    Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
+    InvalidBlockHeaderError, EMPTY_KECCACK_HASH,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::EvmEngine;
+use ethrex_vm::{EvmEngine, EvmError};
 
 pub fn parse_and_execute(path: &Path, evm: EvmEngine, skipped_tests: Option<&[&str]>) {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -61,24 +67,158 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
             Err(error) => {
                 assert!(
                     expects_exception,
-                    "Transaction execution unexpectedly failed on test: {}, with error {}",
+                    "Transaction execution unexpectedly failed on test: {}, with error {:?}",
                     test_key, error
                 );
-                assert_eq!(block_fixture.expect_exception.unwrap(), error);
+                let expected_exception = block_fixture.expect_exception.clone().unwrap();
+                assert!(
+                    exception_is_expected(expected_exception.clone(), &error),
+                    "Returned exception {:?} does not match expected {:?}",
+                    error,
+                    expected_exception,
+                );
                 return;
             }
             Ok(_) => {
                 assert!(
                     !expects_exception,
-                    "Expected transaction execution to fail in test: {} with error: {}",
+                    "Expected transaction execution to fail in test: {} with error: {:?}",
                     test_key,
-                    block_fixture.expect_exception.clone().unwrap()
+                    block_fixture.expect_exception.clone()
                 );
                 apply_fork_choice(&store, hash, hash, hash).await.unwrap();
             }
         }
     }
     check_poststate_against_db(test_key, test, &store).await
+}
+
+fn exception_is_expected(
+    expected_exceptions: Vec<BlockChainExpectedException>,
+    returned_error: &ChainError,
+) -> bool {
+    expected_exceptions.iter().any(|exception| {
+        matches!(
+            (exception, &returned_error),
+            (
+                BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::IntrinsicGasTooLow
+                ),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::InsufficientAccountFunds
+                ),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::PriorityGreaterThanMaxFeePerGas
+                ),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::GasLimitPriceProductOverflow
+                ),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::SenderNotEoa
+                ),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::InsufficientMaxFeePerGas
+                ),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(TransactionExpectedException::NonceIsMax),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::GasAllowanceExceeded
+                ),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::Type3TxPreFork
+                ),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::Type3TxBlobCountExceeded
+                ),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::Type3TxZeroBlobs
+                ),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::Type3TxContractCreation
+                ),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::Type3TxInvalidBlobVersionedHash
+                ),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::InsufficientMaxFeePerBlobGas
+                ),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(
+                    TransactionExpectedException::InitcodeSizeExceeded
+                ),
+                ChainError::InvalidTransaction(_) //??
+            ) | (
+                BlockChainExpectedException::TxtException(TransactionExpectedException::Other),
+                _ //TODO: Decide whether to support more specific errors.
+            ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::IncorrectBlobGasUsed
+                ),
+                ChainError::InvalidBlock(InvalidBlockError::BlobGasUsedMismatch)
+            ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::BlobGasUsedAboveLimit
+                ),
+                ChainError::InvalidBlock(InvalidBlockError::InvalidHeader(
+                    InvalidBlockHeaderError::GasUsedGreaterThanGasLimit
+                ))
+            ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::IncorrectExcessBlobGas
+                ),
+                ChainError::InvalidBlock(InvalidBlockError::InvalidHeader(
+                    InvalidBlockHeaderError::ExcessBlobGasIncorrect
+                ))
+            ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::IncorrectBlockFormat
+                ),
+                ChainError::InvalidBlock(_) //??
+            ) | (
+                BlockChainExpectedException::BlockException(BlockExpectedException::InvalidRequest),
+                ChainError::InvalidBlock(InvalidBlockError::RequestsHashMismatch)
+            ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::SystemContractEmpty
+                ),
+                ChainError::EvmError(EvmError::SystemContractEmpty(_))
+            ) | (
+                BlockChainExpectedException::BlockException(
+                    BlockExpectedException::SystemContractEmpty
+                ),
+                ChainError::EvmError(EvmError::SystemContractCallFailed(_))
+            ) | (
+                BlockChainExpectedException::BlockException(BlockExpectedException::Other),
+                _ //TODO: Decide whether to support more specific errors.
+            ),
+        )
+    })
 }
 
 /// Tests the rlp decoding of a block
@@ -104,12 +244,15 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         "TransactionException.TYPE_4_TX_CONTRACT_CREATION",
     ];
 
-    let expects_rlp_exception = decoding_exception_cases.iter().any(|&case| {
-        block_fixture
-            .expect_exception
-            .as_ref()
-            .map_or(false, |s| s.starts_with(case))
-    });
+    let expects_rlp_exception = block_fixture
+        .expect_exception
+        .as_ref()
+        .unwrap_or(&Vec::new())
+        .into_iter()
+        .any(|case| match case {
+            BlockChainExpectedException::RLPException => true,
+            _ => false,
+        });
 
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
