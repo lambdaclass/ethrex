@@ -28,21 +28,6 @@ restart: restart-local-l1 deploy-l1 purge_prover_state restart-l2 ## 🔄 Restar
 restart-testnet:
 	down-l2 down-metrics rm-db-l2 update-system-contracts deploy-l1-testnet init-l2
 
-# CLI
-cli: ## 🛠️ Installs the L2 Lambda ethrex CLI
-	cd ${ethrex_PATH}/cmd/ethrex_l2 && \
-	cargo install --path . --force
-
-update-cli-contracts: ## 📜 Update the CLI's config contracts
-	@if [ -z "$$C" ]; then \
-		echo "Error: CONFIG_NAME (C) is missing.\nPlease provide it as an argument:\nmake update-cli-contracts C=<config_name>."; \
-		exit 1; \
-	fi && \
-	CB=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' .env | cut -d= -f2) && \
-	ethrex_l2 config edit --common-bridge $$CB $$C && \
-	OP=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' .env | cut -d= -f2) && \
-	ethrex_l2 config edit --on-chain-proposer $$OP $$C
-
 # Variables
 
 ethrex_PATH=$(shell pwd)/../..
@@ -58,7 +43,6 @@ L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
 
 ethrex_L2_DEV_LIBMDBX?=dev_ethrex_l2
-ethrex_L2_2_DEV_LIBMDBX?=dev_ethrex_l2_2
 ethrex_L1_DEV_LIBMDBX=dev_ethrex_l1
 L1_PORT=8545
 L2_PORT=1729
