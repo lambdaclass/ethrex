@@ -129,7 +129,7 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn store_changes_batch(
+    async fn apply_updates(
         &self,
         update_batch: UpdateBatch,
         account_updates: &[AccountUpdate],
@@ -155,18 +155,16 @@ impl StoreEngine for Store {
                     {
                         cursor.delete_current().map_err(StoreError::LibmdbxError)?;
                     }
-                } else {
-                    if let Some(info_update) = update.info {
-                        let value = (
-                            info_update.code_hash,
-                            info_update.balance,
-                            info_update.nonce,
-                        )
-                            .into();
-                        cursor
-                            .upsert(key, value)
-                            .map_err(StoreError::LibmdbxError)?;
-                    }
+                } else if let Some(info_update) = update.info {
+                    let value = (
+                        info_update.code_hash,
+                        info_update.balance,
+                        info_update.nonce,
+                    )
+                        .into();
+                    cursor
+                        .upsert(key, value)
+                        .map_err(StoreError::LibmdbxError)?;
                 }
                 for (slot, value) in update.added_storage.iter() {
                     let key = (update.address.into(), (*slot).into());
@@ -230,16 +228,19 @@ impl StoreEngine for Store {
                     .map_err(StoreError::LibmdbxError)?;
             }
             for (block_hash, receipts) in update_batch.receipts {
-                // store receipts
                 let mut key_values = vec![];
-                for (index, receipt) in receipts.into_iter().enumerate() {
-                    let key = (block_hash, index as u64).into();
-                    let receipt_rlp = receipt.encode_to_vec();
-                    let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp)
-                    else {
-                        continue;
-                    };
+                // store receipts
 
+                for mut entries in
+                    receipts
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(index, receipt)| {
+                            let key = (block_hash, index as u64).into();
+                            let receipt_rlp = receipt.encode_to_vec();
+                            IndexedChunk::from::<Receipts>(key, &receipt_rlp)
+                        })
+                {
                     key_values.append(&mut entries);
                 }
                 let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
@@ -1081,17 +1082,17 @@ impl StoreEngine for Store {
         let cursor = txn
             .cursor::<StateSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
-
-        let mut account_snapshots = Vec::new();
-        let mut cursor_it = cursor.walk(Some(start.into()));
-        while let Some(Ok((hash, acc))) = cursor_it.next() {
-            account_snapshots.push((hash.to()?, acc.to()?));
-        }
-
-        Ok(account_snapshots
-            .into_iter()
-            .take(MAX_SNAPSHOT_READS)
-            .collect::<Vec<_>>())
+        let iter = cursor
+            .walk(Some(start.into()))
+            .map_while(|res| {
+                res.ok().map(|(hash, acc)| match (hash.to(), acc.to()) {
+                    (Ok(hash), Ok(acc)) => Some((hash, acc)),
+                    _ => None,
+                })
+            })
+            .flatten()
+            .take(MAX_SNAPSHOT_READS);
+        Ok(iter.collect::<Vec<_>>())
     }
 
     async fn read_storage_snapshot(

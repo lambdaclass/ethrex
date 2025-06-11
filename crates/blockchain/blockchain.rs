@@ -8,7 +8,7 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::info;
-use constants::MAX_INITCODE_SIZE;
+use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
@@ -26,6 +26,7 @@ use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use mempool::Mempool;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Div, time::Instant};
+
 use vm::StoreVmDatabase;
 
 #[cfg(feature = "c-kzg")]
@@ -50,7 +51,6 @@ pub struct BatchBlockProcessingFailure {
     pub last_valid_hash: H256,
     pub failed_block_hash: H256,
 }
-
 impl Blockchain {
     pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
         Self {
@@ -128,11 +128,15 @@ impl Blockchain {
         account_updates: &[AccountUpdate],
     ) -> Result<(), ChainError> {
         // Apply the account updates over the last block's state and compute the new state root
-        let (new_state_root, state_updates, accounts_updates) = self
+        let apply_updates_list = self
             .storage
             .apply_account_updates_batch(block.header.parent_hash, account_updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
+
+        let new_state_root = apply_updates_list.state_trie_hash;
+        let state_updates = apply_updates_list.state_updates;
+        let accounts_updates = apply_updates_list.storage_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
@@ -144,11 +148,11 @@ impl Blockchain {
             receipts: vec![(block.hash(), execution_result.receipts)],
         };
 
-        update_batch
-            .apply_to_store(self.storage.clone(), account_updates)
-            .await?;
-
-        Ok(())
+        self.storage
+            .clone()
+            .store_block_updates(update_batch, account_updates)
+            .await
+            .map_err(|e| e.into())
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
@@ -275,12 +279,16 @@ impl Blockchain {
             .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
 
         // Apply the account updates over all blocks and compute the new state root
-        let (new_state_root, state_updates, accounts_updates) = self
+        let account_updates_list = self
             .storage
             .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
+
+        let new_state_root = account_updates_list.state_trie_hash;
+        let state_updates = account_updates_list.state_updates;
+        let accounts_updates = account_updates_list.storage_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
@@ -293,7 +301,7 @@ impl Blockchain {
         };
 
         self.storage
-            .store_changes(update_batch, &account_updates)
+            .store_block_updates(update_batch, &account_updates)
             .await
             .map_err(|e| (e.into(), None))?;
 
@@ -401,7 +409,7 @@ impl Blockchain {
         tx: &Transaction,
         sender: Address,
     ) -> Result<(), MempoolError> {
-        // TODO: Add validations here
+        let nonce = tx.nonce();
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
             return Ok(());
@@ -422,6 +430,10 @@ impl Blockchain {
             && tx.data().len() > MAX_INITCODE_SIZE
         {
             return Err(MempoolError::TxMaxInitCodeSizeError);
+        }
+
+        if !tx.is_contract_creation() && tx.data().len() >= MAX_TRANSACTION_DATA_SIZE {
+            return Err(MempoolError::TxMaxDataSizeError);
         }
 
         // Check gas limit is less than header's gas limit
@@ -450,8 +462,8 @@ impl Blockchain {
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if tx.nonce() < sender_acc_info.nonce {
-                return Err(MempoolError::InvalidNonce);
+            if nonce < sender_acc_info.nonce || nonce == u64::MAX {
+                return Err(MempoolError::NonceTooLow);
             }
 
             let tx_cost = tx
@@ -464,6 +476,14 @@ impl Blockchain {
         } else {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
+        }
+
+        // Check the nonce of pendings TXs in the mempool from the same sender
+        if self
+            .mempool
+            .contains_sender_nonce(sender, nonce, tx.compute_hash())?
+        {
+            return Err(MempoolError::InvalidNonce);
         }
 
         if let Some(chain_id) = tx.chain_id() {

@@ -12,11 +12,10 @@ use crate::{
         PayloadBundleRLP, ReceiptRLP, TupleRLP,
     },
 };
-use ethrex_common::types::{AccountInfo, AccountState, BlockBody};
 use ethrex_common::{
     types::{
-        payload::PayloadBundle, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-        Receipt,
+        payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody,
+        BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
     },
     Address, H256, U256,
 };
@@ -305,7 +304,11 @@ impl RedBStore {
 
 #[async_trait::async_trait]
 impl StoreEngine for RedBStore {
-    async fn store_changes_batch(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    async fn apply_updates(
+        &self,
+        update_batch: UpdateBatch,
+        _account_updates: &[AccountUpdate],
+    ) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let write_txn = db.begin_write()?;

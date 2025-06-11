@@ -91,14 +91,14 @@ pub enum ProverServerError {
     StateDiffError(#[from] StateDiffError),
     #[error("ProverServer encountered a ExecutionCacheError")]
     ExecutionCacheError(#[from] ExecutionCacheError),
-    #[error("ProverServer encountered a BlobsBundleCacheError: {0}")]
-    BlobsBundleCacheError(#[from] super::blobs_bundle_cache::BlobsBundleCacheError),
     #[error("ProverServer encountered a BlobsBundleError: {0}")]
     BlobsBundleError(#[from] ethrex_common::types::BlobsBundleError),
     #[error("Failed to execute command: {0}")]
     ComandError(std::io::Error),
     #[error("ProverServer failed failed because of a ProverDB error: {0}")]
     ProverDBError(#[from] ProverDBError),
+    #[error("Missing blob for batch {0}")]
+    MissingBlob(u64),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -179,6 +179,8 @@ pub enum BlockProducerError {
     FailedToEncodeAccountStateDiff(#[from] StateDiffError),
     #[error("Failed to get data from: {0}")]
     FailedToGetDataFrom(String),
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -221,8 +223,6 @@ pub enum CommitterError {
     InternalError(String),
     #[error("Failed to get withdrawals: {0}")]
     FailedToGetWithdrawals(#[from] UtilsError),
-    #[error("Committer failed to push to BlobsBundleCache: {0}")]
-    BlobsBundleCacheError(#[from] super::blobs_bundle_cache::BlobsBundleCacheError),
     #[error("Deposit error: {0}")]
     DepositError(#[from] DepositError),
     #[error("Withdrawal error: {0}")]

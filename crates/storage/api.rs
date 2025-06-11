@@ -19,7 +19,7 @@ use ethrex_trie::{Nibbles, Trie};
 #[async_trait::async_trait]
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Store changes in a batch from a vec of blocks
-    async fn store_changes_batch(
+    async fn apply_updates(
         &self,
         update_batch: UpdateBatch,
         account_updates: &[AccountUpdate],

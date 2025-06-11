@@ -88,7 +88,7 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn store_changes_batch(
+    async fn apply_updates(
         &self,
         update_batch: UpdateBatch,
         _account_updates: &[AccountUpdate],

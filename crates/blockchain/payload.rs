@@ -468,7 +468,7 @@ impl Blockchain {
     ) -> Result<Receipt, ChainError> {
         match **head {
             Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
-            _ => self.apply_plain_transaction(head, context),
+            _ => apply_plain_transaction(head, context),
         }
     }
 
@@ -496,29 +496,13 @@ impl Blockchain {
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
         // Apply transaction
-        let receipt = self.apply_plain_transaction(head, context)?;
+        let receipt = apply_plain_transaction(head, context)?;
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
             Some(prev_blob_gas + blobs_bundle.blobs.len() as u64 * GAS_PER_BLOB);
         context.blobs_bundle += blobs_bundle;
         Ok(receipt)
-    }
-
-    /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
-    fn apply_plain_transaction(
-        &self,
-        head: &HeadTransaction,
-        context: &mut PayloadBuildContext,
-    ) -> Result<Receipt, ChainError> {
-        let (report, gas_used) = context.vm.execute_tx(
-            &head.tx,
-            &context.payload.header,
-            &mut context.remaining_gas,
-            head.tx.sender(),
-        )?;
-        context.block_value += U256::from(gas_used) * head.tip;
-        Ok(report)
     }
 
     pub fn extract_requests(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
@@ -545,11 +529,13 @@ impl Blockchain {
     ) -> Result<(), ChainError> {
         let account_updates = context.vm.get_state_transitions()?;
 
-        let (state_root, _, _) = self
+        let ret_acount_updates_list = self
             .storage
             .apply_account_updates_batch(context.parent_hash(), &account_updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
+
+        let state_root = ret_acount_updates_list.state_trie_hash;
 
         context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =
@@ -560,6 +546,21 @@ impl Blockchain {
         context.account_updates = account_updates;
         Ok(())
     }
+}
+
+/// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
+pub fn apply_plain_transaction(
+    head: &HeadTransaction,
+    context: &mut PayloadBuildContext,
+) -> Result<Receipt, ChainError> {
+    let (report, gas_used) = context.vm.execute_tx(
+        &head.tx,
+        &context.payload.header,
+        &mut context.remaining_gas,
+        head.tx.sender(),
+    )?;
+    context.block_value += U256::from(gas_used) * head.tip;
+    Ok(report)
 }
 
 /// A struct representing suitable mempool transactions waiting to be included in a block

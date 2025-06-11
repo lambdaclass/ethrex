@@ -22,6 +22,7 @@ use ethrex_rpc::{
 };
 use ethrex_storage::{EngineType, Store, UpdateBatch};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+use ethrex_vm::EvmEngine;
 use eyre::OptionExt;
 use itertools::Itertools;
 use keccak_hash::keccak;
@@ -86,6 +87,10 @@ impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             Command::Init { opts } => {
+                if opts.node_opts.evm == EvmEngine::REVM {
+                    panic!("L2 Doesn't support REVM, use LEVM instead.");
+                }
+
                 let data_dir = set_datadir(&opts.node_opts.datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
@@ -333,19 +338,26 @@ impl Command {
 
                             // Apply all account updates to trie
                             let account_updates = state_diff.to_account_updates(&new_trie)?;
-                            let (new_state_root, state_updates, accounts_updates) = store
+                            let account_updates_list = store
                                 .apply_account_updates_from_trie_batch(new_trie, account_updates.values())
                                 .await
                                 .expect("Error applying account updates");
 
+                            let (new_state_root, state_updates, storage_updates) =
+                                (
+                                    account_updates_list.state_trie_hash,
+                                    account_updates_list.state_updates,
+                                    account_updates_list.storage_updates
+                                );
+
                             let pseudo_update_batch = UpdateBatch {
                                 account_updates: state_updates,
-                                storage_updates: accounts_updates,
-                                blocks: vec![],
-                                receipts: vec![],
+                                storage_updates,
+                                ..Default::default()
                             };
 
-                            store.store_changes(pseudo_update_batch).await.expect("Error storing trie updates");
+                            let account_updates: Vec<_> = account_updates.values().cloned().collect();
+                            store.store_block_updates(pseudo_update_batch, &account_updates).await.expect("Error storing trie updates");
 
                             new_trie = store.open_state_trie(new_state_root).expect("Error opening new state trie");
 

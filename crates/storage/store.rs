@@ -24,9 +24,11 @@ use std::sync::Arc;
 use tracing::info;
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
-// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
-// This will always be the amount yielded by snapshot reads unless there are less elements left
+/// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
+/// This will always be the amount yielded by snapshot reads unless there are less elements left
 pub const MAX_SNAPSHOT_READS: usize = 100;
+/// Panic message shown when the Store is initialized with a genesis that differs from the one already stored
+pub const GENESIS_DIFF_PANIC_MESSAGE: &str = "Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2";
 
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -43,6 +45,7 @@ pub enum EngineType {
     RedB,
 }
 
+#[derive(Default)]
 pub struct UpdateBatch {
     /// Nodes to be added to the state trie
     pub account_updates: Vec<TrieNode>,
@@ -54,24 +57,22 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
 }
 
-impl UpdateBatch {
-    pub async fn apply_to_store(
-        self,
-        store: Store,
-        account_updates: &[AccountUpdate],
-    ) -> Result<(), StoreError> {
-        store.store_changes(self, account_updates).await
-    }
+type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+
+pub struct AccountUpdatesList {
+    pub state_trie_hash: H256,
+    pub state_updates: Vec<(NodeHash, Vec<u8>)>,
+    pub storage_updates: StorageUpdates,
 }
 
 impl Store {
-    pub async fn store_changes(
+    pub async fn store_block_updates(
         &self,
         update_batch: UpdateBatch,
         account_updates: &[AccountUpdate],
     ) -> Result<(), StoreError> {
         self.engine
-            .store_changes_batch(update_batch, account_updates)
+            .apply_updates(update_batch, account_updates)
             .await
     }
 
@@ -349,38 +350,23 @@ impl Store {
         &self,
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
-    ) -> Result<
-        Option<(
-            H256,
-            Vec<(NodeHash, Vec<u8>)>,
-            Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
-        )>,
-        StoreError,
-    > {
+    ) -> Result<Option<AccountUpdatesList>, StoreError> {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
 
-        let (state_trie_hash, state_updates, storage_updates) = self
-            .apply_account_updates_from_trie_batch(state_trie, account_updates)
-            .await?;
-
-        Ok(Some((state_trie_hash, state_updates, storage_updates)))
+        Ok(Some(
+            self.apply_account_updates_from_trie_batch(state_trie, account_updates)
+                .await?,
+        ))
     }
 
     pub async fn apply_account_updates_from_trie_batch(
         &self,
         mut state_trie: Trie,
         account_updates: impl IntoIterator<Item = &AccountUpdate>,
-    ) -> Result<
-        (
-            H256,
-            Vec<(NodeHash, Vec<u8>)>,
-            Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>,
-        ),
-        StoreError,
-    > {
-        let mut ret_vec_account = Vec::new();
+    ) -> Result<AccountUpdatesList, StoreError> {
+        let mut ret_storage_updates = Vec::new();
         for update in account_updates {
             let hashed_address = hash_address(&update.address);
             if update.removed {
@@ -417,15 +403,21 @@ impl Store {
                         storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
                 }
-                let (storage_hash, storage_updates) = storage_trie.hash_prepare_batch();
+                let (storage_hash, storage_updates) =
+                    storage_trie.collect_changes_since_last_hash();
                 account_state.storage_root = storage_hash;
-                ret_vec_account.push((H256::from_slice(&hashed_address), storage_updates));
+                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
             }
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        let (state_hash, state_updates) = state_trie.hash_prepare_batch();
 
-        Ok((state_hash, state_updates, ret_vec_account))
+        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+
+        Ok(AccountUpdatesList {
+            state_trie_hash,
+            state_updates,
+            storage_updates: ret_storage_updates,
+        })
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
@@ -559,7 +551,7 @@ impl Store {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
             } else {
-                panic!("Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2");
+                panic!("{GENESIS_DIFF_PANIC_MESSAGE}");
             }
         }
         // Store genesis accounts
@@ -1312,7 +1304,7 @@ mod tests {
         Bloom, H160,
     };
     use ethrex_rlp::decode::RLPDecode;
-    use std::{fs, panic, str::FromStr};
+    use std::{fs, str::FromStr};
 
     use super::*;
 
@@ -1381,11 +1373,16 @@ mod tests {
             .add_initial_state(genesis_kurtosis)
             .await
             .expect("second genesis with same block");
-        panic::catch_unwind(move || {
-            let rt = tokio::runtime::Runtime::new().expect("runtime creation failed");
-            let _ = rt.block_on(store.add_initial_state(genesis_hive));
-        })
-        .expect_err("genesis with a different block should panic");
+        // The task panic will still be shown via stderr, but rest assured that it will also be caught and read by the test assertion
+        let add_initial_state_handle =
+            tokio::task::spawn(async move { store.add_initial_state(genesis_hive).await });
+        let panic = add_initial_state_handle.await.unwrap_err().into_panic();
+        assert_eq!(
+            panic
+                .downcast_ref::<String>()
+                .expect("Failed to downcast panic message"),
+            &GENESIS_DIFF_PANIC_MESSAGE
+        );
     }
 
     fn remove_test_dbs(path: &str) {
