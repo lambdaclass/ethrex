@@ -1028,17 +1028,17 @@ impl StoreEngine for Store {
         let cursor = txn
             .cursor::<StateSnapShot>()
             .map_err(StoreError::LibmdbxError)?;
-
-        let mut account_snapshots = Vec::new();
-        let mut cursor_it = cursor.walk(Some(start.into()));
-        while let Some(Ok((hash, acc))) = cursor_it.next() {
-            account_snapshots.push((hash.to()?, acc.to()?));
-        }
-
-        Ok(account_snapshots
-            .into_iter()
-            .take(MAX_SNAPSHOT_READS)
-            .collect::<Vec<_>>())
+        let iter = cursor
+            .walk(Some(start.into()))
+            .map_while(|res| {
+                res.ok().map(|(hash, acc)| match (hash.to(), acc.to()) {
+                    (Ok(hash), Ok(acc)) => Some((hash, acc)),
+                    _ => None,
+                })
+            })
+            .flatten()
+            .take(MAX_SNAPSHOT_READS);
+        Ok(iter.collect::<Vec<_>>())
     }
 
     async fn read_storage_snapshot(
