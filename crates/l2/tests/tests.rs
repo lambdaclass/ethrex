@@ -39,19 +39,9 @@ const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 
 const DEFAULT_PRIVATE_KEYS_FILE_PATH: &str = "../../test_data/private_keys_l1.txt";
 
-/// Test the full flow of depositing, transferring, and withdrawing funds
+/// Test the full flow of depositing, depositing with contract call, transferring, and withdrawing funds
 /// from L1 to L2 and back.
-///
-/// 1. Check balances on L1 and L2
-/// 2. Deposit from L1 to L2
-/// 3. Check deposit receipt in L2
-/// 4. Check balances on L1 and L2
-/// 5. Transfer funds on L2
-/// 6. Check balances on L2
-/// 7. Withdraw funds from L2 to L1
-/// 8. Check balances on L1 and L2
-/// 9. Claim funds on L1
-/// 10. Check balances on L1 and L2
+
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     read_env_file_by_config();
@@ -413,7 +403,7 @@ async fn test_n_withdraws(
     proposer_client: &EthClient,
     n: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // 7. Withdraw funds from L2 to L1
+    // Withdraw funds from L2 to L1
     let withdrawer_address = ethrex_l2_sdk::get_address_from_secret_key(withdrawer_private_key)?;
     let withdraw_value = U256::from(100000000000000000000u128);
 
