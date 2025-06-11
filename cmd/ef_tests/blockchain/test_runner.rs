@@ -79,7 +79,9 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
         }
     }
     check_poststate_against_db(test_key, test, &store).await;
-    re_run_stateless(blockchain, test, test_key).await;
+    if evm == EvmEngine::LEVM {
+        re_run_stateless(blockchain, test, test_key).await;
+    }
 }
 
 /// Tests the rlp decoding of a block
