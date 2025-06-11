@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749666654167,
+  "lastUpdate": 1749667667058,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12205,6 +12205,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 188251011080,
             "range": "± 788976414",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "2ca9ac4665ea02fdc219c46e89751c524a36565d",
+          "message": "fix(l1): `read_account_snapshot` should only read up to `MAX_SNAPSHOT_READS` (#3112)\n\n**Motivation**\nAfter a recent refactor the `Store:: read_account_snapshot` behaviour\nwas changed to read and push all snapshot values into a vector and then\ntake `MAX_SNAPSHOT_READS` from that vector. This doesn't make sense, as\nthe purpose of having a `MAX_SNAPSHOT_READS` is to prevent performance\nhits due to very long reads.\nThis PR fixes this by restoring the previous behaviour, which took the\nsnapshot values directly from the iterator, reading only up to\n`MAX_SNAPSHOT_READS`\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Restore previous `read_account_snapshot` logic & ensure we don't read\nthe full amount of account snapshots on each request\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses None",
+          "timestamp": "2025-06-11T17:57:38Z",
+          "tree_id": "b4d20f848adae3fdf1d08b5d6a48a2d9ce92180f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2ca9ac4665ea02fdc219c46e89751c524a36565d"
+        },
+        "date": 1749667660250,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184124849878,
+            "range": "± 537481982",
             "unit": "ns/iter"
           }
         ]
