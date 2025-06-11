@@ -10,7 +10,7 @@ use ethrex_common::U256;
 // Environmental Information (16)
 // Opcodes: ADDRESS, BALANCE, ORIGIN, CALLER, CALLVALUE, CALLDATALOAD, CALLDATASIZE, CALLDATACOPY, CODESIZE, CODECOPY, GASPRICE, EXTCODESIZE, EXTCODECOPY, RETURNDATASIZE, RETURNDATACOPY, EXTCODEHASH
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     // ADDRESS operation
     pub fn op_address(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;

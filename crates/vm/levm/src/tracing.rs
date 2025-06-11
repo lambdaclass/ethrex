@@ -197,7 +197,7 @@ fn clear_reverted_logs(callframe: &mut CallTraceFrame) {
     }
 }
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     /// This method is intended to be accessed after transaction execution
     pub fn get_trace_result(&mut self) -> Result<CallTraceFrame, VMError> {
         self.tracer

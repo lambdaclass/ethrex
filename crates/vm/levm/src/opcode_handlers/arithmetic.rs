@@ -9,7 +9,7 @@ use ethrex_common::{U256, U512};
 // Arithmetic Operations (11)
 // Opcodes: ADD, SUB, MUL, DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP, SIGNEXTEND
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     // ADD operation
     pub fn op_add(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;

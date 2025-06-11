@@ -201,7 +201,7 @@ impl CallFrame {
     }
 }
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, VMError> {
         self.call_frames.last_mut().ok_or(VMError::Internal(
             InternalError::CouldNotAccessLastCallframe,

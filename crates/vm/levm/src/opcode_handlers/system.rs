@@ -16,7 +16,7 @@ use ethrex_common::{types::Fork, Address, U256};
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     // CALL operation
     pub fn op_call(&mut self) -> Result<OpcodeResult, VMError> {
         let (

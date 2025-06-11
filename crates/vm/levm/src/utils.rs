@@ -391,7 +391,7 @@ pub fn eip7702_get_code(
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     /// Sets the account code as the EIP7702 determines.
     pub fn eip7702_set_access_code(&mut self) -> Result<(), VMError> {
         let mut refunded_gas: u64 = 0;

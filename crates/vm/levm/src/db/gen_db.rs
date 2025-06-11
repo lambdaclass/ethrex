@@ -109,7 +109,7 @@ impl GeneralizedDatabase {
     }
 }
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     // ================== Account related functions =====================
 
     /*

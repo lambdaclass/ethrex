@@ -10,7 +10,7 @@ use ethrex_common::{types::Log, H256};
 // Logging Operations (5)
 // Opcodes: LOG0 ... LOG4
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     // LOG operation
     pub fn op_log(&mut self, number_of_topics: u8) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;

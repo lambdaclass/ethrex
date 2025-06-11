@@ -9,7 +9,7 @@ use crate::{
 
 use bytes::Bytes;
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     pub fn handle_precompile_result(
         &mut self,
         precompile_result: Result<Bytes, VMError>,

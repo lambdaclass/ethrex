@@ -7,7 +7,7 @@ use crate::{
 // Exchange Operations (16)
 // Opcodes: SWAP1 ... SWAP16
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     // SWAP operation
     pub fn op_swap(&mut self, depth: usize) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;

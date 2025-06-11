@@ -10,7 +10,7 @@ use sha3::{Digest, Keccak256};
 // KECCAK256 (1)
 // Opcodes: KECCAK256
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     pub fn op_keccak256(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         let offset = current_call_frame.stack.pop()?;
