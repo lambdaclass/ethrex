@@ -7,7 +7,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{error::ChainError, fork_choice::apply_fork_choice};
-use ethrex_common::types::Genesis;
+use ethrex_common::types::{BlockNumber, Genesis};
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -15,10 +15,7 @@ use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
-    initializers::{init_blockchain, init_store, open_store},
-    networks::{Network, PublicNetwork},
-    utils::{self, get_client_version, set_datadir},
-    DEFAULT_DATADIR,
+    archive_sync::archive_sync, initializers::{init_blockchain, init_store, open_store}, networks::{Network, PublicNetwork}, utils::{self, get_client_version, set_datadir}, DEFAULT_DATADIR
 };
 
 #[cfg(feature = "l2")]
@@ -279,6 +276,24 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
+    #[command(
+        name = "archive-sync",
+        about = "Sync to a specific block by downloading its state from an archive node"
+    )]
+    ArchiveSync {
+        #[arg(
+            required = true,
+            value_name = "RPC_URL",
+            help = "Url of an archive node's rpc"
+        )]
+        archive_node_url: String,
+        #[arg(
+            required = true,
+            value_name = "NUMBER",
+            help = "Block number to sync to"
+        )]
+        block_number: BlockNumber,
+    },
     #[cfg(feature = "l2")]
     #[command(subcommand)]
     L2(l2::Command),
@@ -315,6 +330,7 @@ impl Subcommand {
                     .compute_state_root();
                 println!("{:#x}", state_root);
             }
+            Self::ArchiveSync { archive_node_url, block_number } => archive_sync(&archive_node_url, block_number).await?,
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
         }

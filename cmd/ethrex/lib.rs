@@ -2,6 +2,7 @@ pub mod initializers;
 pub mod utils;
 
 pub mod cli;
+pub mod archive_sync;
 
 #[cfg(feature = "l2")]
 pub mod l2;
