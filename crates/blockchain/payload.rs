@@ -38,6 +38,7 @@ use crate::{
     Blockchain,
 };
 
+use thiserror::Error;
 use tracing::{debug, error};
 
 pub struct BuildPayloadArgs {
@@ -51,9 +52,15 @@ pub struct BuildPayloadArgs {
     pub elasticity_multiplier: u64,
 }
 
+#[derive(Debug, Error)]
+pub enum BuildPayloadArgsError {
+    #[error("Payload hashed has wrong size")]
+    FailedToConvertPayload,
+}
+
 impl BuildPayloadArgs {
     /// Computes an 8-byte identifier by hashing the components of the payload arguments.
-    pub fn id(&self) -> u64 {
+    pub fn id(&self) -> Result<u64, BuildPayloadArgsError> {
         let mut hasher = Keccak256::new();
         hasher.update(self.parent);
         hasher.update(self.timestamp.to_be_bytes());
@@ -67,7 +74,9 @@ impl BuildPayloadArgs {
         }
         let res = &mut hasher.finalize()[..8];
         res[0] = self.version;
-        u64::from_be_bytes(res.try_into().unwrap())
+        Ok(u64::from_be_bytes(res.try_into().map_err(|_| {
+            BuildPayloadArgsError::FailedToConvertPayload
+        })?))
     }
 }
 
@@ -459,7 +468,7 @@ impl Blockchain {
     ) -> Result<Receipt, ChainError> {
         match **head {
             Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
-            _ => self.apply_plain_transaction(head, context),
+            _ => apply_plain_transaction(head, context),
         }
     }
 
@@ -487,29 +496,13 @@ impl Blockchain {
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
         // Apply transaction
-        let receipt = self.apply_plain_transaction(head, context)?;
+        let receipt = apply_plain_transaction(head, context)?;
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
             Some(prev_blob_gas + blobs_bundle.blobs.len() as u64 * GAS_PER_BLOB);
         context.blobs_bundle += blobs_bundle;
         Ok(receipt)
-    }
-
-    /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
-    fn apply_plain_transaction(
-        &self,
-        head: &HeadTransaction,
-        context: &mut PayloadBuildContext,
-    ) -> Result<Receipt, ChainError> {
-        let (report, gas_used) = context.vm.execute_tx(
-            &head.tx,
-            &context.payload.header,
-            &mut context.remaining_gas,
-            head.tx.sender(),
-        )?;
-        context.block_value += U256::from(gas_used) * head.tip;
-        Ok(report)
     }
 
     pub fn extract_requests(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
@@ -550,6 +543,21 @@ impl Blockchain {
 
         Ok(())
     }
+}
+
+/// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
+pub fn apply_plain_transaction(
+    head: &HeadTransaction,
+    context: &mut PayloadBuildContext,
+) -> Result<Receipt, ChainError> {
+    let (report, gas_used) = context.vm.execute_tx(
+        &head.tx,
+        &context.payload.header,
+        &mut context.remaining_gas,
+        head.tx.sender(),
+    )?;
+    context.block_value += U256::from(gas_used) * head.tip;
+    Ok(report)
 }
 
 /// A struct representing suitable mempool transactions waiting to be included in a block

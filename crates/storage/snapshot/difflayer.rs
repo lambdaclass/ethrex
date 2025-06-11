@@ -219,7 +219,8 @@ impl DiffLayer {
 
         prev_disk
             .db
-            .write_snapshot_account_batch_blocking(account_hashes, account_states)?;
+            .write_snapshot_account_batch_blocking(account_hashes, account_states)
+            .map_err(|e| SnapshotError::StoreError(Box::new(e)))?;
 
         let storage = self.storage();
 
@@ -258,11 +259,10 @@ impl DiffLayer {
             storage_keys.push(keys);
         }
 
-        prev_disk.db.write_snapshot_storage_batches_blocking(
-            account_hashes,
-            storage_keys,
-            storage_values,
-        )?;
+        prev_disk
+            .db
+            .write_snapshot_storage_batches_blocking(account_hashes, storage_keys, storage_values)
+            .map_err(|e| SnapshotError::StoreError(Box::new(e)))?;
 
         let disk = DiskLayer {
             db: prev_disk.db.clone(),

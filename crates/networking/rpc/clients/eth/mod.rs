@@ -84,11 +84,11 @@ impl From<u64> for BlockByNumber {
         BlockByNumber::Number(value)
     }
 }
-const MAX_NUMBER_OF_RETRIES: u64 = 10;
-const BACKOFF_FACTOR: u64 = 2;
+pub const MAX_NUMBER_OF_RETRIES: u64 = 10;
+pub const BACKOFF_FACTOR: u64 = 2;
 // Give at least 8 blocks before trying to bump gas.
-const MIN_RETRY_DELAY: u64 = 96;
-const MAX_RETRY_DELAY: u64 = 1800;
+pub const MIN_RETRY_DELAY: u64 = 96;
+pub const MAX_RETRY_DELAY: u64 = 1800;
 
 const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 
@@ -395,11 +395,17 @@ impl EthClient {
             TxKind::Call(addr) => Some(format!("{addr:#x}")),
             TxKind::Create => None,
         };
+        let blob_versioned_hashes_str: Vec<_> = transaction
+            .blob_versioned_hashes
+            .into_iter()
+            .map(|hash| format!("{hash:#x}"))
+            .collect();
         let mut data = json!({
             "to": to,
             "input": format!("0x{:#x}", transaction.input),
             "from": format!("{:#x}", transaction.from),
             "value": format!("{:#x}", transaction.value),
+            "blobVersionedHashes": blob_versioned_hashes_str
         });
 
         // Add the nonce just if present, otherwise the RPC will use the latest nonce

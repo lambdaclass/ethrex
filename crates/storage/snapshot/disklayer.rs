@@ -63,8 +63,10 @@ impl DiskLayer {
             return Ok(value.clone());
         }
 
-        // TODO: check that snapshot is done to make sure None is None?
-        let account = self.db.get_account_snapshot(hash)?;
+        let account = self
+            .db
+            .get_account_snapshot(hash)
+            .map_err(|e| SnapshotError::StoreError(Box::new(e)))?;
 
         self.cache.accounts.insert(hash, account.clone());
 
@@ -85,7 +87,10 @@ impl DiskLayer {
             return Ok(value);
         }
 
-        let value = self.db.get_storage_snapshot(account_hash, storage_hash)?;
+        let value = self
+            .db
+            .get_storage_snapshot(account_hash, storage_hash)
+            .map_err(|e| SnapshotError::StoreError(Box::new(e)))?;
 
         self.cache
             .storages

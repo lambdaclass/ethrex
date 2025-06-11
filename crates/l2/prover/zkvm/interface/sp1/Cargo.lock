@@ -1247,6 +1247,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-l2-common"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "ethereum-types",
+ "ethrex-common",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-trie",
+ "ethrex-vm",
+ "keccak-hash",
+ "lazy_static",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "ethrex-levm"
 version = "0.1.0"
 dependencies = [
@@ -1349,7 +1366,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-levm",
  "ethrex-rlp",
- "ethrex-storage",
  "ethrex-trie",
  "hex",
  "lazy_static",
@@ -1775,12 +1791,13 @@ dependencies = [
 
 [[package]]
 name = "kzg-rs"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6efe7b9aea4a6b9454dc95a67f2de13505f6b4fbea885bc7a5c09bda48a85b18"
+checksum = "ffd8d5f2e17b33192c9e9d748a2b00200896727882b6410fc5ed1efd4667ce20"
 dependencies = [
  "ff",
  "hex",
+ "serde_arrays",
  "sha2",
  "sp1_bls12_381",
  "spin",
@@ -2801,6 +2818,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_arrays"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94a16b99c5ea4fe3daccd14853ad260ec00ea043b2708d1fd1da3106dcd8d9df"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_derive"
 version = "1.0.219"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3593,10 +3619,13 @@ version = "0.1.0"
 dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",
+ "kzg-rs",
  "sp1-zkvm",
+ "sp1_bls12_381",
  "zkvm_interface",
 ]
 
@@ -3606,11 +3635,13 @@ version = "0.1.0"
 dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
  "keccak-hash",
+ "kzg-rs",
  "serde",
  "serde_json",
  "serde_with",

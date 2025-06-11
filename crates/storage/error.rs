@@ -4,6 +4,8 @@ use ethrex_trie::TrieError;
 use redb::{CommitError, DatabaseError, StorageError, TableError, TransactionError};
 use thiserror::Error;
 
+use crate::snapshot::error::SnapshotError;
+
 // TODO improve errors
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -50,4 +52,6 @@ pub enum StoreError {
     MempoolWriteLock(String),
     #[error("Failed to lock mempool for reading")]
     MempoolReadLock(String),
+    #[error("snapshot error {0}")]
+    SnapshotError(#[from] SnapshotError),
 }

@@ -22,5 +22,5 @@ pub enum SnapshotError {
     #[error("Error getting a lock: {0}")]
     LockError(String),
     #[error(transparent)]
-    StoreError(#[from] StoreError),
+    StoreError(#[from] Box<StoreError>),
 }
