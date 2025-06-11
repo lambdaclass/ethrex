@@ -3748,6 +3748,7 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "k256",
+ "secp256k1",
  "serde_json",
  "sha3",
  "thiserror 2.0.12",

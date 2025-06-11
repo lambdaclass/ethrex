@@ -80,8 +80,8 @@ pub enum MempoolError {
     NotEnoughBalance,
     #[error("Transaction gas fields are invalid")]
     InvalidTxGasvalues,
-    #[error("Transaction sender is invalid")]
-    InvalidTxSender(String),
+    #[error("Transaction sender is invalid {0}")]
+    InvalidTxSender(#[from] secp256k1::Error),
 }
 
 #[derive(Debug)]

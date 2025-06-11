@@ -174,9 +174,7 @@ impl RpcReceiptTxInfo {
         block_blob_gas_price: u64,
     ) -> Result<Self, RpcErr> {
         let nonce = transaction.nonce();
-        let from = transaction
-            .sender()
-            .map_err(|_| RpcErr::Internal("Failed to recover address".to_string()))?;
+        let from = transaction.sender()?;
         let transaction_hash = transaction.compute_hash();
         let effective_gas_price = transaction.gas_price();
         let transaction_index = index;

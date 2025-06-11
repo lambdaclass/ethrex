@@ -32,9 +32,7 @@ impl RpcTransaction {
         block_hash: BlockHash,
         transaction_index: Option<usize>,
     ) -> Result<Self, RpcErr> {
-        let from = tx
-            .sender()
-            .map_err(|_| RpcErr::Internal("Failed to recover address".to_string()))?;
+        let from = tx.sender()?;
         let hash = tx.compute_hash();
         let transaction_index = transaction_index.map(|n| n as u64);
         Ok(RpcTransaction {
