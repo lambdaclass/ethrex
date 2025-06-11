@@ -1,44 +1,113 @@
 use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Instant};
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::{types::{MempoolTransaction, Transaction}, H256};
+use ethrex_common::{
+    types::{MempoolTransaction, Transaction},
+    H256,
+};
 use ethrex_storage::Store;
+use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey};
 use rand::random;
-use spawned_concurrency::tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, GenServerInMsg};
+use spawned_concurrency::tasks::{
+    CallResponse, CastResponse, GenServer, GenServerHandle, GenServerInMsg,
+};
 use spawned_rt::tasks::mpsc::Sender;
-use tokio::{net::{TcpSocket, TcpStream}, sync::{broadcast, Mutex}};
-use tokio_util::codec::Framed;
+use tokio::{
+    net::{TcpSocket, TcpStream},
+    sync::{broadcast, Mutex},
+};
 use tokio_stream::StreamExt;
-use futures::SinkExt;
-use tracing::{debug, error};
+use tokio_util::codec::Framed;
+use tracing::{debug, error, info};
 
-use crate::{discv4::server::MAX_PEERS_TCP_CONNECTIONS, kademlia::{KademliaTable, PeerChannels}, network::P2PContext, rlpx::{error::RLPxError, eth::{backend, blocks::{BlockBodies, BlockHeaders}, receipts::{GetReceipts, Receipts}, transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions}}, message::Message, p2p::{self, Capability, DisconnectMessage, DisconnectReason, PongMessage, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES}, utils::{log_peer_debug, log_peer_error, log_peer_warn}}, snap::{process_account_range_request, process_byte_codes_request, process_storage_ranges_request, process_trie_nodes_request}, types::Node};
+use crate::{
+    discv4::server::MAX_PEERS_TCP_CONNECTIONS,
+    kademlia::{KademliaTable, PeerChannels},
+    network::P2PContext,
+    rlpx::{
+        error::RLPxError,
+        eth::{
+            backend,
+            blocks::{BlockBodies, BlockHeaders},
+            receipts::{GetReceipts, Receipts},
+            transactions::{GetPooledTransactions, NewPooledTransactionHashes, Transactions},
+        },
+        message::Message,
+        p2p::{
+            self, Capability, DisconnectMessage, DisconnectReason, PongMessage,
+            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
+        },
+        utils::{log_peer_debug, log_peer_error, log_peer_warn},
+    },
+    snap::{
+        process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
+        process_trie_nodes_request,
+    },
+    types::Node,
+};
 
 use super::{codec::RLPxCodec, handshake};
 
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
-const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
-const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
-
 type MsgResult = Result<OutMessage, RLPxError>;
 type RLPxConnectionHandle = GenServerHandle<RLPxConnection>;
 
 #[derive(Clone)]
-pub struct RLPxConnectionState {
+pub struct RLPxConnectionState(pub InnerState);
+
+#[derive(Clone)]
+pub struct Initiator {
+    pub(crate) context: P2PContext,
+    pub(crate) node: Node,
+}
+
+
+#[derive(Clone)]
+pub struct Receiver {
+    pub(crate) context: P2PContext,
+    pub(crate) peer_addr: SocketAddr,
+}
+
+#[derive(Clone)]
+pub struct Established {
     pub(crate) signer: SigningKey,
-    pub(crate)  node: Node,
-    pub(crate)  framed: Arc<Mutex<Framed<TcpStream, RLPxCodec>>>,
-    pub(crate)  storage: Store,
-    pub(crate)  blockchain: Arc<Blockchain>,
-    pub(crate)  capabilities: Vec<Capability>,
-    pub(crate)  negotiated_eth_capability: Option<Capability>,
-    pub(crate)  negotiated_snap_capability: Option<Capability>,
-    pub(crate)  next_periodic_ping: Instant,
-    pub(crate)  next_tx_broadcast: Instant,
-    pub(crate)  broadcasted_txs: HashSet<H256>,
-    pub(crate)  client_version: String,
+    pub(crate) framed: Arc<Mutex<Framed<TcpStream, RLPxCodec>>>,
+    pub(crate) node: Node,
+    pub(crate) storage: Store,
+    pub(crate) blockchain: Arc<Blockchain>,
+    pub(crate) capabilities: Vec<Capability>,
+    pub(crate) negotiated_eth_capability: Option<Capability>,
+    pub(crate) negotiated_snap_capability: Option<Capability>,
+    pub(crate) next_periodic_ping: Instant,
+    pub(crate) next_tx_broadcast: Instant,
+    pub(crate) broadcasted_txs: HashSet<H256>,
+    pub(crate) client_version: String,
+    pub(crate) connection_broadcast_send: RLPxConnBroadcastSender,
+    pub(crate) table: Arc<Mutex<KademliaTable>>,
+    pub(crate) inbound: bool,
+}
+
+#[derive(Clone)]
+pub enum InnerState {
+    Initiator(Initiator),
+    Receiver(Receiver),
+    Established(Established),
+}
+pub struct RLPxConnectionStatez {
+    pub(crate) signer: SigningKey,
+    pub(crate) node: Node,
+    pub(crate) framed: Arc<Mutex<Framed<TcpStream, RLPxCodec>>>,
+    pub(crate) storage: Store,
+    pub(crate) blockchain: Arc<Blockchain>,
+    pub(crate) capabilities: Vec<Capability>,
+    pub(crate) negotiated_eth_capability: Option<Capability>,
+    pub(crate) negotiated_snap_capability: Option<Capability>,
+    pub(crate) next_periodic_ping: Instant,
+    pub(crate) next_tx_broadcast: Instant,
+    pub(crate) broadcasted_txs: HashSet<H256>,
+    pub(crate) client_version: String,
     //// Send end of the channel used to broadcast messages
     //// to other connected peers, is ok to have it here,
     //// since internally it's an Arc.
@@ -53,89 +122,65 @@ pub struct RLPxConnectionState {
 }
 
 impl RLPxConnectionState {
-    pub async fn new_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) -> Result<Self, RLPxError> {
-        let (framed, remote_key) = handshake::new_as_receiver(context.clone(), stream).await?;
-        let node = Node::new(
-            peer_addr.ip(),
-            peer_addr.port(),
-            peer_addr.port(),
-            remote_key,
-        );
-        Ok(Self{
-            signer: context.signer,
-            node,
-            framed: Arc::new(Mutex::new(framed)),
-            storage: context.storage,
-            blockchain: context.blockchain,
-            capabilities: vec![],
-            negotiated_eth_capability: None,
-            negotiated_snap_capability: None,
-            next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
-            next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
-            broadcasted_txs: HashSet::new(),
-            client_version: context.client_version,
-            connection_broadcast_send: context.broadcast,
-            table: context.table,
-            inbound: true,
-        })
+    pub fn new_as_receiver(context: P2PContext, peer_addr: SocketAddr) -> Self {
+        Self(InnerState::Receiver(Receiver {
+            context,
+            peer_addr,
+        }))
     }
 
-    pub async fn new_as_initiator(context: P2PContext, node: &Node, stream: TcpStream) -> Result<Self, RLPxError> {
-        let framed = handshake::new_as_initiator(context.clone(), node, stream).await?;
-        Ok(Self{
-            signer: context.signer,
+    pub fn new_as_initiator(
+        context: P2PContext,
+        node: &Node,
+    ) -> Self {
+        Self(InnerState::Initiator(Initiator {
+            context,
             node: node.clone(),
-            framed: Arc::new(Mutex::new(framed)),
-            storage: context.storage,
-            blockchain: context.blockchain,
-            capabilities: vec![],
-            negotiated_eth_capability: None,
-            negotiated_snap_capability: None,
-            next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
-            next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
-            broadcasted_txs: HashSet::new(),
-            client_version: context.client_version,
-            connection_broadcast_send: context.broadcast,
-            table: context.table,
-            inbound: false,
-        })
+        }))
     }
 }
 
-#[derive(Clone)]
 pub enum InMessage {
+    Init(TcpStream),
     PeerMessage(Message),
     BroadcastMessage,
     BackendMessage,
     PeriodicCheck,
 }
 
-#[allow(dead_code)]
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum OutMessage {
+    InitResponse {
+        node: Node,
+        framed: Arc<Mutex<Framed<TcpStream, RLPxCodec>>>
+    },
     Done,
     Error,
 }
-    
+
 pub struct RLPxConnection {}
 
 impl RLPxConnection {
-
     pub async fn spawn_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
-        match RLPxConnectionState::new_as_receiver(context, peer_addr, stream).await {
-            Ok(mut state) => {
-                init(&mut state).await;
-                let node = state.node.clone();
-                let framed = state.framed.clone();
-                let conn = RLPxConnection::start(state);
-                // Send Init message to perform post handshake and initial checks.
+        info!("spawn_as_receiver");
+        let state = RLPxConnectionState::new_as_receiver(context, peer_addr);
+        info!("r new state");
+        let mut conn = RLPxConnection::start(state);
+        info!("r connected");
+        match conn.call(InMessage::Init(stream)).await {
+            Ok(Ok(OutMessage::InitResponse { node, framed })) => {
+                info!("r listener");
                 spawn_listener(conn, node, framed);
-            }
-            Err(error) => error!("Error starting RLPxConnection: {}", error),
-        };
+                info!("r done");
+            },
+            Ok(Ok(_)) => error!("Unexpected response from connection"),
+            Ok(Err(error)) => error!("Error starting RLPxConnection: {:?}", error),
+            Err(error) => error!("Unhandled error starting RLPxConnection: {:?}", error),
+        }
     }
 
     pub async fn spawn_as_initiator(context: P2PContext, node: &Node) {
+        info!("spawn_as_initiator");
         let addr = SocketAddr::new(node.ip, node.tcp_port);
         let stream = match tcp_stream(addr).await {
             Ok(result) => result,
@@ -145,32 +190,22 @@ impl RLPxConnection {
                 return;
             }
         };
-        let table = context.table.clone();
-        match RLPxConnectionState::new_as_initiator(context, node, stream).await {
-            Ok(mut state) => {
-                init(&mut state).await;
-                let node = state.node.clone();
-                let framed = state.framed.clone();
-                let conn = RLPxConnection::start(state);
-                // Send Init message to perform post handshake and initial checks.
+        info!("i stream");
+        let state = RLPxConnectionState::new_as_initiator(context, node);
+        info!("i new state");
+        let mut conn = RLPxConnection::start(state.clone());
+        info!("i connected");
+        match conn.call(InMessage::Init(stream)).await {
+            Ok(Ok(OutMessage::InitResponse { node, framed })) => {
+                info!("i listener");
                 spawn_listener(conn, node, framed);
-            }
-            Err(error) => {
-                log_peer_debug(node, &format!("Error starting RLPxConnection: {error}"));
-                table.lock().await.replace_peer(node.node_id());
-            }
-        };
+                info!("i done");
+            },
+            Ok(Ok(_)) => error!("Unexpected response from connection"),
+            Ok(Err(error)) => error!("Error starting RLPxConnection: {:?}", error),
+            Err(error) => error!("Unhandled error starting RLPxConnection: {:?}", error),
+        }
     }
-
-    // pub async fn spawn_as_receiver_old(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
-    //     let table = context.table.clone();
-    //     match handshake::as_receiver(context, peer_addr, stream).await {
-    //         Ok(mut conn) => conn.start(table, true).await,
-    //         Err(e) => {
-    //             debug!("Error creating tcp connection with peer at {peer_addr}: {e}")
-    //         }
-    //     }
-    // }
 }
 
 impl GenServer for RLPxConnection {
@@ -183,18 +218,23 @@ impl GenServer for RLPxConnection {
         Self {}
     }
 
-
     async fn handle_call(
         &mut self,
         message: Self::InMsg,
         _tx: &Sender<GenServerInMsg<Self>>,
         state: &mut Self::State,
     ) -> CallResponse<Self::OutMsg> {
-        match message.clone() {
+        match message {
+            InMessage::Init(stream) => {
+                match init(state, stream).await {
+                    Ok((node, framed)) => CallResponse::Reply(Ok(OutMessage::InitResponse{node, framed})),
+                    Err(e) => CallResponse::Reply(Err(e)),
+                }
+            }
             InMessage::PeerMessage(message) => {
                 let _ = handle_message(state, message).await;
                 CallResponse::Reply(Ok(OutMessage::Done))
-            },
+            }
             InMessage::BroadcastMessage => todo!(),
             InMessage::BackendMessage => todo!(),
             InMessage::PeriodicCheck => todo!(),
@@ -215,22 +255,23 @@ async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, std::io::Error> {
     TcpSocket::new_v4()?.connect(addr).await
 }
 
-async fn init(state: &mut RLPxConnectionState) {
-        log_peer_debug(&state.node, "Starting RLPx connection");
-
-    if let Err(reason) = post_handshake_checks(state.table.clone()).await {
+async fn init(state: &mut RLPxConnectionState, stream: TcpStream) -> Result<(Node, Arc<Mutex<Framed<TcpStream, RLPxCodec>>>), RLPxError> {
+    // TODO handle unwrap()
+    let mut established_state = handshake::perform(state, stream).await.unwrap();
+    log_peer_debug(&established_state.node, "Starting RLPx connection");
+    if let Err(reason) = post_handshake_checks(established_state.table.clone()).await {
         connection_failed(
-            state,
+            &mut established_state,
             "Post handshake validations failed",
             RLPxError::DisconnectSent(reason),
         )
         .await;
-        return;
+        return Err(RLPxError::Disconnected());
     }
 
-    if let Err(e) = exchange_hello_messages(state).await {
-        connection_failed(state, "Hello messages exchange failed", e)
-            .await;
+    if let Err(e) = exchange_hello_messages(&mut established_state).await {
+        connection_failed(&mut established_state, "Hello messages exchange failed", e).await;
+        return Err(RLPxError::Disconnected());
     } else {
         // Handshake OK: handle connection
         // Create channels to communicate directly to the peer
@@ -240,39 +281,36 @@ async fn init(state: &mut RLPxConnectionState) {
         // but that might not always be the case, so we try to add it to the table
         // Note: we don't ping the node we let the validation service do its job
         {
-            let mut table_lock = state.table.lock().await;
-            table_lock.insert_node_forced(state.node.clone());
+            let mut table_lock = established_state.table.lock().await;
+            table_lock.insert_node_forced(established_state.node.clone());
             table_lock.init_backend_communication(
-                state.node.node_id(),
+                established_state.node.node_id(),
                 peer_channels,
-                state.capabilities.clone(),
-                state.inbound,
+                established_state.capabilities.clone(),
+                established_state.inbound,
             );
         }
         // TODO Handle this unwrap
-        let _ = init_peer_conn(state).await.unwrap();
-        log_peer_debug(&state.node, "Started peer main loop");
+        let _ = init_peer_conn(&mut established_state).await.unwrap();
+        log_peer_debug(&established_state.node, "Started peer main loop");
         // Subscribe this connection to the broadcasting channel.
-        let mut broadcaster_receive = if state.negotiated_eth_capability.is_some() {
-            Some(state.connection_broadcast_send.subscribe())
+        let mut broadcaster_receive = if established_state.negotiated_eth_capability.is_some() {
+            Some(established_state.connection_broadcast_send.clone().subscribe())
         } else {
             None
         };
         // Send transactions transaction hashes from mempool at connection start
-        send_new_pooled_tx_hashes(state).await.unwrap();
+        send_new_pooled_tx_hashes(&mut established_state).await.unwrap();
 
-        // TCP listener loop
-        let framed = state.framed.clone();
-        let node = state.node.clone();
-        
-        // if let Err(e) = self.connection_loop(sender, receiver).await {
-        //     self.connection_failed("Error during RLPx connection", e, state.table.clone())
-        //         .await;
-        // }
+        let node = established_state.clone().node;
+        let framed = established_state.clone().framed;
+        // New state
+        state.0 = InnerState::Established(established_state);
+        Ok((node, framed))
     }
 }
 
-async fn send_new_pooled_tx_hashes(state: &mut RLPxConnectionState) -> Result<(), RLPxError> {
+async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxError> {
     if SUPPORTED_ETH_CAPABILITIES
         .iter()
         .any(|cap| state.capabilities.contains(cap))
@@ -289,9 +327,13 @@ async fn send_new_pooled_tx_hashes(state: &mut RLPxConnectionState) -> Result<()
         if !txs.is_empty() {
             let tx_count = txs.len();
             for tx in txs {
-                send(state, Message::NewPooledTransactionHashes(
-                    NewPooledTransactionHashes::new(vec![(*tx).clone()], &state.blockchain)?,
-                ))
+                send(
+                    state,
+                    Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
+                        vec![(*tx).clone()],
+                        &state.blockchain,
+                    )?),
+                )
                 .await?;
                 // Possible improvement: the mempool already knows the hash but the filter function does not return it
                 state.broadcasted_txs.insert((*tx).compute_hash());
@@ -350,7 +392,7 @@ async fn send_new_pooled_tx_hashes(state: &mut RLPxConnectionState) -> Result<()
 //     }
 // }
 
-async fn init_peer_conn(state: &mut RLPxConnectionState) -> Result<(), RLPxError> {
+async fn init_peer_conn(state: &mut Established) -> Result<(), RLPxError> {
     // Sending eth Status if peer supports it
     if let Some(eth) = state.negotiated_eth_capability.clone() {
         let status = backend::get_status(&state.storage, eth.version).await?;
@@ -401,7 +443,10 @@ async fn post_handshake_checks(
     Ok(())
 }
 
-async fn send_disconnect_message(state: &mut RLPxConnectionState, reason: Option<DisconnectReason>) {
+async fn send_disconnect_message(
+    state: &mut Established,
+    reason: Option<DisconnectReason>,
+) {
     send(state, Message::Disconnect(DisconnectMessage { reason }))
         .await
         .unwrap_or_else(|_| {
@@ -412,18 +457,13 @@ async fn send_disconnect_message(state: &mut RLPxConnectionState, reason: Option
         });
 }
 
-async fn connection_failed(
-    state: &mut RLPxConnectionState,
-    error_text: &str,
-    error: RLPxError,
-) {
+async fn connection_failed(state: &mut Established, error_text: &str, error: RLPxError) {
     log_peer_debug(&state.node, &format!("{error_text}: ({error})"));
 
     // Send disconnect message only if error is different than RLPxError::DisconnectRequested
     // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
     if !matches!(error, RLPxError::DisconnectReceived(_)) {
-        send_disconnect_message(state, match_disconnect_reason(&error))
-            .await;
+        send_disconnect_message(state, match_disconnect_reason(&error)).await;
     }
 
     // Discard peer from kademlia table in some cases
@@ -456,7 +496,7 @@ fn match_disconnect_reason(error: &RLPxError) -> Option<DisconnectReason> {
     }
 }
 
-async fn exchange_hello_messages(state: &mut RLPxConnectionState) -> Result<(), RLPxError> {
+async fn exchange_hello_messages(state: &mut Established) -> Result<(), RLPxError> {
     let supported_capabilities: Vec<Capability> = [
         &SUPPORTED_ETH_CAPABILITIES[..],
         &SUPPORTED_SNAP_CAPABILITIES[..],
@@ -521,17 +561,14 @@ async fn exchange_hello_messages(state: &mut RLPxConnectionState) -> Result<(), 
 
             if negotiated_snap_version != 0 {
                 debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
-                state.negotiated_snap_capability =
-                    Some(Capability::snap(negotiated_snap_version));
+                state.negotiated_snap_capability = Some(Capability::snap(negotiated_snap_version));
             }
 
             state.node.version = Some(hello_message.client_id);
 
             Ok(())
         }
-        Message::Disconnect(disconnect) => {
-            Err(RLPxError::DisconnectReceived(disconnect.reason()))
-        }
+        Message::Disconnect(disconnect) => Err(RLPxError::DisconnectReceived(disconnect.reason())),
         _ => {
             // Fail if it is not a hello message
             Err(RLPxError::BadRequest("Expected Hello message".to_string()))
@@ -539,7 +576,7 @@ async fn exchange_hello_messages(state: &mut RLPxConnectionState) -> Result<(), 
     }
 }
 
-async fn send(state: &mut RLPxConnectionState, message: Message) -> Result<(), RLPxError> {
+async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError> {
     state.framed.lock().await.send(message).await
 }
 
@@ -554,11 +591,15 @@ async fn send(state: &mut RLPxConnectionState, message: Message) -> Result<(), R
 /// while sending pings and you should not assume a disconnection.
 ///
 /// See [`Framed::new`] for more details.
-async fn receive(state: &mut RLPxConnectionState) -> Option<Result<Message, RLPxError>> {
+async fn receive(state: &mut Established) -> Option<Result<Message, RLPxError>> {
     state.framed.lock().await.next().await
 }
 
-fn spawn_listener(mut conn: RLPxConnectionHandle, node: Node, framed: Arc<Mutex<Framed<TcpStream, RLPxCodec>>>) {
+fn spawn_listener(
+    mut conn: RLPxConnectionHandle,
+    node: Node,
+    framed: Arc<Mutex<Framed<TcpStream, RLPxCodec>>>,
+) {
     spawned_rt::tasks::spawn(async move {
         loop {
             match framed.lock().await.next().await {
@@ -566,13 +607,13 @@ fn spawn_listener(mut conn: RLPxConnectionHandle, node: Node, framed: Arc<Mutex<
                     Ok(message) => {
                         log_peer_debug(&node, &format!("Received message {}", message));
                         conn.call(InMessage::PeerMessage(message)).await;
-                        return Ok(())
-                    },
+                        return Ok(());
+                    }
                     Err(e) => {
                         log_peer_debug(&node, &format!("Received RLPX Error in msg {}", e));
                         return Err(e);
                     }
-                }
+                },
                 None => todo!(),
             }
         }
@@ -583,115 +624,123 @@ async fn handle_message(
     state: &mut RLPxConnectionState,
     message: Message,
 ) -> Result<(), RLPxError> {
-    let peer_supports_eth = state.negotiated_eth_capability.is_some();
-    match message {
-        Message::Disconnect(msg_data) => {
-            log_peer_debug(
-                &state.node,
-                &format!("Received Disconnect: {}", msg_data.reason()),
-            );
-            // TODO handle the disconnection request
-            return Err(RLPxError::DisconnectReceived(msg_data.reason()));
-        }
-        Message::Ping(_) => {
-            log_peer_debug(&state.node, "Sending pong message");
-            send(state, Message::Pong(PongMessage {})).await?;
-        }
-        Message::Pong(_) => {
-            // We ignore received Pong messages
-        }
-        Message::Status(msg_data) => {
-            if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth.version).await?
-            };
-        }
-        Message::GetAccountRange(req) => {
-            let response = process_account_range_request(req, state.storage.clone())?;
-            send(state, Message::AccountRange(response)).await?
-        }
-        // TODO(#1129) Add the transaction to the mempool once received.
-        Message::Transactions(txs) if peer_supports_eth => {
-            if state.blockchain.is_synced() {
-                let mut valid_txs = vec![];
-                for tx in &txs.transactions {
-                    if let Err(e) = state.blockchain.add_transaction_to_pool(tx.clone()).await {
-                        log_peer_warn(&state.node, &format!("Error adding transaction: {}", e));
-                        continue;
+    if let InnerState::Established(mut established_state) = state.0.clone() {
+        inner_handle(&mut established_state, message).await?;
+        state.0 = InnerState::Established(established_state);
+        Ok(())
+    } else {
+        Err(RLPxError::StateError("Not established".to_string()))
+    }
+}
+    
+async fn inner_handle(established_state: &mut Established, message: Message) -> Result<(), RLPxError> {
+        let peer_supports_eth = established_state.negotiated_eth_capability.is_some();
+        match message {
+            Message::Disconnect(msg_data) => {
+                log_peer_debug(
+                    &established_state.node,
+                    &format!("Received Disconnect: {}", msg_data.reason()),
+                );
+                // TODO handle the disconnection request
+                return Err(RLPxError::DisconnectReceived(msg_data.reason()));
+            }
+            Message::Ping(_) => {
+                log_peer_debug(&established_state.node, "Sending pong message");
+                send(established_state, Message::Pong(PongMessage {})).await?;
+            }
+            Message::Pong(_) => {
+                // We ignore received Pong messages
+            }
+            Message::Status(msg_data) => {
+                if let Some(eth) = &established_state.negotiated_eth_capability {
+                    backend::validate_status(msg_data, &established_state.storage, eth.version).await?
+                };
+            }
+            Message::GetAccountRange(req) => {
+                let response = process_account_range_request(req, established_state.storage.clone())?;
+                send(established_state, Message::AccountRange(response)).await?
+            }
+            // TODO(#1129) Add the transaction to the mempool once received.
+            Message::Transactions(txs) if peer_supports_eth => {
+                if established_state.blockchain.is_synced() {
+                    let mut valid_txs = vec![];
+                    for tx in &txs.transactions {
+                        if let Err(e) = established_state.blockchain.add_transaction_to_pool(tx.clone()).await {
+                            log_peer_warn(&established_state.node, &format!("Error adding transaction: {}", e));
+                            continue;
+                        }
+                        valid_txs.push(tx.clone());
                     }
-                    valid_txs.push(tx.clone());
+                    broadcast_message(established_state, Message::Transactions(Transactions::new(valid_txs)))?;
                 }
-                broadcast_message(state, Message::Transactions(Transactions::new(valid_txs)))?;
             }
-        }
-        Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
-            let response = BlockHeaders {
-                id: msg_data.id,
-                block_headers: msg_data.fetch_headers(&state.storage).await,
-            };
-            send(state, Message::BlockHeaders(response)).await?;
-        }
-        Message::GetBlockBodies(msg_data) if peer_supports_eth => {
-            let response = BlockBodies {
-                id: msg_data.id,
-                block_bodies: msg_data.fetch_blocks(&state.storage).await,
-            };
-            send(state, Message::BlockBodies(response)).await?;
-        }
-        Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
-            let mut receipts = Vec::new();
-            for hash in block_hashes.iter() {
-                receipts.push(state.storage.get_receipts_for_block(hash)?);
+            Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
+                let response = BlockHeaders {
+                    id: msg_data.id,
+                    block_headers: msg_data.fetch_headers(&established_state.storage).await,
+                };
+                send(established_state, Message::BlockHeaders(response)).await?;
             }
-            let response = Receipts { id, receipts };
-            send(state, Message::Receipts(response)).await?;
-        }
-        Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)
-            if peer_supports_eth =>
-        {
-            //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
-            let hashes =
-                new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
+            Message::GetBlockBodies(msg_data) if peer_supports_eth => {
+                let response = BlockBodies {
+                    id: msg_data.id,
+                    block_bodies: msg_data.fetch_blocks(&established_state.storage).await,
+                };
+                send(established_state, Message::BlockBodies(response)).await?;
+            }
+            Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
+                let mut receipts = Vec::new();
+                for hash in block_hashes.iter() {
+                    receipts.push(established_state.storage.get_receipts_for_block(hash)?);
+                }
+                let response = Receipts { id, receipts };
+                send(established_state, Message::Receipts(response)).await?;
+            }
+            Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
+                //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
+                let hashes =
+                    new_pooled_transaction_hashes.get_transactions_to_request(&established_state.blockchain)?;
 
-            //TODO(#1416): Evaluate keeping track of the request-id.
-            let request = GetPooledTransactions::new(random(), hashes);
-            send(state, Message::GetPooledTransactions(request)).await?;
-        }
-        Message::GetPooledTransactions(msg) => {
-            let response = msg.handle(&state.blockchain)?;
-            send(state, Message::PooledTransactions(response)).await?;
-        }
-        Message::PooledTransactions(msg) if peer_supports_eth => {
-            if state.blockchain.is_synced() {
-                msg.handle(&state.node, &state.blockchain).await?;
+                //TODO(#1416): Evaluate keeping track of the request-id.
+                let request = GetPooledTransactions::new(random(), hashes);
+                send(established_state, Message::GetPooledTransactions(request)).await?;
             }
-        }
-        Message::GetStorageRanges(req) => {
-            let response = process_storage_ranges_request(req, state.storage.clone())?;
-            send(state, Message::StorageRanges(response)).await?
-        }
-        Message::GetByteCodes(req) => {
-            let response = process_byte_codes_request(req, state.storage.clone())?;
-            send(state, Message::ByteCodes(response)).await?
-        }
-        Message::GetTrieNodes(req) => {
-            let response = process_trie_nodes_request(req, state.storage.clone())?;
-            send(state, Message::TrieNodes(response)).await?
-        }
-        // Send response messages to the backend
-        // message @ Message::AccountRange(_)
-        // | message @ Message::StorageRanges(_)
-        // | message @ Message::ByteCodes(_)
-        // | message @ Message::TrieNodes(_)
-        // | message @ Message::BlockBodies(_)
-        // | message @ Message::BlockHeaders(_)
-        // | message @ Message::Receipts(_) => sender.send(message).await?,
-        // TODO: Add new message types and handlers as they are implemented
-        message => return Err(RLPxError::MessageNotHandled(format!("{message}"))),
-    };
-    Ok(())
+            Message::GetPooledTransactions(msg) => {
+                let response = msg.handle(&established_state.blockchain)?;
+                send(established_state, Message::PooledTransactions(response)).await?;
+            }
+            Message::PooledTransactions(msg) if peer_supports_eth => {
+                if established_state.blockchain.is_synced() {
+                    msg.handle(&established_state.node, &established_state.blockchain).await?;
+                }
+            }
+            Message::GetStorageRanges(req) => {
+                let response = process_storage_ranges_request(req, established_state.storage.clone())?;
+                send(established_state, Message::StorageRanges(response)).await?
+            }
+            Message::GetByteCodes(req) => {
+                let response = process_byte_codes_request(req, established_state.storage.clone())?;
+                send(established_state, Message::ByteCodes(response)).await?
+            }
+            Message::GetTrieNodes(req) => {
+                let response = process_trie_nodes_request(req, established_state.storage.clone())?;
+                send(established_state, Message::TrieNodes(response)).await?
+            }
+            // Send response messages to the backend
+            // message @ Message::AccountRange(_)
+            // | message @ Message::StorageRanges(_)
+            // | message @ Message::ByteCodes(_)
+            // | message @ Message::TrieNodes(_)
+            // | message @ Message::BlockBodies(_)
+            // | message @ Message::BlockHeaders(_)
+            // | message @ Message::Receipts(_) => sender.send(message).await?,
+            // TODO: Add new message types and handlers as they are implemented
+            message => return Err(RLPxError::MessageNotHandled(format!("{message}"))),
+        };
+        Ok(())
 }
 
-fn broadcast_message(state: &RLPxConnectionState, msg: Message) -> Result<(), RLPxError> {
+fn broadcast_message(state: &Established, msg: Message) -> Result<(), RLPxError> {
     match msg {
         txs_msg @ Message::Transactions(_) => {
             let txs = Arc::new(txs_msg);

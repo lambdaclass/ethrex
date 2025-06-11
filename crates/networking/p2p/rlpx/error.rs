@@ -11,6 +11,8 @@ use super::{message::Message, p2p::DisconnectReason};
 pub enum RLPxError {
     #[error("{0}")]
     HandshakeError(String),
+    #[error("Invalid connection state: {0}")]
+    StateError(String),
     #[error("No matching capabilities")]
     NoMatchingCapabilities(),
     #[error("Peer disconnected")]

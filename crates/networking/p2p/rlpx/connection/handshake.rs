@@ -1,6 +1,8 @@
+use std::{collections::HashSet, sync::Arc, time::Instant};
+
 use crate::{
-    network::P2PContext,
     rlpx::{
+        connection::server::{Established, InnerState},
         error::RLPxError,
         utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
@@ -24,16 +26,19 @@ use k256::{
 };
 use rand::Rng;
 use sha3::{Digest, Keccak256};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::{io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt}, net::TcpStream, sync::Mutex};
 use tokio_util::codec::Framed;
 use tracing::info;
 
-use super::codec::RLPxCodec;
+use super::{codec::RLPxCodec, server::RLPxConnectionState};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
 // https://github.com/ethereum/go-ethereum/blob/master/p2p/peer.go#L44
 pub const P2P_MAX_MESSAGE_SIZE: usize = 2048;
+
+const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
 pub(crate) struct RemoteState {
     pub(crate) public_key: H512,
@@ -48,38 +53,92 @@ pub(crate) struct LocalState {
     pub(crate) init_message: Vec<u8>,
 }
 
-pub(crate) async fn new_as_receiver<S>(context: P2PContext, mut stream: S) -> Result<(Framed<S, RLPxCodec>, H512), RLPxError>
-where
-    S: AsyncRead + AsyncWrite + std::marker::Unpin,
-{
-    info!("Starting handshake as receiver!");
-    let remote_state = receive_auth(&context.signer, &mut stream).await?;
-    let local_state = send_ack(remote_state.public_key, &mut stream).await?;
-    let hashed_nonces: [u8; 32] =
-        Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
-    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
-    Ok((Framed::new(stream, codec), remote_state.public_key))
-}
-
-pub(crate) async fn new_as_initiator<S>(
-    context: P2PContext,
-    node: &Node,
-    mut stream: S,
-) -> Result<Framed<S, RLPxCodec>, RLPxError>
-where
-    S: AsyncRead + AsyncWrite + std::marker::Unpin,
-{
-
-    info!("Starting handshake as initiator!");
-    let local_state = send_auth(&context.signer, node.public_key, &mut stream).await?;
-    let remote_state = receive_ack(&context.signer, node.public_key, &mut stream).await?;
-    // Local node is initator
-    // keccak256(nonce || initiator-nonce)
-    let hashed_nonces: [u8; 32] =
-        Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
-    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
-    log_peer_debug(node, "Completed handshake as initiator!");
-    Ok(Framed::new(stream, codec))
+pub(crate) async fn perform(
+    state: &mut RLPxConnectionState,
+    mut stream: TcpStream,
+) -> Result<Established, RLPxError> {
+    match &state.0 {
+        InnerState::Initiator(initiator) => {
+            info!("Starting handshake as initiator!");
+            let context = &initiator.context;
+            let local_state = send_auth(
+                &context.signer,
+                initiator.node.public_key,
+                &mut stream,
+            )
+            .await?;
+            let remote_state = receive_ack(
+                &context.signer,
+                initiator.node.public_key,
+                &mut stream,
+            )
+            .await?;
+            // Local node is initator
+            // keccak256(nonce || initiator-nonce)
+            let hashed_nonces: [u8; 32] =
+                Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
+            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
+            log_peer_debug(&initiator.node, "Completed handshake as initiator!");
+            Ok(Established {
+                signer: context.signer.clone(),
+                framed: Arc::new(Mutex::new(Framed::new(stream, codec))),
+                node: initiator.node.clone(),
+                storage: context.storage.clone(),
+                blockchain: context.blockchain.clone(),
+                capabilities: vec![],
+                negotiated_eth_capability: None,
+                negotiated_snap_capability: None,
+                next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
+                next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
+                broadcasted_txs: HashSet::new(),
+                client_version: context.client_version.clone(),
+                connection_broadcast_send: context.broadcast.clone(),
+                table: context.table.clone(),
+                inbound: false,
+            })
+        }
+        InnerState::Receiver(receiver) => {
+            info!("Starting handshake as receiver!");
+            let context = &receiver.context;
+            let remote_state =
+                receive_auth(&context.signer, &mut stream).await?;
+            let local_state = send_ack(remote_state.public_key, &mut stream).await?;
+            // Remote node is initiator
+            // keccak256(nonce || initiator-nonce)
+           let hashed_nonces: [u8; 32] =
+                Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
+            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
+            let peer_addr = receiver.peer_addr;
+            let node = Node::new(
+                peer_addr.ip(),
+                peer_addr.port(),
+                peer_addr.port(),
+                remote_state.public_key,
+            );
+            Ok(Established {
+                signer: context.signer.clone(),
+                framed: Arc::new(Mutex::new(Framed::new(stream, codec))),
+                node: node,
+                storage: context.storage.clone(),
+                blockchain: context.blockchain.clone(),
+                capabilities: vec![],
+                negotiated_eth_capability: None,
+                negotiated_snap_capability: None,
+                next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
+                next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
+                broadcasted_txs: HashSet::new(),
+                client_version: context.client_version.clone(),
+                connection_broadcast_send: context.broadcast.clone(),
+                table: context.table.clone(),
+                inbound: true,
+            })
+        }
+        InnerState::Established(_) => {
+            return Err(RLPxError::StateError(
+                "Already established".to_string(),
+            ))
+        }
+    }
 }
 
 async fn send_auth<S: AsyncWrite + std::marker::Unpin>(

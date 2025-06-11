@@ -16,8 +16,8 @@ use tracing::{debug, error, info, warn};
 
 use super::utils::random_duration;
 
-use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
-use spawned_rt::mpsc::Sender;
+use spawned_concurrency::tasks::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
+use spawned_rt::tasks::mpsc::Sender;
 
 #[derive(Clone)]
 pub struct L1WatcherState {
