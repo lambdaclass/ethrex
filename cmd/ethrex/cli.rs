@@ -7,7 +7,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{error::ChainError, fork_choice::apply_fork_choice};
-use ethrex_common::types::{Genesis};
+use ethrex_common::types::Genesis;
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -305,16 +305,14 @@ impl Subcommand {
 
                 let network = &opts.network;
                 let genesis = network.get_genesis()?;
-                import_blocks(&path, &opts.datadir,genesis, opts.evm).await?;
+                import_blocks(&path, &opts.datadir, genesis, opts.evm).await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
-                let genesis = Network::from(genesis_path)
-                .get_genesis()?;
-                let state_root = genesis
-                    .compute_state_root();
+                let genesis = Network::from(genesis_path).get_genesis()?;
+                let state_root = genesis.compute_state_root();
                 println!("{:#x}", state_root);
             }
             #[cfg(feature = "l2")]

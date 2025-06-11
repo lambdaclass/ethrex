@@ -99,7 +99,7 @@ impl Network {
             Network::GenesisPath(s) => s,
         }
     }
-    pub fn get_genesis(&self) -> Result<Genesis,ChainError> {
+    pub fn get_genesis(&self) -> Result<Genesis, ChainError> {
         utils::read_genesis_file(self.get_genesis_path())
     }
 }

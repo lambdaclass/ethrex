@@ -3,10 +3,7 @@ pub use revm::primitives::SpecId;
 
 /// Returns the spec id according to the block timestamp and the stored chain config
 /// WARNING: Assumes at least Merge fork is active
-pub fn spec_id(
-    chain_config: &ChainConfig,
-    block_timestamp: u64,
-) -> SpecId {
+pub fn spec_id(chain_config: &ChainConfig, block_timestamp: u64) -> SpecId {
     fork_to_spec_id(chain_config.get_fork(block_timestamp))
 }
 

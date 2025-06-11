@@ -56,7 +56,7 @@ impl REVM {
         let block_header = &block.header;
         let spec_id: SpecId = spec_id(
             &state.inner.database.get_chain_config()?,
-            block_header.timestamp
+            block_header.timestamp,
         );
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
@@ -585,10 +585,7 @@ pub(crate) fn generic_system_contract_revm(
     system_address: Address,
 ) -> Result<ExecutionResult, EvmError> {
     let state = &mut state.inner;
-    let spec_id = spec_id(
-        &state.database.get_chain_config()?,
-        block_header.timestamp
-    );
+    let spec_id = spec_id(&state.database.get_chain_config()?, block_header.timestamp);
     let tx_env = TxEnv {
         caller: RevmAddress::from_slice(system_address.as_bytes()),
         transact_to: RevmTxKind::Call(RevmAddress::from_slice(contract_address.as_bytes())),

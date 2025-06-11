@@ -21,7 +21,7 @@ fn block_import() {
     rt.block_on(import_blocks(
         "../../test_data/l2-1k-erc20.rlp",
         data_dir,
-        network.get_genesis(),
+        network.get_genesis().expect("Invalid genesis file"),
         evm_engine,
     ))
     .expect("Failed to import blocks on the Tokio runtime");

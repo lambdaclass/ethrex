@@ -213,7 +213,6 @@ impl ChainConfig {
         self.eip155_block.is_some_and(|num| num <= block_number)
     }
 
-
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
         if self.is_prague_activated(block_timestamp) {
             Fork::Prague
