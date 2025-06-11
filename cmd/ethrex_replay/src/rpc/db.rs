@@ -439,24 +439,6 @@ impl RpcDB {
 }
 
 impl LevmDatabase for RpcDB {
-    fn account_exists(&self, address: Address) -> Result<bool, DatabaseError> {
-        // look into the cache
-        {
-            if self
-                .cache
-                .lock()
-                .unwrap()
-                .get(&address)
-                .is_some_and(|account| matches!(account, Account::Existing { .. }))
-            {
-                return Ok(true);
-            }
-        }
-        Ok(self
-            .fetch_account_blocking(address, &[], false)
-            .is_ok_and(|account| matches!(account, Account::Existing { .. })))
-    }
-
     fn get_account_code(&self, _code_hash: H256) -> Result<Bytes, DatabaseError> {
         Err(DatabaseError::Custom(
             "get_account_code is not supported for RpcDB: code is stored in account info"

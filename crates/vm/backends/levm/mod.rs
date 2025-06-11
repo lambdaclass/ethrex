@@ -240,14 +240,6 @@ impl LEVM {
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
             let removed = new_state_account.is_empty();
 
-            // https://eips.ethereum.org/EIPS/eip-161
-            // If account is now empty and it didn't exist in the trie before, no need to make changes.
-            // This check is necessary just in case we keep empty accounts in the trie. If we're sure we don't, this code can be removed.
-            // `initial_state_account.is_empty()` check can be removed but I added it because it's short-circuiting, this way we don't hit the db very often.
-            if removed && initial_state_account.is_empty() && !db.store.account_exists(*address)? {
-                continue;
-            }
-
             if !removed && !acc_info_updated && !storage_updated {
                 // Account hasn't been updated
                 continue;
