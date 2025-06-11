@@ -6,6 +6,7 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
+use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
