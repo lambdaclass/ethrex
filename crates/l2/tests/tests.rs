@@ -780,7 +780,7 @@ async fn test_call_to_contract_with_deposit(
 
     println!("Waiting for L1 to L2 transaction receipt on L2");
 
-    let call_receipt = wait_for_l2_deposit_receipt(
+    let _ = wait_for_l2_deposit_receipt(
         l1_to_l2_tx_receipt.block_info.block_number,
         eth_client,
         proposer_client,
@@ -816,12 +816,9 @@ async fn test_call_to_contract_with_deposit(
         .get_balance(fees_vault(), BlockByNumber::Latest)
         .await?;
 
-    let call_fees = get_fees_details_l2(call_receipt, proposer_client).await;
-
     assert_eq!(
-        fee_vault_balance_after_call,
-        fee_vault_balance_before_call + call_fees.recoverable_fees,
-        "Fee vault balance didn't increase as expected after call"
+        fee_vault_balance_after_call, fee_vault_balance_before_call,
+        "Fee vault balance increased unexpectedly after call"
     );
 
     let deployed_contract_balance_after_call = proposer_client
