@@ -1,4 +1,5 @@
-.PHONY: sp1
+.PHONY: sp1 sp1-gpu risc0 risc0-gpu pico pico-gpu prove-sp1 prove-sp1-gpu \
+		prove-sp1-gpu-ci prove-risc0 prove-risc0-gpu pico pico-gpu
 
 NETWORK ?= mainnet
 ifdef BLOCK_NUMBER
