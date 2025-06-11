@@ -123,10 +123,10 @@ impl Hook for L2Hook {
 
         // 2. Return unused gas + gas refunds to the sender.
 
-        let gas_refunded = default_hook::compute_gas_refunded(report)?;
-        let actual_gas_used =
-            default_hook::compute_actual_gas_used(vm, gas_refunded, report.gas_used)?;
         if !vm.env.is_privileged {
+            let gas_refunded = default_hook::compute_gas_refunded(report)?;
+            let actual_gas_used =
+                default_hook::compute_actual_gas_used(vm, gas_refunded, report.gas_used)?;
             default_hook::refund_sender(vm, report, gas_refunded, actual_gas_used)?;
             default_hook::pay_coinbase(vm, actual_gas_used)?;
         }
