@@ -128,7 +128,7 @@ impl Blockchain {
         account_updates: &[AccountUpdate],
     ) -> Result<(), ChainError> {
         // Apply the account updates over the last block's state and compute the new state root
-        let new_state_root = self
+        let (new_state_root, snapshot_updates) = self
             .storage
             .apply_account_updates(block.header.parent_hash, account_updates)
             .await?
@@ -145,7 +145,7 @@ impl Blockchain {
             .add_receipts(block.hash(), execution_result.receipts)
             .await
             .map_err(ChainError::StoreError)?;
-
+        self.storage.update_snapshot(snapshot_updates).map_err(ChainError::StoreError)?;
         return Ok(());
     }
 
@@ -281,13 +281,12 @@ impl Blockchain {
         };
 
         // Apply the account updates over all blocks and compute the new state root
-        let new_state_root = self
+        let (new_state_root, snapshot_updates) = self
             .storage
             .apply_account_updates(first_block_header.parent_hash, &account_updates)
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
-
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
@@ -299,7 +298,9 @@ impl Blockchain {
             .add_receipts_for_blocks(all_receipts)
             .await
             .map_err(|e| (e.into(), None))?;
-
+        self.storage
+            .update_snapshot(snapshot_updates)
+            .map_err(|e| (e.into(), None))?;
         let elapsed_total = interval.elapsed().as_millis();
         let mut throughput = 0.0;
         if elapsed_total != 0 && total_gas_used != 0 {

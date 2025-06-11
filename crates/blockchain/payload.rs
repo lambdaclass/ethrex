@@ -536,11 +536,12 @@ impl Blockchain {
     ) -> Result<(), ChainError> {
         let account_updates = context.vm.get_state_transitions()?;
 
-        context.payload.header.state_root = context
+        let (root, _) = context
             .store
             .apply_account_updates(context.parent_hash(), &account_updates)
             .await?
             .unwrap_or_default();
+        context.payload.header.state_root = root;
         context.payload.header.transactions_root =
             compute_transactions_root(&context.payload.body.transactions);
         context.payload.header.receipts_root = compute_receipts_root(&context.receipts);

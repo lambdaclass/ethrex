@@ -353,22 +353,22 @@ impl Store {
         &self,
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
-    ) -> Result<Option<H256>, StoreError> {
+    ) -> Result<Option<(H256, Vec<SnapshotUpdate>)>, StoreError> {
         tracing::debug!("Applying account updates");
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let mut state_trie = self
+        let (mut state_trie, updates) = self
             .apply_account_updates_from_trie(state_trie, account_updates)
             .await?;
-        Ok(Some(state_trie.hash()?))
+        Ok(Some((state_trie.hash()?, updates)))
     }
 
     pub async fn apply_account_updates_from_trie(
         &self,
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
-    ) -> Result<Trie, StoreError> {
+    ) -> Result<(Trie, Vec<SnapshotUpdate>), StoreError> {
         tracing::debug!("Accessing state trie");
         let mut snapshot_updates = Vec::with_capacity(account_updates.len());
         for update in account_updates.iter() {
@@ -421,9 +421,9 @@ impl Store {
         }
         // FIXME: See what we should do if the snapshot fails, since this is
         // not fatal, and the trie is updated anyway.
-        self.update_snapshot(snapshot_updates)?;
+        // self.update_snapshot(snapshot_updates)?;
         tracing::debug!("Block snapshot updated for latest block");
-        Ok(state_trie)
+        Ok((state_trie, snapshot_updates))
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
@@ -614,6 +614,7 @@ impl Store {
         let hashed_key = hash_key_fixed_size(&storage_key);
         let hashed_address = hash_address_fixed(&address);
         if let Some(value) = self.engine.storage_snapshot_for_hash(&hashed_address, &H256::from(hashed_key))? {
+            tracing::debug!("Value for storage sucessfully retrieved");
             return Ok(Some(value));
         };
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
@@ -763,6 +764,7 @@ impl Store {
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
+            tracing::debug!("Value for storage sucessfully retrieved from snapshot");
             return Ok(None);
         };
         self.get_account_state_by_hash(block_hash, address)
@@ -775,6 +777,7 @@ impl Store {
     ) -> Result<Option<AccountState>, StoreError> {
         let hashed_address = hash_address_fixed(&address);
         if let Some(state) = self.state_snapshot_for_account(&hashed_address)? {
+            tracing::debug!("Account state sucessfully retrieved from snapshot");
             return Ok(Some(state));
         }
         let Some(state_trie) = self.state_trie(block_hash)? else {
