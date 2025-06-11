@@ -89,7 +89,7 @@ impl ExecutionWitnessResult {
             self.storage_trie_nodes.as_ref(),
         ) else {
             return Err(ExecutionWitnessError::RebuildTrie(
-                "Tried to rebuild tries with empty nodes rebuilding the trie can only be done once"
+                "Tried to rebuild tries with empty nodes, rebuilding the trie can only be done once"
                     .to_string(),
             ));
         };
