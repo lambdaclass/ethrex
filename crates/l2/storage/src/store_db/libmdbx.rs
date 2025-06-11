@@ -5,9 +5,10 @@ use std::{
 };
 
 use ethrex_common::{
-    types::{AccountUpdate, Blob, BlockNumber},
+    types::{batch::Batch, AccountUpdate, Blob, BlockNumber},
     H256,
 };
+use ethrex_l2_common::prover::{BatchProof, ProofType};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use libmdbx::{
@@ -74,6 +75,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
         table_info!(DepositLogsHash),
         table_info!(LastSentBatchProof),
         table_info!(AccountUpdatesByBlockNumber),
+        table_info!(BatchProofs),
     ]
     .into_iter()
     .collect();
@@ -292,6 +294,28 @@ impl StoreEngineRollup for Store {
         self.write::<AccountUpdatesByBlockNumber>(block_number, serialized)
             .await
     }
+    async fn store_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProofType,
+        proof: BatchProof,
+    ) -> Result<(), StoreError> {
+        let serialized = bincode::serialize(&proof)?;
+        self.write::<BatchProofs>((batch_number, proof_type), serialized)
+            .await
+    }
+
+    async fn get_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProofType,
+    ) -> Result<Option<BatchProof>, StoreError> {
+        self.read::<BatchProofs>((batch_number, proof_type))
+            .await
+            .map(|s| bincode::deserialize(&s))
+            .transpose()
+            .map_err(StoreError::from)
+    }
 }
 
 table!(
@@ -337,4 +361,10 @@ table!(
 table!(
     /// List of serialized account updates by block number
     ( AccountUpdatesByBlockNumber ) BlockNumber => Vec<u8>
+);
+
+table!(
+    /// Stores batch proofs, keyed by (BatchNumber, ProofType as u8).
+    /// Value is the bincode-encoded BatchProof data.
+    (BatchProofs) (u64, ProofType) => Vec<u8>
 );

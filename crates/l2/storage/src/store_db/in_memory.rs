@@ -8,6 +8,7 @@ use ethrex_common::{
     types::{AccountUpdate, Blob, BlockNumber},
     H256,
 };
+use ethrex_l2_common::prover::{BatchProof, ProofType};
 use ethrex_storage::error::StoreError;
 
 use crate::api::StoreEngineRollup;
@@ -35,6 +36,8 @@ struct StoreInner {
     operations_counts: [u64; 3],
     /// Map of block number to account updates
     account_updates_by_block: HashMap<BlockNumber, Vec<AccountUpdate>>,
+    /// Map of (ProofType, batch_number) to batch proof data
+    batch_proofs: HashMap<(ProofType, u64), BatchProof>,
 }
 
 impl Store {
@@ -222,6 +225,30 @@ impl StoreEngineRollup for Store {
             .account_updates_by_block
             .insert(block_number, account_updates);
         Ok(())
+    }
+
+    async fn store_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProofType,
+        proof: BatchProof,
+    ) -> Result<(), StoreError> {
+        self.inner()?
+            .batch_proofs
+            .insert((proof_type, batch_number), proof);
+        Ok(())
+    }
+
+    async fn get_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProofType,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        Ok(self
+            .inner()?
+            .batch_proofs
+            .get(&(proof_type, batch_number))
+            .cloned())
     }
 }
 

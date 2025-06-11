@@ -4,6 +4,7 @@ use ethrex_common::{
     types::{AccountUpdate, Blob, BlockNumber},
     H256,
 };
+use ethrex_l2_common::prover::ProofType;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use redb::{AccessGuard, Database, Key, TableDefinition, Value};
@@ -36,6 +37,9 @@ const LAST_SENT_BATCH_PROOF: TableDefinition<u64, u64> = TableDefinition::new("L
 
 const ACCOUNT_UPDATES_BY_BLOCK_NUMBER: TableDefinition<BlockNumber, Vec<u8>> =
     TableDefinition::new("AccountUpdatesByBlockNumber");
+
+const BATCH_PROOF_BY_BATCH_AND_TYPE: TableDefinition<(u64, ProofType), Vec<u8>> =
+    TableDefinition::new("BatchProofByBatchAndType");
 
 #[derive(Debug)]
 pub struct RedBStoreRollup {
@@ -116,6 +120,7 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_table(BLOCK_NUMBERS_BY_BATCH)?;
     table_creation_txn.open_table(LAST_SENT_BATCH_PROOF)?;
     table_creation_txn.open_table(ACCOUNT_UPDATES_BY_BLOCK_NUMBER)?;
+    table_creation_txn.open_table(BATCH_PROOF_BY_BATCH_AND_TYPE)?;
     table_creation_txn.commit()?;
 
     Ok(db)
@@ -324,5 +329,25 @@ impl StoreEngineRollup for RedBStoreRollup {
         let serialized = bincode::serialize(&account_updates)?;
         self.write(ACCOUNT_UPDATES_BY_BLOCK_NUMBER, block_number, serialized)
             .await
+    }
+    async fn store_account_updates_by_block_number(
+        &self,
+        batch_number: u64,
+        proof_type: ProofType,
+        proof: BatchProof,
+    ) -> Result<(), StoreError> {
+        let key = (batch_number, proof_type as u8);
+        self.write(BATCH_PROOFS_TABLE, key, proof_data).await
+    }
+
+    async fn get_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProofType,
+    ) -> Result<Option<BatchProof>, StoreError> {
+        let maybe_guard = self
+            .read(BATCH_PROOFS_TABLE, (batch_number, proof_type))
+            .await?;
+        Ok(maybe_guard.map(|guard| guard.value().to_vec()))
     }
 }
