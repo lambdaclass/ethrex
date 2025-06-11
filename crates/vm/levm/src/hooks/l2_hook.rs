@@ -11,7 +11,7 @@ pub struct L2Hook {
 }
 
 impl Hook for L2Hook {
-    fn prepare_execution(&self, vm: &mut crate::vm::VM<'_>) -> Result<(), crate::errors::VMError> {
+    fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
         if vm.env.is_privileged {
             let Some(recipient) = self.recipient else {
                 return Err(InternalError::RecipientNotFoundForPrivilegedTransaction.into());
@@ -108,7 +108,7 @@ impl Hook for L2Hook {
     }
 
     fn finalize_execution(
-        &self,
+        &mut self,
         vm: &mut crate::vm::VM<'_>,
         report: &mut crate::errors::ExecutionReport,
     ) -> Result<(), crate::errors::VMError> {

@@ -231,6 +231,27 @@ impl Mempool {
             .cloned()
             .collect())
     }
+
+    pub fn contains_sender_nonce(
+        &self,
+        sender: Address,
+        nonce: u64,
+        received_hash: H256,
+    ) -> Result<bool, MempoolError> {
+        let pooled_transactions = self
+            .transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+
+        let count = pooled_transactions
+            .iter()
+            .filter(|(hash, tx)| {
+                tx.sender() == sender && tx.nonce() == nonce && *hash != &received_hash
+            })
+            .count();
+
+        Ok(count > 0)
+    }
 }
 
 #[derive(Debug, Default)]

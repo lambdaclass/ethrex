@@ -58,9 +58,16 @@ pub struct SequencerOptions {
     #[command(flatten)]
     pub proof_coordinator_opts: ProofCoordinatorOptions,
     #[command(flatten)]
-    pub l2_opts: L2Options,
-    #[command(flatten)]
     pub aligned_opts: AlignedOptions,
+    #[arg(
+        long = "validium",
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_L2_VALIDIUM",
+        help_heading = "L2 options",
+        long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
+    )]
+    pub validium: bool,
 }
 
 impl From<SequencerOptions> for SequencerConfig {
@@ -80,7 +87,7 @@ impl From<SequencerOptions> for SequencerConfig {
                 l1_private_key: opts.committer_opts.committer_l1_private_key,
                 commit_time_ms: opts.committer_opts.commit_time_ms,
                 arbitrary_base_blob_gas_price: opts.committer_opts.arbitrary_base_blob_gas_price,
-                validium: opts.l2_opts.validium,
+                validium: opts.validium,
             },
             eth: EthConfig {
                 rpc_url: opts.eth_opts.rpc_url,
@@ -109,7 +116,7 @@ impl From<SequencerOptions> for SequencerConfig {
                 listen_port: opts.proof_coordinator_opts.listen_port,
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
                 dev_mode: opts.proof_coordinator_opts.dev_mode,
-                validium: opts.l2_opts.validium,
+                validium: opts.validium,
             },
             aligned: AlignedConfig {
                 aligned_mode: opts.aligned_opts.aligned,
@@ -391,19 +398,6 @@ impl Default for ProofCoordinatorOptions {
             dev_mode: true,
         }
     }
-}
-
-#[derive(Parser, Default)]
-pub struct L2Options {
-    #[arg(
-        long = "l2-validium",
-        default_value = "false",
-        value_name = "BOOLEAN",
-        env = "ETHREX_L2_VALIDIUM",
-        help_heading = "L2 general options",
-        long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
-    )]
-    pub validium: bool,
 }
 
 #[derive(Parser)]

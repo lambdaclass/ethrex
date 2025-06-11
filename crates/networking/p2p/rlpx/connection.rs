@@ -509,7 +509,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let response = process_account_range_request(req, self.storage.clone())?;
                 self.send(Message::AccountRange(response)).await?
             }
-            // TODO(#1129) Add the transaction to the mempool once received.
             Message::Transactions(txs) if peer_supports_eth => {
                 if self.blockchain.is_synced() {
                     let mut valid_txs = vec![];
@@ -520,7 +519,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         }
                         valid_txs.push(tx.clone());
                     }
-                    self.broadcast_message(Message::Transactions(Transactions::new(valid_txs)))?;
+                    if !valid_txs.is_empty() {
+                        self.broadcast_message(Message::Transactions(Transactions::new(
+                            valid_txs,
+                        )))?;
+                    }
                 }
             }
             Message::GetBlockHeaders(msg_data) if peer_supports_eth => {

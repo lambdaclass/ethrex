@@ -46,7 +46,9 @@ impl BeaconClient {
         println!("Sending request: {endpoint}");
         let response = self
             .client
-            .get(self.url.clone().join(endpoint).unwrap())
+            .get(self.url.clone().join(endpoint).map_err(|error| {
+                BeaconClientError::FailedToSetURLEndpointError(error.to_string())
+            })?)
             .header("content-type", "application/json")
             .header("accept", "application/json")
             .send()
