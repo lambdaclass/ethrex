@@ -1,5 +1,5 @@
 use crate::{
-    errors::{InternalError, OpcodeResult, VMError},
+    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
     utils::word_to_address,
@@ -96,7 +96,7 @@ impl<'a> VM<'a> {
         };
         let offset: usize = offset
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            .map_err(|_| InternalError::TypeConversion)?;
 
         // All bytes after the end of the calldata are set to 0.
         let mut data = [0u8; 32];
@@ -139,7 +139,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -161,7 +161,7 @@ impl<'a> VM<'a> {
 
         let calldata_offset: usize = calldata_offset
             .try_into()
-            .map_err(|_err| VMError::Internal(InternalError::ConversionError))?;
+            .map_err(|_err| InternalError::TypeConversion)?;
 
         for (i, byte) in current_call_frame
             .calldata
@@ -202,7 +202,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(destination_offset, size)?;
 
@@ -220,7 +220,7 @@ impl<'a> VM<'a> {
         if code_offset < current_call_frame.bytecode.len().into() {
             let code_offset: usize = code_offset
                 .try_into()
-                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+                .map_err(|_| InternalError::TypeConversion)?;
 
             for (i, byte) in current_call_frame
                 .bytecode
@@ -278,7 +278,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let current_memory_size = self.current_call_frame()?.memory.len();
 
         let (_, address_was_cold) = self.db.access_account(&mut self.substate, address)?;
@@ -305,7 +305,7 @@ impl<'a> VM<'a> {
         if offset < bytecode.len().into() {
             let offset: usize = offset
                 .try_into()
-                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+                .map_err(|_| InternalError::TypeConversion)?;
             for (i, byte) in bytecode.iter().skip(offset).take(size).enumerate() {
                 if let Some(data_byte) = data.get_mut(i) {
                     *data_byte = *byte;
@@ -342,12 +342,12 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let size: usize = current_call_frame
             .stack
             .pop()?
             .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -365,10 +365,10 @@ impl<'a> VM<'a> {
 
         let copy_limit = returndata_offset
             .checked_add(size)
-            .ok_or(VMError::VeryLargeNumber)?;
+            .ok_or(ExceptionalHalt::VeryLargeNumber)?;
 
         if copy_limit > sub_return_data_len {
-            return Err(VMError::OutOfBounds);
+            return Err(ExceptionalHalt::OutOfBounds.into());
         }
 
         // Actually we don't need to fill with zeros for out of bounds bytes, this works but is overkill because of the previous validations.

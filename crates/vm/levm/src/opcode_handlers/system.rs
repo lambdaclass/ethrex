@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
-    errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
+    errors::{ExceptionalHalt, ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     utils::{address_to_word, word_to_address, *},
@@ -38,13 +38,13 @@ impl<'a> VM<'a> {
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_| VMError::VeryLargeNumber)?;
+                .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
             let return_data_start_offset = current_call_frame.stack.pop()?;
             let return_data_size: usize = current_call_frame
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_| VMError::VeryLargeNumber)?;
+                .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
@@ -60,7 +60,7 @@ impl<'a> VM<'a> {
 
         // VALIDATIONS
         if self.current_call_frame()?.is_static && !value.is_zero() {
-            return Err(VMError::OpcodeNotAllowedInStaticContext);
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
         // GAS
@@ -81,9 +81,9 @@ impl<'a> VM<'a> {
             .current_call_frame()?
             .gas_limit
             .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::GasOverflow)?
+            .ok_or(InternalError::Underflow)?
             .checked_sub(eip7702_gas_consumed)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
 
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
@@ -145,13 +145,13 @@ impl<'a> VM<'a> {
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_err| VMError::VeryLargeNumber)?;
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let return_data_start_offset = current_call_frame.stack.pop()?;
             let return_data_size = current_call_frame
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_err| VMError::VeryLargeNumber)?;
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
@@ -182,9 +182,9 @@ impl<'a> VM<'a> {
             .current_call_frame()?
             .gas_limit
             .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::GasOverflow)?
+            .ok_or(InternalError::Underflow)?
             .checked_sub(eip7702_gas_consumed)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
 
         let (cost, gas_limit) = gas_cost::callcode(
             new_memory_size,
@@ -232,7 +232,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         if size == 0 {
             return Ok(OpcodeResult::Halt);
@@ -272,13 +272,13 @@ impl<'a> VM<'a> {
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_err| VMError::VeryLargeNumber)?;
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let return_data_start_offset = current_call_frame.stack.pop()?;
             let return_data_size = current_call_frame
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_err| VMError::VeryLargeNumber)?;
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
@@ -307,9 +307,9 @@ impl<'a> VM<'a> {
             .current_call_frame()?
             .gas_limit
             .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::GasOverflow)?
+            .ok_or(InternalError::Underflow)?
             .checked_sub(eip7702_gas_consumed)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
 
         let (cost, gas_limit) = gas_cost::delegatecall(
             new_memory_size,
@@ -369,13 +369,13 @@ impl<'a> VM<'a> {
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_err| VMError::VeryLargeNumber)?;
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let return_data_start_offset = current_call_frame.stack.pop()?;
             let return_data_size = current_call_frame
                 .stack
                 .pop()?
                 .try_into()
-                .map_err(|_err| VMError::VeryLargeNumber)?;
+                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
             let current_memory_size = current_call_frame.memory.len();
             (
                 gas,
@@ -404,9 +404,9 @@ impl<'a> VM<'a> {
             .current_call_frame()?
             .gas_limit
             .checked_sub(self.current_call_frame()?.gas_used)
-            .ok_or(InternalError::GasOverflow)?
+            .ok_or(InternalError::Underflow)?
             .checked_sub(eip7702_gas_consumed)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
 
         let (cost, gas_limit) = gas_cost::staticcall(
             new_memory_size,
@@ -455,7 +455,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
 
@@ -484,7 +484,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
         let salt = current_call_frame.stack.pop()?;
 
         let new_size = calculate_memory_size(code_offset_in_memory, code_size_in_memory)?;
@@ -518,7 +518,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
         let new_memory_size = calculate_memory_size(offset, size)?;
         let current_memory_size = current_call_frame.memory.len();
@@ -537,7 +537,7 @@ impl<'a> VM<'a> {
     /// ### INVALID operation
     /// Reverts consuming all gas, no return data.
     pub fn op_invalid(&mut self) -> Result<OpcodeResult, VMError> {
-        Err(VMError::InvalidOpcode)
+        Err(ExceptionalHalt::InvalidOpcode.into())
     }
 
     // SELFDESTRUCT operation
@@ -555,7 +555,7 @@ impl<'a> VM<'a> {
         let (beneficiary, to) = {
             let current_call_frame = self.current_call_frame_mut()?;
             if current_call_frame.is_static {
-                return Err(VMError::OpcodeNotAllowedInStaticContext);
+                return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
             }
             let target_address = word_to_address(current_call_frame.stack.pop()?);
             let to = current_call_frame.to;
@@ -616,13 +616,13 @@ impl<'a> VM<'a> {
         // Validations that can cause out of gas.
         // 1. [EIP-3860] - Cant exceed init code max size
         if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.config.fork >= Fork::Shanghai {
-            return Err(VMError::OutOfGas(OutOfGasError::ConsumedGasOverflow));
+            return Err(ExceptionalHalt::OutOfGas.into());
         }
 
         let current_call_frame = self.current_call_frame_mut()?;
         // 2. CREATE can't be called in a static context
         if current_call_frame.is_static {
-            return Err(VMError::OpcodeNotAllowedInStaticContext);
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
         // Clear callframe subreturn data
@@ -670,7 +670,7 @@ impl<'a> VM<'a> {
             .current_call_frame_mut()?
             .depth
             .checked_add(1)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
 
         // Validations that push 0 (FAIL) to the stack and return reserved gas to deployer
         // 1. Sender doesn't have enough balance to send value.
@@ -762,7 +762,7 @@ impl<'a> VM<'a> {
             .current_call_frame()?
             .depth
             .checked_add(1)
-            .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            .ok_or(InternalError::Overflow)?;
         if new_depth > 1024 {
             self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
@@ -805,7 +805,7 @@ impl<'a> VM<'a> {
         let backup = self
             .substate_backups
             .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+            .ok_or(InternalError::CallFrame)?;
         if !tx_report.is_success() {
             self.substate = backup;
             self.restore_cache_state()?;
@@ -848,11 +848,11 @@ impl<'a> VM<'a> {
         // Return gas left from subcontext
         let child_unused_gas = gas_limit
             .checked_sub(tx_report.gas_used)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
         parent_call_frame.gas_used = parent_call_frame
             .gas_used
             .checked_sub(child_unused_gas)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
 
         // Append logs
         parent_call_frame.logs.extend(tx_report.logs.clone());
@@ -897,11 +897,11 @@ impl<'a> VM<'a> {
         // Return unused gas
         let unused_gas = gas_limit
             .checked_sub(tx_report.gas_used)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
         parent_call_frame.gas_used = parent_call_frame
             .gas_used
             .checked_sub(unused_gas)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
 
         // Append logs
         parent_call_frame.logs.extend(tx_report.logs.clone());
@@ -939,7 +939,7 @@ impl<'a> VM<'a> {
         callframe.gas_used = callframe
             .gas_used
             .checked_sub(gas_limit)
-            .ok_or(InternalError::GasOverflow)?;
+            .ok_or(InternalError::Underflow)?;
         callframe.stack.push(FAIL)?; // It's the same as revert for CREATE
 
         self.tracer.exit_early(0, Some(reason))?;
