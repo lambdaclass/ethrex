@@ -338,7 +338,6 @@ fn deploy_tdx_contracts(
         .env("ON_CHAIN_PROPOSER", format!("{:#x}", on_chain_proposer))
         .current_dir("tee/contracts")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .spawn()
         .map_err(|err| DeployerError::DependencyError(format!("Failed to spawn make: {err}")))?
         .wait()
