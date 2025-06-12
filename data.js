@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749766976483,
+  "lastUpdate": 1749772438342,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -14942,6 +14942,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.007470783663366337,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1842a65def27844ec4baae2c89dd35e9c99b4ebb",
+          "message": "ci(l2): update rpc ci cache file (#3120)\n\n**Motivation**\n\nWith the merge of #3026 and #3076 the prover now uses\ndebug_executionWitness to prove blocks, so the old cache file is\noutdated\n\n**Description**\n\n- Change the file to a new one generated from our synced Holesky node",
+          "timestamp": "2025-06-12T21:27:22Z",
+          "tree_id": "0d09930a1a4e87228eff940d06c4c0ee088871e8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1842a65def27844ec4baae2c89dd35e9c99b4ebb"
+        },
+        "date": 1749772432757,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008591526172300981,
             "unit": "Mgas/s"
           }
         ]
