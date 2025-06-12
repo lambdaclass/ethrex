@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use bytes::BufMut;
 use bytes::Bytes;
 use ethrex_blockchain::error::MempoolError;
@@ -8,7 +6,6 @@ use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::P2PTransaction;
 use ethrex_common::types::WrappedEIP4844Transaction;
 use ethrex_common::{types::Transaction, H256};
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -21,7 +18,7 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use crate::types::Node;
-use tracing::warn;
+
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
 // Broadcast message
 #[derive(Debug, Clone)]
@@ -68,7 +65,7 @@ impl RLPxMessage for Transactions {
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x08
 // Broadcast message
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct NewPooledTransactionHashes {
     transaction_types: Bytes,
     transaction_sizes: Vec<usize>,
@@ -277,40 +274,8 @@ impl PooledTransactions {
     }
 
     /// Saves every incoming pooled transaction to the mempool.
-    pub async fn handle(
-        self,
-        node: &Node,
-        blockchain: &Blockchain,
-        requested_pooled_transactions: &HashMap<u64, NewPooledTransactionHashes>,
-    ) -> Result<(), MempoolError> {
-        if let Some(requested) = requested_pooled_transactions.get(&self.id) {
-            for tx in &self.pooled_transactions {
-                let tx_hash = tx.compute_hash();
-                let Some(pos) = requested
-                    .transaction_hashes
-                    .iter()
-                    .position(|&hash| hash == tx_hash)
-                else {
-                    warn!(
-                        "HASH NOT FOUND {} in {:?}",
-                        tx_hash, requested.transaction_hashes
-                    );
-                    continue;
-                };
 
-                let tx_type = requested.transaction_types[pos];
-                let size = requested.transaction_sizes[pos];
-                if tx.tx_type() as u8 != tx_type {
-                    warn!("Invalid tx type");
-                    return Err(MempoolError::InvalidNonce);
-                }
-                if tx.encode_to_vec().len() != size {
-                    warn!("Invalid tx size");
-                    return Err(MempoolError::InvalidNonce);
-                }
-            }
-        }
-
+    pub async fn handle(self, node: &Node, blockchain: &Blockchain) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
                 if let Err(e) = blockchain
