@@ -4,7 +4,7 @@ use ethrex_common::{
     types::{AccountUpdate, Blob, BlockNumber},
     H256,
 };
-use ethrex_l2_common::prover::ProverType;
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use redb::{AccessGuard, Database, Key, TableDefinition, Value};
@@ -330,16 +330,17 @@ impl StoreEngineRollup for RedBStoreRollup {
         self.write(ACCOUNT_UPDATES_BY_BLOCK_NUMBER, block_number, serialized)
             .await
     }
-    async fn store_account_updates_by_block_number(
+    async fn store_proof_by_batch_and_type(
         &self,
         batch_number: u64,
         proof_type: ProverType,
         proof: BatchProof,
     ) -> Result<(), StoreError> {
+        let serialized = bincode::serialize(&proof)?;
         self.write(
-            BATCH_PROOFS_TABLE,
+            BATCH_PROOF_BY_BATCH_AND_TYPE,
             (batch_number, proof_type.into()),
-            proof_data,
+            serialized,
         )
         .await
     }
@@ -349,9 +350,13 @@ impl StoreEngineRollup for RedBStoreRollup {
         batch_number: u64,
         proof_type: ProverType,
     ) -> Result<Option<BatchProof>, StoreError> {
-        let maybe_guard = self
-            .read(BATCH_PROOFS_TABLE, (batch_number, proof_type.into()))
-            .await?;
-        Ok(maybe_guard.map(|guard| guard.value().to_vec()))
+        self.read(
+            BATCH_PROOF_BY_BATCH_AND_TYPE,
+            (batch_number, proof_type.into()),
+        )
+        .await?
+        .map(|s| bincode::deserialize(&s.value()))
+        .transpose()
+        .map_err(StoreError::from)
     }
 }
