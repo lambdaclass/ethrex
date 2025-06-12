@@ -1,4 +1,4 @@
 .DS_Store
-Cargo.lock
+./Cargo.lock
 target/
 interface/sp1/out
