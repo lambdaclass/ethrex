@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749684007564,
+  "lastUpdate": 1749732849044,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12325,6 +12325,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184163311227,
             "range": "± 390904277",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "adb383df1fc07556609e5b57617291bc700b7e25",
+          "message": "ci(core): remove docker bake (#3137)\n\n**Motivation**\n\nThe CI runner is running out of space, possibly due to the very large\ndocker caches.\n\n**Description**\n\nThis PR removes the docker bake steps.",
+          "timestamp": "2025-06-12T11:59:08Z",
+          "tree_id": "a7747f6d62ff4aa2239e07024106f8ed2db27cb0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/adb383df1fc07556609e5b57617291bc700b7e25"
+        },
+        "date": 1749732842467,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 186015828446,
+            "range": "± 679540492",
             "unit": "ns/iter"
           }
         ]
