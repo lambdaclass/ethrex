@@ -288,7 +288,6 @@ impl StoreEngine for MDBXFork {
 
             for (block_hash, receipts) in update_batch.receipts {
                 // store receipts
-                let tx = db.tx_mut().unwrap();
                 for (index, receipt) in receipts.into_iter().enumerate() {
                     let receipt_bytes = receipt.encode_to_vec();
                     let receipt_db_key = (block_hash, index).encode_to_vec();
