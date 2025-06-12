@@ -63,7 +63,7 @@ Accessing a **cold** address incurs higher gas costs than accessing a **warm** a
 **CacheDB:**
 - The `CacheDB` is a structure that is persisted between transactions and keeps track of changes that are eventually going to be committed to the Database.
 
-So if you want to access an account that's in the `CacheDB` it will be cheap for the EVM (because it won't look up in the `Database`) but if it was accessed in a transaction that never touched that account the address will still be **cold** and therefore the gas cost will be higher than if it was **warm**.
+So if you want to access an account that's in the `CacheDB` it will be cheap for the EVM (because it won't look up in the `Database`) but if it was accessed in a transaction that never accessed that account the address will still be **cold** and therefore the gas cost will be higher than if it was **warm**.
 
 ## Errors
 

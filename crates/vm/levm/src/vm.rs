@@ -30,8 +30,8 @@ pub type Storage = HashMap<U256, H256>;
 /// Information that changes during transaction execution
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
-    pub touched_accounts: HashSet<Address>,
-    pub touched_storage_slots: HashMap<Address, BTreeSet<H256>>,
+    pub accessed_addresses: HashSet<Address>,
+    pub accessed_storage_slots: HashMap<Address, BTreeSet<H256>>,
     pub created_accounts: HashSet<Address>,
     pub refunded_gas: u64,
     pub transient_storage: TransientStorage,
