@@ -15,7 +15,7 @@ use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
-    archive_sync::archive_sync,
+    archive_sync::{archive_sync, archive_sync_2},
     initializers::{init_blockchain, init_store, open_store},
     networks::{Network, PublicNetwork},
     utils::{self, get_client_version, read_jwtsecret_file, set_datadir},
@@ -305,6 +305,24 @@ pub enum Subcommand {
         )]
         block_number: BlockNumber,
     },
+    #[command(
+        name = "archive-sync-2",
+        about = "Sync to a specific block by downloading its state from an archive node"
+    )]
+    ArchiveSync2 {
+        #[arg(
+            required = true,
+            value_name = "IPC_PATH",
+            help = "Path to the ipc of the archive node."
+        )]
+        archive_node_ipc: String,
+        #[arg(
+            required = true,
+            value_name = "NUMBER",
+            help = "Block number to sync to"
+        )]
+        block_number: BlockNumber,
+    },
     #[cfg(feature = "l2")]
     #[command(subcommand)]
     L2(l2::Command),
@@ -349,6 +367,10 @@ impl Subcommand {
                 let jwt_secret = read_jwtsecret_file(&archive_node_jwt);
                 archive_sync(&archive_node_url, &jwt_secret, block_number).await?
             }
+            Self::ArchiveSync2 {
+                archive_node_ipc,
+                block_number,
+            } => archive_sync_2(&archive_node_ipc, block_number).await?,
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
         }

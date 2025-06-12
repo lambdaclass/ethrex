@@ -5,6 +5,27 @@ lazy_static::lazy_static! {
 use ethrex_common::{types::BlockNumber, Bytes};
 use ethrex_rpc::authentication::generate_jwt_token;
 use serde_json::json;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::UnixStream;
+
+pub async fn archive_sync_2(archive_ipc_path: &str, block_number: BlockNumber) -> eyre::Result<()> {
+    let mut stream = UnixStream::connect(archive_ipc_path).await?;
+
+    let request = &json!({
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "debug_dumpBlock",
+    "params": [block_number]
+    });
+    stream.write_all(request.to_string().as_bytes()).await?;
+    stream.write_all(b"\n").await?;
+    stream.flush().await?;
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await?;
+    let res = serde_json::from_slice(&response)?;
+    dbg!(&res);
+    Ok(())
+}
 
 pub async fn archive_sync(
     archive_node_url: &str,
