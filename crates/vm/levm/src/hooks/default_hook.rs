@@ -182,11 +182,11 @@ pub fn refund_sender(
 }
 
 // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-pub fn compute_gas_refunded(vm: &VM<'_>, report: &ContextResult) -> Result<u64, VMError> {
+pub fn compute_gas_refunded(vm: &VM<'_>, ctx_result: &ContextResult) -> Result<u64, VMError> {
     Ok(vm
         .substate
         .refunded_gas
-        .min(report.gas_used / MAX_REFUND_QUOTIENT))
+        .min(ctx_result.gas_used / MAX_REFUND_QUOTIENT))
 }
 
 // Calculate actual gas used in the whole transaction. Since Prague there is a base minimum to be consumed.
