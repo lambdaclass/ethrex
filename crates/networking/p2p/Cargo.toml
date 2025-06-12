@@ -46,3 +46,6 @@ path = "./p2p.rs"
 default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
+
+[lints.clippy] 
+unwrap_used = "deny" 
