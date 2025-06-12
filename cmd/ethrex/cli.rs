@@ -403,6 +403,17 @@ pub async fn import_blocks(
         .await
         .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
 
+    // Make head canonical and label all special blocks correctly.
+    if let Some(block) = blocks.last() {
+        store
+            .update_finalized_block_number(block.header.number)
+            .await?;
+        store.update_safe_block_number(block.header.number).await?;
+        store
+            .update_latest_block_number(block.header.number)
+            .await?;
+    }
+
     info!("Added {size} blocks to blockchain");
     Ok(())
 }
