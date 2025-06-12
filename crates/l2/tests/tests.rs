@@ -806,11 +806,17 @@ async fn get_fees_details_l2(tx_receipt: RpcReceipt, proposer_client: &EthClient
 }
 
 fn eth_client() -> EthClient {
-    EthClient::new(DEFAULT_ETH_URL).unwrap()
+    EthClient::new(
+        &std::env::var("INTEGRATION_TEST_ETH_URL").unwrap_or(DEFAULT_ETH_URL.to_string()),
+    )
+    .unwrap()
 }
 
 fn proposer_client() -> EthClient {
-    EthClient::new(DEFAULT_PROPOSER_URL).unwrap()
+    EthClient::new(
+        &std::env::var("INTEGRATION_TEST_PROPOSER_URL").unwrap_or(DEFAULT_PROPOSER_URL.to_string()),
+    )
+    .unwrap()
 }
 
 fn common_bridge_address() -> Address {
@@ -826,11 +832,16 @@ fn common_bridge_address() -> Address {
 }
 
 fn fees_vault() -> Address {
-    DEFAULT_PROPOSER_COINBASE_ADDRESS
+    std::env::var("INTEGRATION_TEST_PROPOSER_COINBASE_ADDRESS")
+        .map(|address| Address::from_str(&address).expect("Invalid proposer coinbase address"))
+        .unwrap_or(DEFAULT_PROPOSER_COINBASE_ADDRESS)
 }
 
 fn l1_rich_wallet_private_key() -> SecretKey {
-    SecretKey::from_slice(DEFAULT_L1_RICH_WALLET_PRIVATE_KEY.as_bytes()).unwrap()
+    let l1_rich_wallet_pk = std::env::var("INTEGRATION_TEST_L1_RICH_WALLET_PRIVATE_KEY")
+        .map(|pk| H256::from_str(&pk).expect("Invalid l1 rich wallet pk"))
+        .unwrap_or(DEFAULT_L1_RICH_WALLET_PRIVATE_KEY);
+    SecretKey::from_slice(l1_rich_wallet_pk.as_bytes()).unwrap()
 }
 
 async fn wait_for_l2_deposit_receipt(
