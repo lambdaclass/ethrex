@@ -20,9 +20,7 @@ where
                     BlockChainExpectedException::TxtException("Nonce is max".to_string())
                 }
                 "TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED" => {
-                    BlockChainExpectedException::TxtException(
-                        "Type 3 transaction blob count exceeded".to_string(),
-                    )
+                    BlockChainExpectedException::TxtException("Blob count exceeded".to_string())
                 }
                 "TransactionException.TYPE_3_TX_ZERO_BLOBS" => {
                     BlockChainExpectedException::TxtException(
@@ -31,7 +29,7 @@ where
                 }
                 "TransactionException.TYPE_3_TX_CONTRACT_CREATION" => {
                     BlockChainExpectedException::TxtException(
-                        "Type 3 transaction contract creation".to_string(),
+                        "Contract creation in blob transaction".to_string(),
                     )
                 }
                 "TransactionException.TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH" => {
@@ -40,7 +38,7 @@ where
                     )
                 }
                 "TransactionException.INTRINSIC_GAS_TOO_LOW" => {
-                    BlockChainExpectedException::TxtException("Intrinsic gas too low".to_string())
+                    BlockChainExpectedException::TxtException("INTRINSIC_GAS_TOO_LOW".to_string())
                 }
                 "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
                     BlockChainExpectedException::TxtException(
@@ -48,11 +46,11 @@ where
                     )
                 }
                 "TransactionException.SENDER_NOT_EOA" => BlockChainExpectedException::TxtException(
-                    "Sender is not an Externally Owned Account".to_string(),
+                    "Sender account shouldn't be a contract".to_string(),
                 ),
                 "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS" => {
                     BlockChainExpectedException::TxtException(
-                        "Priority greater than max fee per gas".to_string(),
+                        "priority fee is greater than max fee per gas".to_string(),
                     )
                 }
                 "TransactionException.GAS_ALLOWANCE_EXCEEDED" => {

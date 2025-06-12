@@ -106,7 +106,8 @@ fn exception_is_expected(
             ChainError::EvmError(EvmError::Transaction(error_msg)),
         ) = (exception, returned_error)
         {
-            return expected_error_msg == error_msg;
+            return match_alternative_revm_exception_msg(expected_error_msg, error_msg)
+                || (expected_error_msg == error_msg);
         }
         matches!(
             (exception, &returned_error),
@@ -155,6 +156,17 @@ fn exception_is_expected(
     })
 }
 
+fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &String) -> bool {
+    (msg == "empty blobs" && expected_msg == "Type 3 transaction without blobs")
+        || (msg == "blob versioned hashes not supported"
+            && expected_msg == "Type 3 transactions are not supported before the Cancun fork")
+        || (msg == "blob version not supported" && expected_msg == "Invalid blob versioned hash")
+        || (msg == "gas price is less than basefee"
+            && expected_msg == "Insufficient max fee per gas")
+        || (msg == "blob gas price is greater than max fee per blob gas"
+            && expected_msg == "Insufficient max fee per blob gas")
+        || (msg.starts_with("lack of funds ") && expected_msg == "Insufficient account funds")
+}
 /// Tests the rlp decoding of a block
 fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
     // NOTE: There is a test which validates that an EIP-7702 transaction is not allowed to
