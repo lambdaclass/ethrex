@@ -655,7 +655,7 @@ impl<'a> VM<'a> {
             None => calculate_create_address(deployer, deployer_nonce)?,
         };
 
-        // Touch new contract
+        // Add new contract to accessed addresses
         self.substate.accessed_addresses.insert(new_address);
 
         // Log CREATE in tracer
