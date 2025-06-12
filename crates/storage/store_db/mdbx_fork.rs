@@ -229,14 +229,12 @@ impl StoreEngine for MDBXFork {
 
             // store account updates
             for (node_hash, node_data) in update_batch.account_updates {
-                tx.delete::<StateTrieNodes>(node_hash.as_ref().to_vec(), None)?;
                 tx.put::<StateTrieNodes>(node_hash.as_ref().to_vec(), node_data)?;
             }
 
             for (hashed_address, nodes) in update_batch.storage_updates {
                 for (node_hash, node_data) in nodes {
                     let key = (hashed_address, node_hash).encode_to_vec();
-                    tx.delete::<StateTrieNodes>(key.clone(), None)?;
                     tx.put::<StorageTriesNodes>(key, node_data)?;
                 }
             }
