@@ -35,26 +35,29 @@ where
 
 impl TrieDB for MDBXTrieDB<StateTrieNodes> {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        let tx = self.db.tx().unwrap();
+        let tx = self.db.tx().map_err(|e| TrieError::DbError(e.into()))?;
         let node_hash_bytes = key.as_ref().to_vec();
-        Ok(tx.get::<StateTrieNodes>(node_hash_bytes).unwrap())
+        tx.get::<StateTrieNodes>(node_hash_bytes)
+            .map_err(|e| TrieError::DbError(e.into()))
     }
 
     fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
-        let tx = self.db.tx_mut().unwrap();
+        let tx = self.db.tx_mut().map_err(|e| TrieError::DbError(e.into()))?;
         let node_hash_bytes = key.as_ref().to_vec();
-        tx.put::<StateTrieNodes>(node_hash_bytes, value).unwrap();
-        tx.commit().unwrap();
+        tx.put::<StateTrieNodes>(node_hash_bytes, value)
+            .map_err(|e| TrieError::DbError(e.into()))?;
+        tx.commit().map_err(|e| TrieError::DbError(e.into()))?;
         Ok(())
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
-        let txn = self.db.tx_mut().unwrap();
+        let txn = self.db.tx_mut().map_err(|e| TrieError::DbError(e.into()))?;
         for (k, v) in key_values {
             let node_hash_bytes = k.as_ref().to_vec();
-            txn.put::<StateTrieNodes>(node_hash_bytes, v).unwrap();
+            txn.put::<StateTrieNodes>(node_hash_bytes, v)
+                .map_err(|e| TrieError::DbError(e.into()))?;
         }
-        txn.commit().unwrap();
+        txn.commit().map_err(|e| TrieError::DbError(e.into()))?;
         Ok(())
     }
 }
