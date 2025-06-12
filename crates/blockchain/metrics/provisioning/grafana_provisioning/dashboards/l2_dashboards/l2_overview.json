@@ -556,18 +556,18 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red"
-              },
-              {
-                "color": "orange",
-                "value": 25
+                "color": "green"
               },
               {
                 "color": "yellow",
+                "value": 25
+              },
+              {
+                "color": "orange",
                 "value": 50
               },
               {
-                "color": "green",
+                "color": "red",
                 "value": 75
               }
             ]
@@ -899,7 +899,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.0.1",
+      "pluginVersion": "12.0.0",
       "targets": [
         {
           "datasource": {
@@ -907,8 +907,8 @@
             "uid": "prom-001"
           },
           "disableTextWrap": false,
-          "editorMode": "builder",
-          "expr": "transactions_tracker",
+          "editorMode": "code",
+          "expr": "floor(increase(transactions_tracker[$__range]))",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -942,18 +942,18 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red"
-              },
-              {
-                "color": "orange",
-                "value": 25
+                "color": "green"
               },
               {
                 "color": "yellow",
+                "value": 25
+              },
+              {
+                "color": "orange",
                 "value": 50
               },
               {
-                "color": "green",
+                "color": "red",
                 "value": 75
               }
             ]
