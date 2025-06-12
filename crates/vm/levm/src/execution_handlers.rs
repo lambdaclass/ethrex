@@ -143,54 +143,28 @@ impl<'a> VM<'a> {
     pub fn handle_opcode_result(&mut self) -> Result<ContextResult, VMError> {
         // On successful create check output validity
         if self.is_create()? {
-            let contract_code = self.current_call_frame_mut()?.output.clone();
-            let code_length = contract_code.len();
+            let validate_create = self.validate_contract_creation();
 
-            let code_length_u64: u64 = code_length
-                .try_into()
-                .map_err(|_| InternalError::TypeConversion)?;
-
-            let code_deposit_cost: u64 = code_length_u64
-                .checked_mul(CODE_DEPOSIT_COST)
-                .ok_or(InternalError::Overflow)?;
-
-            // Revert
-            // If the first byte of code is 0xef
-            // If the code_length > MAX_CODE_SIZE
-            // If current_consumed_gas + code_deposit_cost > gas_limit
-            let validate_create = if code_length > MAX_CODE_SIZE {
-                Err(ExceptionalHalt::ContractOutputTooBig)
-            } else if contract_code
-                .first()
-                .is_some_and(|val| val == &INVALID_CONTRACT_PREFIX)
-            {
-                Err(ExceptionalHalt::InvalidContractPrefix)
-            } else if self
-                .current_call_frame_mut()?
-                .increase_consumed_gas(code_deposit_cost)
-                .is_err()
-            {
-                Err(ExceptionalHalt::OutOfGas)
-            } else {
-                Ok(self.current_call_frame()?.to)
-            };
-
-            match validate_create {
-                Ok(new_address) => {
-                    // Set bytecode to new account if success
-                    self.update_account_bytecode(new_address, contract_code)?;
+            if let Err(error) = validate_create {
+                if error.should_propagate() {
+                    return Err(error);
                 }
-                Err(error) => {
-                    // Revert if error
-                    self.current_call_frame_mut()?.gas_used = self.current_call_frame()?.gas_limit;
 
-                    return Ok(ContextResult {
-                        result: TxResult::Revert(error.into()),
-                        gas_used: self.current_call_frame()?.gas_used,
-                        output: Bytes::new(),
-                    });
-                }
+                // Consume all gas because error was exceptional.
+                let callframe = self.current_call_frame_mut()?;
+                callframe.gas_used = callframe.gas_limit;
+
+                return Ok(ContextResult {
+                    result: TxResult::Revert(error.into()),
+                    gas_used: callframe.gas_used,
+                    output: Bytes::new(),
+                });
             }
+
+            // Set bytecode to the newly created contract.
+            let contract_address = self.current_call_frame()?.to;
+            let code = self.current_call_frame()?.output.clone();
+            self.update_account_bytecode(contract_address, code)?;
         }
 
         Ok(ContextResult {
@@ -219,6 +193,7 @@ impl<'a> VM<'a> {
         })
     }
 
+    /// Handles external create transaction.
     pub fn handle_create_transaction(&mut self) -> Result<Option<ContextResult>, VMError> {
         let new_contract_address = self.current_call_frame()?.to;
         let new_account = self.get_account_mut(new_contract_address)?;
@@ -236,5 +211,36 @@ impl<'a> VM<'a> {
         self.increment_account_nonce(new_contract_address)?;
 
         Ok(None)
+    }
+
+    /// Validates that the contract creation was successful, otherwise it returns an ExceptionalHalt.
+    fn validate_contract_creation(&mut self) -> Result<(), VMError> {
+        let callframe = self.current_call_frame_mut()?;
+        let code = &callframe.output;
+
+        let code_length: u64 = code
+            .len()
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?;
+
+        let code_deposit_cost: u64 = code_length
+            .checked_mul(CODE_DEPOSIT_COST)
+            .ok_or(InternalError::Overflow)?;
+
+        // Revert Scenarios
+        // 1. If the first byte of code is 0xEF
+        if code.first().is_some_and(|v| v == &EOF_PREFIX) {
+            return Err(ExceptionalHalt::InvalidContractPrefix.into());
+        }
+
+        // 2. If the code_length > MAX_CODE_SIZE
+        if code_length > MAX_CODE_SIZE {
+            return Err(ExceptionalHalt::ContractOutputTooBig.into());
+        }
+
+        // 3. current_consumed_gas + code_deposit_cost > gas_limit
+        callframe.increase_consumed_gas(code_deposit_cost)?;
+
+        Ok(())
     }
 }
