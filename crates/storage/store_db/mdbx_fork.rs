@@ -1,18 +1,17 @@
 #![allow(clippy::unwrap_used)]
 
-use ethrex_trie::NodeHash;
 use reth_db::table::DupSort;
-use std::marker::PhantomData;
 use std::ops::Div;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::RwLock;
 
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::Rlp;
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::trie_db::mdbx_fork::MDBXTrieDB;
+use crate::trie_db::mdbx_fork::MDBXTrieWithFixedKey;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use alloy_primitives::B256;
 use anyhow::Result;
@@ -25,7 +24,7 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::{Nibbles, Trie, TrieDB, TrieError};
+use ethrex_trie::{Nibbles, Trie};
 use reth_db::mdbx::{DatabaseArguments, DatabaseEnv};
 use reth_db::tables;
 use reth_db::DatabaseEnvKind;
@@ -41,7 +40,6 @@ static DB_DUPSORT_MAX_SIZE: OnceLock<usize> = OnceLock::new();
 
 pub struct MDBXFork {
     env: Arc<DatabaseEnv>,
-    storage_trie: Arc<MDBXTrieDupsort<StorageTriesNodes>>,
     state_trie: Arc<MDBXTrieDB<StateTrieNodes>>,
 }
 
@@ -70,7 +68,7 @@ impl MDBXFork {
 
         tx.create_db(Some("StateTrieNodes"), DatabaseFlags::default())
             .unwrap();
-        tx.create_db(Some("StorageTriesNodes"), DatabaseFlags::DUP_SORT)
+        tx.create_db(Some("StorageTriesNodes"), DatabaseFlags::default())
             .unwrap();
         tx.create_db(Some("Receipts"), DatabaseFlags::default())
             .unwrap();
@@ -109,144 +107,21 @@ impl MDBXFork {
             Default::default(),
         )
         .unwrap();
-        let env_storage_trie = DatabaseEnv::open(
-            Path::new(&format!("{}/storage_trie", path)),
-            reth_db::DatabaseEnvKind::RW,
-            Default::default(),
-        )
-        .unwrap();
-        let storage_trie = Arc::new(MDBXTrieDupsort::new(env_storage_trie));
         let state_trie = Arc::new(MDBXTrieDB::new(env_account_trie));
 
-        Ok(Self {
-            env,
-            storage_trie,
-            state_trie,
-        })
+        Ok(Self { env, state_trie })
     }
 }
 
 use reth_db_api::table::Table as RethTable;
 use reth_libmdbx::DatabaseFlags;
 
-pub struct MDBXTrieDB<T: RethTable> {
-    db: DatabaseEnv,
-    phantom: PhantomData<T>,
-}
-
-impl<T> MDBXTrieDB<T>
-where
-    T: RethTable,
-{
-    pub fn new(db: DatabaseEnv) -> Self {
-        let tx = db.begin_rw_txn().unwrap();
-        tx.create_db(Some(T::NAME), DatabaseFlags::default())
-            .unwrap();
-        tx.commit().unwrap();
-        Self {
-            db,
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl TrieDB for MDBXTrieDB<StateTrieNodes> {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        let tx = self.db.tx().unwrap();
-        let node_hash_bytes = key.as_ref().to_vec();
-        Ok(tx.get::<StateTrieNodes>(node_hash_bytes).unwrap())
-    }
-
-    fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
-        let tx = self.db.tx_mut().unwrap();
-        let node_hash_bytes = key.as_ref().to_vec();
-        tx.put::<StateTrieNodes>(node_hash_bytes, value).unwrap();
-        tx.commit().unwrap();
-        Ok(())
-    }
-
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
-        let txn = self.db.tx_mut().unwrap();
-        for (k, v) in key_values {
-            let node_hash_bytes = k.as_ref().to_vec();
-            txn.put::<StateTrieNodes>(node_hash_bytes, v).unwrap();
-        }
-        txn.commit().unwrap();
-        Ok(())
-    }
-}
-
-pub struct MDBXTrieDupsort<T: DupSort> {
-    db: DatabaseEnv,
-    phantom: PhantomData<T>,
-    pub fixed_key: Arc<RwLock<Option<H256>>>,
-}
-
-impl<T> MDBXTrieDupsort<T>
-where
-    T: DupSort,
-{
-    pub fn new(db: DatabaseEnv) -> Self {
-        let tx = db.begin_rw_txn().unwrap();
-        tx.create_db(Some(T::NAME), DatabaseFlags::DUP_SORT)
-            .unwrap();
-        tx.commit().unwrap();
-        Self {
-            fixed_key: Default::default(),
-            db,
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl TrieDB for MDBXTrieDupsort<StorageTriesNodes> {
-    fn get(&self, subkey: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        let key = self.fixed_key.read().unwrap().as_ref().unwrap().0.to_vec();
-        let tx = self.db.tx().unwrap();
-        let mut cursor = tx.cursor_read::<StorageTriesNodes>().unwrap();
-        cursor.seek_exact(key).unwrap();
-        while let Some((_, encoded_tuple)) = cursor.current().unwrap() {
-            let (found_subkey, value): (NodeHash, Vec<u8>) =
-                RLPDecode::decode(&encoded_tuple).unwrap();
-            if subkey == found_subkey {
-                return Ok(Some(value));
-            }
-            cursor.next_dup_val().unwrap();
-        }
-        Ok(None)
-    }
-
-    fn put(&self, subkey: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
-        let key = self.fixed_key.read().unwrap().as_ref().unwrap().0.to_vec();
-        let tx = self.db.tx_mut().unwrap();
-        tx.put::<StorageTriesNodes>(key, (subkey, value).encode_to_vec())
-            .unwrap();
-        tx.commit().unwrap();
-        Ok(())
-    }
-
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
-        let key = *self.fixed_key.read().unwrap().as_ref().unwrap();
-        let tx = self.db.tx_mut().unwrap();
-        let mut cursor = tx.cursor_write::<StorageTriesNodes>().unwrap();
-
-        for (subkey, value) in key_values {
-            cursor
-                .upsert(key.0.to_vec(), (subkey, value).encode_to_vec())
-                .unwrap();
-        }
-
-        tx.commit().unwrap();
-        Ok(())
-    }
-}
-
 use reth_db::TableType;
 use reth_db::TableViewer;
 use std::fmt::{self, Error, Formatter};
 
 tables! {
-    table StorageTriesNodes<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
+    table StorageTriesNodes<Key = Vec<u8>, Value = Vec<u8>>;
     table StateTrieNodes<Key = Vec<u8>, Value = Vec<u8>>;
     table Receipts<Key = Vec<u8>, Value = Vec<u8>>;
     table TransactionLocations<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
@@ -813,8 +688,10 @@ impl StoreEngine for MDBXFork {
         hashed_address: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        *(self.storage_trie.fixed_key.write().unwrap()) = Some(hashed_address);
-        Ok(Trie::open(self.storage_trie.clone(), storage_root))
+        Ok(Trie::open(
+            Arc::new(MDBXTrieWithFixedKey::new(self.env.clone(), hashed_address)),
+            storage_root,
+        ))
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
