@@ -5,3 +5,5 @@ pub mod fork_choice;
 pub mod payload;
 pub mod receipt;
 pub mod transaction;
+#[cfg(feature = "l2")]
+pub mod withdrawal;

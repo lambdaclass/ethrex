@@ -3,9 +3,10 @@ use serde_json::Value;
 use tracing::info;
 
 use crate::{
-    clients::eth::WithdrawalProof,
+    l2::utils::{get_withdrawal_hash, merkle_proof},
     rpc::{RpcApiContext, RpcHandler},
-    utils::{get_withdrawal_hash, merkle_proof, RpcErr},
+    types::withdrawal::WithdrawalProof,
+    utils::RpcErr,
 };
 
 pub struct GetWithdrawalProof {
