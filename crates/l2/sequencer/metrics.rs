@@ -4,9 +4,9 @@ use crate::{
 };
 use ::ethrex_storage_rollup::StoreRollup;
 use ethereum_types::Address;
+use ethrex_l2_sdk::client::EthClient;
 use ethrex_metrics::metrics_l2::{MetricsL2BlockType, MetricsL2OperationType, METRICS_L2};
 use ethrex_metrics::metrics_transactions::METRICS_TX;
-use ethrex_rpc::clients::eth::EthClient;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error};
