@@ -1402,11 +1402,32 @@ impl Encodable for AccountInfoWriteLog {
         for entry in self.0.into_iter() {
             encoded.extend(entry.address.encode());
 
+            let entry_info_balance: [u8; 32] = entry
+                .info
+                .balance
+                .to_big_endian()
+                .try_into()
+                .unwrap_or_default();
+
+            let code_hash: [u8; 32] = entry
+                .info
+                .code_hash
+                .as_bytes()
+                .try_into()
+                .unwrap_or_default();
+
+            let previous_info_balance: [u8; 32] = entry
+                .previous_info
+                .balance
+                .to_big_endian()
+                .try_into()
+                .unwrap_or_default();
+
             // TODO (for thursday): write `Encodable` for `AccountInfo`
-            encoded.extend(Encodable::encode(entry.info.balance));
+            encoded.extend(Encodable::encode(entry_info_balance));
             encoded.extend(Encodable::encode(entry.info.nonce));
-            encoded.extend(Encodable::encode(entry.info.code_hash));
-            encoded.extend(Encodable::encode(entry.previous_info.balance));
+            encoded.extend(Encodable::encode(code_hash));
+            encoded.extend(Encodable::encode(previous_info_balance));
             encoded.extend(entry.previous_info.nonce.to_be_bytes());
             encoded.extend(entry.previous_info.code_hash.as_fixed_bytes());
         }
