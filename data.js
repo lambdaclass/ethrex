@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749732849044,
+  "lastUpdate": 1749735584087,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12355,6 +12355,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 186015828446,
             "range": "± 679540492",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "36491a05816ac1cb30ac02f6c6b1b20f964dc92f",
+          "message": "perf: avoid N commits to the DB in import command (#3130)\n\nUse the batched canonical mark operation instead of doing that in a\nloop. That saves about 20 minutes when testing the first 20k blocks\nfrom Hoodi.",
+          "timestamp": "2025-06-12T12:44:01Z",
+          "tree_id": "2fea9e8175ef6b9f7527b3c0540012cba11deb2e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/36491a05816ac1cb30ac02f6c6b1b20f964dc92f"
+        },
+        "date": 1749735568742,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 185474566049,
+            "range": "± 203438415",
             "unit": "ns/iter"
           }
         ]
