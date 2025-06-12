@@ -1504,6 +1504,13 @@ mod canonic_encoding {
             self.encode_canonical(&mut buf);
             buf
         }
+
+        pub fn compute_hash(&self) -> H256 {
+            if let P2PTransaction::PrivilegedL2Transaction(tx) = self {
+                return tx.get_deposit_hash().unwrap_or_default();
+            }
+            keccak_hash::keccak(self.encode_canonical_to_vec())
+        }
     }
 }
 

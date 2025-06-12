@@ -32,7 +32,10 @@ use ethrex_storage::Store;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{
@@ -91,6 +94,7 @@ pub(crate) struct RLPxConnection<S> {
     next_block_range_update: Instant,
     last_block_range_update_block: u64,
     broadcasted_txs: HashSet<H256>,
+    requested_pooled_txs: HashMap<u64, NewPooledTransactionHashes>,
     client_version: String,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
@@ -129,6 +133,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             next_block_range_update: Instant::now() + PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL,
             last_block_range_update_block: 0,
             broadcasted_txs: HashSet::new(),
+            requested_pooled_txs: HashMap::new(),
             client_version,
             connection_broadcast_send: connection_broadcast,
         }
@@ -567,12 +572,22 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)
                 if peer_supports_eth =>
             {
-                //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
+                if self
+                    .requested_pooled_txs
+                    .values()
+                    .any(|v| *v == new_pooled_transaction_hashes)
+                {
+                    return Ok(());
+                }
+
                 let hashes =
                     new_pooled_transaction_hashes.get_transactions_to_request(&self.blockchain)?;
 
-                //TODO(#1416): Evaluate keeping track of the request-id.
-                let request = GetPooledTransactions::new(random(), hashes);
+                let request_id = random();
+                self.requested_pooled_txs
+                    .insert(request_id, new_pooled_transaction_hashes);
+
+                let request = GetPooledTransactions::new(request_id, hashes);
                 self.send(Message::GetPooledTransactions(request)).await?;
             }
             Message::GetPooledTransactions(msg) => {
@@ -581,7 +596,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
                 if self.blockchain.is_synced() {
-                    msg.handle(&self.node, &self.blockchain).await?;
+                    msg.handle(&self.node, &self.blockchain, &self.requested_pooled_txs)
+                        .await?;
                 }
             }
             Message::GetStorageRanges(req) => {
