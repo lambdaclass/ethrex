@@ -3,6 +3,204 @@
   "groups": [
     {
       "orgId": 1,
+      "name": "1h-evaluation",
+      "folder": "alerts",
+      "interval": "1h",
+      "rules": [
+        {
+          "uid": "aeoo6t5k52io0b",
+          "title": "L1 Committer balance",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": { "from": 600, "to": 0 },
+              "datasourceUid": "l1-rpc",
+              "model": {
+                "columns": [],
+                "datasource": {
+                  "type": "yesoreyeram-infinity-datasource",
+                  "uid": "l1-rpc"
+                },
+                "filters": [],
+                "format": "table",
+                "global_query_id": "",
+                "instant": true,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "parser": "backend",
+                "refId": "A",
+                "root_selector": "$length($.result)",
+                "source": "url",
+                "type": "json",
+                "url": "",
+                "url_options": {
+                  "body_content_type": "application/json",
+                  "body_type": "raw",
+                  "data": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"1\",\n  \"method\": \"eth_getBalance\",\n  \"params\": [\"0xC932b62A827417748E8eda76d415BD2aF523Bd14\", \"latest\"]\n}",
+                  "method": "POST"
+                }
+              }
+            },
+            {
+              "refId": "reducer",
+              "queryType": "expression",
+              "relativeTimeRange": { "from": 0, "to": 0 },
+              "datasourceUid": "__expr__",
+              "model": {
+                "conditions": [
+                  {
+                    "evaluator": { "params": [0, 0], "type": "gt" },
+                    "operator": { "type": "and" },
+                    "query": { "params": [] },
+                    "reducer": { "params": [], "type": "avg" },
+                    "type": "query"
+                  }
+                ],
+                "datasource": {
+                  "name": "Expression",
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "expression": "A",
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "reducer": "last",
+                "refId": "reducer",
+                "type": "reduce"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": { "from": 0, "to": 0 },
+              "datasourceUid": "__expr__",
+              "model": {
+                "conditions": [
+                  {
+                    "evaluator": { "params": [17], "type": "lt" },
+                    "operator": { "type": "and" },
+                    "query": { "params": ["C"] },
+                    "reducer": { "params": [], "type": "last" },
+                    "type": "query"
+                  }
+                ],
+                "datasource": { "type": "__expr__", "uid": "__expr__" },
+                "expression": "reducer",
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "refId": "C",
+                "type": "threshold"
+              }
+            }
+          ],
+          "noDataState": "NoData",
+          "execErrState": "Error",
+          "annotations": {
+            "description": "L1 Committer balance is lower than 0.1 ETH",
+            "summary": "L1 Committer is running out of funds"
+          },
+          "isPaused": false,
+          "notification_settings": { "receiver": "Slack" }
+        },
+        {
+          "uid": "feoo8vit68jr4d",
+          "title": "Proof Sender balance",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": { "from": 600, "to": 0 },
+              "datasourceUid": "l1-rpc",
+              "model": {
+                "columns": [],
+                "datasource": {
+                  "type": "yesoreyeram-infinity-datasource",
+                  "uid": "l1-rpc"
+                },
+                "filters": [],
+                "format": "table",
+                "global_query_id": "",
+                "instant": true,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "parser": "backend",
+                "refId": "A",
+                "root_selector": "$length($.result)",
+                "source": "url",
+                "type": "json",
+                "url": "",
+                "url_options": {
+                  "body_content_type": "application/json",
+                  "body_type": "raw",
+                  "data": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": \"1\",\n  \"method\": \"eth_getBalance\",\n  \"params\": [\"0x30ebBfbE91Edea22BFA99b16c2E9F74C29eF7cfe\", \"latest\"]\n}",
+                  "method": "POST"
+                }
+              }
+            },
+            {
+              "refId": "reducer",
+              "queryType": "expression",
+              "relativeTimeRange": { "from": 0, "to": 0 },
+              "datasourceUid": "__expr__",
+              "model": {
+                "conditions": [
+                  {
+                    "evaluator": { "params": [0, 0], "type": "gt" },
+                    "operator": { "type": "and" },
+                    "query": { "params": [] },
+                    "reducer": { "params": [], "type": "avg" },
+                    "type": "query"
+                  }
+                ],
+                "datasource": {
+                  "name": "Expression",
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "expression": "A",
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "reducer": "last",
+                "refId": "reducer",
+                "type": "reduce"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": { "from": 0, "to": 0 },
+              "datasourceUid": "__expr__",
+              "model": {
+                "conditions": [
+                  {
+                    "evaluator": { "params": [17], "type": "lt" },
+                    "operator": { "type": "and" },
+                    "query": { "params": ["C"] },
+                    "reducer": { "params": [], "type": "last" },
+                    "type": "query"
+                  }
+                ],
+                "datasource": { "type": "__expr__", "uid": "__expr__" },
+                "expression": "reducer",
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "refId": "C",
+                "type": "threshold"
+              }
+            }
+          ],
+          "noDataState": "NoData",
+          "execErrState": "Error",
+          "annotations": {
+            "description": "Proof Sender balance is lower than 0.1 ETH",
+            "summary": "Proof Sender is running out of funds"
+          },
+          "isPaused": false,
+          "notification_settings": { "receiver": "Slack" }
+        }
+      ]
+    },
+    {
+      "orgId": 1,
       "name": "1m-evaluation",
       "folder": "alerts",
       "interval": "1m",
