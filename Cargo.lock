@@ -184,7 +184,6 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde 0.4.2",
  "auto_impl",
- "c-kzg",
  "derive_more 1.0.0",
  "serde",
 ]
@@ -330,8 +329,6 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde 0.4.2",
  "c-kzg",
- "derive_more 1.0.0",
- "once_cell",
  "serde",
  "sha2",
 ]
@@ -4174,8 +4171,6 @@ dependencies = [
 name = "ethrex-storage"
 version = "0.1.0"
 dependencies = [
- "alloy-consensus 0.4.2",
- "alloy-eips 0.4.2",
  "alloy-primitives 0.8.25",
  "anyhow",
  "async-trait",
