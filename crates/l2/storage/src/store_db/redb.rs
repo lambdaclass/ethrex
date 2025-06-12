@@ -1,11 +1,11 @@
 use std::{panic::RefUnwindSafe, sync::Arc};
 
+use crate::error::RollupStoreError;
 use ethrex_common::{
     types::{Blob, BlockNumber},
     H256,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::error::StoreError;
 use redb::{AccessGuard, Database, Key, TableDefinition, Value};
 
 use crate::{
@@ -41,7 +41,7 @@ pub struct RedBStoreRollup {
 
 impl RefUnwindSafe for RedBStoreRollup {}
 impl RedBStoreRollup {
-    pub fn new() -> Result<Self, StoreError> {
+    pub fn new() -> Result<Self, RollupStoreError> {
         Ok(Self {
             db: Arc::new(init_db()?),
         })
@@ -53,7 +53,7 @@ impl RedBStoreRollup {
         table: TableDefinition<'a, K, V>,
         key: K::SelfType<'k>,
         value: V::SelfType<'v>,
-    ) -> Result<(), StoreError>
+    ) -> Result<(), RollupStoreError>
     where
         K: Key + Send + 'static,
         V: Value + Send + 'static,
@@ -72,14 +72,14 @@ impl RedBStoreRollup {
             Ok(())
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+        .map_err(|e| RollupStoreError::Custom(format!("task panicked: {e}")))?
     }
     // Helper method to read from a redb table
     async fn read<'k, 'a, K, V>(
         &self,
         table: TableDefinition<'a, K, V>,
         key: K::SelfType<'k>,
-    ) -> Result<Option<AccessGuard<'static, V>>, StoreError>
+    ) -> Result<Option<AccessGuard<'static, V>>, RollupStoreError>
     where
         K: Key + Send + 'static,
         V: Value + Send + 'static,
@@ -95,11 +95,11 @@ impl RedBStoreRollup {
             Ok(result)
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+        .map_err(|e| RollupStoreError::Custom(format!("task panicked: {e}")))?
     }
 }
 
-pub fn init_db() -> Result<Database, StoreError> {
+pub fn init_db() -> Result<Database, RollupStoreError> {
     let db = Database::create("ethrex_l2.redb")?;
 
     let table_creation_txn = db.begin_write()?;
@@ -122,7 +122,7 @@ impl StoreEngineRollup for RedBStoreRollup {
     async fn get_batch_number_by_block(
         &self,
         block_number: BlockNumber,
-    ) -> Result<Option<u64>, StoreError> {
+    ) -> Result<Option<u64>, RollupStoreError> {
         Ok(self
             .read(BATCHES_BY_BLOCK_NUMBER_TABLE, block_number)
             .await?
@@ -133,7 +133,7 @@ impl StoreEngineRollup for RedBStoreRollup {
         &self,
         block_number: BlockNumber,
         batch_number: u64,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         self.write(BATCHES_BY_BLOCK_NUMBER_TABLE, block_number, batch_number)
             .await
     }
@@ -141,7 +141,7 @@ impl StoreEngineRollup for RedBStoreRollup {
     async fn get_withdrawal_hashes_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<Vec<H256>>, StoreError> {
+    ) -> Result<Option<Vec<H256>>, RollupStoreError> {
         Ok(self
             .read(WITHDRAWALS_BY_BATCH, batch_number)
             .await?
@@ -152,7 +152,7 @@ impl StoreEngineRollup for RedBStoreRollup {
         &self,
         batch_number: u64,
         withdrawals: Vec<H256>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         self.write(
             WITHDRAWALS_BY_BATCH,
             batch_number,
@@ -165,7 +165,7 @@ impl StoreEngineRollup for RedBStoreRollup {
         &self,
         batch_number: u64,
         block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         self.write(
             BLOCK_NUMBERS_BY_BATCH,
             batch_number,
@@ -177,14 +177,14 @@ impl StoreEngineRollup for RedBStoreRollup {
     async fn get_block_numbers_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
+    ) -> Result<Option<Vec<BlockNumber>>, RollupStoreError> {
         Ok(self
             .read(BLOCK_NUMBERS_BY_BATCH, batch_number)
             .await?
             .map(|rlp| rlp.value().to()))
     }
 
-    async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
+    async fn contains_batch(&self, batch_number: &u64) -> Result<bool, RollupStoreError> {
         let exists = self
             .read(BLOCK_NUMBERS_BY_BATCH, *batch_number)
             .await?
@@ -196,7 +196,7 @@ impl StoreEngineRollup for RedBStoreRollup {
         &self,
         batch_number: u64,
         deposit_logs_hash: H256,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         self.write(DEPOSIT_LOGS_HASHES, batch_number, deposit_logs_hash.into())
             .await
     }
@@ -204,7 +204,7 @@ impl StoreEngineRollup for RedBStoreRollup {
     async fn get_deposit_logs_hash_by_batch_number(
         &self,
         batch_number: u64,
-    ) -> Result<Option<H256>, StoreError> {
+    ) -> Result<Option<H256>, RollupStoreError> {
         Ok(self
             .read(DEPOSIT_LOGS_HASHES, batch_number)
             .await?
@@ -215,7 +215,7 @@ impl StoreEngineRollup for RedBStoreRollup {
         &self,
         batch_number: u64,
         state_root: H256,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         self.write(STATE_ROOTS, batch_number, state_root.into())
             .await
     }
@@ -223,7 +223,7 @@ impl StoreEngineRollup for RedBStoreRollup {
     async fn get_state_root_by_batch_number(
         &self,
         batch_number: u64,
-    ) -> Result<Option<H256>, StoreError> {
+    ) -> Result<Option<H256>, RollupStoreError> {
         Ok(self
             .read(STATE_ROOTS, batch_number)
             .await?
@@ -234,7 +234,7 @@ impl StoreEngineRollup for RedBStoreRollup {
         &self,
         batch_number: u64,
         state_diff: Vec<Blob>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         self.write(BLOB_BUNDLES, batch_number, state_diff.into())
             .await
     }
@@ -242,7 +242,7 @@ impl StoreEngineRollup for RedBStoreRollup {
     async fn get_blob_bundle_by_batch_number(
         &self,
         batch_number: u64,
-    ) -> Result<Option<Vec<Blob>>, StoreError> {
+    ) -> Result<Option<Vec<Blob>>, RollupStoreError> {
         Ok(self
             .read(BLOB_BUNDLES, batch_number)
             .await?
@@ -254,7 +254,7 @@ impl StoreEngineRollup for RedBStoreRollup {
         transaction_inc: u64,
         deposits_inc: u64,
         withdrawals_inc: u64,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), RollupStoreError> {
         let (transaction_count, withdrawals_count, deposits_count) = {
             let current_operations = self.get_operations_count().await?;
             (
@@ -274,7 +274,7 @@ impl StoreEngineRollup for RedBStoreRollup {
         .await
     }
 
-    async fn get_operations_count(&self) -> Result<[u64; 3], StoreError> {
+    async fn get_operations_count(&self) -> Result<[u64; 3], RollupStoreError> {
         let operations = self
             .read(OPERATIONS_COUNTS, 0)
             .await?
@@ -289,7 +289,7 @@ impl StoreEngineRollup for RedBStoreRollup {
         }
     }
 
-    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
+    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
         Ok(self
             .read(LAST_SENT_BATCH_PROOF, 0)
             .await?
@@ -297,7 +297,10 @@ impl StoreEngineRollup for RedBStoreRollup {
             .unwrap_or(0))
     }
 
-    async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
+    async fn set_lastest_sent_batch_proof(
+        &self,
+        batch_number: u64,
+    ) -> Result<(), RollupStoreError> {
         self.write(LAST_SENT_BATCH_PROOF, 0, batch_number).await
     }
 }
