@@ -17,6 +17,7 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{EvmEngine, EvmError};
+use zkvm_interface::io::ProgramInput;
 
 pub fn parse_and_execute(path: &Path, evm: EvmEngine, skipped_tests: Option<&[&str]>) {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -77,7 +78,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
                     error,
                     expected_exception,
                 );
-                return;
+                break;
             }
             Ok(_) => {
                 assert!(
@@ -90,7 +91,10 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
             }
         }
     }
-    check_poststate_against_db(test_key, test, &store).await
+    check_poststate_against_db(test_key, test, &store).await;
+    if evm == EvmEngine::LEVM {
+        re_run_stateless(blockchain, test, test_key).await;
+    }
 }
 
 fn exception_is_expected(
@@ -358,4 +362,49 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
     let last_block = db.get_block_header(last_block_number).unwrap();
     assert!(last_block.is_some(), "Block hash is not stored in db");
     // State root was alredy validated by `add_block``
+}
+
+async fn re_run_stateless(blockchain: Blockchain, test: &TestUnit, test_key: &str) {
+    let blocks = test
+        .blocks
+        .iter()
+        .map(|block_fixture| block_fixture.block().unwrap().clone().into())
+        .collect::<Vec<CoreBlock>>();
+
+    let test_should_fail = test.blocks.iter().any(|t| t.expect_exception.is_some());
+
+    let witness = blockchain
+        .generate_witness_for_blocks(&blocks)
+        .await
+        .unwrap_or_else(|_| {
+            use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
+            if test_should_fail {
+                ExecutionWitnessResult {
+                    state_trie_nodes: Some(Vec::new()),
+                    storage_trie_nodes: Some(HashMap::new()),
+                    ..Default::default()
+                }
+            } else {
+                panic!("Failed to create witness for a test that should not fail")
+            }
+        });
+
+    let program_input = ProgramInput {
+        blocks,
+        db: witness,
+        elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
+        ..Default::default()
+    };
+
+    if let Err(e) = ethrex_prover_lib::execute(program_input) {
+        assert!(
+            test_should_fail,
+            "Expected test: {test_key} to succeed but failed with {e}"
+        )
+    } else {
+        assert!(
+            !test_should_fail,
+            "Expected test: {test_key} to fail but succeeded"
+        )
+    }
 }

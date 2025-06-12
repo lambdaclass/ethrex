@@ -10,6 +10,9 @@ ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
 ethrex-vm.workspace = true
 ethrex-levm.workspace = true
+ethrex-prover = { path = "../../../crates/l2/prover", default-features = false }
+zkvm_interface = { path = "../../../crates/l2/prover/zkvm/interface", default-features = false }
+
 
 serde.workspace = true
 serde_json.workspace = true
@@ -18,6 +21,7 @@ hex.workspace = true
 lazy_static.workspace = true
 tokio = { workspace = true , features = ["full"] }
 ef_tests-state = { path = "../state" }
+
 
 [dev-dependencies]
 datatest-stable = "0.2.9"

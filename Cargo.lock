@@ -3119,6 +3119,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-levm",
+ "ethrex-prover",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-vm",
@@ -3127,6 +3128,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "zkvm_interface",
 ]
 
 [[package]]
@@ -4170,6 +4172,7 @@ dependencies = [
  "revm-inspectors",
  "revm-primitives 15.2.0",
  "serde",
+ "sha3",
  "thiserror 2.0.12",
  "tracing",
 ]
