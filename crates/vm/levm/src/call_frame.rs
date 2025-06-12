@@ -173,16 +173,15 @@ impl CallFrame {
     }
 
     /// Increases gas consumption of CallFrame and Environment, returning an error if the callframe gas limit is reached.
-    pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), VMError> {
-        let potential_consumed_gas = self
+    pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), ExceptionalHalt> {
+        self.gas_used = self
             .gas_used
             .checked_add(gas)
             .ok_or(ExceptionalHalt::OutOfGas)?;
-        if potential_consumed_gas > self.gas_limit {
+
+        if self.gas_used > self.gas_limit {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
-
-        self.gas_used = potential_consumed_gas;
 
         Ok(())
     }
