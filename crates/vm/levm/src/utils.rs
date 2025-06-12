@@ -334,7 +334,7 @@ pub fn eip7702_recover_address(
 
 /// Gets code of an account, returning early if it's not a delegated account, otherwise
 /// Returns tuple (is_delegated, eip7702_cost, code_address, code).
-/// Notice that it also inserts the delegated account to the "touched accounts" set.
+/// Notice that it also inserts the delegated account to the "accessed accounts" set.
 ///
 /// Where:
 /// - `is_delegated`: True if account is a delegated account.
@@ -585,19 +585,19 @@ impl<'a> VM<'a> {
 
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize_substate(&mut self) -> Result<(), VMError> {
-        // Add sender and recipient to touched accounts [https://www.evm.codes/about#access_list]
+        // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = HashSet::new();
         let mut initial_accessed_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
 
-        // Add Tx sender to touched accounts
+        // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(self.env.origin);
 
-        // [EIP-3651] - Add coinbase to touched accounts after Shanghai
+        // [EIP-3651] - Add coinbase to accessed accounts after Shanghai
         if self.env.config.fork >= Fork::Shanghai {
             initial_accessed_addresses.insert(self.env.coinbase);
         }
 
-        // Add precompiled contracts addresses to touched accounts.
+        // Add precompiled contracts addresses to accessed accounts.
         let max_precompile_address = match self.env.config.fork {
             spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
             spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
@@ -608,7 +608,7 @@ impl<'a> VM<'a> {
             initial_accessed_addresses.insert(Address::from_low_u64_be(i));
         }
 
-        // Add access lists contents to touched accounts and touched storage slots.
+        // Add access lists contents to accessed accounts and accessed storage slots.
         for (address, keys) in self.tx.access_list().clone() {
             initial_accessed_addresses.insert(address);
             let mut warm_slots = BTreeSet::new();
