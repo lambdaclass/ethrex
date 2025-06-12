@@ -286,7 +286,6 @@ impl StoreEngine for MDBXFork {
 
             } */
 
-            let mut cursor = tx.cursor_write::<Receipts>()?;
             for (block_hash, receipts) in update_batch.receipts {
                 // store receipts
                 let tx = db.tx_mut().unwrap();
