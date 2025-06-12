@@ -138,8 +138,7 @@ impl RpcHandler for SponsoredTx {
             .lock()
             .await
             .estimate_gas_tip(&context.storage)
-            .await
-            .map_err(RpcErr::from)?;
+            .await?;
         let gas_price_request = GasPrice {}.handle(context.clone()).await?;
 
         let gas_price_request = gas_price_request

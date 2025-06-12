@@ -65,7 +65,7 @@ impl RedBStoreRollup {
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let write_txn = db.begin_write()?;
+            let write_txn = db.begin_write().map_err(Box::new)?;
             write_txn.open_table(table)?.insert(key, value)?;
             write_txn.commit()?;
 
@@ -89,7 +89,7 @@ impl RedBStoreRollup {
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let read_txn = db.begin_read()?;
+            let read_txn = db.begin_read().map_err(Box::new)?;
             let table = read_txn.open_table(table)?;
             let result = table.get(key)?;
             Ok(result)
@@ -102,7 +102,7 @@ impl RedBStoreRollup {
 pub fn init_db() -> Result<Database, StoreError> {
     let db = Database::create("ethrex_l2.redb")?;
 
-    let table_creation_txn = db.begin_write()?;
+    let table_creation_txn = db.begin_write().map_err(Box::new)?;
 
     table_creation_txn.open_table(BATCHES_BY_BLOCK_NUMBER_TABLE)?;
     table_creation_txn.open_table(WITHDRAWALS_BY_BATCH)?;

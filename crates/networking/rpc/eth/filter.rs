@@ -497,7 +497,7 @@ mod tests {
             .unwrap();
 
         assert!(
-            active_filters.clone().lock().unwrap().len() == 0,
+            active_filters.clone().lock().unwrap().is_empty(),
             "Expected filter map to be empty after request"
         );
     }
