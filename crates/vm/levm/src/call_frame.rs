@@ -198,7 +198,7 @@ impl CallFrame {
     }
 }
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, InternalError> {
         self.call_frames.last_mut().ok_or(InternalError::CallFrame)
     }
