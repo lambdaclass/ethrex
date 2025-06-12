@@ -11,7 +11,6 @@ use std::collections::HashMap;
 
 use crate::deserialize::deserialize_block_expected_exception;
 use crate::network::Network;
-use ef_tests_state::types::TransactionExpectedException as TransactionExpectedExeption;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -488,7 +487,7 @@ impl From<Account> for GenesisAccount {
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 pub enum BlockChainExpectedException {
-    TxtException(TransactionExpectedExeption),
+    TxtException(String),
     BlockException(BlockExpectedException),
     RLPException,
     Other,

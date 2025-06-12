@@ -1,5 +1,4 @@
 use crate::types::{BlockChainExpectedException, BlockExpectedException};
-use ef_tests_state::types::TransactionExpectedException;
 use serde::{Deserialize, Deserializer};
 
 pub fn deserialize_block_expected_exception<'de, D>(
@@ -15,74 +14,66 @@ where
             .split('|')
             .map(|s| match s.trim() {
                 "TransactionException.INITCODE_SIZE_EXCEEDED" => {
-                    BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::InitcodeSizeExceeded,
-                    )
+                    BlockChainExpectedException::TxtException("Initcode size exceeded".to_string())
                 }
-                "TransactionException.NONCE_IS_MAX" => BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::NonceIsMax,
-                ),
+                "TransactionException.NONCE_IS_MAX" => {
+                    BlockChainExpectedException::TxtException("Nonce is max".to_string())
+                }
                 "TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED" => {
                     BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::Type3TxBlobCountExceeded,
+                        "Type 3 transaction blob count exceeded".to_string(),
                     )
                 }
                 "TransactionException.TYPE_3_TX_ZERO_BLOBS" => {
                     BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::Type3TxZeroBlobs,
+                        "Type 3 transaction without blobs".to_string(),
                     )
                 }
                 "TransactionException.TYPE_3_TX_CONTRACT_CREATION" => {
                     BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::Type3TxContractCreation,
+                        "Type 3 transaction contract creation".to_string(),
                     )
                 }
                 "TransactionException.TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH" => {
                     BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::Type3TxInvalidBlobVersionedHash,
+                        "Invalid blob versioned hash".to_string(),
                     )
                 }
                 "TransactionException.INTRINSIC_GAS_TOO_LOW" => {
-                    BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::IntrinsicGasTooLow,
-                    )
+                    BlockChainExpectedException::TxtException("Intrinsic gas too low".to_string())
                 }
                 "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
                     BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::InsufficientAccountFunds,
+                        "Insufficient account funds".to_string(),
                     )
                 }
                 "TransactionException.SENDER_NOT_EOA" => BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::SenderNotEoa,
+                    "Sender is not an Externally Owned Account".to_string(),
                 ),
                 "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS" => {
                     BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::PriorityGreaterThanMaxFeePerGas,
+                        "Priority greater than max fee per gas".to_string(),
                     )
                 }
                 "TransactionException.GAS_ALLOWANCE_EXCEEDED" => {
-                    BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::GasAllowanceExceeded,
-                    )
+                    BlockChainExpectedException::TxtException("Gas allowance exceeded".to_string())
                 }
                 "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS" => {
                     BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::InsufficientMaxFeePerGas,
+                        "Insufficient max fee per gas".to_string(),
                     )
                 }
                 "TransactionException.RLP_INVALID_VALUE" => {
-                    BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::RlpInvalidValue,
-                    )
+                    BlockChainExpectedException::TxtException("RLP invalid value".to_string())
                 }
                 "TransactionException.GASLIMIT_PRICE_PRODUCT_OVERFLOW" => {
                     BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::GasLimitPriceProductOverflow,
+                        "Gas limit price product overflow".to_string(),
                     )
                 }
                 "TransactionException.TYPE_3_TX_PRE_FORK" => {
                     BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::Type3TxPreFork,
+                        "Type 3 transactions are not supported before the Cancun fork".to_string(),
                     )
                 }
                 "TransactionException.TYPE_4_TX_CONTRACT_CREATION" => {
@@ -90,7 +81,7 @@ where
                 }
                 "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
                     BlockChainExpectedException::TxtException(
-                        TransactionExpectedException::InsufficientMaxFeePerBlobGas,
+                        "Insufficient max fee per blob gas".to_string(),
                     )
                 }
                 "BlockException.RLP_STRUCTURES_ENCODING" => {

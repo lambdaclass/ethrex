@@ -4,7 +4,6 @@ use crate::{
     network::Network,
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
-use ef_tests_state::types::TransactionExpectedException;
 use ethrex_blockchain::{
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
@@ -102,82 +101,16 @@ fn exception_is_expected(
     returned_error: &ChainError,
 ) -> bool {
     expected_exceptions.iter().any(|exception| {
+        if let (
+            BlockChainExpectedException::TxtException(expected_error_msg),
+            ChainError::EvmError(EvmError::Transaction(error_msg)),
+        ) = (exception, returned_error)
+        {
+            return expected_error_msg == error_msg;
+        }
         matches!(
             (exception, &returned_error),
             (
-                BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::IntrinsicGasTooLow
-                ),
-                ChainError::EvmError(EvmError::Transaction(_))
-            ) | (
-                BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::InsufficientAccountFunds
-                ),
-                ChainError::EvmError(EvmError::Transaction(_))
-            ) | (
-                BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::PriorityGreaterThanMaxFeePerGas
-                ),
-                ChainError::EvmError(EvmError::Transaction(_))
-            ) | (
-                BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::GasLimitPriceProductOverflow
-                ),
-                ChainError::EvmError(EvmError::Transaction(_))
-            ) | (
-                BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::SenderNotEoa
-                ),
-                ChainError::EvmError(EvmError::Transaction(_))
-            ) | (
-                BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::InsufficientMaxFeePerGas
-                ),
-                ChainError::EvmError(EvmError::Transaction(_))
-            ) | (
-                BlockChainExpectedException::TxtException(TransactionExpectedException::NonceIsMax),
-                ChainError::EvmError(EvmError::Transaction(_))
-            ) | (
-                BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::GasAllowanceExceeded
-                ),
-                ChainError::EvmError(EvmError::Transaction(_))
-            ) | (
-                BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::Type3TxPreFork
-                ),
-                ChainError::EvmError(EvmError::Transaction(_))
-            ) | (
-                BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::Type3TxBlobCountExceeded
-                ),
-                ChainError::InvalidBlock(InvalidBlockError::ExceededMaxBlobGasPerBlock)
-            ) | (
-                BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::Type3TxZeroBlobs
-                ),
-                ChainError::EvmError(EvmError::Transaction(_))
-            ) | (
-                BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::Type3TxContractCreation
-                ),
-                ChainError::EvmError(EvmError::Transaction(_))
-            ) | (
-                BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::Type3TxInvalidBlobVersionedHash
-                ),
-                ChainError::EvmError(EvmError::Transaction(_))
-            ) | (
-                BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::InsufficientMaxFeePerBlobGas
-                ),
-                ChainError::EvmError(EvmError::Transaction(_))
-            ) | (
-                BlockChainExpectedException::TxtException(
-                    TransactionExpectedException::InitcodeSizeExceeded
-                ),
-                ChainError::EvmError(EvmError::Transaction(_))
-            ) | (
                 BlockChainExpectedException::BlockException(
                     BlockExpectedException::IncorrectBlobGasUsed
                 ),
