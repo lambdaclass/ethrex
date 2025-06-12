@@ -301,6 +301,29 @@ mod tests {
     use std::str::FromStr;
 
     #[test]
+    fn verify_range_proof_of_absence() {
+        let mut trie = Trie::new_temp();
+        trie.insert(vec![0x00, 0x01], vec![0x00]).unwrap();
+        trie.insert(vec![0x00, 0x02], vec![0x00]).unwrap();
+        trie.insert(vec![0x01; 32], vec![0x00]).unwrap();
+
+        // Obtain a proof of absence for a node that will return a branch completely outside the
+        // path of the first available key.
+        let mut proof = trie.get_proof(&vec![0x00, 0xFF]).unwrap();
+        proof.extend(trie.get_proof(&vec![0x01; 32]).unwrap());
+
+        let root = trie.hash_no_commit();
+        let keys = &[H256([0x01u8; 32])];
+        let values = &[vec![0x00u8]];
+
+        let mut first_key = H256([0xFF; 32]);
+        first_key.0[0] = 0;
+
+        let fetch_more = verify_range(root, &first_key, keys, values, &proof).unwrap();
+        assert!(!fetch_more);
+    }
+
+    #[test]
     fn verify_range_regular_case_only_branch_nodes() {
         // The trie will have keys and values ranging from 25-100
         // We will prove the range from 50-75
