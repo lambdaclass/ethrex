@@ -6,9 +6,9 @@ use ethrex_l2::{
     BlockProducerConfig, CommitterConfig, EthConfig, L1WatcherConfig, ProofCoordinatorConfig,
     SequencerConfig,
 };
-use ethrex_rpc::clients::eth::{
-    get_address_from_secret_key, BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY,
-    MIN_RETRY_DELAY,
+use ethrex_l2_sdk::{
+    client::eth::{BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY},
+    get_address_from_secret_key,
 };
 use secp256k1::SecretKey;
 use std::net::{IpAddr, Ipv4Addr};

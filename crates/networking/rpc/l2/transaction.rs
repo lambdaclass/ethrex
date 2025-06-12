@@ -1,6 +1,6 @@
 use crate::{
-    clients::eth::get_address_from_secret_key,
     eth::{gas_price::GasPrice, transaction::EstimateGasRequest},
+    l2::utils::get_address_from_secret_key,
     rpc::{RpcApiContext, RpcHandler},
     types::transaction::SendRawTransactionRequest,
     utils::RpcErr,
@@ -117,9 +117,9 @@ impl RpcHandler for SponsoredTx {
                 ));
             }
         }
-        let sponsor_address = get_address_from_secret_key(&context.sponsor_pk).map_err(|_| {
-            RpcErr::InvalidEthrexL2Message("Ethrex L2 Rpc method not enabled".to_string())
-        })?;
+        let sponsor_address = get_address_from_secret_key(&context.sponsor_pk).ok_or(
+            RpcErr::InvalidEthrexL2Message("Ethrex L2 Rpc method not enabled".to_string()),
+        )?;
         let latest_block_number = context
             .storage
             .get_latest_block_number()

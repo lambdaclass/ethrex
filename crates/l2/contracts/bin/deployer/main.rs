@@ -12,14 +12,11 @@ use cli::{parse_private_key, DeployerOptions};
 use error::DeployerError;
 use ethrex_common::{Address, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
+use ethrex_l2_sdk::client::{eth::BlockByNumber, EthClient, Overrides};
 use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
     compile_contract, deploy_contract, deploy_with_proxy, get_address_from_secret_key,
     initialize_contract,
-};
-use ethrex_rpc::{
-    clients::{eth::BlockByNumber, Overrides},
-    EthClient,
 };
 use keccak_hash::H256;
 use tracing::{debug, error, info, trace, warn, Level};

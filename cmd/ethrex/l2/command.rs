@@ -15,11 +15,8 @@ use ethrex_common::{
 };
 use ethrex_l2::SequencerConfig;
 use ethrex_l2_common::state_diff::StateDiff;
+use ethrex_l2_sdk::client::{BeaconClient, BlockByNumber, EthClient};
 use ethrex_p2p::network::peer_table;
-use ethrex_rpc::{
-    clients::{beacon::BeaconClient, eth::BlockByNumber},
-    EthClient,
-};
 use ethrex_storage::{EngineType, Store, UpdateBatch};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use ethrex_vm::EvmEngine;

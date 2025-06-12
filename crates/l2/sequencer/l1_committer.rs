@@ -11,16 +11,15 @@ use ethrex_common::{
 use ethrex_l2_common::{
     deposits::{compute_deposit_logs_hash, get_block_deposits},
     state_diff::{prepare_state_diff, StateDiff},
-    withdrawals::{compute_withdrawals_merkle_root, get_block_withdrawals},
+    withdrawals::{compute_withdrawals_merkle_root, get_block_withdrawals, get_withdrawal_hash},
 };
-use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_l2_sdk::{
+    calldata::{encode_calldata, Value},
+    client::{eth::BlockByNumber, EthClient, Overrides, WrappedTransaction},
+};
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};
-use ethrex_rpc::{
-    clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
-    utils::get_withdrawal_hash,
-};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmEngine};

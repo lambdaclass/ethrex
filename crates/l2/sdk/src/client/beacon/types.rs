@@ -32,6 +32,7 @@ pub struct BlobSidecar {
 }
 
 impl BlobSidecar {
+    #[allow(clippy::indexing_slicing)]
     pub fn versioned_hash(&self) -> H256 {
         let mut hasher = sha2::Sha256::new();
         hasher.update(&self.kzg_commitment);

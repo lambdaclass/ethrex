@@ -4,8 +4,7 @@
 #![allow(clippy::as_conversions)]
 
 use ethrex_common::{Address, U256};
-use ethrex_l2_sdk::get_address_from_secret_key;
-use ethrex_rpc::EthClient;
+use ethrex_l2_sdk::{client::EthClient, get_address_from_secret_key};
 
 use secp256k1::SecretKey;
 

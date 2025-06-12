@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 ethrex-common.workspace = true
-ethrex-rpc.workspace = true
+ethrex-rpc = { workspace = true, features = ["l2"] }
 
 ethereum-types.workspace = true
 tokio.workspace = true
@@ -22,6 +22,8 @@ bytes.workspace = true
 reqwest.workspace = true
 eyre.workspace = true
 lazy_static.workspace = true
+jsonwebtoken.workspace = true
+sha2.workspace = true
 
 [lib]
 name = "ethrex_l2_sdk"

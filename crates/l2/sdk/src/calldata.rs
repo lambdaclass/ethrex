@@ -1,6 +1,6 @@
+use crate::client::eth::errors::CalldataEncodeError;
 use ethrex_common::Bytes;
 use ethrex_common::{Address, H32, U256};
-use ethrex_rpc::clients::eth::errors::CalldataEncodeError;
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 

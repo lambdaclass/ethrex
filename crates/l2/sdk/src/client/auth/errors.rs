@@ -1,10 +1,4 @@
 #[derive(Debug, thiserror::Error)]
-pub enum ConfigError {
-    #[error("Error deserializing config from env: {0}")]
-    ConfigDeserializationError(#[from] envy::Error),
-}
-
-#[derive(Debug, thiserror::Error)]
 pub enum EngineClientError {
     #[error("Error sending request {0}")]
     RequestError(String),

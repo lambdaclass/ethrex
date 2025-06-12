@@ -17,7 +17,7 @@ use aligned_sdk::{
 };
 use ethrex_common::{Address, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_rpc::EthClient;
+use ethrex_l2_sdk::client::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};

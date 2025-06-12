@@ -350,7 +350,8 @@ fn compute_withdrawals_and_deposits_digests(
     let withdrawal_hashes: Vec<_> = withdrawals
         .iter()
         .map(get_withdrawal_hash)
-        .collect::<Result<_, _>>()?;
+        .collect::<Option<_>>()
+        .ok_or(WithdrawalError::WithdrawalHash)?;
     let deposit_hashes: Vec<_> = deposits
         .iter()
         .map(PrivilegedL2Transaction::get_deposit_hash)

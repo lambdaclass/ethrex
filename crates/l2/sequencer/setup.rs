@@ -1,11 +1,11 @@
 use crate::sequencer::errors::ProverServerError;
 use ethrex_common::{Address, Bytes};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::get_address_from_secret_key;
-use ethrex_rpc::clients::{
+use ethrex_l2_sdk::client::{
     eth::{EthClient, WrappedTransaction},
     Overrides,
 };
+use ethrex_l2_sdk::get_address_from_secret_key;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::str::FromStr;

@@ -1,5 +1,7 @@
-use ethrex_l2_sdk::{ContractCompilationError, DeployError};
-use ethrex_rpc::clients::{eth::errors::CalldataEncodeError, EthClientError};
+use ethrex_l2_sdk::{
+    client::{eth::errors::CalldataEncodeError, EthClientError},
+    ContractCompilationError, DeployError,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DeployerError {

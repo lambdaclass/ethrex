@@ -1,10 +1,7 @@
 use crate::calldata::{self, Value};
+use crate::client::{eth::errors::CalldataEncodeError, EthClient, EthClientError, Overrides};
 use bytes::Bytes;
 use ethrex_common::{Address, U256};
-use ethrex_rpc::{
-    clients::{eth::errors::CalldataEncodeError, EthClientError, Overrides},
-    EthClient,
-};
 use keccak_hash::H256;
 use secp256k1::SecretKey;
 
