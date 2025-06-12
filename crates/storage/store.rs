@@ -336,10 +336,13 @@ impl Store {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
+        let hashed_address = hash_address(&address);
+        if let Some(account_state) = self.state_snapshot_for_account(&H256::from_slice(&hashed_address))? {
+            return Ok(Some(account_state.nonce))
+        }
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
         };
@@ -354,7 +357,6 @@ impl Store {
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<(H256, Vec<SnapshotUpdate>)>, StoreError> {
-        tracing::debug!("Applying account updates");
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -369,7 +371,6 @@ impl Store {
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
     ) -> Result<(Trie, Vec<SnapshotUpdate>), StoreError> {
-        tracing::debug!("Accessing state trie");
         let mut snapshot_updates = Vec::with_capacity(account_updates.len());
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
@@ -422,7 +423,6 @@ impl Store {
         // FIXME: See what we should do if the snapshot fails, since this is
         // not fatal, and the trie is updated anyway.
         // self.update_snapshot(snapshot_updates)?;
-        tracing::debug!("Block snapshot updated for latest block");
         Ok((state_trie, snapshot_updates))
     }
 
@@ -614,9 +614,9 @@ impl Store {
         let hashed_key = hash_key_fixed_size(&storage_key);
         let hashed_address = hash_address_fixed(&address);
         if let Some(value) = self.engine.storage_snapshot_for_hash(&hashed_address, &H256::from(hashed_key))? {
-            tracing::debug!("Value for storage sucessfully retrieved");
             return Ok(Some(value));
         };
+        tracing::debug!("Storage trie accessed");
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
             return Ok(None);
         };
@@ -764,7 +764,6 @@ impl Store {
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
-            tracing::debug!("Value for storage sucessfully retrieved from snapshot");
             return Ok(None);
         };
         self.get_account_state_by_hash(block_hash, address)
@@ -777,9 +776,9 @@ impl Store {
     ) -> Result<Option<AccountState>, StoreError> {
         let hashed_address = hash_address_fixed(&address);
         if let Some(state) = self.state_snapshot_for_account(&hashed_address)? {
-            tracing::debug!("Account state sucessfully retrieved from snapshot");
             return Ok(Some(state));
         }
+        tracing::debug!("Account Trie Accessed");
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };

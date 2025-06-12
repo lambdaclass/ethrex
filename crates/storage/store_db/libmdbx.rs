@@ -1088,6 +1088,7 @@ impl StoreEngine for Store {
             let (sub_key, value) = found.map_err(StoreError::LibmdbxError)?;
             if sub_key == hashed_key_bytes {
                 let value = U256::from_big_endian(&value.0);
+                tracing::debug!("Returning storage snapshot value for hash");
                 return Ok(Some(value));
             }
         }

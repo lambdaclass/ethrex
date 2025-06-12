@@ -719,8 +719,37 @@ impl StoreEngine for Store {
         states_to_remove: Vec<Rlp<H256>>,
         states_to_update: Vec<(Rlp<H256>, Rlp<AccountState>)>,
     ) -> Result<(), StoreError> {
-        // FIXME: Implement this.
-        todo!()
+        {
+            let storage_snapshot = &mut self.inner()?.storage_snapshot;
+
+            for (account_hash, key, value) in storages_to_update {
+                let account_hash = account_hash.to()?;
+                let key = key.into();
+                storage_snapshot
+                    .entry(account_hash)
+                    .and_modify(|map| {
+                        map.insert(key, value.into());
+                    })
+                    .or_insert(BTreeMap::new());
+            }
+
+            for account_hash in storages_to_remove {
+                storage_snapshot.remove_entry(&account_hash.to()?);
+            }
+        }
+        {
+            let state_snapshot = &mut self.inner()?.state_snapshot;
+            for (account_hash, state) in states_to_update {
+                let account_hash = account_hash.to()?;
+                let state = state.to()?;
+                state_snapshot.insert(account_hash, state);
+            }
+            for account_hash in states_to_remove {
+                let account_hash = account_hash.to()?;
+                state_snapshot.remove(&account_hash);
+            }
+        }
+        Ok(())
     }
 
     fn state_snapshot_for_account(
@@ -728,7 +757,7 @@ impl StoreEngine for Store {
         account_hash: &H256,
     ) -> Result<Option<AccountState>, StoreError> {
         // FIXME: Implement this.
-        todo!()
+        Ok(self.inner()?.state_snapshot.get(account_hash).cloned())
     }
 
     fn storage_snapshot_for_hash(
@@ -736,7 +765,9 @@ impl StoreEngine for Store {
         account_hash: &H256,
         hashed_key: &H256,
     ) -> Result<Option<U256>, StoreError>{
-        todo!()
+        Ok(
+            self.inner()?.storage_snapshot.get(account_hash).map(|bmap| bmap.get(hashed_key).cloned()).flatten()
+        )
     }
 }
 
