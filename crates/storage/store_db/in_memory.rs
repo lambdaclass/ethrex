@@ -91,7 +91,7 @@ impl StoreEngine for Store {
     async fn apply_updates(
         &self,
         update_batch: UpdateBatch,
-        _account_updates: &[AccountUpdate],
+        _account_updates: Vec<Vec<AccountUpdate>>,
     ) -> Result<(), StoreError> {
         let mut store = self.inner()?;
         {
