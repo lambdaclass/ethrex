@@ -20,13 +20,10 @@ pub enum ChainError {
     EvmError(#[from] EvmError),
     #[error("Invalid Transaction: {0}")]
     InvalidTransaction(String),
-<<<<<<< invalid-fork-genesis
     #[error("Genesis error: {0}")]
     Genesis(String),
-=======
     #[error("Failed to generate witness: {0}")]
     WitnessGeneration(String),
->>>>>>> main
     #[error("{0}")]
     Custom(String),
 }
