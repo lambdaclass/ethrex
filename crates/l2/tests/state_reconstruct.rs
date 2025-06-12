@@ -16,7 +16,7 @@ use std::fs;
 // This test verifies the correct reconstruction of the L2 state from data blobs.
 
 // Test Data:
-// - The test uses 5 pre-generated data blobs located under test_data/blobs/
+// - The test uses 5 pre-generated data blobs located under test_data/fixtures/blobs/
 // - Each blob contains a batch of blocks with specific deposit transactions:
 //
 // Blob Contents:

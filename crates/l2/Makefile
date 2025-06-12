@@ -231,7 +231,7 @@ state-diff-test:
 	cargo run --release --manifest-path ../../cmd/ethrex/Cargo.toml --features l2 --bin ethrex -- \
 	l2 reconstruct \
 	-g ../../test_data/genesis-l2.json \
-	-b ../../test_data/blobs/ \
+	-b ../../test_data/fixtures/blobs/ \
 	-s $$PWD/store \
 	-c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	cargo b --manifest-path ../../Cargo.toml --release
