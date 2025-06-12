@@ -2,8 +2,6 @@ name: RPC Prover (SP1 Backend)
 on:
   push:
     branches: ["main"]
-  pull_request:
-    branches: ["**"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -55,30 +53,28 @@ jobs:
           cp test_data/rpc_prover/cache_3990967.json cmd/ethrex_replay
           cd cmd/ethrex_replay
           make prove-sp1-gpu-ci BLOCK_NUMBER=3990967 NETWORK=holesky
-          cat bench_latest.json
 
-      # - name: Store benchmark result
-      #   uses: benchmark-action/github-action-benchmark@v1
-      #   with:
-      #     name: "L1 block proving benchmark"
-      #     tool: "customBiggerIsBetter"
-      #     output-file-path: cmd/ethrex_replay/bench_latest.json
-      #     benchmark-data-dir-path: "."
-      #     # Access token to deploy GitHub Pages branch
-      #     github-token: ${{ secrets.GITHUB_TOKEN }}
-      #     # Push and deploy GitHub pages branch automatically
-      #     auto-push: true
-      #     comment-on-alert: true
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: "L1 block proving benchmark"
+          tool: "customBiggerIsBetter"
+          output-file-path: cmd/ethrex_replay/bench_latest.json
+          benchmark-data-dir-path: "."
+          # Access token to deploy GitHub Pages branch
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Push and deploy GitHub pages branch automatically
+          auto-push: true
+          comment-on-alert: true
 
       - name: Ensure admin permissions in _work
         if: always()
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
-      # Reenable when job is stable
-      # - name: Report Status
-      #   if: always()
-      #   uses: ravsamhq/notify-slack-action@v2
-      #   with:
-      #     status: ${{ job.status }}
-      #     notify_when: 'failure'
-      #   env:
-      #     SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
+      - name: Report Status
+        if: always()
+        uses: ravsamhq/notify-slack-action@v2
+        with:
+          status: ${{ job.status }}
+          notify_when: 'failure'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
