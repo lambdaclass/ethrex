@@ -1,10 +1,7 @@
-#![allow(clippy::unwrap_used)]
-
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 use ethrex_common::H256;
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::TrieError;
 use ethrex_trie::{NodeHash, TrieDB};
 use reth_db::cursor::DbCursorRW;
@@ -15,6 +12,7 @@ use reth_db_api::table::Table as RethTable;
 
 use crate::store_db::mdbx_fork::StateTrieNodes;
 use crate::store_db::mdbx_fork::StorageTriesNodes;
+use crate::trie_db::utils::node_hash_to_fixed_size;
 
 pub struct MDBXTrieDB<T: RethTable> {
     db: Arc<DatabaseEnv>,
@@ -83,31 +81,41 @@ where
 
 impl TrieDB for MDBXTrieWithFixedKey<StorageTriesNodes> {
     fn get(&self, subkey: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
-        let tx = self.db.tx().unwrap();
-        let key = (self.fixed_key, subkey).encode_to_vec();
-        let value = tx.get::<StorageTriesNodes>(key).unwrap();
+        let tx = self.db.tx().map_err(|e| TrieError::DbError(e.into()))?;
+        let key = node_hash_to_fixed_size(subkey);
+        let full_key = [&self.fixed_key.0, key.as_ref()].concat();
+        let value = tx
+            .get::<StorageTriesNodes>(full_key)
+            .map_err(|e| TrieError::DbError(e.into()))?;
         Ok(value)
     }
 
     fn put(&self, subkey: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
-        let tx = self.db.tx_mut().unwrap();
-        let key = (self.fixed_key, subkey).encode_to_vec();
-        tx.put::<StorageTriesNodes>(key, value).unwrap();
-        tx.commit().unwrap();
+        let tx = self.db.tx_mut().map_err(|e| TrieError::DbError(e.into()))?;
+        let key = node_hash_to_fixed_size(subkey);
+        let full_key = [&self.fixed_key.0, key.as_ref()].concat();
+        tx.put::<StorageTriesNodes>(full_key, value)
+            .map_err(|e| TrieError::DbError(e.into()))?;
+        tx.commit().map_err(|e| TrieError::DbError(e.into()))?;
         Ok(())
     }
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
-        let tx = self.db.tx_mut().unwrap();
+        let tx = self.db.tx_mut().map_err(|e| TrieError::DbError(e.into()))?;
 
-        let mut cursor = tx.cursor_write::<StorageTriesNodes>().unwrap();
+        let mut cursor = tx
+            .cursor_write::<StorageTriesNodes>()
+            .map_err(|e| TrieError::DbError(e.into()))?;
 
         for (subkey, value) in key_values {
-            let key = (self.fixed_key, subkey).encode_to_vec();
-            cursor.upsert(key, value).unwrap();
+            let key = node_hash_to_fixed_size(subkey);
+            let full_key = [&self.fixed_key.0, key.as_ref()].concat();
+            cursor
+                .upsert(full_key, value)
+                .map_err(|e| TrieError::DbError(e.into()))?;
         }
 
-        tx.commit().unwrap();
+        tx.commit().map_err(|e| TrieError::DbError(e.into()))?;
         Ok(())
     }
 }

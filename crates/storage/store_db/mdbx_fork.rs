@@ -10,6 +10,7 @@ use crate::rlp::Rlp;
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::mdbx_fork::MDBXTrieDB;
 use crate::trie_db::mdbx_fork::MDBXTrieWithFixedKey;
+use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use crate::UpdateBatch;
 use alloy_primitives::B256;
@@ -215,8 +216,9 @@ impl StoreEngine for MDBXFork {
 
             for (hashed_address, nodes) in update_batch.storage_updates {
                 for (node_hash, node_data) in nodes {
-                    let key = (hashed_address, node_hash).encode_to_vec();
-                    tx.put::<StorageTriesNodes>(key, node_data)?;
+                    let key = node_hash_to_fixed_size(node_hash);
+                    let full_key = [&hashed_address.0, key.as_ref()].concat();
+                    tx.put::<StorageTriesNodes>(full_key, node_data)?;
                 }
             }
 
