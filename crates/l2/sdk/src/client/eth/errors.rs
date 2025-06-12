@@ -1,9 +1,7 @@
-use crate::utils::RpcRequest;
-
 #[derive(Debug, thiserror::Error)]
 pub enum EthClientError {
     #[error("Error sending request {0:?}")]
-    RequestError(RpcRequest),
+    RequestError(ethrex_rpc::utils::RpcRequest),
     #[error("reqwest error: {0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("eth_gasPrice request error: {0}")]

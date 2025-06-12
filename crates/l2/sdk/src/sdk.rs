@@ -15,6 +15,7 @@ use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod calldata;
+pub mod client;
 pub mod l1_to_l2_tx_data;
 pub mod merkle_tree;
 

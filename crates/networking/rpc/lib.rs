@@ -9,7 +9,6 @@ mod net;
 mod rpc;
 mod tracing;
 
-pub mod clients;
 pub mod types;
 pub mod utils;
 pub use clients::{EngineClient, EthClient};

@@ -1,18 +1,16 @@
-use crate::{
-    clients::eth::{
-        errors::{CallError, EthClientError},
-        EthClient, RpcResponse,
-    },
-    utils::{RpcRequest, RpcRequestId},
-};
 use bytes::Bytes;
 use ethrex_common::types::{GenericTransaction, TxKind};
 use ethrex_common::H256;
 use ethrex_common::{Address, U256};
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_rpc::utils::{RpcRequest, RpcRequestId};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde_json::json;
+
+use crate::client::eth::errors::CallError;
+use crate::client::eth::RpcResponse;
+use crate::client::{EthClient, EthClientError};
 
 use super::BlockByNumber;
 

@@ -1,12 +1,5 @@
 use std::fmt;
 
-use crate::{
-    types::{
-        block::RpcBlock,
-        receipt::{RpcLog, RpcReceipt},
-    },
-    utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
-};
 use bytes::Bytes;
 use errors::{
     EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockByHashError,
@@ -23,6 +16,14 @@ use ethrex_common::{
     Address, H160, H256, U256,
 };
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_rpc::{
+    types::{
+        block::RpcBlock,
+        receipt::{RpcLog, RpcReceipt},
+        withdrawal::WithdrawalProof,
+    },
+    utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
+};
 use keccak_hash::keccak;
 use reqwest::{Client, Url};
 use secp256k1::SecretKey;
@@ -94,14 +95,6 @@ const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 
 // 0x08c379a0 == Error(String)
 pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct WithdrawalProof {
-    pub batch_number: u64,
-    pub index: usize,
-    pub withdrawal_hash: H256,
-    pub merkle_proof: Vec<H256>,
-}
 
 impl EthClient {
     pub fn new(url: &str) -> Result<EthClient, EthClientError> {
@@ -320,7 +313,12 @@ impl EthClient {
             let mut attempt = 1;
             let attempts_to_wait_in_seconds = self
                 .backoff_factor
-                .pow(number_of_retries as u32)
+                .pow(number_of_retries.try_into().map_err(|_| {
+                    EthClientError::Custom(
+                        "Failed to convert number_of_retries to u64 in send_tx_bump_gas_exponential_backoff"
+                            .to_string(),
+                    )
+                })?)
                 .clamp(self.min_retry_delay, self.max_retry_delay);
             while receipt.is_none() {
                 if attempt >= (attempts_to_wait_in_seconds / WAIT_TIME_FOR_RECEIPT_SECONDS) {
@@ -1053,10 +1051,18 @@ impl EthClient {
         }
 
         // Get the offset (should be 0x20 for simple arrays)
-        let offset = U256::from_big_endian(&bytes[0..32]).as_usize();
+        let offset = U256::from_big_endian(bytes.get(0..32).ok_or(EthClientError::Custom(
+            "Failed to slice bytes for offset in from_hex_string_to_h256_array".to_owned(),
+        ))?)
+        .as_usize();
 
         // Get the length of the array
-        let length = U256::from_big_endian(&bytes[offset..offset + 32]).as_usize();
+        let length = U256::from_big_endian(bytes.get(offset..offset + 32).ok_or(
+            EthClientError::Custom(
+                "Failed to slice bytes for offset in from_hex_string_to_h256_array".to_owned(),
+            ),
+        )?)
+        .as_usize();
 
         // Calculate the start of the array data
         let data_start = offset + 32;
@@ -1067,7 +1073,11 @@ impl EthClient {
         }
 
         // Convert the slice directly to H256 array
-        bytes[data_start..data_end]
+        bytes
+            .get(data_start..data_end)
+            .ok_or(EthClientError::Custom(
+                "Failed to slice bytes for H256 conversion".to_owned(),
+            ))?
             .chunks_exact(32)
             .map(|chunk| Ok(H256::from_slice(chunk)))
             .collect()

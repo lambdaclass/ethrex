@@ -1,21 +1,17 @@
-use crate::{
-    engine::{
-        fork_choice::ForkChoiceUpdatedV3,
-        payload::{GetPayloadV4Request, NewPayloadV4Request},
-        ExchangeCapabilitiesRequest,
-    },
-    types::{
-        fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
-        payload::{ExecutionPayload, ExecutionPayloadResponse, PayloadStatus},
-    },
-    utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
-};
 use bytes::Bytes;
 use errors::{
     EngineClientError, ExchangeCapabilitiesError, ForkChoiceUpdatedError, GetPayloadError,
     NewPayloadError,
 };
 use ethrex_common::H256;
+use ethrex_rpc::{
+    types::{
+        fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
+        payload::{ExecutionPayload, ExecutionPayloadResponse, PayloadStatus},
+    },
+    utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
+    ExchangeCapabilitiesRequest, ForkChoiceUpdatedV3, GetPayloadV4Request, NewPayloadV4Request,
+};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::json;
@@ -162,7 +158,7 @@ impl EngineClient {
         // Header
         let header = jsonwebtoken::Header::default();
         // Claims
-        let valid_iat = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as usize;
+        let valid_iat = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let claims = json!({"iat": valid_iat});
         let encoding_key = jsonwebtoken::EncodingKey::from_secret(&self.secret);
         // JWT Token
