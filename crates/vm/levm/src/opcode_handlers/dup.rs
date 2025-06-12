@@ -1,5 +1,5 @@
 use crate::{
-    errors::{OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
@@ -16,7 +16,7 @@ impl VM<'_> {
 
         // Ensure the stack has enough elements to duplicate
         if current_call_frame.stack.len() < depth {
-            return Err(VMError::StackUnderflow);
+            return Err(ExceptionalHalt::StackUnderflow.into());
         }
 
         // Get the value at the specified depth
@@ -25,7 +25,7 @@ impl VM<'_> {
                 .stack
                 .len()
                 .checked_sub(depth)
-                .ok_or(VMError::StackUnderflow)?,
+                .ok_or(ExceptionalHalt::StackUnderflow)?,
         )?;
 
         // Push the duplicated value onto the stack

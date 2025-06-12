@@ -53,4 +53,6 @@ pub enum StoreError {
     MempoolWriteLock(String),
     #[error("Failed to lock mempool for reading")]
     MempoolReadLock(String),
+    #[error("Failed to lock database for writing")]
+    LockError,
 }

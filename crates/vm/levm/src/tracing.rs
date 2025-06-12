@@ -83,10 +83,7 @@ impl LevmCallTracer {
         error: Option<String>,
         revert_reason: Option<String>,
     ) -> Result<(), InternalError> {
-        let mut callframe = self
-            .callframes
-            .pop()
-            .ok_or(InternalError::CouldNotPopCallframe)?;
+        let mut callframe = self.callframes.pop().ok_or(InternalError::CallFrame)?;
 
         process_output(&mut callframe, gas_used, output, error, revert_reason);
 
@@ -159,7 +156,7 @@ impl LevmCallTracer {
             data: log.data.clone(),
             position: match callframe.calls.len().try_into() {
                 Ok(pos) => pos,
-                Err(_) => return Err(InternalError::ConversionError),
+                Err(_) => return Err(InternalError::TypeConversion),
             },
         };
 
@@ -168,9 +165,7 @@ impl LevmCallTracer {
     }
 
     fn current_callframe_mut(&mut self) -> Result<&mut CallTraceFrame, InternalError> {
-        self.callframes
-            .last_mut()
-            .ok_or(InternalError::CouldNotAccessLastCallframe)
+        self.callframes.last_mut().ok_or(InternalError::CallFrame)
     }
 }
 
@@ -203,6 +198,6 @@ impl VM<'_> {
         self.tracer
             .callframes
             .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))
+            .ok_or(InternalError::CallFrame.into())
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    errors::{OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
@@ -17,14 +17,14 @@ impl VM<'_> {
             .stack
             .len()
             .checked_sub(1)
-            .ok_or(VMError::StackUnderflow)?;
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
 
         if current_call_frame.stack.len() < depth {
-            return Err(VMError::StackUnderflow);
+            return Err(ExceptionalHalt::StackUnderflow.into());
         }
         let to_swap_index = stack_top_index
             .checked_sub(depth)
-            .ok_or(VMError::StackUnderflow)?;
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
         current_call_frame
             .stack
             .swap(stack_top_index, to_swap_index)?;

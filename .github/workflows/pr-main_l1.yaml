@@ -36,7 +36,7 @@ jobs:
         run: |
           cargo clippy --workspace -- -D warnings
           cargo clippy -- -D warnings
-          cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
+          cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain -- -D warnings
 
       - name: Run cargo fmt
         run: |
