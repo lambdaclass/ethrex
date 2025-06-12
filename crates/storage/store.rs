@@ -69,7 +69,7 @@ impl Store {
     pub async fn store_block_updates(
         &self,
         update_batch: UpdateBatch,
-        account_updates: &[AccountUpdate],
+        account_updates: &[&[AccountUpdate]],
     ) -> Result<(), StoreError> {
         self.engine
             .apply_updates(update_batch, account_updates)

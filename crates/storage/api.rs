@@ -22,7 +22,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn apply_updates(
         &self,
         update_batch: UpdateBatch,
-        account_updates: &[AccountUpdate],
+        account_updates: &[&[AccountUpdate]],
     ) -> Result<(), StoreError>;
 
     /// Add a batch of blocks in a single transaction.
