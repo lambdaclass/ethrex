@@ -111,7 +111,7 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         block_fixture
             .expect_exception
             .as_ref()
-            .map_or(false, |s| s.starts_with(case))
+            .is_some_and(|s| s.starts_with(case))
     });
 
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
