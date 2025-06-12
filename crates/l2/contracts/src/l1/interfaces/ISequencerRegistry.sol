@@ -20,4 +20,6 @@ interface ISequencerRegistry {
     function leadSequencerForBatch(
         uint256 batchNumber
     ) external view returns (address);
+
+    function pushSequencer(uint256 batchNumber, address sequencer) external;
 }

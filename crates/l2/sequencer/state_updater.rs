@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use ethrex_blockchain::{error::InvalidForkChoice, fork_choice::apply_fork_choice};
+use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_common::{types::Block, Address};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::{clients::Overrides, EthClient};
@@ -195,7 +195,7 @@ impl StateUpdater {
         )
         .await
         {
-            Ok(_) | Err(InvalidForkChoice::NewHeadAlreadyCanonical) => {
+            Ok(_) => {
                 self.store
                     .update_latest_block_number(*last_l2_committed_batch_block_number)
                     .await?;
