@@ -85,9 +85,9 @@ pub fn read_block_file(block_file_path: &str) -> Block {
 pub fn read_genesis_file(genesis_file_path: &Path) -> Result<Genesis, ChainError> {
     let genesis_file = std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
     let genesis = decode::genesis_file(genesis_file).expect("Failed to decode genesis file");
-    let is_genesis_post_merge = genesis.config.merge_netsplit_block == Some(0) ||
-                                    genesis.config.terminal_total_difficulty_passed == true ||
-                                    genesis.difficulty.is_zero();
+    let is_genesis_post_merge = genesis.config.merge_netsplit_block == Some(0)
+        || genesis.config.terminal_total_difficulty_passed
+        || genesis.difficulty.is_zero();
     if !is_genesis_post_merge {
         return Err(ChainError::Genesis(String::from(
             "Fork not supported. Only post-merge networks are supported.",

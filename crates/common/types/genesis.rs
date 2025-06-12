@@ -222,7 +222,7 @@ impl ChainConfig {
             Fork::Shanghai
         } else {
             Fork::Paris
-        } 
+        }
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
