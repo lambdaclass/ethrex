@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749753752904,
+  "lastUpdate": 1749754864272,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12475,6 +12475,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 186014871202,
             "range": "± 631780266",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "26dcc3264d6f5f76af3bfb50cdd7fc2648363cbe",
+          "message": "fix(l2): remove payment to Coinbase in `PrivilegedTransaction` (#3132)\n\n**Motivation**\n\nWe were paying a `priorityFee` to `Coinbase` in\n`PrivilegedL2Transactions`, resulting in an L2 total balance higher than\nthe amount locked in the `CommonBridge` contract on L1.\n\n**Description**\n\n- Removes the `Coinbase` payment in `PrivilegedL2Transactions`.\n- Adds a check to the `l2_integration_test` to assert that the L2 total\nbalance is `<=` than the amount in the bridge contract.\n- In order to calculate the L2 total balance, we need to track all\naddresses that have received a deposit and retrieve their balances at\nthe end of all tests. To achieve this, this PR places all tests under\n`l2_integration_test`, ensuring the test order and collecting the\nnecessary addresses.\n\nCloses #3079",
+          "timestamp": "2025-06-12T18:06:46Z",
+          "tree_id": "e159227f407f5c02b9cd7191ee87c2df4deb66ed",
+          "url": "https://github.com/lambdaclass/ethrex/commit/26dcc3264d6f5f76af3bfb50cdd7fc2648363cbe"
+        },
+        "date": 1749754857913,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183827659028,
+            "range": "± 273783206",
             "unit": "ns/iter"
           }
         ]
