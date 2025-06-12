@@ -833,13 +833,13 @@ fn common_bridge_address() -> Address {
 
 fn fees_vault() -> Address {
     std::env::var("INTEGRATION_TEST_PROPOSER_COINBASE_ADDRESS")
-        .map(|address| Address::from_str(&address).expect("Invalid proposer coinbase address"))
+        .map(|address| address.parse().expect("Invalid proposer coinbase address"))
         .unwrap_or(DEFAULT_PROPOSER_COINBASE_ADDRESS)
 }
 
 fn l1_rich_wallet_private_key() -> SecretKey {
     let l1_rich_wallet_pk = std::env::var("INTEGRATION_TEST_L1_RICH_WALLET_PRIVATE_KEY")
-        .map(|pk| H256::from_str(&pk).expect("Invalid l1 rich wallet pk"))
+        .map(|pk| pk.parse().expect("Invalid l1 rich wallet pk"))
         .unwrap_or(DEFAULT_L1_RICH_WALLET_PRIVATE_KEY);
     SecretKey::from_slice(l1_rich_wallet_pk.as_bytes()).unwrap()
 }
