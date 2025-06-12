@@ -908,7 +908,7 @@ impl<'a> VM<'a> {
             }
             TxResult::Revert(err) => {
                 // If revert we have to copy the return_data
-                if err == VMError::RevertOpcode {
+                if err.is_revert_opcode() {
                     parent_call_frame.sub_return_data = ctx_result.output.clone();
                 }
 
