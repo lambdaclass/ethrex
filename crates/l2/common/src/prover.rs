@@ -10,7 +10,6 @@ pub enum ProverType {
     Exec,
     RISC0,
     SP1,
-    Pico,
     Aligned,
     TDX,
 }
@@ -35,7 +34,6 @@ impl ProverType {
             ProverType::Exec,
             ProverType::RISC0,
             ProverType::SP1,
-            ProverType::Pico,
             ProverType::Aligned,
             ProverType::TDX,
         ]
@@ -56,13 +54,6 @@ impl ProverType {
             ProverType::SP1 => {
                 vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
             }
-            ProverType::Pico => {
-                vec![
-                    Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                    Value::Bytes(vec![].into()),
-                    Value::FixedArray(vec![Value::Uint(U256::zero()); 8]),
-                ]
-            }
             ProverType::TDX => {
                 vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
             }
@@ -77,7 +68,6 @@ impl ProverType {
             Self::Aligned => Some("ALIGNEDPROOFAGGREGATOR()".to_string()),
             Self::RISC0 => Some("R0VERIFIER()".to_string()),
             Self::SP1 => Some("SP1VERIFIER()".to_string()),
-            Self::Pico => Some("PICOVERIFIER()".to_string()),
             Self::TDX => Some("TDXVERIFIER()".to_string()),
             Self::Exec => None,
         }
@@ -90,7 +80,6 @@ impl Display for ProverType {
             Self::Exec => write!(f, "Exec"),
             Self::RISC0 => write!(f, "RISC0"),
             Self::SP1 => write!(f, "SP1"),
-            Self::Pico => write!(f, "Pico"),
             Self::TDX => write!(f, "TDX"),
             Self::Aligned => write!(f, "Aligned"),
         }

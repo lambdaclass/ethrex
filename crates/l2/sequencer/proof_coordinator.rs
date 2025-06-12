@@ -1,24 +1,30 @@
 use crate::sequencer::errors::ProverServerError;
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_latest_sent_batch;
-use crate::utils::prover::db::to_prover_db;
+use crate::utils::prover::proving_systems::{BatchProof, ProverType};
+use crate::utils::prover::save_state::{
+    batch_number_has_state_file, write_state, StateFileType, StateType,
+};
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use bytes::Bytes;
-use ethrex_common::types::{BlobsBundle, Block};
-use ethrex_common::Address;
-use ethrex_l2_common::prover::{BatchProof, ProverType};
+use ethrex_blockchain::Blockchain;
+use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
+use ethrex_common::types::BlobsBundle;
+use ethrex_common::{
+    types::{blobs_bundle, Block},
+    Address,
+};
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::ProverDB;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer};
-use std::net::SocketAddr;
-use std::{fmt::Debug, net::IpAddr};
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -27,14 +33,11 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-#[cfg(feature = "l2")]
-use ethrex_common::types::blobs_bundle;
-
 #[serde_as]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
-    pub db: ProverDB,
+    pub db: ExecutionWitnessResult,
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
@@ -145,6 +148,7 @@ pub struct ProofCoordinatorState {
     rollup_store: StoreRollup,
     rpc_url: String,
     l1_private_key: SecretKey,
+    blockchain: Arc<Blockchain>,
     validium: bool,
     needed_proof_types: Vec<ProverType>,
 }
@@ -158,6 +162,7 @@ impl ProofCoordinatorState {
         proposer_config: &BlockProducerConfig,
         store: Store,
         rollup_store: StoreRollup,
+        blockchain: Arc<Blockchain>,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<Self, ProverServerError> {
         let eth_client = EthClient::new_with_config(
@@ -189,6 +194,7 @@ impl ProofCoordinatorState {
             rollup_store,
             rpc_url,
             l1_private_key: config.l1_private_key,
+            blockchain,
             validium: config.validium,
             needed_proof_types,
         })
@@ -211,6 +217,7 @@ impl ProofCoordinator {
         store: Store,
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
+        blockchain: Arc<Blockchain>,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProverServerError> {
         let state = ProofCoordinatorState::new(
@@ -220,6 +227,7 @@ impl ProofCoordinator {
             &cfg.block_producer,
             store,
             rollup_store,
+            blockchain,
             needed_proof_types,
         )
         .await?;
@@ -546,8 +554,11 @@ async fn create_prover_input(
 
     let blocks = fetch_blocks(state, block_numbers).await?;
 
-    // Create prover_db
-    let db = to_prover_db(&state.store.clone(), &blocks).await?;
+    let witness = state
+        .blockchain
+        .generate_witness_for_blocks(&blocks)
+        .await
+        .map_err(ProverServerError::from)?;
 
     // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
     let (blob_commitment, blob_proof) = if state.validium {
@@ -572,7 +583,7 @@ async fn create_prover_input(
     debug!("Created prover input for batch {batch_number}");
 
     Ok(ProverInputData {
-        db,
+        db: witness,
         blocks,
         elasticity_multiplier: state.elasticity_multiplier,
         #[cfg(feature = "l2")]

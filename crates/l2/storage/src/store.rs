@@ -219,7 +219,7 @@ impl Store {
         let withdrawal_hashes = self
             .get_withdrawal_hashes_by_batch(batch_number)
             .await?.ok_or(StoreError::Custom(
-            "Failed while trying to retrieve the wiShdrawal hashes of a known batch. This is a bug."
+            "Failed while trying to retrieve the withdrawal hashes of a known batch. This is a bug."
                 .to_owned(),
         ))?;
         let deposit_logs_hash = self
