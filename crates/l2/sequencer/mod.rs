@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::utils::prover::proving_systems::ProverType;
 use crate::SequencerConfig;
-use block_producer::start_block_producer;
+use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -76,6 +76,7 @@ pub async fn start_l2(
         store.clone(),
         rollup_store.clone(),
         cfg.clone(),
+        blockchain.clone(),
         needed_proof_types.clone(),
     )
     .await
@@ -92,18 +93,21 @@ pub async fn start_l2(
     .inspect_err(|err| {
         error!("Error starting Proof Coordinator: {err}");
     });
+    let _ = BlockProducer::spawn(
+        store.clone(),
+        blockchain,
+        execution_cache.clone(),
+        cfg.clone(),
+    )
+    .await
+    .inspect_err(|err| {
+        error!("Error starting Block Producer: {err}");
+    });
 
     let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
-
     if needed_proof_types.contains(&ProverType::Aligned) {
         task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(cfg.clone()));
     }
-    task_set.spawn(start_block_producer(
-        store.clone(),
-        blockchain,
-        cfg.clone(),
-        execution_cache,
-    ));
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
 
