@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749735584087,
+  "lastUpdate": 1749738768586,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12385,6 +12385,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 185474566049,
             "range": "± 203438415",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7ca51082a71b35319423fc6818ad905cc26b4c5b",
+          "message": "fix(l1): peer scoring to avoid syncing hanging in holesky (#3042)\n\n**Motivation**\n\nSyncing where being hanged in a loop, not being able to proceed at the\nbodies request stage\n\n**Description**\n\nThe issue was related to an early return of an error when receiving no\nbodies from a peer (after the retries). This happen even if some peer\nwas able to answer but we exhausted the retries with those who wont. We\ntried a couple of solutions:\n\n- **Remove the error and just break with the accumulated bodies:** This\nproved to hurt the performance and just push the issue to the next\niteration which also failed to accumulate the whole amount of bodies\n- **Remove the peers that doesn't answer the bodies:** This proved to\nstill fail when we end up with just one good active peer and for some\nreason it doesn't answer. In that case we removed it also and were\nunable to get more peers.\n- **Remove the peer that doesn't answer and increase the timeouts:** It\nwas possible that the issue with the good peer was related to the short\ntimeout of 5 seconds, increasing this proved to be better thatn te\nprevious solution but after a couple of houser the issue of having no\npeers still remained.\n\n**Current solution:**\n\nNow we implemented a initial version of a simple peer-scoring. This just\nadds a new score field to the peer data and use it to weight the peers\nwhen choosing them (instead of the previous random selection). In both\nheaders and bodies request we penalize and reward peers given their\nresponses. This could be further improved in other PRs (#3042) but it's\nenough for the current issue. After running the whole night 3 different\ntimes syncing from holesky's 3.6m there were no issues in sight! We also\nmaintained the increased peer timeout from 5 to 15 secs.\n\nAdditionally I removed the marking of the sync head as invalid,\nsomething that shouldn't be needed in syncing (we are already marking\nthe failing one, which could also be an issue but is tracked in #2767)\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3020",
+          "timestamp": "2025-06-12T13:37:51Z",
+          "tree_id": "ff3cb8b361a1c36cfa5609f8796e3b68b0202e0f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7ca51082a71b35319423fc6818ad905cc26b4c5b"
+        },
+        "date": 1749738762563,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 186179866008,
+            "range": "± 618264260",
             "unit": "ns/iter"
           }
         ]
