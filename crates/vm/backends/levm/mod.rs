@@ -1,4 +1,5 @@
 pub mod db;
+mod tracing;
 
 use super::BlockExecutionResult;
 use crate::constants::{
@@ -18,8 +19,8 @@ use ethrex_common::{
 use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-use ethrex_levm::errors::TxValidationError;
-use ethrex_levm::utils::restore_cache_state;
+use ethrex_levm::errors::{InternalError, TxValidationError};
+use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
@@ -130,7 +131,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx);
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
 
         vm.execute().map_err(VMError::into)
     }
@@ -145,7 +146,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<(ExecutionReport, CallFrameBackup), EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db)?;
-        let mut vm = VM::new(env, db, tx);
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
 
         let report_result = vm.execute().map_err(EvmError::from)?;
 
@@ -155,17 +156,14 @@ impl LEVM {
         let call_frame_backup = vm
             .call_frames
             .pop()
-            .ok_or(VMError::OutOfBounds)?
+            .ok_or(VMError::Internal(InternalError::CallFrame))?
             .call_frame_backup;
 
         Ok((report_result, call_frame_backup))
     }
 
-    pub fn restore_cache_state(
-        db: &mut GeneralizedDatabase,
-        call_frame_backup: CallFrameBackup,
-    ) -> Result<(), EvmError> {
-        restore_cache_state(db, call_frame_backup).map_err(VMError::from)?;
+    pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
+        db.undo_last_transaction()?;
         Ok(())
     }
 
@@ -241,14 +239,6 @@ impl LEVM {
 
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
             let removed = new_state_account.is_empty();
-
-            // https://eips.ethereum.org/EIPS/eip-161
-            // If account is now empty and it didn't exist in the trie before, no need to make changes.
-            // This check is necessary just in case we keep empty accounts in the trie. If we're sure we don't, this code can be removed.
-            // `initial_state_account.is_empty()` check can be removed but I added it because it's short-circuiting, this way we don't hit the db very often.
-            if removed && initial_state_account.is_empty() && !db.store.account_exists(*address)? {
-                continue;
-            }
 
             if !removed && !acc_info_updated && !storage_updated {
                 // Account hasn't been updated
@@ -468,7 +458,7 @@ pub fn generic_system_contract_levm(
         data: calldata,
         ..Default::default()
     });
-    let mut vm = VM::new(env, db, tx);
+    let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled());
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -555,7 +545,7 @@ fn adjust_disabled_base_fee(env: &mut Environment) {
 
 pub fn build_access_list(substate: &Substate) -> AccessList {
     let access_list: AccessList = substate
-        .touched_storage_slots
+        .accessed_storage_slots
         .iter()
         .map(|(address, slots)| (*address, slots.iter().cloned().collect::<Vec<H256>>()))
         .collect();
@@ -604,7 +594,9 @@ fn vm_from_generic<'a>(
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
                 TxKind::Call(to) => to,
-                TxKind::Create => return Err(VMError::InvalidTransaction),
+                TxKind::Create => {
+                    return Err(InternalError::msg("Generic Tx cannot be create type").into())
+                }
             },
             value: tx.value,
             data: tx.input.clone(),
@@ -631,5 +623,5 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
-    Ok(VM::new(env, db, &tx))
+    Ok(VM::new(env, db, &tx, LevmCallTracer::disabled()))
 }

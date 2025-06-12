@@ -46,17 +46,6 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: rm -rf crates/l2/.env
 
-      - name: Bake docker images
-        # if: ${{ always() && github.event_name == 'merge_group' }}
-        uses: docker/bake-action@v6
-        with:
-          workdir: "crates/l2"
-          files: "crates/l2/docker-compose-l2.yaml"
-          load: true
-          set: |
-            *.cache-to=type=gha,mode=max
-            *.cache-from=type=gha
-
       - name: Build prover
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
@@ -83,7 +72,7 @@ jobs:
         run: |
           cd crates/l2
           CI_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_PROPOSER_BLOCK_TIME_MS=12000 \
+          ETHREX_PROPOSER_BLOCK_TIME=12000 \
           ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
           docker compose -f docker-compose-l2.yaml up ethrex_l2 --detach
 
