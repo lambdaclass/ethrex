@@ -5,7 +5,7 @@ use std::{
 };
 
 use ethrex_common::{
-    types::{batch::Batch, AccountUpdate, Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber},
     H256,
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};

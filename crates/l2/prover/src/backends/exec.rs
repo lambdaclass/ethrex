@@ -1,4 +1,4 @@
-use ethrex_l2_common::{calldata::Value, prover::{BatchProof, ProofBytes, ProofCalldata, ProverType}};
+use ethrex_l2_common::{calldata::Value, prover::{BatchProof, ProofCalldata, ProverType}};
 use tracing::warn;
 
 use zkvm_interface::io::{ProgramInput, ProgramOutput};

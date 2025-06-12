@@ -3,7 +3,6 @@ use ethrex_common::{Address, H32, U256};
 use ethrex_rpc::clients::eth::errors::CalldataEncodeError;
 use ethrex_l2_common::calldata::Value;
 use keccak_hash::keccak;
-use serde::{Deserialize, Serialize};
 
 fn parse_signature(signature: &str) -> Result<(String, Vec<String>), CalldataEncodeError> {
     let sig = signature.trim().trim_start_matches("function ");
