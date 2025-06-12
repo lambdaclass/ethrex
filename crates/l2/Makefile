@@ -102,7 +102,6 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
 	--contracts-path contracts \
-	--pico.verifier-address 0x00000000000000000000000000000000000000aa \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
 	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
@@ -178,7 +177,7 @@ build-prover:
 	@if [ -z "$$PROVER" ]; then \
 		echo "Error: ProverType (PROVER) is missing. Running in exec mode."; \
 		echo "Please provide it as an argument:"; \
-		echo "make init-prover PROVER=<prover_type: (risc0, sp1, pico)> <G=true>"; \
+		echo "make init-prover PROVER=<prover_type: (risc0, sp1)> <G=true>"; \
 		echo "The prover can also be run with GPU (G)"; \
 	fi; \
 
@@ -220,7 +219,6 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
-	ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER} \
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
 
 	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & \

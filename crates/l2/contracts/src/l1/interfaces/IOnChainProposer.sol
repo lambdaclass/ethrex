@@ -60,10 +60,6 @@ interface IOnChainProposer {
     /// @param sp1PublicValues Values used to perform the execution
     /// @param sp1ProofBytes Groth16 proof
     /// ----------------------------------------------------------------------
-    /// @param picoRiscvVkey Public verifying key
-    /// @param picoPublicValues Values used to perform the execution
-    /// @param picoProof Groth16 proof
-    /// ----------------------------------------------------------------------
     /// @param tdxPublicValues Values used to perform the execution
     /// @param tdxSignature TDX signature
     function verifyBatch(
@@ -75,10 +71,6 @@ interface IOnChainProposer {
         //sp1
         bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
-        //pico
-        bytes32 picoRiscvVkey,
-        bytes calldata picoPublicValues,
-        uint256[8] memory picoProof,
         //tdx
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature

@@ -8,8 +8,6 @@ pub fn write_benchmark_file(gas_used: f64, elapsed: f64) {
         "SP1"
     } else if cfg!(feature = "risc0") {
         "Risc0"
-    } else if cfg!(feature = "pico") {
-        "Pico"
     } else {
         "Exec"
     };

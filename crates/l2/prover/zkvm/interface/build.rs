@@ -1,28 +1,11 @@
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
 
-    #[cfg(feature = "pico")]
-    build_pico_program();
-
     #[cfg(feature = "risc0")]
     build_risc0_program();
 
     #[cfg(feature = "sp1")]
     build_sp1_program();
-}
-
-#[cfg(feature = "pico")]
-fn build_pico_program() {
-    let output = std::process::Command::new("make")
-        .output()
-        .expect("failed to execute Makefile when building Pico ELF");
-
-    if !output.status.success() {
-        panic!(
-            "Failed to build pico elf: {}",
-            std::str::from_utf8(&output.stderr).unwrap()
-        );
-    }
 }
 
 #[cfg(feature = "risc0")]
