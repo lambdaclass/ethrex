@@ -215,7 +215,9 @@ async fn test_deposit(
 
     let depositor = ethrex_l2_sdk::get_address_from_secret_key(depositor_private_key)?;
     let deposit_recipient_address = Address::random();
-    let deposit_value = U256::from(1000000000000000000000u128);
+    let deposit_value = std::env::var("INTEGRATION_TEST_DEPOSIT_VALUE")
+        .map(|value| U256::from_dec_str(&value).expect("Invalid deposit value"))
+        .unwrap_or(U256::from(100000000000000000000u128));
 
     let depositor_l1_initial_balance = eth_client
         .get_balance(depositor, BlockByNumber::Latest)
@@ -320,7 +322,9 @@ async fn test_transfer(
 
     let transfer_recipient_address = Address::random();
     let transferer_address = ethrex_l2_sdk::get_address_from_secret_key(transferer_private_key)?;
-    let transfer_value = U256::from(10000000000u128);
+    let transfer_value = std::env::var("INTEGRATION_TEST_TRANSFER_VALUE")
+        .map(|value| U256::from_dec_str(&value).expect("Invalid transfer value"))
+        .unwrap_or(U256::from(10000000000u128));
 
     let transferer_initial_l2_balance = proposer_client
         .get_balance(transferer_address, BlockByNumber::Latest)
@@ -408,7 +412,9 @@ async fn test_n_withdraws(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // 7. Withdraw funds from L2 to L1
     let withdrawer_address = ethrex_l2_sdk::get_address_from_secret_key(withdrawer_private_key)?;
-    let withdraw_value = U256::from(100000000000000000000u128);
+    let withdraw_value = std::env::var("INTEGRATION_TEST_WITHDRAW_VALUE")
+        .map(|value| U256::from_dec_str(&value).expect("Invalid withdraw value"))
+        .unwrap_or(U256::from(100000000000000000000u128));
 
     println!("Checking balances on L1 and L2 before withdrawal");
 
@@ -667,7 +673,9 @@ async fn test_call_to_contract_with_deposit(
         .expect("Failed to get address");
 
     let deposit_recipient_address = Address::random();
-    let deposit_value = U256::from(100000000000000000000u128);
+    let deposit_value = std::env::var("INTEGRATION_TEST_DEPOSIT_VALUE")
+        .map(|value| U256::from_dec_str(&value).expect("Invalid deposit value"))
+        .unwrap_or(U256::from(100000000000000000000u128));
 
     println!("Checking balances before call");
 
