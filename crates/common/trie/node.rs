@@ -134,14 +134,20 @@ impl From<NodeHash> for ValueOrHash {
 /// A Node in an Ethereum Compatible Patricia Merkle Trie
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
-    Branch(BranchNode),
+    Branch(Box<BranchNode>),
     Extension(ExtensionNode),
     Leaf(LeafNode),
 }
 
+impl From<Box<BranchNode>> for Node {
+    fn from(val: Box<BranchNode>) -> Self {
+        Node::Branch(val)
+    }
+}
+
 impl From<BranchNode> for Node {
     fn from(val: BranchNode) -> Self {
-        Node::Branch(val)
+        Node::Branch(Box::new(val))
     }
 }
 

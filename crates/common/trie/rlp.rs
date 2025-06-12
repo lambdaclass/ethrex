@@ -123,12 +123,13 @@ impl RLPDecode for Node {
         let rlp = &rlp[1..];
         match node_type {
             NodeType::Branch => {
-                BranchNode::decode_unfinished(rlp).map(|(node, rem)| (Node::Branch(node), rem))
+                BranchNode::decode_unfinished(rlp)
+                    .map(|(node, rem)| (node.into(), rem))
             }
             NodeType::Extension => ExtensionNode::decode_unfinished(rlp)
-                .map(|(node, rem)| (Node::Extension(node), rem)),
+                .map(|(node, rem)| (node.into(), rem)),
             NodeType::Leaf => {
-                LeafNode::decode_unfinished(rlp).map(|(node, rem)| (Node::Leaf(node), rem))
+                LeafNode::decode_unfinished(rlp).map(|(node, rem)| (node.into(), rem))
             }
         }
     }
