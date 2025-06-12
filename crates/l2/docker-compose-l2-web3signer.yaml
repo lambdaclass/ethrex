@@ -2,13 +2,14 @@ services:
   web3signer:
     restart: always
     container_name: web3signer
-    image: "web3signer"
-    build:
-      context: ../../test_data
-      dockerfile: ./web3signer.Dockerfile
+    image: "consensys/web3signer"
     ports:
       # API
       - 0.0.0.0:9000:9000
+    volumes:
+      - ../../test_data/web3signer-keys:/keys
+    command:
+      "--http-host-allowlist=* --key-store-path=/keys eth1 --chain-id=1729" 
 
   ethrex_l2:
     command: >
