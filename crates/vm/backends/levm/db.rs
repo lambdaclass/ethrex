@@ -37,10 +37,21 @@ impl LevmDatabase for DatabaseLogger {
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
             .entry(address)
             .or_default();
-        self.store
+        let account = self
+            .store
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .get_account(address)
+            .get_account(address)?;
+        // We have to treat the code as accessed because Account has access to the code
+        // And some parts of LEVM use the bytecode from the account instead of using get_account_code
+        if account.has_code() {
+            let mut code_accessed = self
+                .code_accessed
+                .lock()
+                .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?;
+            code_accessed.push(account.info.code_hash);
+        }
+        Ok(account)
     }
 
     fn account_exists(&self, address: CoreAddress) -> Result<bool, DatabaseError> {

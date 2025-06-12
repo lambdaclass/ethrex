@@ -59,6 +59,3 @@ pub fn get_chain_config(name: &str) -> eyre::Result<ChainConfig> {
         }
     })
 }
-// RPC related constants
-
-pub const RPC_RATE_LIMIT: usize = 15; // requests per second
