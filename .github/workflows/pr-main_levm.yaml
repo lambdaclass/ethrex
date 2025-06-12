@@ -1,5 +1,4 @@
 name: LEVM
-
 on:
   push:
     branches: ["main"]
@@ -119,7 +118,7 @@ jobs:
           cd cmd/ef_tests/state
           awk '/Prague:/, /Paris:/ {print $1, $3}' test_result_main.txt | sed 's/[()]//g' | grep -v '100.00%' > failed_tests.txt"
           if [ "$(awk '/Summary:/ {print $(NF)}' test_result_main_short.txt)" != "(100.00%)" ]; then
-              echo ""All percentage are not 100%. The following tests failed:"
+              echo "All percentage are not 100%. The following tests failed:"
               cat failed_tests.txt
               exit 1
           else
