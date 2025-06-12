@@ -142,7 +142,7 @@ impl<'a> VM<'a> {
 
     pub fn handle_opcode_result(&mut self) -> Result<ContextResult, VMError> {
         // On successful create check output validity
-        if self.current_call_frame()?.is_create {
+        if self.is_create()? {
             let contract_code = self.current_call_frame_mut()?.output.clone();
             let code_length = contract_code.len();
 
@@ -205,23 +205,17 @@ impl<'a> VM<'a> {
             return Err(error);
         }
 
-        // Unless error is from Revert opcode, all gas is consumed
-        if error != VMError::RevertOpcode {
-            let left_gas = self
-                .current_call_frame()?
-                .gas_limit
-                .saturating_sub(self.current_call_frame()?.gas_used);
-            self.current_call_frame_mut()?.gas_used =
-                self.current_call_frame()?.gas_used.saturating_add(left_gas);
-        }
+        let callframe = self.current_call_frame_mut()?;
 
-        let output = std::mem::take(&mut self.current_call_frame_mut()?.output); // Bytes::new() if error is not RevertOpcode
-        let gas_used = self.current_call_frame()?.gas_used;
+        // Unless error is caused by Revert Opcode, consume all gas left.
+        if !error.is_revert_opcode() {
+            callframe.gas_used = callframe.gas_limit;
+        }
 
         Ok(ContextResult {
             result: TxResult::Revert(error),
-            gas_used,
-            output,
+            gas_used: callframe.gas_used,
+            output: std::mem::take(&mut callframe.output),
         })
     }
 
