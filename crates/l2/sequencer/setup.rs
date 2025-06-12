@@ -1,7 +1,7 @@
 use crate::sequencer::errors::ProverServerError;
 use ethrex_common::{Address, Bytes};
-use ethrex_l2_sdk::calldata::{encode_calldata};
 use ethrex_l2_common::calldata::Value;
+use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::{
     eth::{EthClient, WrappedTransaction},

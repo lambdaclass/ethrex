@@ -1,4 +1,4 @@
-use ethrex_common::{Address, U256, Bytes};
+use ethrex_common::{Address, Bytes, U256};
 use serde::{Deserialize, Serialize};
 
 /// Struct representing the possible solidity types for function arguments

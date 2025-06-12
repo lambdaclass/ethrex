@@ -23,7 +23,7 @@ impl From<ProverType> for u32 {
             ProverType::SP1 => 2,
             ProverType::Pico => 3,
             ProverType::Aligned => 4,
-            ProverType::TDX => 5
+            ProverType::TDX => 5,
         }
     }
 }

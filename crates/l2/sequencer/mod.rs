@@ -86,7 +86,10 @@ pub async fn start_l2(
     let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
 
     if needed_proof_types.contains(&ProverType::Aligned) {
-        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(cfg.clone(), rollup_store.clone()));
+        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(
+            cfg.clone(),
+            rollup_store.clone(),
+        ));
     }
     task_set.spawn(start_block_producer(
         store.clone(),

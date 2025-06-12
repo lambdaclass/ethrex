@@ -135,7 +135,7 @@ pub enum ProofVerifierError {
     #[error("Failed with a SaveStateError: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Store error: {0}")]
-    StoreError(#[from] StoreError)
+    StoreError(#[from] StoreError),
 }
 
 #[derive(Debug, thiserror::Error)]

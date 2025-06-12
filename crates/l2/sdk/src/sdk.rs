@@ -1,15 +1,15 @@
 use std::{fs::read_to_string, path::Path, process::Command};
 
 use bytes::Bytes;
-use calldata::{encode_calldata};
+use calldata::encode_calldata;
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_common::types::GenericTransaction;
+use ethrex_l2_common::calldata::Value;
 use ethrex_rpc::clients::eth::WithdrawalProof;
 use ethrex_rpc::clients::eth::{
     errors::EthClientError, eth_sender::Overrides, EthClient, WrappedTransaction,
 };
 use ethrex_rpc::types::receipt::RpcReceipt;
-use ethrex_l2_common::calldata::Value;
 
 use keccak_hash::keccak;
 use secp256k1::SecretKey;

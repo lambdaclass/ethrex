@@ -12,7 +12,7 @@ use aligned_sdk::{
     verification_layer::{estimate_fee, get_nonce_from_batcher, submit},
 };
 use ethrex_common::{Address, U256};
-use ethrex_l2_common::{calldata::Value, prover::{ProverType}};
+use ethrex_l2_common::{calldata::Value, prover::ProverType};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;

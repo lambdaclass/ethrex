@@ -9,12 +9,12 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use ethrex_l2_common::{
+    calldata::Value,
     deposits::{compute_deposit_logs_hash, get_block_deposits},
     state_diff::{prepare_state_diff, StateDiff},
     withdrawals::{compute_withdrawals_merkle_root, get_block_withdrawals},
-    calldata::Value,
 };
-use ethrex_l2_sdk::calldata::{encode_calldata};
+use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};

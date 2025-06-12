@@ -1,7 +1,7 @@
 use ethrex_common::Bytes;
 use ethrex_common::{Address, H32, U256};
-use ethrex_rpc::clients::eth::errors::CalldataEncodeError;
 use ethrex_l2_common::calldata::Value;
+use ethrex_rpc::clients::eth::errors::CalldataEncodeError;
 use keccak_hash::keccak;
 
 fn parse_signature(signature: &str) -> Result<(String, Vec<String>), CalldataEncodeError> {

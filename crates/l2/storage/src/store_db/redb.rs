@@ -336,7 +336,12 @@ impl StoreEngineRollup for RedBStoreRollup {
         proof_type: ProverType,
         proof: BatchProof,
     ) -> Result<(), StoreError> {
-        self.write(BATCH_PROOFS_TABLE, (batch_number, proof_type.into()), proof_data).await
+        self.write(
+            BATCH_PROOFS_TABLE,
+            (batch_number, proof_type.into()),
+            proof_data,
+        )
+        .await
     }
 
     async fn get_proof_by_batch_and_type(

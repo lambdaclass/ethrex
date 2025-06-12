@@ -1,13 +1,13 @@
 use crate::calldata::{self};
 use bytes::Bytes;
 use ethrex_common::{Address, U256};
+use ethrex_l2_common::calldata::Value;
 use ethrex_rpc::{
     clients::{eth::errors::CalldataEncodeError, EthClientError, Overrides},
     EthClient,
 };
 use keccak_hash::H256;
 use secp256k1::SecretKey;
-use ethrex_l2_common::calldata::Value;
 
 #[derive(Debug)]
 pub struct L1ToL2TransactionData {
