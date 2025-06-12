@@ -1,3 +1,4 @@
+use alloy_primitives::FixedBytes;
 use reth_db::table::DupSort;
 use std::ops::Div;
 use std::path::Path;
@@ -99,7 +100,7 @@ use std::fmt::{self, Error, Formatter};
 
 tables! {
     table StorageTriesNodes<Key = Vec<u8>, Value = Vec<u8>>;
-    table StateTrieNodes<Key = Vec<u8>, Value = Vec<u8>>;
+    table StateTrieNodes<Key = FixedBytes<32>, Value = Vec<u8>>;
     table Receipts<Key = Vec<u8>, Value = Vec<u8>>;
     table TransactionLocations<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
     table Bodies<Key = Vec<u8>, Value = Vec<u8>>;
@@ -211,7 +212,9 @@ impl StoreEngine for MDBXFork {
 
             // store account updates
             for (node_hash, node_data) in update_batch.account_updates {
-                tx.put::<StateTrieNodes>(node_hash.as_ref().to_vec(), node_data)?;
+                let node_hash_bytes =
+                    FixedBytes::new(node_hash.as_ref().try_into().expect("should always fit"));
+                tx.put::<StateTrieNodes>(node_hash_bytes, node_data)?;
             }
 
             for (hashed_address, nodes) in update_batch.storage_updates {
