@@ -3,3 +3,9 @@ authors = ["lambdaclass"]
 language = "en"
 src = "docs"
 title = "Ethrex Documentation"
+
+[rust]
+edition = "2021"
+
+[output.html]
+git-repository-url = "https://github.com/lambdaclass/ethrex"
