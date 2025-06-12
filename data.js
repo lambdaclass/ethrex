@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749739852377,
+  "lastUpdate": 1749753752904,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12445,6 +12445,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184255504618,
             "range": "± 570372346",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0af7738c6eb0b0befa83deb31961569a9b7aa8c7",
+          "message": "chore(l1): drop unwraps from p2p crate (#3051)\n\n**Motivation**\n\nDissallow unwraps on l1.\n\n**Description**\n\nThis pr drops unwraps on crate p2p in networking. Test's unwraps remain.\nResolves partially #2879\n\n---------\n\nCo-authored-by: Marcos Nicolau <76252340+MarcosNicolau@users.noreply.github.com>",
+          "timestamp": "2025-06-12T17:47:22Z",
+          "tree_id": "854a795f9cf81d8703af8348349a49210cca26d5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0af7738c6eb0b0befa83deb31961569a9b7aa8c7"
+        },
+        "date": 1749753746737,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 186014871202,
+            "range": "± 631780266",
             "unit": "ns/iter"
           }
         ]
