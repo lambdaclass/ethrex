@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::{
     discv4::messages::FindNodeRequest,
     rlpx::{message::Message as RLPxMessage, p2p::Capability},
@@ -7,6 +5,7 @@ use crate::{
 };
 use ethrex_common::{H256, U256};
 use rand::random;
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{Mutex, mpsc};
 use tracing::debug;
@@ -165,12 +164,10 @@ impl KademliaTable {
     }
 
     pub fn pong_answered(&mut self, node_id: H256, pong_at: u64) {
-        let peer = self.get_by_node_id_mut(node_id);
-        if peer.is_none() {
+        let Some(peer) = self.get_by_node_id_mut(node_id) else {
             return;
-        }
+        };
 
-        let peer = peer.unwrap();
         peer.is_proven = true;
         peer.last_pong = pong_at;
         peer.last_ping_hash = None;
@@ -178,12 +175,10 @@ impl KademliaTable {
     }
 
     pub fn update_peer_ping(&mut self, node_id: H256, ping_hash: Option<H256>, ping_at: u64) {
-        let peer = self.get_by_node_id_mut(node_id);
-        if peer.is_none() {
+        let Some(peer) = self.get_by_node_id_mut(node_id) else {
             return;
-        }
+        };
 
-        let peer = peer.unwrap();
         peer.last_ping_hash = ping_hash;
         peer.last_ping = ping_at;
     }

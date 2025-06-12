@@ -70,7 +70,7 @@ impl SyncManager {
             syncer: Arc::new(Mutex::new(Syncer::dummy())),
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: Store::new("temp.db", ethrex_storage::EngineType::InMemory)
-                .expect("Failed to create test DB"),
+                .expect("Failed to start Storage Engine"),
         }
     }
 
