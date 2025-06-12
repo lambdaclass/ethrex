@@ -4,8 +4,8 @@ use crate::{
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, U256};
-use std::sync::Arc;
 use rand::random;
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{mpsc, Mutex};
 use tracing::debug;
