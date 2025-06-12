@@ -6,12 +6,13 @@ use ethrex_common::types::BlockNumber;
 use ethrex_common::H160;
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
-use ethrex_l2_sdk::wait_for_transaction_receipt;
+use ethrex_l2_sdk::{get_address_from_secret_key, wait_for_transaction_receipt};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient};
 use ethrex_rpc::types::receipt::RpcReceipt;
+use hex::FromHexError;
 use keccak_hash::{keccak, H256};
 use secp256k1::SecretKey;
-use std::fs::File;
+use std::fs::{read_to_string, File};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::{ops::Mul, str::FromStr, time::Duration};
@@ -36,19 +37,11 @@ const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
 
 const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 
-/// Test the full flow of depositing, transferring, and withdrawing funds
+const DEFAULT_PRIVATE_KEYS_FILE_PATH: &str = "../../test_data/private_keys_l1.txt";
+
+/// Test the full flow of depositing, depositing with contract call, transferring, and withdrawing funds
 /// from L1 to L2 and back.
-///
-/// 1. Check balances on L1 and L2
-/// 2. Deposit from L1 to L2
-/// 3. Check deposit receipt in L2
-/// 4. Check balances on L1 and L2
-/// 5. Transfer funds on L2
-/// 6. Check balances on L2
-/// 7. Withdraw funds from L2 to L1
-/// 8. Check balances on L1 and L2
-/// 9. Claim funds on L1
-/// 10. Check balances on L1 and L2
+
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     read_env_file_by_config();
@@ -57,18 +50,44 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let proposer_client = proposer_client();
     let rich_wallet_private_key = l1_rich_wallet_private_key();
     let bridge_address = common_bridge_address();
+    let deposit_recipient_address = Address::random();
+    let transfer_recipient_address = Address::random();
 
     test_deposit(
         &rich_wallet_private_key,
         bridge_address,
+        deposit_recipient_address,
         &eth_client,
         &proposer_client,
     )
     .await?;
 
-    test_transfer(&rich_wallet_private_key, &proposer_client).await?;
+    test_transfer(
+        &rich_wallet_private_key,
+        transfer_recipient_address,
+        &proposer_client,
+    )
+    .await?;
 
     test_n_withdraws(&rich_wallet_private_key, &eth_client, &proposer_client, 5).await?;
+
+    test_deposit_with_contract_call(deposit_recipient_address, &proposer_client, &eth_client)
+        .await?;
+
+    test_deposit_with_contract_call_revert(
+        deposit_recipient_address,
+        &proposer_client,
+        &eth_client,
+    )
+    .await?;
+
+    test_total_eth_l2(
+        deposit_recipient_address,
+        transfer_recipient_address,
+        &eth_client,
+        &proposer_client,
+    )
+    .await?;
 
     println!("l2_integration_test is done");
     Ok(())
@@ -77,22 +96,12 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 /// In this test we deploy a contract on L2 and call it from L1 using the CommonBridge contract.
 /// We call the contract by making a deposit from L1 to L2 with the recipient being the rich account.
 /// The deposit will trigger the call to the contract.
-#[tokio::test]
-async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error>> {
-    read_env_file_by_config();
-
-    let eth_client = eth_client();
-    let proposer_client = proposer_client();
+async fn test_deposit_with_contract_call(
+    deposit_recipient_address: Address,
+    proposer_client: &EthClient,
+    eth_client: &EthClient,
+) -> Result<(), Box<dyn std::error::Error>> {
     let rich_wallet_private_key = l1_rich_wallet_private_key();
-    let bridge_address = common_bridge_address();
-
-    test_deposit(
-        &rich_wallet_private_key,
-        bridge_address,
-        &eth_client,
-        &proposer_client,
-    )
-    .await?;
 
     // pragma solidity ^0.8.27;
     // contract Test {
@@ -104,7 +113,7 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
     let init_code = hex::decode("6080604052348015600e575f5ffd5b506101008061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063f15d140b14602a575b5f5ffd5b60406004803603810190603c919060a4565b6042565b005b807f9ec8254969d1974eac8c74afb0c03595b4ffe0a1d7ad8a7f82ed31b9c854259160405160405180910390a250565b5f5ffd5b5f819050919050565b6086816076565b8114608f575f5ffd5b50565b5f81359050609e81607f565b92915050565b5f6020828403121560b65760b56072565b5b5f60c1848285016092565b9150509291505056fea26469706673582212206f6d360696127c56e2d2a456f3db4a61e30eae0ea9b3af3c900c81ea062e8fe464736f6c634300081c0033")?;
 
     let deployed_contract_address =
-        test_deploy(&init_code, &rich_wallet_private_key, &proposer_client).await?;
+        test_deploy(&init_code, &rich_wallet_private_key, proposer_client).await?;
 
     let number_to_emit = U256::from(424242);
     let calldata_to_contract: Bytes =
@@ -117,8 +126,9 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
         deployed_contract_address,
         calldata_to_contract,
         &rich_wallet_private_key,
-        &proposer_client,
-        &eth_client,
+        proposer_client,
+        eth_client,
+        deposit_recipient_address,
     )
     .await?;
 
@@ -163,33 +173,22 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
 
 /// Test the deployment of a contract on L2 and call it from L1 using the CommonBridge contract.
 /// The call to the contract should revert but the deposit should be successful.
-#[tokio::test]
-async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error::Error>> {
-    read_env_file_by_config();
-
-    let eth_client = eth_client();
-    let proposer_client = proposer_client();
-    let rich_wallet_private_key = l1_rich_wallet_private_key();
-    let bridge_address = common_bridge_address();
-
-    test_deposit(
-        &rich_wallet_private_key,
-        bridge_address,
-        &eth_client,
-        &proposer_client,
-    )
-    .await?;
-
+async fn test_deposit_with_contract_call_revert(
+    deposit_recipient_address: Address,
+    proposer_client: &EthClient,
+    eth_client: &EthClient,
+) -> Result<(), Box<dyn std::error::Error>> {
     // pragma solidity ^0.8.27;
     // contract RevertTest {
     //     function revert_call() public {
     //         revert("Reverted");
     //     }
     // }
+    let rich_wallet_private_key = l1_rich_wallet_private_key();
     let init_code = hex::decode("6080604052348015600e575f5ffd5b506101138061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c806311ebce9114602a575b5f5ffd5b60306032565b005b6040517f08c379a000000000000000000000000000000000000000000000000000000000815260040160629060c1565b60405180910390fd5b5f82825260208201905092915050565b7f52657665727465640000000000000000000000000000000000000000000000005f82015250565b5f60ad600883606b565b915060b682607b565b602082019050919050565b5f6020820190508181035f83015260d68160a3565b905091905056fea2646970667358221220903f571921ce472f979989f9135b8637314b68e080fd70d0da6ede87ad8b5bd564736f6c634300081c0033")?;
 
     let deployed_contract_address =
-        test_deploy(&init_code, &rich_wallet_private_key, &proposer_client).await?;
+        test_deploy(&init_code, &rich_wallet_private_key, proposer_client).await?;
 
     let calldata_to_contract: Bytes = calldata::encode_calldata("revert_call()", &[])?.into();
 
@@ -197,8 +196,9 @@ async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error
         deployed_contract_address,
         calldata_to_contract,
         &rich_wallet_private_key,
-        &proposer_client,
-        &eth_client,
+        proposer_client,
+        eth_client,
+        deposit_recipient_address,
     )
     .await?;
 
@@ -208,16 +208,16 @@ async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error
 async fn test_deposit(
     depositor_private_key: &SecretKey,
     bridge_address: Address,
+    deposit_recipient_address: Address,
     eth_client: &EthClient,
     proposer_client: &EthClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Fetching initial balances on L1 and L2");
 
     let depositor = ethrex_l2_sdk::get_address_from_secret_key(depositor_private_key)?;
-    let deposit_recipient_address = Address::random();
     let deposit_value = std::env::var("INTEGRATION_TEST_DEPOSIT_VALUE")
         .map(|value| U256::from_dec_str(&value).expect("Invalid deposit value"))
-        .unwrap_or(U256::from(100000000000000000000u128));
+        .unwrap_or(U256::from(1000000000000000000000u128));
 
     let depositor_l1_initial_balance = eth_client
         .get_balance(depositor, BlockByNumber::Latest)
@@ -282,7 +282,7 @@ async fn test_deposit(
 
     println!("Waiting for L2 deposit tx receipt");
 
-    let deposit_tx_receipt = wait_for_l2_deposit_receipt(
+    let _ = wait_for_l2_deposit_receipt(
         deposit_tx_receipt.block_info.block_number,
         eth_client,
         proposer_client,
@@ -299,15 +299,12 @@ async fn test_deposit(
         "Deposit recipient L2 balance didn't increase as expected after deposit"
     );
 
-    let deposit_fees = get_fees_details_l2(deposit_tx_receipt, proposer_client).await;
-
     let fee_vault_balance_after_deposit = proposer_client
         .get_balance(fees_vault(), BlockByNumber::Latest)
         .await?;
 
     assert_eq!(
-        fee_vault_balance_after_deposit,
-        fee_vault_balance_before_deposit + deposit_fees.recoverable_fees,
+        fee_vault_balance_after_deposit, fee_vault_balance_before_deposit,
         "Fee vault balance should not change after deposit"
     );
 
@@ -316,11 +313,11 @@ async fn test_deposit(
 
 async fn test_transfer(
     transferer_private_key: &SecretKey,
+    transfer_recipient_address: Address,
     proposer_client: &EthClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Transferring funds on L2");
 
-    let transfer_recipient_address = Address::random();
     let transferer_address = ethrex_l2_sdk::get_address_from_secret_key(transferer_private_key)?;
     let transfer_value = std::env::var("INTEGRATION_TEST_TRANSFER_VALUE")
         .map(|value| U256::from_dec_str(&value).expect("Invalid transfer value"))
@@ -410,7 +407,7 @@ async fn test_n_withdraws(
     proposer_client: &EthClient,
     n: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // 7. Withdraw funds from L2 to L1
+    // Withdraw funds from L2 to L1
     let withdrawer_address = ethrex_l2_sdk::get_address_from_secret_key(withdrawer_private_key)?;
     let withdraw_value = std::env::var("INTEGRATION_TEST_WITHDRAW_VALUE")
         .map(|value| U256::from_dec_str(&value).expect("Invalid withdraw value"))
@@ -599,6 +596,63 @@ async fn test_n_withdraws(
     Ok(())
 }
 
+async fn test_total_eth_l2(
+    deposit_recipient_address: Address,
+    transfer_recipient_address: Address,
+    eth_client: &EthClient,
+    proposer_client: &EthClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Checking total ETH on L2");
+
+    println!("Fetching rich accounts balance on L2");
+    let rich_accounts_balance = get_rich_accounts_balance(proposer_client)
+        .await
+        .expect("Failed to get rich accounts balance");
+
+    println!("Rich accounts balance: {rich_accounts_balance}");
+
+    println!("Getting deposit and transfer recipient balances on L2");
+
+    let deposit_recipient_balance = proposer_client
+        .get_balance(deposit_recipient_address, BlockByNumber::Latest)
+        .await?;
+
+    let transfer_recipient_balance = proposer_client
+        .get_balance(transfer_recipient_address, BlockByNumber::Latest)
+        .await?;
+
+    println!("Getting coinbase balance");
+
+    let coinbase_balance = proposer_client
+        .get_balance(fees_vault(), BlockByNumber::Latest)
+        .await?;
+
+    println!("Coinbase balance: {coinbase_balance}");
+
+    let total_eth_on_l2 = rich_accounts_balance
+        + deposit_recipient_balance
+        + transfer_recipient_balance
+        + coinbase_balance;
+
+    println!("Total ETH on L2: {rich_accounts_balance} + {deposit_recipient_balance} + {transfer_recipient_balance} + {coinbase_balance} = {total_eth_on_l2}");
+
+    println!("Checking locked ETH on CommonBridge");
+
+    let bridge_address = common_bridge_address();
+    let bridge_locked_eth = eth_client
+        .get_balance(bridge_address, BlockByNumber::Latest)
+        .await?;
+
+    println!("Bridge locked ETH: {bridge_locked_eth}");
+
+    assert!(
+        total_eth_on_l2 <= bridge_locked_eth,
+        "Total ETH on L2 ({total_eth_on_l2}) is greater than bridge locked ETH ({bridge_locked_eth})"
+    );
+
+    Ok(())
+}
+
 async fn test_deploy(
     init_code: &[u8],
     deployer_private_key: &SecretKey,
@@ -668,11 +722,11 @@ async fn test_call_to_contract_with_deposit(
     caller_private_key: &SecretKey,
     proposer_client: &EthClient,
     eth_client: &EthClient,
+    deposit_recipient_address: Address,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let caller_address = ethrex_l2_sdk::get_address_from_secret_key(caller_private_key)
         .expect("Failed to get address");
 
-    let deposit_recipient_address = Address::random();
     let deposit_value = std::env::var("INTEGRATION_TEST_DEPOSIT_VALUE")
         .map(|value| U256::from_dec_str(&value).expect("Invalid deposit value"))
         .unwrap_or(U256::from(100000000000000000000u128));
@@ -724,7 +778,7 @@ async fn test_call_to_contract_with_deposit(
 
     println!("Waiting for L1 to L2 transaction receipt on L2");
 
-    let call_receipt = wait_for_l2_deposit_receipt(
+    let _ = wait_for_l2_deposit_receipt(
         l1_to_l2_tx_receipt.block_info.block_number,
         eth_client,
         proposer_client,
@@ -760,12 +814,9 @@ async fn test_call_to_contract_with_deposit(
         .get_balance(fees_vault(), BlockByNumber::Latest)
         .await?;
 
-    let call_fees = get_fees_details_l2(call_receipt, proposer_client).await;
-
     assert_eq!(
-        fee_vault_balance_after_call,
-        fee_vault_balance_before_call + call_fees.recoverable_fees,
-        "Fee vault balance didn't increase as expected after call"
+        fee_vault_balance_after_call, fee_vault_balance_before_call,
+        "Fee vault balance increased unexpectedly after call"
     );
 
     let deployed_contract_balance_after_call = proposer_client
@@ -898,5 +949,53 @@ pub fn read_env_file_by_config() {
             }
             None => continue,
         };
+    }
+}
+
+async fn get_rich_accounts_balance(
+    proposer_client: &EthClient,
+) -> Result<U256, Box<dyn std::error::Error>> {
+    let mut total_balance = U256::zero();
+    let private_keys_file_path = private_keys_file_path();
+
+    let pks = read_to_string(private_keys_file_path)?;
+    let private_keys: Vec<String> = pks
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.trim().to_string())
+        .collect();
+
+    for pk in private_keys.iter() {
+        let secret_key = parse_private_key(pk)?;
+        let address = get_address_from_secret_key(&secret_key)?;
+        let get_balance = proposer_client
+            .get_balance(address, BlockByNumber::Latest)
+            .await?;
+        total_balance += get_balance;
+    }
+    Ok(total_balance)
+}
+
+fn private_keys_file_path() -> PathBuf {
+    match std::env::var("ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH") {
+        Ok(path) => PathBuf::from(path),
+        Err(_) => {
+            println!(
+                "ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH not set, using default: {}",
+                DEFAULT_PRIVATE_KEYS_FILE_PATH
+            );
+            PathBuf::from(DEFAULT_PRIVATE_KEYS_FILE_PATH)
+        }
+    }
+}
+
+pub fn parse_private_key(s: &str) -> Result<SecretKey, Box<dyn std::error::Error>> {
+    Ok(SecretKey::from_slice(&parse_hex(s)?)?)
+}
+
+pub fn parse_hex(s: &str) -> Result<Bytes, FromHexError> {
+    match s.strip_prefix("0x") {
+        Some(s) => hex::decode(s).map(Into::into),
+        None => hex::decode(s).map(Into::into),
     }
 }
