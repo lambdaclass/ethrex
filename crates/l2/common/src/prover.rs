@@ -1,4 +1,4 @@
-use ethrex_common::{H256, U256};
+use ethrex_common::H256;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
 
@@ -20,7 +20,6 @@ impl From<ProverType> for u32 {
             ProverType::Exec => 0,
             ProverType::RISC0 => 1,
             ProverType::SP1 => 2,
-            ProverType::Pico => 3,
             ProverType::Aligned => 4,
             ProverType::TDX => 5,
         }

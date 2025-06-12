@@ -1,10 +1,6 @@
 use crate::sequencer::errors::ProverServerError;
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_latest_sent_batch;
-use crate::utils::prover::proving_systems::{BatchProof, ProverType};
-use crate::utils::prover::save_state::{
-    batch_number_has_state_file, write_state, StateFileType, StateType,
-};
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
@@ -16,6 +12,7 @@ use ethrex_common::{
     types::{blobs_bundle, Block},
     Address,
 };
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;

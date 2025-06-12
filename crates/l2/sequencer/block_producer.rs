@@ -46,7 +46,7 @@ impl BlockProducerState {
     pub fn new(
         config: &BlockProducerConfig,
         store: Store,
-        rollup_store: StoreRollup,
+        rollup_store: Store,
         blockchain: Arc<Blockchain>,
     ) -> Self {
         let BlockProducerConfig {
@@ -87,7 +87,7 @@ impl BlockProducer {
         cfg: SequencerConfig,
     ) -> Result<(), BlockProducerError> {
         let state =
-            BlockProducerState::new(&cfg.block_producer, store, rollup_store, blockchain);
+            BlockProducerState::new(&cfg.block_producer, store, blockchain);
         let mut block_producer = BlockProducer::start(state);
         block_producer
             .cast(InMessage::Produce)
