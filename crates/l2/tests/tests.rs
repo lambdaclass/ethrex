@@ -881,7 +881,7 @@ pub fn read_env_file_by_config() {
                 if std::env::vars().any(|(k, _)| k == key) {
                     continue;
                 }
-                std::env::set_var(key, value)
+                unsafe { std::env::set_var(key, value) }
             }
             None => continue,
         };
