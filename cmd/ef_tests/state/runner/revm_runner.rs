@@ -474,7 +474,7 @@ pub async fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunn
                     levm_cache,
                 )) => {
                     ef_test_report_fork.register_post_state_validation_failure(
-                        transaction_report,
+                        *transaction_report,
                         reason,
                         *vector,
                         levm_cache,
@@ -536,13 +536,13 @@ pub async fn _ensure_post_state_revm(
                 Some(expected_exception) => {
                     let error_reason = format!("Expected exception: {expected_exception:?}");
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
-                        ExecutionReport {
+                        Box::new(ExecutionReport {
                             result: TxResult::Success,
                             gas_used: 42,
                             gas_refunded: 42,
                             logs: vec![],
                             output: Bytes::new(),
-                        },
+                        }),
                         //TODO: This is not a TransactionReport because it is REVM
                         error_reason,
                         HashMap::new(),
@@ -558,13 +558,13 @@ pub async fn _ensure_post_state_revm(
                     if expected_post_state_root_hash != pos_state_root {
                         println!("Post-state root mismatch",);
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
-                            ExecutionReport {
+                            Box::new(ExecutionReport {
                                 result: TxResult::Success,
                                 gas_used: 42,
                                 gas_refunded: 42,
                                 logs: vec![],
                                 output: Bytes::new(),
-                            },
+                            }),
                             //TODO: This is not a TransactionReport because it is REVM
                             "Post-state root mismatch".to_string(),
                             HashMap::new(),

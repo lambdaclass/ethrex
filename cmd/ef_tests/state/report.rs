@@ -526,7 +526,11 @@ impl EFTestReportForkResult {
     ) {
         self.failed_vectors.insert(
             failed_vector,
-            EFTestRunnerError::FailedToEnsurePostState(transaction_report, reason, levm_cache),
+            EFTestRunnerError::FailedToEnsurePostState(
+                Box::new(transaction_report),
+                reason,
+                levm_cache,
+            ),
         );
     }
 
