@@ -155,7 +155,7 @@ impl<'a> VM<'a> {
                 callframe.gas_used = callframe.gas_limit;
 
                 return Ok(ContextResult {
-                    result: TxResult::Revert(error.into()),
+                    result: TxResult::Revert(error),
                     gas_used: callframe.gas_used,
                     output: Bytes::new(),
                 });

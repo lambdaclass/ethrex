@@ -180,7 +180,7 @@ impl CallFrame {
             .ok_or(ExceptionalHalt::OutOfGas)?;
 
         if self.gas_used > self.gas_limit {
-            return Err(ExceptionalHalt::OutOfGas.into());
+            return Err(ExceptionalHalt::OutOfGas);
         }
 
         Ok(())
