@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749754908217,
+  "lastUpdate": 1749755839037,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12535,6 +12535,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182389978254,
             "range": "± 405131030",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c23e7838d524feb9624cdf1e5766b9f6e96c50a3",
+          "message": "fix(l2): add validium check for blobs in OnChainProposer (#3101)\n\n**Motivation**\n\nIf the L2 is running as a rollup (non-validium) the sequencer is able to\nnot publish blobs anyway, and viceversa. This check enforces the blob\npolicy depending whether the contract was deployed for a rollup or\nvalidium L2.",
+          "timestamp": "2025-06-12T18:19:56Z",
+          "tree_id": "8d41a6cf7d5f68c97ddcb80b187971536f6ce4b1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c23e7838d524feb9624cdf1e5766b9f6e96c50a3"
+        },
+        "date": 1749755831659,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181695162663,
+            "range": "± 364094487",
             "unit": "ns/iter"
           }
         ]
