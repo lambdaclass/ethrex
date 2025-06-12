@@ -68,7 +68,7 @@ impl Default for ProverClientOptions {
     fn default() -> Self {
         Self {
             http_addr: "127.0.0.1".to_string(),
-            http_port: 3901,
+            http_port: 3900,
             proving_time_ms: 5000,
             log_level: Level::INFO,
             aligned: false,
