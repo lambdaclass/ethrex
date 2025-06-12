@@ -14,10 +14,9 @@ use crate::UpdateBatch;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Index, Receipt, Transaction,
+    payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash,
+    BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
 };
-use ethrex_common::types::{Account, AccountInfo};
 use ethrex_common::Address;
 use ethrex_common::H160;
 use ethrex_rlp::decode::RLPDecode;
@@ -33,6 +32,7 @@ use libmdbx::{
 use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
 use std::fmt::{Debug, Formatter};
+use std::mem;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -1384,20 +1384,14 @@ pub struct AccountInfoLogEntry {
     pub info: AccountInfo,
     pub previous_info: AccountInfo,
 }
-pub struct StorageWriteLogEntry {
-    pub address: AccountAddress,
-    pub slot: H256,
-    pub previous_value: U256,
-    pub new_value: U256,
-}
-pub struct StorageWriteLog(pub Vec<StorageWriteLogEntry>);
 pub struct AccountInfoWriteLog(pub Vec<AccountInfoLogEntry>);
+
+const SIZE_OF_ACCOUNT_INFO_LOG_ENTRY: usize = mem::size_of::<AccountInfoLogEntry>();
 
 impl Encodable for AccountInfoWriteLog {
     type Encoded = Vec<u8>;
     fn encode(self) -> Self::Encoded {
-        let mut encoded =
-            Vec::with_capacity(8 + std::mem::size_of::<AccountInfoLogEntry>() * self.0.len());
+        let mut encoded = Vec::with_capacity(8 + SIZE_OF_ACCOUNT_INFO_LOG_ENTRY * self.0.len());
         encoded.extend(self.0.len().to_be_bytes());
         for entry in self.0.into_iter() {
             encoded.extend(entry.address.encode());
@@ -1441,21 +1435,20 @@ impl Decodable for AccountInfoWriteLog {
             anyhow::bail!("Invalid length for AccountInfoLog");
         }
         let len = u64::from_be_bytes(b[0..8].try_into()?);
+        if b.len() != 8 + (len as usize * SIZE_OF_ACCOUNT_INFO_LOG_ENTRY) {
+            anyhow::bail!("Invalid length for AccountInfoLog entries");
+        }
         let mut entries = Vec::with_capacity(len as usize);
-        let mut offset = 8;
-        for _ in 0..len {
-            if b.len() < offset + 72 {
-                anyhow::bail!("Invalid length for AccountInfoLogEntry");
-            }
+        for offset in (8..b.len()).step_by(SIZE_OF_ACCOUNT_INFO_LOG_ENTRY) {
             let address = AccountAddress::decode(&b[offset..offset + 20])?;
             let info = AccountInfo::decode(&b[offset + 20..offset + 52])?;
-            let previous_info = AccountInfo::decode(&b[offset + 52..offset + 72])?;
+            let previous_info =
+                AccountInfo::decode(&b[offset + 52..offset + SIZE_OF_ACCOUNT_INFO_LOG_ENTRY])?;
             entries.push(AccountInfoLogEntry {
                 address,
                 info,
                 previous_info,
             });
-            offset += 72;
         }
         Ok(AccountInfoWriteLog(entries))
     }
@@ -1466,9 +1459,62 @@ table!(
     ( AccountsStateWriteLog ) BlockNumHash => AccountInfoWriteLog
 );
 
+/* TODO: use this instead of the tuple version below
+pub struct StorageWriteLogEntry {
+    pub address: AccountAddress,
+    pub slot: H256,
+    pub previous_value: U256,
+    pub new_value: U256,
+}
+pub struct StorageWriteLog(pub Vec<StorageWriteLogEntry>);
+*/
+pub struct StorageStateWriteLogVal(Vec<(AccountAddress, H256, U256, U256)>);
+
+// implemente Encode and Decode for StorageStateWriteLogVal
+impl Encodable for StorageStateWriteLogVal {
+    type Encoded = Vec<u8>;
+
+    fn encode(self) -> Self::Encoded {
+        let mut encoded = Vec::with_capacity(8 + 32 * self.0.len());
+        encoded.extend(self.0.len().to_be_bytes());
+        for (address, slot, previous_value, new_value) in self.0.into_iter() {
+            let slot_encoded: [u8; 32] = slot.as_bytes().try_into().unwrap_or_default();
+
+            encoded.extend(address.encode());
+            encoded.extend(slot_encoded);
+            encoded.extend(previous_value.to_big_endian());
+            encoded.extend(new_value.to_big_endian());
+        }
+        encoded
+    }
+}
+
+impl Decodable for StorageStateWriteLogVal {
+    fn decode(b: &[u8]) -> anyhow::Result<Self> {
+        if b.len() < 8 {
+            anyhow::bail!("Invalid length for StorageStateWriteLogVal");
+        }
+        let len = u64::from_be_bytes(b[0..8].try_into()?);
+        let mut entries = Vec::with_capacity(len as usize);
+        let mut offset = 8;
+        for _ in 0..len {
+            if b.len() < offset + 72 {
+                anyhow::bail!("Invalid length for StorageStateWriteLogVal entry");
+            }
+            let address = AccountAddress::decode(&b[offset..offset + 20])?;
+            let slot = H256::decode(&b[offset + 20..offset + 52])?;
+            let previous_value = U256::from_big_endian(&b[offset + 52..offset + 84]);
+            let new_value = U256::from_big_endian(&b[offset + 84..offset + 116]);
+            entries.push((address, slot, previous_value, new_value));
+            offset += 116;
+        }
+        Ok(StorageStateWriteLogVal(entries))
+    }
+}
+
 table!(
     /// Storage write log table.
-    ( StorageStateWriteLog ) BlockNumHash => Vec<(AccountAddress, H256, U256, U256)>
+    ( StorageStateWriteLog ) BlockNumHash => StorageStateWriteLogVal
 );
 
 impl Encodable for BlockNumHash {
