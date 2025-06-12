@@ -5,7 +5,7 @@ use crate::{
         init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
     },
     l2::options::Options,
-    utils::{set_datadir, store_node_config_file, NodeConfigFile},
+    utils::{parse_private_key, set_datadir, store_node_config_file, NodeConfigFile},
     DEFAULT_L2_DATADIR,
 };
 use clap::Subcommand;
@@ -15,6 +15,8 @@ use ethrex_common::{
 };
 use ethrex_l2::SequencerConfig;
 use ethrex_l2_common::state_diff::StateDiff;
+use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_l2_sdk::{get_address_from_secret_key, wait_for_transaction_receipt};
 use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
     clients::{beacon::BeaconClient, eth::BlockByNumber},
@@ -27,6 +29,7 @@ use eyre::OptionExt;
 use itertools::Itertools;
 use keccak_hash::keccak;
 use reqwest::Url;
+use secp256k1::SecretKey;
 use std::{
     fs::{create_dir_all, read_dir},
     future::IntoFuture,
@@ -80,6 +83,24 @@ pub enum Command {
         store_path: PathBuf,
         #[arg(short = 'c', long, help = "Address of the L2 proposer coinbase")]
         coinbase: Address,
+    },
+    #[command(about = "Reverts unverified batches.")]
+    RevertBatch {
+        #[arg(help = "ID of the batch to revert to")]
+        batch: u64,
+        #[arg(help = "The address of the OnChainProposer contract")]
+        contract_address: Address,
+        #[arg(long, value_parser = parse_private_key, env = "PRIVATE_KEY", help = "The private key of the owner. Assumed to have sequencing permission.")]
+        private_key: SecretKey,
+        #[arg(
+            long,
+            default_value = "http://localhost:8545",
+            env = "RPC_URL",
+            help = "URL of the L1 RPC"
+        )]
+        rpc_url: Url,
+        #[command(flatten)]
+        node_opts: NodeOptions,
     },
 }
 
@@ -430,7 +451,78 @@ impl Command {
                     }
                 }
             }
+            Command::RevertBatch {
+                batch,
+                contract_address,
+                rpc_url,
+                private_key,
+                node_opts,
+            } => {
+                let data_dir = set_datadir(&node_opts.datadir);
+                let rollup_store_dir = data_dir.clone() + "/rollup_store";
+
+                let client = EthClient::new(rpc_url.as_str())?;
+                info!("Pausing OnChainProposer...");
+                call_contract(&client, &private_key, contract_address, "pause()", vec![]).await?;
+                info!("Doing revert on OnChainProposer...");
+                call_contract(
+                    &client,
+                    &private_key,
+                    contract_address,
+                    "revertBatch(uint256)",
+                    vec![Value::Uint(batch.into())],
+                )
+                .await?;
+                info!("Updating store...");
+                let rollup_store = init_rollup_store(&rollup_store_dir).await;
+                let last_kept_block = rollup_store
+                    .get_block_numbers_by_batch(batch)
+                    .await?
+                    .and_then(|kept_blocks| kept_blocks.iter().max().cloned())
+                    .unwrap_or(0);
+
+                let network = get_network(&node_opts);
+                let genesis = network.get_genesis();
+                let store = init_store(&data_dir, genesis).await;
+
+                rollup_store.revert_to_batch(batch).await?;
+                store.update_latest_block_number(last_kept_block).await?;
+
+                let mut block_to_delete = last_kept_block + 1;
+                while store
+                    .get_canonical_block_hash(block_to_delete)
+                    .await?
+                    .is_some()
+                {
+                    store.remove_block(block_to_delete).await?;
+                    block_to_delete += 1;
+                }
+
+                info!("Unpausing OnChainProposer...");
+                call_contract(&client, &private_key, contract_address, "unpause()", vec![]).await?;
+            }
         }
         Ok(())
     }
+}
+
+async fn call_contract(
+    client: &EthClient,
+    private_key: &SecretKey,
+    to: Address,
+    signature: &str,
+    parameters: Vec<Value>,
+) -> eyre::Result<()> {
+    let calldata = encode_calldata(signature, &parameters)?.into();
+    let from = get_address_from_secret_key(private_key)?;
+    let tx = client
+        .build_eip1559_transaction(to, from, calldata, Default::default())
+        .await?;
+
+    let tx_hash = client.send_eip1559_transaction(&tx, private_key).await?;
+
+    info!("TxID: {tx_hash:#x}",);
+
+    wait_for_transaction_receipt(tx_hash, client, 100).await?;
+    Ok(())
 }

@@ -459,7 +459,7 @@ contract OnChainProposer is
         uint256 batchNumber
     ) external override onlySequencer whenPaused {
         require(batchNumber >= lastVerifiedBatch, "OnChainProposer: can't revert verified batch");
-        require(batchNumber >= lastCommittedBatch, "OnChainProposer: no batches are being reverted");
+        require(batchNumber < lastCommittedBatch, "OnChainProposer: no batches are being reverted");
 
         // Remove old batches
         for (uint256 i = batchNumber; i < lastCommittedBatch; i++) {
@@ -478,12 +478,12 @@ contract OnChainProposer is
     ) internal virtual override onlyOwner {}
 
     /// @inheritdoc IOnChainProposer
-    function pause() external override onlyOwner whenNotPaused {
+    function pause() external override onlyOwner {
         _pause();
     }
 
     /// @inheritdoc IOnChainProposer
-    function unpause() external override onlyOwner whenPaused {
+    function unpause() external override onlyOwner {
         _unpause();
     }
 }

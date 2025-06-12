@@ -17,6 +17,7 @@ ethrex-rlp.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
 ethrex-l2 = { workspace = true, optional = true }
 ethrex-l2-common = { workspace = true, optional = true }
+ethrex-sdk = { workspace = true, optional = true }
 
 bytes.workspace = true
 hex.workspace = true
@@ -70,6 +71,7 @@ blst = ["ethrex-vm/blst"]
 l2 = [
   "dep:ethrex-l2",
   "dep:ethrex-l2-common",
+  "dep:ethrex-sdk",
   "ethrex-vm/l2",
   "ethrex-blockchain/l2",
   "ethrex-rpc/l2",

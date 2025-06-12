@@ -3655,6 +3655,7 @@ dependencies = [
  "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-rpc",
+ "ethrex-sdk",
  "ethrex-storage",
  "ethrex-storage-rollup",
  "ethrex-vm",
