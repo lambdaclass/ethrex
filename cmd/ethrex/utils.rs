@@ -87,7 +87,7 @@ pub fn read_genesis_file(genesis_file_path: &Path) -> Result<Genesis, ChainError
     let genesis = decode::genesis_file(genesis_file).expect("Failed to decode genesis file");
     let _fork = genesis
         .config
-        .get_fork(genesis.timestamp, genesis.difficulty)
+        .get_fork(genesis.timestamp)
         .map_err(|error| ChainError::Genesis(error.to_string()))?;
     Ok(genesis)
 }

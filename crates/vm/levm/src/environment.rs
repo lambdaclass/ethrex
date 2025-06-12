@@ -63,7 +63,7 @@ impl EVMConfig {
     }
 
     pub fn new_from_chain_config(chain_config: &ChainConfig, block_header: &BlockHeader) -> Self {
-        let fork = chain_config.fork(block_header.timestamp, block_header.difficulty);
+        let fork = chain_config.fork(block_header.timestamp);
 
         let blob_schedule = chain_config
             .get_fork_blob_schedule(block_header.timestamp)
