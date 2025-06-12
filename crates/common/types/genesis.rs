@@ -220,15 +220,9 @@ impl ChainConfig {
             Fork::Cancun
         } else if self.is_shanghai_activated(block_timestamp) {
             Fork::Shanghai
-        } else if self.terminal_total_difficulty_passed
-            || self.terminal_total_difficulty >= Some(58750000000000000000000)
-        {
-            // If the TTDP flag is true or the TTD was passed then we are in Paris
-            Fork::Paris
         } else {
-            // It's pre-merge, return a pre-merge fork
-            Fork::GrayGlacier
-        }
+            Fork::Paris
+        } 
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
