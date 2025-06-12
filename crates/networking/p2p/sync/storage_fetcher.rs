@@ -96,11 +96,13 @@ async fn fetch_storage_batch(
     large_storage_sender: Sender<Vec<LargeStorageRequest>>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
+    let batch_first = batch.first().ok_or(SyncError::InvalidRangeReceived)?;
+    let batch_last = batch.last().ok_or(SyncError::InvalidRangeReceived)?;
     debug!(
         "Requesting storage ranges for addresses {}..{}",
-        batch.first().unwrap().0,
-        batch.last().unwrap().0
+        batch_first.0, batch_last.0
     );
+
     let (batch_hahses, batch_roots) = batch.clone().into_iter().unzip();
     if let Some((mut keys, mut values, incomplete)) = peers
         .request_storage_ranges(state_root, batch_roots, batch_hahses, H256::zero())
@@ -110,13 +112,15 @@ async fn fetch_storage_batch(
         // Handle incomplete ranges
         if incomplete {
             // An incomplete range cannot be empty
-            let (last_keys, last_values) = (keys.pop().unwrap(), values.pop().unwrap());
+            let last_keys = keys.pop().ok_or(SyncError::InvalidRangeReceived)?;
+            let last_values = values.pop().ok_or(SyncError::InvalidRangeReceived)?;
             // If only one incomplete range is returned then it must belong to a trie that is too big to fit into one request
             // We will handle this large trie separately
             if keys.is_empty() {
                 debug!("Large storage trie encountered, handling separately");
                 let (account_hash, storage_root) = batch.remove(0);
-                let last_key = *last_keys.last().unwrap();
+                let lk = last_keys.last().ok_or(SyncError::InvalidRangeReceived)?;
+                let last_key = *lk;
                 // Store downloaded range
                 store
                     .write_snapshot_storage_batch(account_hash, last_keys, last_values)
@@ -230,7 +234,10 @@ async fn fetch_large_storage(
         .await
     {
         // Update next batch's start
-        request.last_key = *keys.last().unwrap();
+        let last_key = keys
+            .last()
+            .ok_or(SyncError::Trie(ethrex_trie::TrieError::InconsistentTree))?;
+        request.last_key = *last_key;
         // Write storage range to snapshot
         store
             .write_snapshot_storage_batch(request.account_hash, keys, values)
