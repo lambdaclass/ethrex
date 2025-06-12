@@ -107,7 +107,7 @@ fn exception_is_expected(
         ) = (exception, returned_error)
         {
             return match_alternative_revm_exception_msg(expected_error_msg, error_msg)
-                || (expected_error_msg == error_msg);
+                || (expected_error_msg.to_lowercase() == error_msg.to_lowercase());
         }
         matches!(
             (exception, &returned_error),
@@ -157,15 +157,35 @@ fn exception_is_expected(
 }
 
 fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &String) -> bool {
-    (msg == "empty blobs" && expected_msg == "Type 3 transaction without blobs")
-        || (msg == "blob versioned hashes not supported"
-            && expected_msg == "Type 3 transactions are not supported before the Cancun fork")
-        || (msg == "blob version not supported" && expected_msg == "Invalid blob versioned hash")
-        || (msg == "gas price is less than basefee"
-            && expected_msg == "Insufficient max fee per gas")
-        || (msg == "blob gas price is greater than max fee per blob gas"
-            && expected_msg == "Insufficient max fee per blob gas")
-        || (msg.starts_with("lack of funds ") && expected_msg == "Insufficient account funds")
+    matches!(
+        (msg.as_str(), expected_msg.as_str()),
+        (
+            "reject transactions from senders with deployed code",
+            "Sender account shouldn't be a contract"
+        ) | (
+            "call gas cost exceeds the gas limit",
+            "Intrinsic gas too low"
+        ) | ("gas floor exceeds the gas limit", "Intrinsic gas too low")
+            | ("empty blobs", "Type 3 transaction without blobs")
+            | (
+                "blob versioned hashes not supported",
+                "Type 3 transactions are not supported before the Cancun fork"
+            )
+            | ("blob version not supported", "Invalid blob versioned hash")
+            | (
+                "gas price is less than basefee",
+                "Insufficient max fee per gas"
+            )
+            | (
+                "blob gas price is greater than max fee per blob gas",
+                "Insufficient max fee per blob gas"
+            )
+            | (
+                "priority fee is greater than max fee",
+                "Priority fee is greater than max fee per gas"
+            )
+            | ("create initcode size limit", "Initcode size exceeded")
+    ) || (msg.starts_with("lack of funds") && expected_msg == "Insufficient account funds")
 }
 /// Tests the rlp decoding of a block
 fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {

@@ -38,7 +38,7 @@ where
                     )
                 }
                 "TransactionException.INTRINSIC_GAS_TOO_LOW" => {
-                    BlockChainExpectedException::TxtException("INTRINSIC_GAS_TOO_LOW".to_string())
+                    BlockChainExpectedException::TxtException("Intrinsic gas too low".to_string())
                 }
                 "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
                     BlockChainExpectedException::TxtException(
@@ -50,7 +50,7 @@ where
                 ),
                 "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS" => {
                     BlockChainExpectedException::TxtException(
-                        "priority fee is greater than max fee per gas".to_string(),
+                        "Priority fee is greater than max fee per gas".to_string(),
                     )
                 }
                 "TransactionException.GAS_ALLOWANCE_EXCEEDED" => {
