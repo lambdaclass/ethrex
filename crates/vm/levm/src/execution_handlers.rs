@@ -142,9 +142,7 @@ impl<'a> VM<'a> {
 
     pub fn handle_opcode_result(&mut self) -> Result<ContextResult, VMError> {
         // On successful create check output validity
-        if (self.is_create() && self.current_call_frame()?.depth == 0)
-            || self.current_call_frame()?.create_op_called
-        {
+        if self.current_call_frame()?.is_create {
             let contract_code = self.current_call_frame_mut()?.output.clone();
             let code_length = contract_code.len();
 

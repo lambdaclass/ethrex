@@ -59,7 +59,7 @@ impl Hook for DefaultHook {
         validate_sufficient_max_fee_per_gas(vm)?;
 
         // (5) INITCODE_SIZE_EXCEEDED
-        if vm.is_create() {
+        if vm.is_create()? {
             validate_init_code_size(vm)?;
         }
 
@@ -141,7 +141,7 @@ impl Hook for DefaultHook {
 
 pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
     // In a create if Tx was reverted the account won't even exist by this point.
-    if !vm.is_create() {
+    if !vm.is_create()? {
         vm.decrease_account_balance(
             vm.current_call_frame()?.to,
             vm.current_call_frame()?.msg_value,
@@ -329,7 +329,7 @@ pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     // it won't reach this point.
     // For more information, please check the following thread:
     // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
-    if vm.is_create() {
+    if vm.is_create()? {
         return Err(TxValidationError::Type3TxContractCreation.into());
     }
 
@@ -355,7 +355,7 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     // it won't reach this point.
     // For more information, please check the following thread:
     // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
-    if vm.is_create() {
+    if vm.is_create()? {
         return Err(TxValidationError::Type4TxContractCreation.into());
     }
 
@@ -448,7 +448,7 @@ pub fn deduct_caller(
 /// Note that non-privileged is a concept of L2 and in L1 every transaction is non-privileged
 pub fn transfer_value_if_applicable(vm: &mut VM<'_>) -> Result<(), VMError> {
     // Transfer value only in Call transactions that are not privileged.
-    if !vm.is_create() && !vm.env.is_privileged {
+    if !vm.is_create()? && !vm.env.is_privileged {
         vm.increase_account_balance(
             vm.current_call_frame()?.to,
             vm.current_call_frame()?.msg_value,
@@ -460,7 +460,7 @@ pub fn transfer_value_if_applicable(vm: &mut VM<'_>) -> Result<(), VMError> {
 /// Sets bytecode and code_address to CallFrame
 pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     // Get bytecode and code_address for assigning those values to the callframe.
-    let (bytecode, code_address) = if vm.is_create() {
+    let (bytecode, code_address) = if vm.is_create()? {
         // Here bytecode is the calldata and the code_address is just the created contract address.
         let calldata = std::mem::take(&mut vm.current_call_frame_mut()?.calldata);
         (calldata, vm.current_call_frame()?.to)
