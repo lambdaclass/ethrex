@@ -102,13 +102,7 @@ impl MDBXFork {
         tx.create_db(Some("InvalidAncestor"), DatabaseFlags::default())
             .unwrap();
         tx.commit().unwrap();
-        let env_account_trie = DatabaseEnv::open(
-            Path::new(&format!("{}/account_trie", path)),
-            reth_db::DatabaseEnvKind::RW,
-            Default::default(),
-        )
-        .unwrap();
-        let state_trie = Arc::new(MDBXTrieDB::new(env_account_trie));
+        let state_trie = Arc::new(MDBXTrieDB::new(env.clone()));
 
         Ok(Self { env, state_trie })
     }
@@ -235,20 +229,22 @@ impl StoreEngine for MDBXFork {
 
             // store account updates
             for (node_hash, node_data) in update_batch.account_updates {
+                tx.delete::<StateTrieNodes>(node_hash.as_ref().to_vec(), None)?;
                 tx.put::<StateTrieNodes>(node_hash.as_ref().to_vec(), node_data)?;
             }
 
             for (hashed_address, nodes) in update_batch.storage_updates {
                 for (node_hash, node_data) in nodes {
                     let key = (hashed_address, node_hash).encode_to_vec();
+                    tx.delete::<StateTrieNodes>(key.clone(), None)?;
                     tx.put::<StorageTriesNodes>(key, node_data)?;
                 }
             }
+
             for block in update_batch.blocks {
                 // store block
                 let number = block.header.number;
                 let hash = block.hash();
-
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     tx.put::<TransactionLocations>(
                         transaction.compute_hash().0.encode_to_vec(),
@@ -257,37 +253,14 @@ impl StoreEngine for MDBXFork {
                 }
 
                 tx.put::<Bodies>(hash.encode_to_vec(), block.body.encode_to_vec())?;
-
                 tx.put::<Headers>(hash.encode_to_vec(), block.header.encode_to_vec())?;
-
                 tx.put::<BlockNumbers>(hash.encode_to_vec(), number)?;
             }
-            /* TODO: ADD indexed chunk in order to use a cursor
-            for (block_hash, receipts) in update_batch.receipts {
-                // store receipts
-
-                let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
-                for mut entries in
-                    receipts
-                        .into_iter()
-                        .enumerate()
-                        .filter_map(|(index, receipt)| {
-                            let key = (block_hash, index as u64).into();
-                            let receipt_rlp = receipt.encode_to_vec();
-                            IndexedChunk::from::<Receipts>(key, &receipt_rlp)
-                        })
-                {
-                    key_values.append(&mut entries);
-                }
-                let mut cursor = tx.cursor_write::<Receipts>()?;
-                for (key, value) in key_values {
-                    cursor.upsert(key, value)?;
-                }
-
-            } */
 
             for (block_hash, receipts) in update_batch.receipts {
                 // store receipts
+                // TODO: the non-fork uses indexed chunk here to use a cursor.
+                // consider implementing it too
                 for (index, receipt) in receipts.into_iter().enumerate() {
                     let receipt_bytes = receipt.encode_to_vec();
                     let receipt_db_key = (block_hash, index).encode_to_vec();

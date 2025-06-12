@@ -12,13 +12,12 @@ use reth_db::transaction::DbTx;
 use reth_db::transaction::DbTxMut;
 use reth_db::{Database, DatabaseEnv};
 use reth_db_api::table::Table as RethTable;
-use reth_libmdbx::DatabaseFlags;
 
 use crate::store_db::mdbx_fork::StateTrieNodes;
 use crate::store_db::mdbx_fork::StorageTriesNodes;
 
 pub struct MDBXTrieDB<T: RethTable> {
-    db: DatabaseEnv,
+    db: Arc<DatabaseEnv>,
     phantom: PhantomData<T>,
 }
 
@@ -26,11 +25,7 @@ impl<T> MDBXTrieDB<T>
 where
     T: RethTable,
 {
-    pub fn new(db: DatabaseEnv) -> Self {
-        let tx = db.begin_rw_txn().unwrap();
-        tx.create_db(Some(T::NAME), DatabaseFlags::default())
-            .unwrap();
-        tx.commit().unwrap();
+    pub fn new(db: Arc<DatabaseEnv>) -> Self {
         Self {
             db,
             phantom: PhantomData,
