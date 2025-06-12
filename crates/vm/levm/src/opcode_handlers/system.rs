@@ -655,8 +655,8 @@ impl<'a> VM<'a> {
             None => calculate_create_address(deployer, deployer_nonce)?,
         };
 
-        // Touch new contract
-        self.substate.touched_accounts.insert(new_address);
+        // Add new contract to accessed addresses
+        self.substate.accessed_addresses.insert(new_address);
 
         // Log CREATE in tracer
         let call_type = match salt {
