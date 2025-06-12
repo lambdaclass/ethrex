@@ -304,14 +304,14 @@ impl Subcommand {
                 }
 
                 let network = &opts.network;
-                let genesis = network.get_genesis()?;
+                let genesis = network.get_genesis();
                 import_blocks(&path, &opts.datadir, genesis, opts.evm).await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
-                let genesis = Network::from(genesis_path).get_genesis()?;
+                let genesis = Network::from(genesis_path).get_genesis();
                 let state_root = genesis.compute_state_root();
                 println!("{:#x}", state_root);
             }

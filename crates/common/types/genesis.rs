@@ -4,7 +4,11 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs::File,
+    io::BufReader,
+};
 
 use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
@@ -42,6 +46,28 @@ pub struct Genesis {
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub excess_blob_gas: Option<u64>,
     pub requests_hash: Option<H256>,
+}
+
+impl TryFrom<BufReader<File>> for Genesis {
+    type Error = String;
+
+    fn try_from(genesis_reader: BufReader<File>) -> Result<Self, Self::Error> {
+        let genesis: Genesis =
+            serde_json::from_reader(genesis_reader).map_err(|m| m.to_string())?;
+        let chain_config = genesis.config;
+        let is_post_merge = chain_config.is_prague_activated(genesis.timestamp)
+            || chain_config.is_cancun_activated(genesis.timestamp)
+            || chain_config.is_shanghai_activated(genesis.timestamp);
+        let is_at_paris = chain_config.merge_netsplit_block == Some(0)
+            || chain_config.terminal_total_difficulty_passed
+            || genesis.difficulty.is_zero();
+        if !is_post_merge && !is_at_paris {
+            return Err(String::from(
+                "Fork not supported. Only post-merge networks are supported.",
+            ));
+        }
+        Ok(genesis)
+    }
 }
 
 #[allow(unused)]
