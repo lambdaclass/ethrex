@@ -54,14 +54,7 @@ impl TryFrom<BufReader<File>> for Genesis {
     fn try_from(genesis_reader: BufReader<File>) -> Result<Self, Self::Error> {
         let genesis: Genesis =
             serde_json::from_reader(genesis_reader).map_err(|m| m.to_string())?;
-        let chain_config = genesis.config;
-        let is_post_merge = chain_config.is_prague_activated(genesis.timestamp)
-            || chain_config.is_cancun_activated(genesis.timestamp)
-            || chain_config.is_shanghai_activated(genesis.timestamp);
-        let is_at_paris = chain_config.merge_netsplit_block == Some(0)
-            || chain_config.terminal_total_difficulty_passed
-            || genesis.difficulty.is_zero();
-        if !is_post_merge && !is_at_paris {
+        if !genesis.is_post_merge(){
             return Err(String::from(
                 "Fork not supported. Only post-merge networks are supported.",
             ));
@@ -397,6 +390,18 @@ impl Genesis {
             )
         });
         Trie::compute_hash_from_unsorted_iter(iter)
+    }
+
+    fn is_post_merge(&self) -> bool{
+        let chain_config = self.config;
+        let is_post_paris = chain_config.is_prague_activated(self.timestamp)
+            || chain_config.is_cancun_activated(self.timestamp)
+            || chain_config.is_shanghai_activated(self.timestamp);
+        let is_at_paris = chain_config.merge_netsplit_block == Some(0)
+            || chain_config.terminal_total_difficulty_passed
+            || self.difficulty.is_zero();
+        let is_post_merge = is_post_paris || is_at_paris;
+        is_post_merge
     }
 }
 #[cfg(test)]
