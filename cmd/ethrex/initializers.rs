@@ -284,7 +284,7 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
 pub fn get_signer(data_dir: &str) -> SigningKey {
     // Get the signer from the default directory, create one if the key file is not present.
     let key_path = Path::new(data_dir).join("node.key");
-    let signer = match fs::read(key_path.clone()) {
+    match fs::read(key_path.clone()) {
         Ok(content) => SigningKey::from_slice(&content).expect("Signing key could not be created."),
         Err(_) => {
             info!(
@@ -299,8 +299,7 @@ pub fn get_signer(data_dir: &str) -> SigningKey {
                 .expect("Newly created signer could not be saved to disk.");
             signer
         }
-    };
-    signer
+    }
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SigningKey) -> Node {

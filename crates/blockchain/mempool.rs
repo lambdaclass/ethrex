@@ -100,9 +100,9 @@ impl Mempool {
 
             // Filter by tip & base_fee
             if let Some(min_tip) = filter.min_tip {
-                if !tx
+                if tx
                     .effective_gas_tip(filter.base_fee)
-                    .is_some_and(|tip| tip >= min_tip)
+                    .is_none_or(|tip| tip < min_tip)
                 {
                     return false;
                 }
@@ -115,7 +115,7 @@ impl Mempool {
 
             // Filter by blob gas fee
             if let (true, Some(blob_fee)) = (is_blob_tx, filter.blob_fee) {
-                if !tx.max_fee_per_blob_gas().is_some_and(|fee| fee >= blob_fee) {
+                if tx.max_fee_per_blob_gas().is_none_or(|fee| fee < blob_fee) {
                     return false;
                 }
             }
