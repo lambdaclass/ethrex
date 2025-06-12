@@ -16,7 +16,7 @@ use ethrex_common::{
     types::{blobs_bundle, Block},
     Address,
 };
-use ethrex_rpc::clients::eth::EthClient;
+use ethrex_l2_sdk::client::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;

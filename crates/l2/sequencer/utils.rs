@@ -1,9 +1,6 @@
 use aligned_sdk::common::types::Network;
 use ethrex_common::{Address, H160, H256};
-use ethrex_rpc::{
-    clients::{eth::WrappedTransaction, EthClientError, Overrides},
-    EthClient,
-};
+use ethrex_l2_sdk::client::{eth::WrappedTransaction, EthClient, EthClientError, Overrides};
 use ethrex_storage_rollup::StoreRollup;
 use keccak_hash::keccak;
 use rand::Rng;

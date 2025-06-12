@@ -11,6 +11,10 @@ mod tracing;
 
 pub mod types;
 pub mod utils;
-pub use clients::{EngineClient, EthClient};
 
+pub use engine::{
+    fork_choice::ForkChoiceUpdatedV3,
+    payload::{GetPayloadV4Request, NewPayloadV4Request},
+    ExchangeCapabilitiesRequest,
+};
 pub use rpc::start_api;

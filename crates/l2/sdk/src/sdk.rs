@@ -4,15 +4,13 @@ use bytes::Bytes;
 use calldata::{encode_calldata, Value};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_common::types::GenericTransaction;
-use ethrex_rpc::clients::eth::WithdrawalProof;
-use ethrex_rpc::clients::eth::{
-    errors::EthClientError, eth_sender::Overrides, EthClient, WrappedTransaction,
-};
-use ethrex_rpc::types::receipt::RpcReceipt;
+use ethrex_rpc::types::{receipt::RpcReceipt, withdrawal::WithdrawalProof};
 
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use crate::client::{EthClient, EthClientError, Overrides, WrappedTransaction};
 
 pub mod calldata;
 pub mod client;
@@ -485,7 +483,7 @@ async fn create2_deploy(
         )
         .await?;
 
-    let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(deploy_tx);
+    let mut wrapped_tx = WrappedTransaction::EIP1559(deploy_tx);
     eth_client
         .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer_address)
         .await?;

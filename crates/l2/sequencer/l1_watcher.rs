@@ -4,11 +4,9 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{types::Transaction, H160};
+use ethrex_l2_sdk::client::{EthClient, Overrides};
 use ethrex_rpc::types::receipt::RpcLog;
-use ethrex_rpc::{
-    clients::eth::{eth_sender::Overrides, EthClient},
-    types::receipt::RpcLogInfo,
-};
+use ethrex_rpc::types::receipt::RpcLogInfo;
 use ethrex_storage::Store;
 use keccak_hash::keccak;
 use std::{cmp::min, sync::Arc};

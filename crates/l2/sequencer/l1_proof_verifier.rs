@@ -4,7 +4,7 @@ use aligned_sdk::{
 };
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_rpc::EthClient;
+use ethrex_l2_sdk::client::EthClient;
 use secp256k1::SecretKey;
 use tracing::{error, info};
 
