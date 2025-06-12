@@ -125,7 +125,7 @@ jobs:
           else
               echo "All percentage are 100%."
           fi
-          
+
       - name: Check EF-TESTS status is 100%
         run: |
           cd cmd/ef_tests/state
