@@ -115,12 +115,12 @@ pub async fn get_needed_proof_types(
 
 pub async fn get_latest_sent_batch(
     needed_proof_types: Vec<ProverType>,
-    rollup_storage: &StoreRollup,
+    rollup_store: &StoreRollup,
     eth_client: &EthClient,
     on_chain_proposer_address: Address,
 ) -> Result<u64, SequencerError> {
     if needed_proof_types.contains(&ProverType::Aligned) {
-        Ok(rollup_storage.get_lastest_sent_batch_proof().await?)
+        Ok(rollup_store.get_lastest_sent_batch_proof().await?)
     } else {
         Ok(eth_client
             .get_last_verified_batch(on_chain_proposer_address)

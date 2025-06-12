@@ -4,7 +4,7 @@ use ethrex_common::{
     types::{AccountUpdate, Blob, BlockNumber},
     H256,
 };
-use ethrex_l2_common::prover::ProofType;
+use ethrex_l2_common::prover::ProverType;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use redb::{AccessGuard, Database, Key, TableDefinition, Value};
@@ -38,7 +38,7 @@ const LAST_SENT_BATCH_PROOF: TableDefinition<u64, u64> = TableDefinition::new("L
 const ACCOUNT_UPDATES_BY_BLOCK_NUMBER: TableDefinition<BlockNumber, Vec<u8>> =
     TableDefinition::new("AccountUpdatesByBlockNumber");
 
-const BATCH_PROOF_BY_BATCH_AND_TYPE: TableDefinition<(u64, ProofType), Vec<u8>> =
+const BATCH_PROOF_BY_BATCH_AND_TYPE: TableDefinition<(u64, u32), Vec<u8>> =
     TableDefinition::new("BatchProofByBatchAndType");
 
 #[derive(Debug)]
@@ -333,20 +333,19 @@ impl StoreEngineRollup for RedBStoreRollup {
     async fn store_account_updates_by_block_number(
         &self,
         batch_number: u64,
-        proof_type: ProofType,
+        proof_type: ProverType,
         proof: BatchProof,
     ) -> Result<(), StoreError> {
-        let key = (batch_number, proof_type as u8);
-        self.write(BATCH_PROOFS_TABLE, key, proof_data).await
+        self.write(BATCH_PROOFS_TABLE, (batch_number, proof_type.into()), proof_data).await
     }
 
     async fn get_proof_by_batch_and_type(
         &self,
         batch_number: u64,
-        proof_type: ProofType,
+        proof_type: ProverType,
     ) -> Result<Option<BatchProof>, StoreError> {
         let maybe_guard = self
-            .read(BATCH_PROOFS_TABLE, (batch_number, proof_type))
+            .read(BATCH_PROOFS_TABLE, (batch_number, proof_type.into()))
             .await?;
         Ok(maybe_guard.map(|guard| guard.value().to_vec()))
     }

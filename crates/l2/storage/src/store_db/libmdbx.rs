@@ -8,7 +8,7 @@ use ethrex_common::{
     types::{batch::Batch, AccountUpdate, Blob, BlockNumber},
     H256,
 };
-use ethrex_l2_common::prover::{BatchProof, ProofType};
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use libmdbx::{
@@ -297,21 +297,21 @@ impl StoreEngineRollup for Store {
     async fn store_proof_by_batch_and_type(
         &self,
         batch_number: u64,
-        proof_type: ProofType,
+        proof_type: ProverType,
         proof: BatchProof,
     ) -> Result<(), StoreError> {
         let serialized = bincode::serialize(&proof)?;
-        self.write::<BatchProofs>((batch_number, proof_type), serialized)
+        self.write::<BatchProofs>((batch_number, proof_type.into()), serialized)
             .await
     }
 
     async fn get_proof_by_batch_and_type(
         &self,
         batch_number: u64,
-        proof_type: ProofType,
+        proof_type: ProverType,
     ) -> Result<Option<BatchProof>, StoreError> {
-        self.read::<BatchProofs>((batch_number, proof_type))
-            .await
+        self.read::<BatchProofs>((batch_number, proof_type.into()))
+            .await?
             .map(|s| bincode::deserialize(&s))
             .transpose()
             .map_err(StoreError::from)
@@ -364,7 +364,7 @@ table!(
 );
 
 table!(
-    /// Stores batch proofs, keyed by (BatchNumber, ProofType as u8).
+    /// Stores batch proofs, keyed by (BatchNumber, ProverType as u8).
     /// Value is the bincode-encoded BatchProof data.
-    (BatchProofs) (u64, ProofType) => Vec<u8>
+    (BatchProofs) (u64, u32) => Vec<u8>
 );

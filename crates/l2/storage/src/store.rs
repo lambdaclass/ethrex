@@ -10,6 +10,7 @@ use ethrex_common::{
     types::{batch::Batch, AccountUpdate, Blob, BlobsBundle, BlockNumber},
     H256,
 };
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_storage::error::StoreError;
 use tracing::info;
 
@@ -307,6 +308,27 @@ impl Store {
     ) -> Result<(), StoreError> {
         self.engine
             .store_account_updates_by_block_number(block_number, account_updates)
+            .await
+    }
+
+    pub async fn store_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+        proof: BatchProof,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .store_proof_by_batch_and_type(batch_number, proof_type, proof)
+            .await
+    }
+
+    pub async fn get_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<Option<BatchProof>, StoreError> {
+        self.engine
+            .get_proof_by_batch_and_type(batch_number, proof_type)
             .await
     }
 }

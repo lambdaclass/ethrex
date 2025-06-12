@@ -391,7 +391,7 @@ async fn handle_connection(
             batch_number,
             batch_proof,
         }) => {
-            if let Err(e) = handle_submit(&mut stream, batch_number, batch_proof).await {
+            if let Err(e) = handle_submit(state, &mut stream, batch_number, batch_proof).await {
                 error!("Failed to handle ProofSubmit: {e}");
             }
         }
@@ -450,22 +450,33 @@ async fn handle_request(
 }
 
 async fn handle_submit(
+    state: &ProofCoordinatorState,
     stream: &mut TcpStream,
     batch_number: u64,
     batch_proof: BatchProof,
 ) -> Result<(), ProverServerError> {
     info!("ProofSubmit received for batch number: {batch_number}");
 
-    // Check if we have the proof for that ProverType
-    todo!();
-    // if batch_number_has_state_file(
-    //     StateFileType::BatchProof(batch_proof.prover_type()),
-    //     batch_number,
-    // )? {
-    //     debug!("Already known proof. Skipping");
-    // } else {
-    //     write_state(batch_number, &StateType::BatchProof(batch_proof))?;
-    // }
+    // Check if we have a proof for this batch and prover type
+    let prover_type = batch_proof.prover_type();
+    if state
+        .rollup_store
+        .get_proof_by_batch_and_type(batch_number, prover_type)
+        .await?
+        .is_some()
+    {
+        info!(
+            ?batch_number,
+            ?prover_type,
+            "A proof was received for a batch and type that is already stored"
+        );
+    } else {
+        // If not, store it
+        state
+            .rollup_store
+            .store_proof_by_batch_and_type(batch_number, prover_type, batch_proof)
+            .await?;
+    }
 
     let response = ProofData::proof_submit_ack(batch_number);
 
