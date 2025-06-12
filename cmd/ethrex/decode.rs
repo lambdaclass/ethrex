@@ -35,7 +35,7 @@ pub fn chain_file(file: File) -> Result<Vec<Block>, Error> {
 
 pub fn genesis_file(file: File) -> Result<Genesis, ChainError> {
     let genesis_reader = BufReader::new(file);
-    Genesis::try_from(genesis_reader).map_err(|m| ChainError::Genesis(m))
+    Genesis::try_from(genesis_reader).map_err(ChainError::Genesis)
 }
 
 #[cfg(test)]
