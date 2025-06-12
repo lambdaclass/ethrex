@@ -13,6 +13,7 @@ use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::mdbx_fork::MDBXTrieDB;
 use crate::trie_db::mdbx_fork::MDBXTrieWithFixedKey;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
+use crate::UpdateBatch;
 use alloy_primitives::B256;
 use anyhow::Result;
 use bytes::Bytes;
@@ -227,6 +228,82 @@ impl MDBXFork {
 
 #[async_trait::async_trait]
 impl StoreEngine for MDBXFork {
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        let db = self.env.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
+            let tx = db.tx_mut()?;
+
+            // store account updates
+            for (node_hash, node_data) in update_batch.account_updates {
+                tx.put::<StateTrieNodes>(node_hash.as_ref().to_vec(), node_data)?;
+            }
+
+            for (hashed_address, nodes) in update_batch.storage_updates {
+                for (node_hash, node_data) in nodes {
+                    let key = (hashed_address, node_hash).encode_to_vec();
+                    tx.put::<StorageTriesNodes>(key, node_data)?;
+                }
+            }
+            for block in update_batch.blocks {
+                // store block
+                let number = block.header.number;
+                let hash = block.hash();
+
+                for (index, transaction) in block.body.transactions.iter().enumerate() {
+                    tx.put::<TransactionLocations>(
+                        transaction.compute_hash().0.encode_to_vec(),
+                        (number, hash, index as u64).encode_to_vec(),
+                    )?;
+                }
+
+                tx.put::<Bodies>(hash.encode_to_vec(), block.body.encode_to_vec())?;
+
+                tx.put::<Headers>(hash.encode_to_vec(), block.header.encode_to_vec())?;
+
+                tx.put::<BlockNumbers>(hash.encode_to_vec(), number)?;
+            }
+            /* TODO: ADD indexed chunk in order to use a cursor
+            for (block_hash, receipts) in update_batch.receipts {
+                // store receipts
+
+                let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
+                for mut entries in
+                    receipts
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(index, receipt)| {
+                            let key = (block_hash, index as u64).into();
+                            let receipt_rlp = receipt.encode_to_vec();
+                            IndexedChunk::from::<Receipts>(key, &receipt_rlp)
+                        })
+                {
+                    key_values.append(&mut entries);
+                }
+                let mut cursor = tx.cursor_write::<Receipts>()?;
+                for (key, value) in key_values {
+                    cursor.upsert(key, value)?;
+                }
+
+            } */
+
+            let mut cursor = tx.cursor_write::<Receipts>()?;
+            for (block_hash, receipts) in update_batch.receipts {
+                // store receipts
+                let tx = db.tx_mut().unwrap();
+                for (index, receipt) in receipts.into_iter().enumerate() {
+                    let receipt_bytes = receipt.encode_to_vec();
+                    let receipt_db_key = (block_hash, index).encode_to_vec();
+                    tx.put::<Receipts>(receipt_db_key, receipt_bytes).unwrap();
+                }
+            }
+
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
     async fn add_block_header(
         &self,
         block_hash: BlockHash,
@@ -838,6 +915,8 @@ impl StoreEngine for MDBXFork {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
+        //  TODO: ADD indexed chunk in order to use a cursor
+
         // Using write batch here crashes libmdbx at some point due to a max size limit.
         let db = self.env.clone();
 
@@ -854,15 +933,6 @@ impl StoreEngine for MDBXFork {
         .await
         .unwrap();
 
-        Ok(())
-    }
-    async fn add_receipts_for_blocks(
-        &self,
-        receipts: std::collections::HashMap<BlockHash, Vec<Receipt>>,
-    ) -> Result<(), StoreError> {
-        for (block_hash, receipts) in receipts {
-            self.add_receipts(block_hash, receipts).await.unwrap();
-        }
         Ok(())
     }
 
