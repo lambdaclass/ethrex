@@ -1,10 +1,11 @@
 use crate::{
     call_frame::CallFrame,
-    errors::{InternalError, OpcodeResult, VMError},
+    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
 };
 use ethrex_common::{types::Fork, U256};
+use ExceptionalHalt::OutOfBounds;
 
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32
@@ -33,7 +34,7 @@ impl<'a> VM<'a> {
     pub fn op_push0(&mut self) -> Result<OpcodeResult, VMError> {
         // [EIP-3855] - PUSH0 is only available from SHANGHAI
         if self.env.config.fork < Fork::Shanghai {
-            return Err(VMError::InvalidOpcode);
+            return Err(ExceptionalHalt::InvalidOpcode.into());
         }
         let current_call_frame = self.current_call_frame_mut()?;
 
@@ -53,12 +54,10 @@ fn read_bytcode_slice(current_call_frame: &CallFrame, n_bytes: usize) -> Result<
         // to read. We only want to read the data _NEXT_ to that
         // bytecode
         .checked_add(1)
-        .ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow,
-        ))?;
+        .ok_or(InternalError::Overflow)?;
 
     Ok(current_call_frame
         .bytecode
-        .get(pc_offset..pc_offset.checked_add(n_bytes).ok_or(VMError::OutOfBounds)?)
+        .get(pc_offset..pc_offset.checked_add(n_bytes).ok_or(OutOfBounds)?)
         .unwrap_or_default())
 }

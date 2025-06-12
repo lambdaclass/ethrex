@@ -159,7 +159,7 @@ down-metrics: ## 🛑 Shuts down the metrics' containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} down
 
 down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
-	pkill -f ethrex || exit 0
+	pkill -x ethrex || exit 0
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
