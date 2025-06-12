@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749754864272,
+  "lastUpdate": 1749754908217,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12505,6 +12505,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183827659028,
             "range": "± 273783206",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "811903f14678adc3a2338919f7c89f841b370a5e",
+          "message": "chore(l2): remove pico (#3125)\n\n**Motivation**\n\nWe no longer want to support pico.\n\n**Description**\n\nNote that this PR changes the arguments of the verifyBatch contract\nfunction, so the contract and the sequencer should be upgraded\nsimultaneously.",
+          "timestamp": "2025-06-12T18:07:57Z",
+          "tree_id": "fccb9eb16a6328003c0e8037ad0b9884dd454324",
+          "url": "https://github.com/lambdaclass/ethrex/commit/811903f14678adc3a2338919f7c89f841b370a5e"
+        },
+        "date": 1749754902887,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182389978254,
+            "range": "± 405131030",
             "unit": "ns/iter"
           }
         ]
