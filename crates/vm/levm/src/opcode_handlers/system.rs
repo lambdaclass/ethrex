@@ -819,7 +819,7 @@ impl<'a> VM<'a> {
         let executed_call_frame = self.pop_call_frame()?;
 
         // Here happens the interaction between child (executed) and parent (caller) callframe.
-        if executed_call_frame.create_op_called {
+        if executed_call_frame.is_create {
             self.handle_return_create(executed_call_frame, ctx_result)?;
         } else {
             self.handle_return_call(executed_call_frame, ctx_result)?;
@@ -908,7 +908,7 @@ impl<'a> VM<'a> {
             }
             TxResult::Revert(err) => {
                 // If revert we have to copy the return_data
-                if err == VMError::RevertOpcode {
+                if err.is_revert_opcode() {
                     parent_call_frame.sub_return_data = ctx_result.output.clone();
                 }
 

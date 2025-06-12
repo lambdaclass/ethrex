@@ -22,6 +22,11 @@ impl VMError {
     pub fn should_propagate(&self) -> bool {
         matches!(self, VMError::Internal(_))
     }
+
+    /// Error triggered by revert opcode. This error doesn't consume all gas left in context.
+    pub fn is_revert_opcode(&self) -> bool {
+        matches!(self, VMError::RevertOpcode)
+    }
 }
 
 impl From<DatabaseError> for VMError {

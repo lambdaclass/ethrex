@@ -2,7 +2,7 @@ use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
-    errors::{ContextResult, ExecutionReport, OpcodeResult, VMError},
+    errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
     hooks::{
         backup_hook::BackupHook,
         hook::{get_hooks, Hook},
@@ -14,7 +14,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{
     tracing::CallType,
-    types::{Log, Transaction, TxKind},
+    types::{Log, Transaction},
     Address, H256, U256,
 };
 use std::{
@@ -82,7 +82,7 @@ impl<'a> VM<'a> {
     pub fn setup_vm(&mut self) -> Result<(), VMError> {
         self.initialize_substate()?;
 
-        let callee = self.get_tx_callee()?;
+        let (callee, is_create) = self.get_tx_callee()?;
 
         let initial_call_frame = CallFrame::new(
             self.env.origin,
@@ -95,14 +95,14 @@ impl<'a> VM<'a> {
             self.env.gas_limit,
             0,
             true,
-            false,
+            is_create,
             U256::zero(),
             0,
         );
 
         self.call_frames.push(initial_call_frame);
 
-        let call_type = if self.is_create() {
+        let call_type = if is_create {
             CallType::CREATE
         } else {
             CallType::CALL
@@ -133,7 +133,7 @@ impl<'a> VM<'a> {
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame_mut()?.call_frame_backup.clear();
 
-        if self.is_create() {
+        if self.is_create()? {
             // Create contract, reverting the Tx if address is already occupied.
             if let Some(context_result) = self.handle_create_transaction()? {
                 let report = self.finalize_execution(context_result)?;
@@ -199,8 +199,8 @@ impl<'a> VM<'a> {
     }
 
     /// True if external transaction is a contract creation
-    pub fn is_create(&self) -> bool {
-        matches!(self.tx.to(), TxKind::Create)
+    pub fn is_create(&self) -> Result<bool, InternalError> {
+        Ok(self.current_call_frame()?.is_create)
     }
 
     /// Executes without making changes to the cache.
