@@ -147,23 +147,22 @@ impl StoreEngine for Store {
                 .map_err(StoreError::LibmdbxError)?;
             let mut previous_account_infos = Vec::with_capacity(account_updates.len());
             let mut previous_storage_values = Vec::with_capacity(account_updates.len());
-            for block_updates in account_updates.iter() {
+            for (block_updates, block) in account_updates.iter().zip(update_batch.blocks.iter()) {
+                let mut previous_account_infos_for_block = Vec::with_capacity(block_updates.len());
+                let mut previous_storage_values_for_block = Vec::with_capacity(block_updates.len());
                 for update in block_updates.iter() {
                     let key = AccountAddress(update.address);
-                    let current_account_info = if update.removed {
+                    let current_account_info = cursor
+                        .seek_exact(key)
+                        .map_err(StoreError::LibmdbxError)?
+                        .map(|elem| elem.1 .0);
+                    if update.removed {
                         if cursor
                             .seek_exact(key)
                             .map_err(StoreError::LibmdbxError)?
                             .is_some()
                         {
-                            let current: Option<AccountInfo> = cursor
-                                .current()
-                                .map_err(StoreError::LibmdbxError)?
-                                .map(|elem| elem.1 .0);
                             cursor.delete_current().map_err(StoreError::LibmdbxError)?;
-                            current
-                        } else {
-                            None
                         }
                     } else if let Some(info_update) = &update.info {
                         let value = (
@@ -172,18 +171,10 @@ impl StoreEngine for Store {
                             info_update.nonce,
                         )
                             .into();
-                        let current: Option<AccountInfo> = cursor
-                            .current()
-                            .map_err(StoreError::LibmdbxError)?
-                            .map(|elem| elem.1 .0);
-
                         cursor
                             .upsert(key, value)
                             .map_err(StoreError::LibmdbxError)?;
-                        current
-                    } else {
-                        None
-                    };
+                    }
 
                     let mut current_storage_values = Vec::with_capacity(update.added_storage.len());
                     for (slot, value) in update.added_storage.iter() {
@@ -191,33 +182,37 @@ impl StoreEngine for Store {
 
                         // we will accumulate the previous storage values as we change them
 
-                        let current_value = if !value.is_zero() {
-                            let current = storage_cursor
-                                .current()
-                                .map_err(StoreError::LibmdbxError)?
-                                .map(|elem| elem.1);
+                        let current_value = storage_cursor
+                            .seek_exact(key)
+                            .map_err(StoreError::LibmdbxError)?
+                            .map(|elem| elem.1);
+                        if !value.is_zero() {
                             storage_cursor
                                 .upsert(key, (*value).into())
                                 .map_err(StoreError::LibmdbxError)?;
-                            current
-                        } else if let Some(current_data) = storage_cursor
+                        } else if let Some(_current_data) = storage_cursor
                             .seek_exact(key)
                             .map_err(StoreError::LibmdbxError)?
                         {
                             storage_cursor
                                 .delete_current()
                                 .map_err(StoreError::LibmdbxError)?;
-                            current_data.1.into()
-                        } else {
-                            None
-                        };
+                        }
                         current_storage_values.push((slot, current_value));
                     }
+                    // we will accumulate the previous storage values as we change them
+                    previous_storage_values_for_block.push(current_storage_values);
+                    // we will accumulate the previous account infos as we change them
+                    previous_account_infos_for_block.push((update.address, current_account_info));
                 }
-                previous_account_infos.push((update.address, current_account_info));
-                previous_storage_values.push(current_storage_values);
+                // we will accumulate the previous account infos as we change them
+                previous_account_infos.push(previous_account_infos_for_block);
+                // we will accumulate the previous storage values as we change them
+                previous_storage_values.push(previous_storage_values_for_block);
             }
 
+            let mut account_info_log = AccountInfoWriteLogSegment(Vec::new());
+            let mut storage_logs = Vec::new();
             // for each block in the update batch, we iterate over the account updates (by index)
             // we store account info changes in the table StateWriteBatch
             for i in 0..update_batch.blocks.len() {
@@ -225,30 +220,35 @@ impl StoreEngine for Store {
                 let account_updates = &account_updates[i];
                 let previous_account_infos = &previous_account_infos[i];
                 let storage_updates = &previous_storage_values[i];
-                let mut account_info_log = AccountInfoWriteLog(Vec::new());
-                let mut storage_logs = Vec::new();
                 for j in 0..account_updates.len() {
                     // we can use the index to get the account update, previous account info and storage update
                     let account_info_log_entry = AccountInfoLogEntry {
                         address: AccountAddress(account_updates[j].address),
-                        info: previous_account_infos[j].clone(),
+                        info: previous_account_infos[j].1.clone().unwrap_or_default(),
                         previous_info: account_updates[j].info.clone().unwrap_or_default(),
                     };
                     account_info_log.0.push(account_info_log_entry);
                     let mut storage_log_entries = Vec::new();
                     // we can use the index to get the storage updates
                     for k in 0..storage_updates[j].len() {
-                        let (slot, value) = &storage_updates[k];
+                        let (slot, value) = &storage_updates[j][k];
                         let storage_log_entry = (
                             AccountAddress(account_updates[j].address),
                             *slot,
-                            previous_storage_values[i][j][k].1,
-                            *value,
+                            previous_storage_values[i][j][k]
+                                .1
+                                .clone()
+                                .unwrap_or_default(),
+                            account_updates[j]
+                                .added_storage
+                                .get(slot)
+                                .cloned()
+                                .unwrap_or_default(),
                         )
                             .into();
                         storage_log_entries.push(storage_log_entry);
                     }
-                    storage_logs.push(StorageStateWriteLog(storage_log_entries));
+                    storage_logs.push(StorageStateWriteLogVal(storage_log_entries));
 
                     //StorageStateWriteLog
                     //StorageStateWriteLogVal(Vec<(AccountAddress, H256, U256, U256)>);
@@ -264,16 +264,12 @@ impl StoreEngine for Store {
                     }
                     */
                 }
-            }
-            // store account state updates
-            for (address, log) in account_info_log {
-                tx.upsert::<AccountInfoWriteLog>(address, log)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-            // store storage state updates
-            for (address, log) in storage_logs {
-                tx.upsert::<StorageStateWriteLog>(address, log)
-                    .map_err(StoreError::LibmdbxError)?;
+                // store account state updates
+                tx.upsert::<AccountsStateWriteLog>(
+                    BlockNumHash(block.header.number, block.hash()),
+                    account_info_log,
+                )
+                .map_err(StoreError::LibmdbxError)?;
             }
 
             // store account updates
@@ -1476,11 +1472,11 @@ pub struct AccountInfoLogEntry {
     pub info: AccountInfo,
     pub previous_info: AccountInfo,
 }
-pub struct AccountInfoWriteLog(pub Vec<AccountInfoLogEntry>);
+pub struct AccountInfoWriteLogSegment(pub Vec<AccountInfoLogEntry>);
 
 const SIZE_OF_ACCOUNT_INFO_LOG_ENTRY: usize = mem::size_of::<AccountInfoLogEntry>();
 
-impl Encodable for AccountInfoWriteLog {
+impl Encodable for AccountInfoWriteLogSegment {
     type Encoded = Vec<u8>;
     fn encode(self) -> Self::Encoded {
         let mut encoded = Vec::with_capacity(8 + SIZE_OF_ACCOUNT_INFO_LOG_ENTRY * self.0.len());
@@ -1521,7 +1517,7 @@ impl Encodable for AccountInfoWriteLog {
     }
 }
 
-impl Decodable for AccountInfoWriteLog {
+impl Decodable for AccountInfoWriteLogSegment {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
         if b.len() < 8 {
             anyhow::bail!("Invalid length for AccountInfoLog");
@@ -1542,13 +1538,13 @@ impl Decodable for AccountInfoWriteLog {
                 previous_info,
             });
         }
-        Ok(AccountInfoWriteLog(entries))
+        Ok(AccountInfoWriteLogSegment(entries))
     }
 }
 
 table!(
     /// Account codes table.
-    ( AccountsStateWriteLog ) BlockNumHash => AccountInfoWriteLog
+    ( AccountsStateWriteLog ) BlockNumHash => AccountInfoWriteLogSegment
 );
 
 /* TODO: use this instead of the tuple version below
