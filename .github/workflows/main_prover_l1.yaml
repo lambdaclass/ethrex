@@ -52,9 +52,10 @@ jobs:
           # RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
           RPC_URL: "dummy"
         run: |
-          cp test_data/rpc_prover/cache_22240087.json cmd/ethrex_replay
+          cp test_data/rpc_prover/cache_3990497.json cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make prove-sp1-gpu-ci BLOCK_NUMBER=22240087
+          make prove-sp1-gpu-ci BLOCK_NUMBER=3990497
+          cat bench_latest.json
 
       # - name: Store benchmark result
       #   uses: benchmark-action/github-action-benchmark@v1
