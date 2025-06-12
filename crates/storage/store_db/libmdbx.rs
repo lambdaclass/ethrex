@@ -1742,16 +1742,16 @@ mod tests {
         topics_size: usize,
     ) -> Receipt {
         let large_data: Bytes = Bytes::from(vec![1u8; data_size_in_bytes]);
-        let large_topics: Vec<H256> = std::iter::repeat(H256::random())
-            .take(topics_size)
-            .collect();
+        let large_topics: Vec<H256> = std::iter::repeat_n(H256::random(), topics_size).collect();
 
-        let logs = std::iter::repeat(Log {
-            address: Address::random(),
-            topics: large_topics.clone(),
-            data: large_data.clone(),
-        })
-        .take(logs_size)
+        let logs = std::iter::repeat_n(
+            Log {
+                address: Address::random(),
+                topics: large_topics.clone(),
+                data: large_data.clone(),
+            },
+            logs_size,
+        )
         .collect();
 
         Receipt {
