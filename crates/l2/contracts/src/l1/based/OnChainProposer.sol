@@ -9,7 +9,6 @@ import {CommonBridge} from "../CommonBridge.sol";
 import {ICommonBridge} from "../interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "../interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "../interfaces/ISP1Verifier.sol";
-import {IPicoVerifier} from "../interfaces/IPicoVerifier.sol";
 import {ITDXVerifier} from "../interfaces/ITDXVerifier.sol";
 import {ISequencerRegistry} from "../interfaces/ISequencerRegistry.sol";
 
@@ -103,7 +102,6 @@ contract OnChainProposer is
         address owner,
         address r0verifier,
         address sp1verifier,
-        address picoverifier,
         address tdxverifier,
         address alignedProofAggregator,
         bytes32 sp1Vk,
@@ -127,21 +125,6 @@ contract OnChainProposer is
         );
 
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
-
-        // Set the PicoGroth16Verifier address
-        require(
-            PICOVERIFIER == address(0),
-            "OnChainProposer: contract already initialized"
-        );
-        require(
-            picoverifier != address(0),
-            "OnChainProposer: picoverifier is the zero address"
-        );
-        require(
-            picoverifier != address(this),
-            "OnChainProposer: picoverifier is the contract address"
-        );
-        PICOVERIFIER = picoverifier;
 
         // Set the Risc0Groth16Verifier address
         require(
@@ -282,6 +265,17 @@ contract OnChainProposer is
 
         // Blob is published in the (EIP-4844) transaction that calls this function.
         bytes32 blobVersionedHash = blobhash(0);
+        if (VALIDIUM) {
+            require(
+                blobVersionedHash == 0,
+                "L2 running as validium but blob was published"
+            );
+        } else {
+            require(
+                blobVersionedHash != 0,
+                "L2 running as rollup but blob was not published"
+            );
+        }
 
         batchCommitments[batchNumber] = BatchCommitmentInfo(
             newStateRoot,
@@ -310,14 +304,10 @@ contract OnChainProposer is
         //sp1
         bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
-        //pico
-        bytes32 picoRiscvVkey,
-        bytes calldata picoPublicValues,
-        uint256[8] calldata picoProof,
         //tdx
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
-    ) external override {
+    ) external {
         // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
@@ -329,16 +319,6 @@ contract OnChainProposer is
             batchCommitments[batchNumber].newStateRoot != bytes32(0),
             "OnChainProposer: cannot verify an uncommitted batch"
         );
-
-        if (PICOVERIFIER != DEV_MODE) {
-            // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, picoPublicValues);
-            IPicoVerifier(PICOVERIFIER).verifyPicoProof(
-                picoRiscvVkey,
-                picoPublicValues,
-                picoProof
-            );
-        }
 
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.

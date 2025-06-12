@@ -32,7 +32,7 @@ use aligned_sdk::{
 use ethers::signers::{Signer, Wallet};
 
 const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
+    "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub struct L1ProofSenderState {
@@ -313,10 +313,6 @@ pub async fn send_proof_to_contract(
         proofs
             .get(&ProverType::SP1)
             .unwrap_or(&ProverType::SP1.empty_calldata())
-            .as_slice(),
-        proofs
-            .get(&ProverType::Pico)
-            .unwrap_or(&ProverType::Pico.empty_calldata())
             .as_slice(),
         proofs
             .get(&ProverType::TDX)
