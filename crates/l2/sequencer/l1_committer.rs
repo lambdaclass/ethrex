@@ -469,6 +469,7 @@ async fn send_commitment(
     // Validium: EIP1559 Transaction.
     // Rollup: EIP4844 Transaction -> For on-chain Data Availability.
     let mut tx = if !state.validium {
+        info!("L2 is in rollup mode, sending EIP-4844 (including blob) tx to commit block");
         let le_bytes = estimate_blob_gas(
             &state.eth_client,
             state.arbitrary_base_blob_gas_price,
@@ -499,6 +500,7 @@ async fn send_commitment(
 
         WrappedTransaction::EIP4844(wrapped_tx)
     } else {
+        info!("L2 is in validium mode, sending EIP-1559 (no blob) tx to commit block");
         let wrapped_tx = state
             .eth_client
             .build_eip1559_transaction(

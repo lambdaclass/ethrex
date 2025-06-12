@@ -52,4 +52,6 @@ pub enum StoreError {
     MempoolReadLock(String),
     #[error("Bincode (de)serialization error: {0}")]
     BincodeError(#[from] bincode::Error),
+    #[error("Failed to lock database for writing")]
+    LockError,
 }
