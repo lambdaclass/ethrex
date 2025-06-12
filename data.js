@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749738768586,
+  "lastUpdate": 1749739852377,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12415,6 +12415,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 186179866008,
             "range": "± 618264260",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "84012757251d60147621fc3964c71205a5f22c33",
+          "message": "refactor(levm): remove contemplations for empty accounts in trie (#3131)\n\n**Motivation**\n\n- In post-Merge Mainnet there aren't any empty accounts in the trie.\nThey were all cleared, so we don't need to implement the logic for\nclearing those accounts that were just in the trie because of a \"bug\"\nprevious to Homestead fork. For more information see\n[EIP-7523](https://eips.ethereum.org/EIPS/eip-7523).\n\n**Description**\n\n- Removes `account_exists()` method from our Database trait in LEVM, as\nwe don't need that information anymore.\n- We also remove some unused methods that `account_exists()` from RpcDB\nwas using only there.\n- Renames `touched_accounts` to `accessed_addresses`, which is the name\nit should've had in the first place. It's just that we didn't fully\nunderstand the difference between these two concepts and treated them as\nbeing the same. Now that we do understand it we don't care about keeping\ntrack of touched accounts but we do care about accessed addresses.",
+          "timestamp": "2025-06-12T13:56:39Z",
+          "tree_id": "4cc5390d46c12762a4e036a8549eb3c8308f5dd6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/84012757251d60147621fc3964c71205a5f22c33"
+        },
+        "date": 1749739846145,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184255504618,
+            "range": "± 570372346",
             "unit": "ns/iter"
           }
         ]
