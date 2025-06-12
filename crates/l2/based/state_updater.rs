@@ -11,7 +11,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::{errors::SequencerError, utils::node_is_up_to_date},
+    sequencer::utils::node_is_up_to_date,
     utils::parse::hash_to_address,
     SequencerConfig,
 };
@@ -86,14 +86,13 @@ impl StateUpdater {
         sequencer_state: SequencerState,
         store: Store,
         rollup_store: StoreRollup,
-    ) -> Result<(), SequencerError> {
+    ) -> Result<(), StateUpdaterError> {
         let state = StateUpdaterState::new(sequencer_cfg, sequencer_state, store, rollup_store)?;
         let mut state_updater = StateUpdater::start(state);
         state_updater
             .cast(InMessage::UpdateState)
             .await
-            .map_err(StateUpdaterError::GenServerError)?;
-        Ok(())
+            .map_err(StateUpdaterError::GenServerError)
     }
 }
 
