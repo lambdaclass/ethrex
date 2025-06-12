@@ -3,6 +3,8 @@ use ethrex_trie::TrieError;
 #[cfg(feature = "redb")]
 use redb::{CommitError, DatabaseError, StorageError, TableError, TransactionError};
 use thiserror::Error;
+#[cfg(any(feature = "libmdbx", feature = "redb"))]
+use tokio::task::JoinError;
 
 // TODO improve errors
 #[derive(Debug, Error)]
@@ -13,8 +15,11 @@ pub enum StoreError {
     #[error("Libmdbx error: {0}")]
     LibmdbxError(anyhow::Error),
     #[cfg(feature = "libmdbx")]
+    #[error("Libmdbx api error: {0}")]
+    LibmdbxApiForkError(#[from] reth_db::DatabaseError),
+    #[cfg(feature = "libmdbx")]
     #[error("Libmdbx error: {0}")]
-    LibmdbxForkError(#[from] reth_db::DatabaseError),
+    LibmdbxForkError(#[from] reth_libmdbx::Error),
     #[cfg(feature = "redb")]
     #[error("Redb Storage error: {0}")]
     RedbStorageError(#[from] StorageError),
@@ -55,4 +60,7 @@ pub enum StoreError {
     MempoolReadLock(String),
     #[error("Failed to lock database for writing")]
     LockError,
+    #[cfg(any(feature = "libmdbx", feature = "redb"))]
+    #[error("Task failed to execute: {0}")]
+    TaskError(#[from] JoinError),
 }
