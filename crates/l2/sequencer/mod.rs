@@ -78,6 +78,7 @@ pub async fn start_l2(
         store.clone(),
         rollup_store.clone(),
         cfg.clone(),
+        blockchain.clone(),
         needed_proof_types.clone(),
     )
     .await
