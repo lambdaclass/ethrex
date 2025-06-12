@@ -31,16 +31,11 @@ use ethrex_metrics::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRI
 pub struct BlockProducerState {
     store: Store,
     blockchain: Arc<Blockchain>,
-    execution_cache: Arc<ExecutionCache>,
     block_time_ms: u64,
     coinbase_address: Address,
     elasticity_multiplier: u64,
     rollup_store: StoreRollup,
 }
-        // Store execution result
-        // rollup_store
-        //     .store_account_updates_by_block_number(block.header.number, account_updates)
-        //     .await?;
 
 impl BlockProducerState {
     pub fn new(
@@ -57,7 +52,6 @@ impl BlockProducerState {
         Self {
             store,
             blockchain,
-            execution_cache,
             block_time_ms: *block_time_ms,
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
@@ -83,7 +77,6 @@ impl BlockProducer {
         store: Store,
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
-        execution_cache: Arc<ExecutionCache>,
         cfg: SequencerConfig,
     ) -> Result<(), BlockProducerError> {
         let state =
@@ -199,8 +192,9 @@ pub async fn produce_block(state: &BlockProducerState) -> Result<(), BlockProduc
     info!("Stored new block {:x}", block.hash());
     // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
-    // Cache execution result
-    state.execution_cache.push(block.hash(), account_updates)?;
+    state.rollup_store
+        .store_account_updates_by_block_number(block.header.number, account_updates)
+        .await?;
 
     // Make the new head be part of the canonical chain
     apply_fork_choice(&state.store, block.hash(), block.hash(), block.hash()).await?;
