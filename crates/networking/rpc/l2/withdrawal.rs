@@ -12,7 +12,7 @@ pub struct GetWithdrawalProof {
     pub transaction_hash: H256,
 }
 
-impl RpcHanler for GetWithdrawalProof {
+impl RpcHandler for GetWithdrawalProof {
     fn parse(params: &Option<Vec<Value>>) -> Result<GetWithdrawalProof, RpcErr> {
         let params = params
             .as_ref()
