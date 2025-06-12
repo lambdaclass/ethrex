@@ -1,6 +1,6 @@
 use ethrex_common::{
-    types::{Receipt, Transaction, TxKind},
     H256,
+    types::{Receipt, Transaction, TxKind},
 };
 use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
 

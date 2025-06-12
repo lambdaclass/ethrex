@@ -67,12 +67,16 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     stdin_builder.borrow_mut().write(&input);
 
     // we could generate a "fast" proof but it takes several (>10) minutes to complete
-    warn!("Pico doesn't implement execution only so the backend's execute() function will not run anything");
+    warn!(
+        "Pico doesn't implement execution only so the backend's execute() function will not run anything"
+    );
     Ok(())
 }
 
 pub fn verify(_output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
-    warn!("Pico backend's verify() does nothing, this is because Pico doesn't expose a verification function but will verify each phase during proving as a sanity check");
+    warn!(
+        "Pico backend's verify() does nothing, this is because Pico doesn't expose a verification function but will verify each phase during proving as a sanity check"
+    );
     Ok(())
 }
 

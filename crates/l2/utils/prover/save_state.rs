@@ -4,7 +4,7 @@ use directories::ProjectDirs;
 use ethrex_common::types::AccountUpdate;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
-use std::fs::{create_dir, read_dir, File};
+use std::fs::{File, create_dir, read_dir};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::{
@@ -394,12 +394,12 @@ pub fn batch_number_has_all_needed_proofs(
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use ethrex_blockchain::{vm::StoreVmDatabase, Blockchain};
+    use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
     use ethrex_levm::db::gen_db::GeneralizedDatabase;
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::{
-        backends::levm::{CacheDB, LEVM},
         DynVmDatabase,
+        backends::levm::{CacheDB, LEVM},
     };
 
     use super::*;

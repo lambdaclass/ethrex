@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use serde::{de::Error, ser::SerializeSeq, Deserialize, Deserializer, Serializer};
+use serde::{Deserialize, Deserializer, Serializer, de::Error, ser::SerializeSeq};
 
 pub mod u256 {
     use super::*;

@@ -7,7 +7,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
-    network::{public_key_from_signing_key, P2PContext},
+    network::{P2PContext, public_key_from_signing_key},
     peer_handler::PeerHandler,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -27,7 +27,7 @@ use std::{
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
-use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
+use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
 
 #[cfg(feature = "l2")]
 use crate::l2::L2Options;

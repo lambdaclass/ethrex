@@ -8,7 +8,7 @@ use ethrex_rlp::{
     structs::{self, Decoder, Encoder},
 };
 use k256::ecdsa::{SigningKey, VerifyingKey};
-use serde::{ser::Serializer, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::Serializer};
 use sha3::{Digest, Keccak256};
 use std::{
     fmt::Display,

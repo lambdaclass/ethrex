@@ -7,21 +7,21 @@ mod storage_healing;
 mod trie_rebuild;
 
 use bytecode_fetcher::bytecode_fetcher;
-use ethrex_blockchain::{error::ChainError, BatchBlockProcessingFailure, Blockchain};
+use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
-    types::{Block, BlockHash, BlockHeader},
     BigEndianHash, H256, U256, U512,
+    types::{Block, BlockHash, BlockHeader},
 };
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_storage::{error::StoreError, EngineType, Store, STATE_TRIE_SEGMENTS};
+use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
 use std::{
     array,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 use storage_healing::storage_healer;
@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use trie_rebuild::TrieRebuilder;
 
-use crate::peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST};
+use crate::peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;

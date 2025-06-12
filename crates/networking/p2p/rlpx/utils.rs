@@ -2,11 +2,11 @@ use crate::types::Node;
 use ethrex_common::{H256, H512};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use k256::{
-    elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
     EncodedPoint, PublicKey, SecretKey,
+    elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
 };
 use sha3::{Digest, Keccak256};
-use snap::raw::{max_compress_len, Decoder as SnappyDecoder, Encoder as SnappyEncoder};
+use snap::raw::{Decoder as SnappyDecoder, Encoder as SnappyEncoder, max_compress_len};
 use tracing::{debug, error, warn};
 
 pub fn sha256(data: &[u8]) -> [u8; 32] {

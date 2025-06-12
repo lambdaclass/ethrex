@@ -5,18 +5,18 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_common::{
-    types::{
-        tx_fields::*, AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction,
-        TxKind,
-    },
     H256, U256,
+    types::{
+        AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction, TxKind,
+        tx_fields::*,
+    },
 };
 use ethrex_levm::{
+    EVMConfig, Environment,
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
     tracing::LevmCallTracer,
     vm::VM,
-    EVMConfig, Environment,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::backends;

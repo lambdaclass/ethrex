@@ -9,7 +9,7 @@ use std::{
 
 pub use branch::BranchNode;
 use ethrex_rlp::{
-    decode::{decode_bytes, RLPDecode},
+    decode::{RLPDecode, decode_bytes},
     encode::RLPEncode,
     error::RLPDecodeError,
     structs::Decoder,
@@ -17,9 +17,9 @@ use ethrex_rlp::{
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
-use crate::{error::TrieError, nibbles::Nibbles, TrieDB};
+use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
 
-use super::{node_hash::NodeHash, ValueRLP};
+use super::{ValueRLP, node_hash::NodeHash};
 
 /// A reference to a node.
 #[derive(Clone, Debug)]
@@ -270,7 +270,7 @@ impl Node {
             n => {
                 return Err(RLPDecodeError::Custom(format!(
                     "Invalid arg count for Node, expected 2 or 17, got {n}"
-                )))
+                )));
             }
         })
     }

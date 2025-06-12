@@ -5,8 +5,8 @@ use super::{
     utils::ecdh_xchng,
 };
 use aes::{
-    cipher::{BlockEncrypt as _, KeyInit as _, KeyIvInit, StreamCipher as _},
     Aes256Enc,
+    cipher::{BlockEncrypt as _, KeyInit as _, KeyIvInit, StreamCipher as _},
 };
 use bytes::{Buf, BytesMut};
 use ethrex_common::{H128, H256};

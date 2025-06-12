@@ -14,11 +14,11 @@ use crate::{
 };
 use ethrex_common::types::{AccountState, BlockBody};
 use ethrex_common::{
-    types::{
-        payload::PayloadBundle, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-        Receipt,
-    },
     H256, U256,
+    types::{
+        Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
+        payload::PayloadBundle,
+    },
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -26,9 +26,9 @@ use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
 
+use crate::UpdateBatch;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::SnapStateIndex;
-use crate::UpdateBatch;
 use crate::{api::StoreEngine, utils::ChainDataIndex};
 
 const STATE_TRIE_NODES_TABLE: TableDefinition<&[u8], &[u8]> =
