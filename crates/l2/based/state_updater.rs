@@ -121,8 +121,7 @@ impl GenServer for StateUpdater {
         tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
         state: &mut Self::State,
     ) -> spawned_concurrency::CastResponse {
-        // Right now we only have the Produce message, so we ignore the message
-        let _ = main_logic(state)
+        let _ = update_state(state)
             .await
             .inspect_err(|err| error!("State Updater Error: {err}"));
         send_after(
@@ -134,7 +133,7 @@ impl GenServer for StateUpdater {
     }
 }
 
-pub async fn main_logic(state: &mut StateUpdaterState) -> Result<(), StateUpdaterError> {
+pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpdaterError> {
     let calldata = encode_calldata("leaderSequencer()", &[])?;
 
     let lead_sequencer = hash_to_address(
