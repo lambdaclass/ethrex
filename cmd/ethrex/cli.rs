@@ -376,6 +376,10 @@ pub async fn import_blocks(
         utils::read_chain_file(path)
     };
     let size = blocks.len();
+    let numbers_and_hashes = blocks
+        .iter()
+        .map(|b| (b.header.number, b.hash()))
+        .collect::<Vec<_>>();
     for block in &blocks {
         let hash = block.hash();
         let number = block.header.number;
@@ -398,10 +402,10 @@ pub async fn import_blocks(
             .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}",))?;
     }
 
-    _ = store
-        .mark_chain_as_canonical(&blocks)
+    store
+        .mark_chain_as_canonical(&numbers_and_hashes)
         .await
-        .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
+        .inspect_err(|error| warn!("Failed to apply fork choice: {}", error))?;
 
     // Make head canonical and label all special blocks correctly.
     if let Some(block) = blocks.last() {

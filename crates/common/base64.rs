@@ -33,7 +33,7 @@ pub fn encode(bytes: &[u8]) -> Vec<u8> {
 
     let mut bytes_iter = bytes.iter();
     while bytes_iter.len() > 0 {
-        // each block is made of as much as 24 bits (3 bytes)
+        // each block is made of as many as 24 bits (3 bytes)
         let mut block: Vec<u8> = vec![];
 
         while block.len() < 3 {

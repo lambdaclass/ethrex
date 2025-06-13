@@ -10,6 +10,7 @@ pub struct MetricsBlocks {
     gas_limit: Gauge,
     block_number: IntGauge,
     gigagas: Gauge,
+    gas_used: Gauge,
 }
 
 impl Default for MetricsBlocks {
@@ -36,6 +37,11 @@ impl MetricsBlocks {
                 "Keeps track of the block building throughput through gigagas/s",
             )
             .unwrap(),
+            gas_used: Gauge::new(
+                "gas_used",
+                "Keeps track of the gas used in the latest block",
+            )
+            .unwrap(),
         }
     }
 
@@ -52,6 +58,10 @@ impl MetricsBlocks {
         Ok(())
     }
 
+    pub fn set_latest_gas_used(&self, gas_used: f64) {
+        self.gas_used.set(gas_used);
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
@@ -60,6 +70,8 @@ impl MetricsBlocks {
         r.register(Box::new(self.block_number.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.gigagas.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.gas_used.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
