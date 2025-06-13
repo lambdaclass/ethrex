@@ -40,7 +40,6 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use futures::SinkExt;
 use k256::{PublicKey, SecretKey, ecdsa::SigningKey};
-use lazy_static::lazy_static;
 use rand::random;
 #[cfg(feature = "l2")]
 use secp256k1::Message as SignedMessage;
@@ -73,6 +72,8 @@ use super::{
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const PERIODIC_BLOCK_BROADCAST_INTERVAL: std::time::Duration =
+    std::time::Duration::from_millis(500);
+const PERIODIC_BATCH_BROADCAST_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(500);
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL: std::time::Duration =
@@ -112,6 +113,7 @@ pub(crate) struct RLPxConnection<S> {
     last_block_range_update_block: u64,
     broadcasted_txs: HashSet<H256>,
     next_block_broadcast: Instant,
+    next_batch_broadcast: Instant,
     latest_block_sent: u64,
     latest_block_added: u64,
     blocks_on_queue: BTreeMap<u64, Block>,
@@ -161,6 +163,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
             next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
             next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
+            next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL,
             next_block_range_update: Instant::now() + PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL,
             last_block_range_update_block: 0,
             broadcasted_txs: HashSet::new(),
@@ -464,9 +467,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             self.send_new_block().await?;
             self.next_block_broadcast = Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL;
         }
-        if Instant::now() >= self.next_periodic_ping - PERIODIC_PING_INTERVAL {
+        if Instant::now() >= self.next_batch_broadcast - PERIODIC_BATCH_BROADCAST_INTERVAL {
             self.send_sealed_batch().await?;
-        };
+            self.next_batch_broadcast = Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL;
+        }
         if Instant::now() >= self.next_block_range_update {
             self.next_block_range_update = Instant::now() + PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL;
             if self.should_send_block_range_update().await? {
