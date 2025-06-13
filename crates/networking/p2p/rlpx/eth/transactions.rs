@@ -243,6 +243,7 @@ impl PooledTransactions {
             if tx.tx_type() as u8 != tx_type {
                 return Err(MempoolError::InvalidPooledTxType(tx_type));
             }
+            // remove the code from the encoding (-4)
             if tx.encode_to_vec().len() - 4 != size {
                 return Err(MempoolError::InvalidPooledTxSize);
             }
