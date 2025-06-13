@@ -1,0 +1,119 @@
+- name: Deploy Grafana
+  hosts: all
+  become: yes
+
+  vars:
+    explorer_dir: "/home/{{ ansible_user }}/explorer"
+    nodejs_version: "22.16.0"
+
+  tasks:
+    - name: Install Explorer tools and libraries
+      apt:
+        name:
+          - inotify-tools
+          - make
+          - g++
+          - libudev-dev
+          - zip
+          - unzip
+          - build-essential
+          - cmake
+          - git
+          - automake
+          - libtool
+          - libgmp-dev
+          - libgmp10
+          - autoconf
+          - m4
+          - libncurses5-dev
+          - libwxgtk3.2-dev
+          - libwxgtk-webview3.2-dev
+          - libgl1-mesa-dev
+          - libglu1-mesa-dev
+          - libpng-dev
+          - libssh-dev
+          - unixodbc-dev
+          - xsltproc
+          - fop
+          - libxml2-utils
+          - libncurses-dev
+          - openjdk-17-jdk
+        state: present
+
+    - name: Add PostgreSQL GPG key
+      apt_key:
+        url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+        keyring: /etc/apt/trusted.gpg.d/postgresql.gpg
+        state: present
+
+    - name: Add PostgreSQL repository
+      apt_repository:
+        repo: "deb http://apt.postgresql.org/pub/repos/apt {{ ansible_lsb.codename }}-pgdg main"
+        state: present
+        filename: pgdg
+
+    - name: Install PostgreSQL 17
+      apt:
+        name: postgresql-17
+        state: present
+        update_cache: yes
+
+    - name: Ensure PostgreSQL is running
+      systemd:
+        name: postgresql
+        state: started
+        enabled: yes
+
+    - name: Add Erlang Solutions GPG key
+      apt_key:
+        url: https://packages.erlang-solutions.com/ubuntu/erlang_solutions.asc
+        keyring: /etc/apt/trusted.gpg.d/erlang-solutions.gpg
+        state: present
+
+    - name: Add Erlang Solutions repository
+      apt_repository:
+        repo: "{{ item.repo }}"
+        state: present
+        filename: "{{ item.name }}"
+        update_cache: yes
+      loop:
+        - { repo: "deb https://binaries2.erlang-solutions.com/ubuntu/ jammy-esl-erlang-25 contrib", name: "erlang" }
+        - { repo: "deb https://binaries2.erlang-solutions.com/ubuntu/ trusty contrib", name: "elixir" }
+
+    - name: Get architecture
+      set_fact:
+        architecture: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' if ansible_architecture == 'aarch64' else ansible_architecture }}"
+
+    - name: Download NodeJS
+      get_url:
+        url: "https://nodejs.org/dist/v{{ nodejs_version }}/node-v{{ nodejs_version }}-linux-{{ architecture }}.tar.xz"
+        dest: "/tmp/nodejs-{{ nodejs_version }}.tar.xz"
+        mode: '0644'
+
+    - name: Extract NodeJS
+      unarchive:
+        src: "/tmp/nodejs-{{ nodejs_version }}.tar.xz"
+        dest: /tmp/
+        remote_src: yes
+
+    - name: Move Node Exporter
+      copy:
+        remote_src: true
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: '0755'
+      with_items:
+        - { src: "/tmp/nodejs-{{ nodejs_version }}/bin/", dest: "/usr/local/bin/" }
+
+    - name: Install Erlang
+      apt:
+        name:
+          - erlang
+          - elixir
+        state: latest
+
+    - name: Clone Explorer repository
+      git:
+        repo: "https://github.com/lambdaclass/sovra-explorer.git"
+        dest: "{{ explorer_dir }}"
+        version: stable

@@ -1,0 +1,27 @@
+- name: Metrics Setup
+  hosts: all
+
+  tasks:
+    - name: Clone monitoring stack repository
+      git:
+        repo: https://github.com/lambdaclass/monitoring-stack.git"
+        dest: /opt/monitoring-stack
+        version: main
+      register: monitoring_stack_clone
+
+    - name: Run monitoring stack deployment
+      make:
+        chdir: /opt/monitoring-stack
+        target: all
+        params:
+          GRAFANA_PASSWORD: lambda
+          TARGET: localhost
+      when: monitoring_stack_clone.changed
+
+    - name: Overwrite default monitoring-stack config with Ethrex's
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+      with_items:
+        - { src: "", dest: "" }
+      
