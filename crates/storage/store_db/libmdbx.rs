@@ -360,7 +360,7 @@ impl StoreEngine for Store {
                     },
                 )?;
             }
-            Ok(())
+            tx.commit()
         };
         inner().map_err(StoreError::LibmdbxError)
     }
@@ -377,7 +377,7 @@ impl StoreEngine for Store {
                     (old_value.to_big_endian(), new_value.to_big_endian()),
                 )?;
             }
-            Ok(())
+            tx.commit()
         };
         inner().map_err(StoreError::LibmdbxError)
     }
