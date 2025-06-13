@@ -2,13 +2,13 @@ use crate::{cli::Options as NodeOptions, utils};
 use clap::Parser;
 use ethrex_common::Address;
 use ethrex_l2::{
-    sequencer::{configs::AlignedConfig, utils::resolve_aligned_network},
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
+    sequencer::configs::AlignedConfig,
 };
 use ethrex_rpc::clients::eth::{
-    get_address_from_secret_key, BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY,
-    MIN_RETRY_DELAY,
+    BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
+    get_address_from_secret_key,
 };
 use secp256k1::SecretKey;
 use std::net::{IpAddr, Ipv4Addr};
