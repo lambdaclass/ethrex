@@ -18,6 +18,7 @@
   - [Quickstart]()
 
 - [Developers]()
+  - [Quickstart](./developers/quickstart.md)
 
 - [CLI reference]()
 - [Troubleshooting]()
