@@ -1871,6 +1871,8 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(InvalidAncestors),
         table_info!(FlatAccountStorage),
         table_info!(FlatAccountInfo),
+        table_info!(StorageStateWriteLog),
+        table_info!(AccountsStateWriteLog),
     ]
     .into_iter()
     .collect();
