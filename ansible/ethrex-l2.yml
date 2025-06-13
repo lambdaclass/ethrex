@@ -6,21 +6,6 @@
     ethereum_metrics_exporter_version: "0.27.4"
 
   tasks:
-    - name: Update apt cache
-      apt:
-        update_cache: yes
-
-    - name: Install Clang and related tools
-      apt:
-        name:
-          - libclang-dev
-          - clang
-          - tmux
-          - rsync
-          - linux-perf
-          - git
-        state: present
-
     - name: Check if rustup is installed
       stat:
         path: /home/{{ ansible_user }}/.cargo/bin/rustc
@@ -36,51 +21,6 @@
         line: source $HOME/.cargo/env
         create: yes
       when: not rustup_check.stat.exists
-
-    - name: Clone monitoring stack repository
-      git:
-        repo: https://github.com/lambdaclass/monitoring-stack.git"
-        dest: /opt/monitoring-stack
-        version: main
-      register: monitoring_stack_clone
-
-    - name: Run monitoring stack deployment
-      make:
-        chdir: /opt/monitoring-stack
-        target: all
-        params:
-          GRAFANA_PASSWORD: lambda
-          TARGET: localhost
-      when: monitoring_stack_clone.changed
-
-    - name: Clone Ethrex repository
-      git:
-        repo: "https://github.com/lambdaclass/ethrex.git"
-        dest: "{{ ethrex_dir }}"
-        version: main
-
-    - name: Get architecture
-      set_fact:
-        architecture: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' if ansible_architecture == 'aarch64' else ansible_architecture }}"
-
-    - name: Download Ethereum Metrics Exporter
-      get_url:
-        url: "https://github.com/ethpandaops/ethereum-metrics-exporter/releases/download/v{{ ethereum_metrics_exporter_version }}/ethereum-metrics-exporter_{{ ethereum_metrics_exporter_version }}.linux_{{ architecture }}.tar.gz "
-        dest: "/tmp/ethereum_metrics_exporter_{{ ethereum_metrics_exporter_version }}.tar.gz"
-        mode: '0644'
-
-    - name: Extract Ethereum Metrics Exporter
-      unarchive:
-        src: "/tmp/ethereum_metrics_exporter_{{ ethereum_metrics_exporter_version }}.tar.gz"
-        dest: /tmp/
-        remote_src: yes
-      
-    - name: Move Ethereum Metrics Exporter
-      copy:
-        remote_src: true
-        src: "/tmp/ethereum_metrics_exporter_{{ ethereum_metrics_exporter_version }}_linux_{{ architecture }}"
-        dest: "/usr/local/bin/ethereum_metrics_exporter"
-        mode: '0755'
 
     - name: Compile Ethrex with L2 features
       command: cargo build --release --features l2,metrics,rollup_storage_libmdbx
@@ -100,7 +40,7 @@
         group: "{{ ansible_user }}"
         mode: '0700'
 
-    - name: Instll Ethrex L2 service
+    - name: Install Ethrex L2 service
       template:
         src: services/ethrex-l2.service.j2
         dest: /home/{{ ansible_user }}/.config/systemd/user/ethrex-l2.service
