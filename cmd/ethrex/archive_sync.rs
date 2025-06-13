@@ -5,12 +5,12 @@ lazy_static::lazy_static! {
 use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
 
-use ethrex_common::types::{AccountState, EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH};
+use ethrex_common::types::{AccountState, Block, EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH};
 use ethrex_common::{Address, serde_utils};
 use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::auth::RpcResponse;
-use ethrex_rpc::types::block::RpcBlock;
 use ethrex_storage::Store;
 use keccak_hash::keccak;
 use serde::{Deserialize, Deserializer};
@@ -92,14 +92,13 @@ pub async fn archive_sync(
     let request = &json!({
     "id": 1,
     "jsonrpc": "2.0",
-    "method": "eth_getBlockByNumber",
-    "params": [format!("{block_number:#x}"), true]
+    "method": "debug_getRawBlock",
+    "params": [format!("{block_number:#x}")]
     });
     let response = send_ipc_json_request(&mut stream, request).await?;
-    let rpc_block: RpcBlock = serde_json::from_value(response)?;
-    let block = rpc_block.into_full_block().ok_or(eyre::ErrReport::msg(
-        "Requested block with full transactions but only obtained hashes",
-    ))?;
+    let rlp_block_str: String = serde_json::from_value(response)?;
+    let rlp_block = hex::decode(rlp_block_str.trim_start_matches("0x"))?;
+    let block = Block::decode(&rlp_block)?;
     if state_trie_root != block.header.state_root {
         return Err(eyre::ErrReport::msg(
             "State root doesn't match the one in the header after archive sync",

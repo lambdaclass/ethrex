@@ -29,7 +29,7 @@ pub enum BlockBodyWrapper {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FullBlockBody {
     pub transactions: Vec<RpcTransaction>,
-    pub uncles: Vec<BlockHeader>,
+    pub uncles: Vec<H256>,
     #[serde(default)]
     pub withdrawals: Vec<Withdrawal>,
 }
@@ -38,7 +38,7 @@ pub struct FullBlockBody {
 pub struct OnlyHashesBlockBody {
     // Only tx hashes
     pub transactions: Vec<H256>,
-    pub uncles: Vec<BlockHeader>,
+    pub uncles: Vec<H256>,
     pub withdrawals: Vec<Withdrawal>,
 }
 
@@ -57,7 +57,7 @@ impl RpcBlock {
         } else {
             BlockBodyWrapper::OnlyHashes(OnlyHashesBlockBody {
                 transactions: body.transactions.iter().map(|t| t.compute_hash()).collect(),
-                uncles: body.ommers,
+                uncles: body.ommers.iter().map(|ommer| ommer.hash()).collect(),
                 withdrawals: body.withdrawals.unwrap_or_default(),
             })
         };
@@ -68,18 +68,6 @@ impl RpcBlock {
             header,
             body: body_wrapper,
         }
-    }
-
-    /// Converts self into Block only if self's body is a Full version
-    pub fn into_full_block(self) -> Option<Block> {
-        let body = match self.body {
-            BlockBodyWrapper::Full(full) => full.into(),
-            BlockBodyWrapper::OnlyHashes(_) => return None,
-        };
-        Some(Block {
-            header: self.header,
-            body,
-        })
     }
 }
 
@@ -100,23 +88,8 @@ impl FullBlockBody {
         }
         FullBlockBody {
             transactions,
-            uncles: body.ommers,
+            uncles: body.ommers.iter().map(|ommer| ommer.hash()).collect(),
             withdrawals: body.withdrawals.unwrap_or_default(),
-        }
-    }
-}
-
-impl From<FullBlockBody> for BlockBody {
-    fn from(value: FullBlockBody) -> Self {
-        let transactions = value
-            .transactions
-            .into_iter()
-            .map(|rpctx| rpctx.tx)
-            .collect();
-        BlockBody {
-            transactions,
-            ommers: value.uncles,
-            withdrawals: Some(value.withdrawals),
         }
     }
 }
