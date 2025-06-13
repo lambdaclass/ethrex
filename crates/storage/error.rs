@@ -31,7 +31,7 @@ pub enum StoreError {
     RedbCommitError(#[from] CommitError),
     #[cfg(feature = "redb")]
     #[error("Redb Transaction error: {0}")]
-    RedbTransactionError(#[from] TransactionError),
+    RedbTransactionError(#[from] Box<TransactionError>),
     #[error("Redb Database error: {0}")]
     #[cfg(feature = "redb")]
     RedbDatabaseError(#[from] DatabaseError),

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use crate::{
+    PathRLP, Trie, TrieDB, ValueRLP,
     nibbles::Nibbles,
     node::{Node, NodeRef},
-    PathRLP, Trie, TrieDB, ValueRLP,
 };
 
 pub struct TrieIterator {

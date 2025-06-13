@@ -1,3 +1,4 @@
+use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
@@ -10,22 +11,21 @@ use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
-use crate::UpdateBatch;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Index, Receipt, Transaction,
+    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+    Receipt, Transaction, payload::PayloadBundle,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, NodeHash, Trie};
-use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
 use libmdbx::TransactionKind;
+use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
 use libmdbx::{
     dupsort,
-    orm::{table, Database},
+    orm::{Database, table},
 };
 use serde_json;
 use std::fmt::{Debug, Formatter};
@@ -1363,10 +1363,10 @@ mod tests {
     use crate::rlp::TupleRLP;
     use bytes::Bytes;
     use ethrex_common::{
-        types::{BlockHash, Index, Log, TxType},
         Address, H256,
+        types::{BlockHash, Index, Log, TxType},
     };
-    use libmdbx::{table_info, DatabaseOptions, Mode, PageSize, ReadWriteOptions};
+    use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, table_info};
 
     /// default page size recommended by libmdbx
     ///
@@ -1556,7 +1556,7 @@ mod tests {
             let txn = db.begin_read().unwrap();
             let cursor = txn.cursor::<DupsortExample>().unwrap();
             let mut acc = 0;
-            for key in cursor.walk_key(key, None).map(|r| r.unwrap().0 .0) {
+            for key in cursor.walk_key(key, None).map(|r| r.unwrap().0.0) {
                 acc += key;
             }
 

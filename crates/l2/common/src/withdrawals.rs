@@ -2,8 +2,8 @@ use std::sync::LazyLock;
 
 use ethereum_types::{Address, H256};
 use ethrex_common::{
-    types::{Receipt, Transaction, TxKind},
     H160, U256,
+    types::{Receipt, Transaction, TxKind},
 };
 use keccak_hash::keccak;
 

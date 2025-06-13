@@ -4,8 +4,8 @@ use super::{
 };
 use bytes::{BufMut, Bytes};
 use ethrex_common::{
-    types::{AccountState, EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     H256, U256,
+    types::{AccountState, EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
 };
 use ethrex_rlp::{
     decode::RLPDecode,

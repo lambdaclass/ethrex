@@ -14,17 +14,18 @@ use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
-use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
-use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
+use ethrex_common::types::MempoolTransaction;
+use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
+use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
-    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
-    validate_prague_header_fields, validate_pre_cancun_header_fields, AccountUpdate, Block,
-    BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
+    AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
+    Receipt, Transaction, compute_receipts_root, validate_block_header,
+    validate_cancun_header_fields, validate_prague_header_fields,
+    validate_pre_cancun_header_fields,
 };
-use ethrex_common::{Address, TrieLogger, H256};
-use ethrex_storage::{error::StoreError, hash_address, hash_key, Store, UpdateBatch};
+use ethrex_common::{Address, H256, TrieLogger};
+use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
 use mempool::Mempool;
@@ -380,10 +381,11 @@ impl Blockchain {
             let storage_fraction = (storage_time * 100_f64 / interval).round() as u64;
             let execution_time_per_gigagas = (execution_time / as_gigas).round() as u64;
             let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
-            let base_log =
-                format!(
+            let base_log = format!(
                 "[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {:.0} ms. #Txs: {}.",
-                throughput, interval, block.body.transactions.len()
+                throughput,
+                interval,
+                block.body.transactions.len()
             );
             let extra_log = if as_gigas > 0.0 {
                 format!(

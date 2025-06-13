@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::Rlp;
@@ -13,25 +14,24 @@ use crate::trie_db::mdbx_fork::MDBXTrieDB;
 use crate::trie_db::mdbx_fork::MDBXTrieWithFixedKey;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
-use crate::UpdateBatch;
 use alloy_primitives::B256;
 use anyhow::Result;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Index, Receipt, Transaction,
+    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+    Receipt, Transaction, payload::PayloadBundle,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
+use reth_db::DatabaseEnvKind;
 use reth_db::mdbx::{DatabaseArguments, DatabaseEnv};
 use reth_db::tables;
-use reth_db::DatabaseEnvKind;
 use reth_db::{
-    transaction::{DbTx, DbTxMut},
     Database,
+    transaction::{DbTx, DbTxMut},
 };
 use reth_db_api::cursor::DbCursorRO;
 use reth_db_api::cursor::DbCursorRW;

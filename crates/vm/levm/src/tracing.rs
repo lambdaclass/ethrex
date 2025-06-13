@@ -4,9 +4,9 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
+    Address, U256,
     tracing::{CallLog, CallTraceFrame, CallType},
     types::Log,
-    Address, U256,
 };
 
 /// Geth's callTracer (https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers)
