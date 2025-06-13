@@ -9,6 +9,7 @@ on:
       - "cmd/ef_tests/state/**"
       - "crates/vm/levm/**"
       - ".github/workflows/pr-main_levm.yaml"
+      - "cmd/ef_tests/state"
   workflow_dispatch:
 
 concurrency:
