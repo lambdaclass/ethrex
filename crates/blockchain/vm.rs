@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use ethrex_common::{
+    Address, H256, U256,
     constants::EMPTY_KECCACK_HASH,
     types::{AccountInfo, BlockHash, BlockNumber, ChainConfig},
-    Address, H256, U256,
 };
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
@@ -82,7 +82,7 @@ impl VmDatabase for StoreVmDatabase {
                         return Err(EvmError::DB(format!(
                             "Block number requested {} is higher than the current block number {}",
                             block_number, ancestor.number
-                        )))
+                        )));
                     }
                 }
             }

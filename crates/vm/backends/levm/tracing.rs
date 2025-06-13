@@ -2,7 +2,7 @@ use ethrex_common::types::{Block, Transaction};
 use ethrex_common::{tracing::CallTrace, types::BlockHeader};
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
 
-use crate::{backends::levm::LEVM, EvmError};
+use crate::{EvmError, backends::levm::LEVM};
 
 impl LEVM {
     /// Execute all transactions of the block up until a certain transaction specified in `stop_index`.
@@ -26,7 +26,7 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db).map_err(EvmError::from)?;
+            Self::execute_tx(tx, sender, &block.header, db)?;
         }
 
         // Process withdrawals only if the whole block has been executed.

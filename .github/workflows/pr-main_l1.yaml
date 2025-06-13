@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.82.0
+        uses: dtolnay/rust-toolchain@1.87.0
         with:
           components: rustfmt, clippy
 
@@ -36,7 +36,7 @@ jobs:
         run: |
           cargo clippy --workspace -- -D warnings
           cargo clippy -- -D warnings
-          cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
+          cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain -- -D warnings
 
       - name: Run cargo fmt
         run: |
@@ -51,7 +51,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.82.0
+        uses: dtolnay/rust-toolchain@1.87.0
 
       - name: Caching
         uses: Swatinem/rust-cache@v2

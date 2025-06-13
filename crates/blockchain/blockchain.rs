@@ -12,19 +12,24 @@ use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
-use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
+use ethrex_common::types::MempoolTransaction;
+use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
+use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
-    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
-    validate_prague_header_fields, validate_pre_cancun_header_fields, AccountUpdate, Block,
-    BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
+    AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
+    Receipt, Transaction, compute_receipts_root, validate_block_header,
+    validate_cancun_header_fields, validate_prague_header_fields,
+    validate_pre_cancun_header_fields,
 };
-use ethrex_common::{Address, H256};
-use ethrex_storage::{error::StoreError, Store, UpdateBatch};
-use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
+use ethrex_common::{Address, H256, TrieLogger};
+use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
+use ethrex_vm::backends::levm::db::DatabaseLogger;
+use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
 use mempool::Mempool;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::{ops::Div, time::Instant};
 
 use vm::StoreVmDatabase;
@@ -121,6 +126,204 @@ impl Blockchain {
         Ok(execution_result)
     }
 
+    pub async fn generate_witness_for_blocks(
+        &self,
+        blocks: &[Block],
+    ) -> Result<ExecutionWitnessResult, ChainError> {
+        let first_block_header = blocks
+            .first()
+            .ok_or(ChainError::WitnessGeneration(
+                "Empty block batch".to_string(),
+            ))?
+            .header
+            .clone();
+
+        let parent_block_header = self
+            .storage
+            .get_block_header_by_hash(first_block_header.parent_hash)?
+            .ok_or(ChainError::ParentNotFound)?;
+
+        // Get state at previous block
+        let trie = self
+            .storage
+            .state_trie(first_block_header.parent_hash)
+            .map_err(|_| ChainError::ParentStateNotFound)?
+            .ok_or(ChainError::ParentStateNotFound)?;
+        let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
+
+        // Store the root node in case the block is empty and the witness does not record any nodes
+        let root_node = trie.root_node().map_err(|_| {
+            ChainError::WitnessGeneration("Failed to get root state node".to_string())
+        })?;
+
+        let mut encoded_storage_tries: HashMap<ethrex_common::H160, Vec<Vec<u8>>> = HashMap::new();
+        let mut block_hashes = HashMap::new();
+        let mut codes = HashMap::new();
+
+        for block in blocks {
+            let parent_hash = block.header.parent_hash;
+            let vm_db: DynVmDatabase =
+                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+            let mut vm = Evm::new_from_db(logger.clone());
+
+            // Re-execute block with logger
+            vm.execute_block(block)?;
+            // Gather account updates
+            let account_updates = vm.get_state_transitions()?;
+
+            let mut used_storage_tries = HashMap::new();
+            // Get the used block hashes from the logger
+            let logger_block_hashes = logger
+                .block_hashes_accessed
+                .lock()
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to get block hashes".to_string())
+                })?
+                .clone();
+            block_hashes.extend(logger_block_hashes);
+            // Access all the accounts needed for withdrawals
+            if let Some(withdrawals) = block.body.withdrawals.as_ref() {
+                for withdrawal in withdrawals {
+                    trie.get(&hash_address(&withdrawal.address)).map_err(|_e| {
+                        ChainError::Custom("Failed to access account from trie".to_string())
+                    })?;
+                }
+            }
+
+            // Access all the accounts from the initial trie
+            // Record all the storage nodes for the initial state
+            for (account, keys) in logger
+                .state_accessed
+                .lock()
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
+                })?
+                .iter()
+            {
+                // Access the account from the state trie to record the nodes used to access it
+                trie.get(&hash_address(account)).map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to access account from trie".to_string())
+                })?;
+                // Get storage trie at before updates
+                if !keys.is_empty() {
+                    if let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
+                    {
+                        let (storage_trie_witness, storage_trie) =
+                            TrieLogger::open_trie(storage_trie);
+                        // Access all the keys
+                        for storage_key in keys {
+                            let hashed_key = hash_key(storage_key);
+                            storage_trie.get(&hashed_key).map_err(|_e| {
+                                ChainError::WitnessGeneration(
+                                    "Failed to access storage key".to_string(),
+                                )
+                            })?;
+                        }
+                        // Store the tries to reuse when applying account updates
+                        used_storage_tries.insert(*account, (storage_trie_witness, storage_trie));
+                    }
+                }
+            }
+            // Store all the accessed evm bytecodes
+            for code_hash in logger
+                .code_accessed
+                .lock()
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
+                })?
+                .iter()
+            {
+                let code = self
+                    .storage
+                    .get_account_code(*code_hash)
+                    .map_err(|_e| {
+                        ChainError::WitnessGeneration("Failed to get account code".to_string())
+                    })?
+                    .ok_or(ChainError::WitnessGeneration(
+                        "Failed to get account code".to_string(),
+                    ))?;
+                codes.insert(*code_hash, code);
+            }
+
+            // Apply account updates to the trie recording all the necessary nodes to do so
+            let (updated_trie, storage_tries_after_update) = self
+                .storage
+                .apply_account_updates_from_trie_with_witness(
+                    trie,
+                    &account_updates,
+                    used_storage_tries,
+                )
+                .await?;
+            for (address, (witness, _storage_trie)) in storage_tries_after_update {
+                let mut witness = witness.lock().map_err(|_| {
+                    ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
+                })?;
+                let witness = std::mem::take(&mut *witness);
+                let witness = witness.into_iter().collect::<Vec<_>>();
+                match encoded_storage_tries.entry(address) {
+                    std::collections::hash_map::Entry::Occupied(mut entry) => {
+                        entry.get_mut().extend(witness);
+                    }
+                    std::collections::hash_map::Entry::Vacant(vacant) => {
+                        vacant.insert(witness);
+                    }
+                }
+            }
+            trie = updated_trie;
+        }
+
+        // Get the witness for the state trie
+        let mut state_trie_witness = state_trie_witness.lock().map_err(|_| {
+            ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
+        })?;
+        let state_trie_witness = std::mem::take(&mut *state_trie_witness);
+        let mut used_trie_nodes = Vec::from_iter(state_trie_witness.into_iter());
+        // If the witness is empty at least try to store the root
+        if used_trie_nodes.is_empty() {
+            if let Some(root) = root_node {
+                used_trie_nodes.push(root.encode_raw());
+            }
+        }
+
+        let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
+        needed_block_numbers.sort();
+        // The last block number we need is the parent of the last block we execute
+        let last_needed_block_number = blocks
+            .last()
+            .ok_or(ChainError::WitnessGeneration("Empty batch".to_string()))?
+            .header
+            .number
+            .saturating_sub(1);
+        // The first block number we need is either the parent of the first block number or the earliest block number used by BLOCKHASH
+        let mut first_needed_block_number = first_block_header.number.saturating_sub(1);
+        if let Some(block_number_from_logger) = needed_block_numbers.first() {
+            if **block_number_from_logger < first_needed_block_number {
+                first_needed_block_number = **block_number_from_logger;
+            }
+        }
+        let mut block_headers = HashMap::new();
+        for block_number in first_needed_block_number..=last_needed_block_number {
+            let header = self.storage.get_block_header(block_number)?.ok_or(
+                ChainError::WitnessGeneration("Failed to get block header".to_string()),
+            )?;
+            block_headers.insert(block_number, header);
+        }
+
+        let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
+
+        Ok(ExecutionWitnessResult {
+            state_trie_nodes: Some(used_trie_nodes),
+            storage_trie_nodes: Some(encoded_storage_tries),
+            codes,
+            state_trie: None,
+            storage_tries: None,
+            block_headers,
+            parent_block_header,
+            chain_config,
+        })
+    }
+
     pub async fn store_block(
         &self,
         block: &Block,
@@ -176,10 +379,11 @@ impl Blockchain {
             let storage_fraction = (storage_time * 100_f64 / interval).round() as u64;
             let execution_time_per_gigagas = (execution_time / as_gigas).round() as u64;
             let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
-            let base_log =
-                format!(
+            let base_log = format!(
                 "[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {:.0} ms. #Txs: {}.",
-                throughput, interval, block.body.transactions.len()
+                throughput,
+                interval,
+                block.body.transactions.len()
             );
             let extra_log = if as_gigas > 0.0 {
                 format!(

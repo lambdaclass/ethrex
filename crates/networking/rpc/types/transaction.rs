@@ -1,11 +1,10 @@
 use crate::utils::RpcErr;
 use ethrex_common::{
-    serde_utils,
+    Address, H256, serde_utils,
     types::{
         BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, EIP7702Transaction,
         LegacyTransaction, PrivilegedL2Transaction, Transaction, WrappedEIP4844Transaction,
     },
-    Address, H256,
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use serde::{Deserialize, Serialize};

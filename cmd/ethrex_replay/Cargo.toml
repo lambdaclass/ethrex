@@ -1,7 +1,7 @@
 [package]
 name = "ethrex-replay"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 ethrex-common.workspace = true
@@ -55,7 +55,6 @@ charming = { version = "0.4.0", features = ["ssr"] }
 
 
 [features]
-pico = ["zkvm_interface/pico", "ethrex-prover/pico"]
 risc0 = ["zkvm_interface/risc0", "ethrex-prover/risc0"]
 sp1 = ["zkvm_interface/sp1", "ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]

@@ -1,10 +1,10 @@
-use ethrex_common::types::Account;
 use ethrex_common::U256 as CoreU256;
+use ethrex_common::types::Account;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
 
-use crate::db::DynVmDatabase;
 use crate::VmDatabase;
+use crate::db::DynVmDatabase;
 use ethrex_levm::errors::DatabaseError;
 use std::collections::HashMap;
 use std::result::Result;
@@ -37,17 +37,21 @@ impl LevmDatabase for DatabaseLogger {
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
             .entry(address)
             .or_default();
-        self.store
+        let account = self
+            .store
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .get_account(address)
-    }
-
-    fn account_exists(&self, address: CoreAddress) -> Result<bool, DatabaseError> {
-        self.store
-            .lock()
-            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .account_exists(address)
+            .get_account(address)?;
+        // We have to treat the code as accessed because Account has access to the code
+        // And some parts of LEVM use the bytecode from the account instead of using get_account_code
+        if account.has_code() {
+            let mut code_accessed = self
+                .code_accessed
+                .lock()
+                .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?;
+            code_accessed.push(account.info.code_hash);
+        }
+        Ok(account)
     }
 
     fn get_storage_value(
@@ -119,12 +123,6 @@ impl LevmDatabase for DynVmDatabase {
             acc_info.nonce,
             HashMap::new(),
         ))
-    }
-
-    fn account_exists(&self, address: CoreAddress) -> Result<bool, DatabaseError> {
-        let acc_info = <dyn VmDatabase>::get_account_info(self.as_ref(), address)
-            .map_err(|e| DatabaseError::Custom(e.to_string()))?;
-        Ok(acc_info.is_some())
     }
 
     fn get_storage_value(

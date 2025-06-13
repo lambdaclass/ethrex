@@ -7,11 +7,11 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
+    Address, U256,
     types::{
         AuthorizationList, EIP1559Transaction, EIP7702Transaction, GenericTransaction, Signable,
         TxKind,
     },
-    Address, U256,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -138,8 +138,7 @@ impl RpcHandler for SponsoredTx {
             .lock()
             .await
             .estimate_gas_tip(&context.storage)
-            .await
-            .map_err(RpcErr::from)?;
+            .await?;
         let gas_price_request = GasPrice {}.handle(context.clone()).await?;
 
         let gas_price_request = gas_price_request
@@ -185,7 +184,7 @@ impl RpcHandler for SponsoredTx {
             _ => {
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "Error while creating transaction".to_string(),
-                ))
+                ));
             }
         };
         generic.gas = None;
@@ -235,7 +234,7 @@ impl RpcHandler for SponsoredTx {
             _ => {
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "Error while creating transaction".to_string(),
-                ))
+                ));
             }
         }
 

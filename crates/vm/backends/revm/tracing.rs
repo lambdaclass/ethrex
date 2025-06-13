@@ -2,17 +2,17 @@ use std::collections::HashSet;
 
 use ethrex_common::tracing::{CallLog, CallTrace, CallTraceFrame, CallType};
 use ethrex_common::types::{BlockHeader, Transaction};
-use ethrex_common::{types::Block, Address, H256, U256};
-use revm::{inspector_handle_register, Evm};
+use ethrex_common::{Address, H256, U256, types::Block};
+use revm::{Evm, inspector_handle_register};
 use revm_inspectors::tracing::{
-    types::{CallKind, CallLog as RevmCallLog, CallTraceNode},
     CallTraceArena, TracingInspectorConfig,
+    types::{CallKind, CallLog as RevmCallLog, CallTraceNode},
 };
 use revm_primitives::{BlockEnv, ExecutionResult as RevmExecutionResult, SpecId, TxEnv};
 
-use crate::{backends::revm::run_evm, helpers::spec_id, EvmError};
+use crate::{EvmError, backends::revm::run_evm, helpers::spec_id};
 
-use super::{block_env, db::EvmState, tx_env, REVM};
+use super::{REVM, block_env, db::EvmState, tx_env};
 
 impl REVM {
     /// Runs a single tx with the call tracer and outputs its trace

@@ -19,7 +19,6 @@ pub mod test_utils {
             Block, BlockBody, BlockHeader, EIP1559Transaction, Genesis, LegacyTransaction,
             Transaction, TxKind,
         },
-        Address, Bloom, H256, U256,
     };
     use ethrex_storage::{EngineType, Store};
     use hex_literal::hex;

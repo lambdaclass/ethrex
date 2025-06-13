@@ -9,23 +9,23 @@ use crate::constants::{
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::{
-    types::{
-        requests::Requests, AccessList, AccountUpdate, AuthorizationTuple, Block, BlockHeader,
-        EIP1559Transaction, EIP7702Transaction, Fork, GenericTransaction, Receipt, Transaction,
-        TxKind, Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
-    },
     Address, H256, U256,
+    types::{
+        AccessList, AccountUpdate, AuthorizationTuple, Block, BlockHeader, EIP1559Transaction,
+        EIP7702Transaction, Fork, GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt,
+        Transaction, TxKind, Withdrawal, requests::Requests,
+    },
 };
+use ethrex_levm::EVMConfig;
 use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::tracing::LevmCallTracer;
-use ethrex_levm::EVMConfig;
 use ethrex_levm::{
+    Environment,
     errors::{ExecutionReport, TxResult, VMError},
     vm::{Substate, VM},
-    Environment,
 };
 use std::cmp::min;
 use std::collections::HashMap;
@@ -113,7 +113,7 @@ impl LEVM {
             tx_blob_hashes: tx.blob_versioned_hashes(),
             tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
             tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
-            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
+            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas(),
             tx_nonce: tx.nonce(),
             block_gas_limit: block_header.gas_limit,
             difficulty: block_header.difficulty,
@@ -242,14 +242,6 @@ impl LEVM {
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
             let removed = new_state_account.is_empty();
 
-            // https://eips.ethereum.org/EIPS/eip-161
-            // If account is now empty and it didn't exist in the trie before, no need to make changes.
-            // This check is necessary just in case we keep empty accounts in the trie. If we're sure we don't, this code can be removed.
-            // `initial_state_account.is_empty()` check can be removed but I added it because it's short-circuiting, this way we don't hit the db very often.
-            if removed && initial_state_account.is_empty() && !db.store.account_exists(*address)? {
-                continue;
-            }
-
             if !removed && !acc_info_updated && !storage_updated {
                 // Account hasn't been updated
                 continue;
@@ -300,7 +292,7 @@ impl LEVM {
             None => {
                 return Err(EvmError::Header(
                     "parent_beacon_block_root field is missing".to_string(),
-                ))
+                ));
             }
             Some(beacon_root) => beacon_root,
         };
@@ -555,7 +547,7 @@ fn adjust_disabled_base_fee(env: &mut Environment) {
 
 pub fn build_access_list(substate: &Substate) -> AccessList {
     let access_list: AccessList = substate
-        .touched_storage_slots
+        .accessed_storage_slots
         .iter()
         .map(|(address, slots)| (*address, slots.iter().cloned().collect::<Vec<H256>>()))
         .collect();
@@ -605,7 +597,7 @@ fn vm_from_generic<'a>(
             to: match tx.to {
                 TxKind::Call(to) => to,
                 TxKind::Create => {
-                    return Err(InternalError::msg("Generic Tx cannot be create type").into())
+                    return Err(InternalError::msg("Generic Tx cannot be create type").into());
                 }
             },
             value: tx.value,
