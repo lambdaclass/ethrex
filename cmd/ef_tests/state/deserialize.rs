@@ -3,7 +3,7 @@ use crate::types::{
     TransactionExpectedException,
 };
 use bytes::Bytes;
-use ethrex_common::{types::Fork, H256, U256};
+use ethrex_common::{H256, U256, types::Fork};
 use serde::{Deserialize, Deserializer};
 use std::{collections::HashMap, str::FromStr};
 
@@ -310,7 +310,7 @@ where
                 return Err(serde::de::Error::custom(format!(
                     "Unknown fork name: {}",
                     other
-                )))
+                )));
             }
         };
         post_parsed.insert(fork, values);

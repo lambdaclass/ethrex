@@ -9,6 +9,8 @@ use ethrex_blockchain::{
     fork_choice::apply_fork_choice,
     Blockchain,
 };
+
+use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
 use ethrex_common::types::{
     Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
     InvalidBlockHeaderError, EMPTY_KECCACK_HASH,

@@ -1,6 +1,6 @@
 use ethrex_rlp::structs::Encoder;
 
-use crate::{error::TrieError, nibbles::Nibbles, node_hash::NodeHash, TrieDB, ValueRLP};
+use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
 
 use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
 
@@ -272,7 +272,7 @@ mod test {
 
     use super::*;
 
-    use crate::{pmt_node, Trie};
+    use crate::{Trie, pmt_node};
 
     #[test]
     fn new() {
