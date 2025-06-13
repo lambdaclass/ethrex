@@ -469,7 +469,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             self.send_new_block().await?;
             self.next_block_broadcast = Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL;
         }
-        if Instant::now() >= self.next_batch_broadcast - PERIODIC_BATCH_BROADCAST_INTERVAL {
+        if Instant::now() >= self.next_batch_broadcast {
             self.send_sealed_batch().await?;
             self.next_batch_broadcast = Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL;
         }
