@@ -1038,12 +1038,19 @@ impl StoreEngine for Store {
             .db
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
-        let mut cursor = tx.cursor::<StorageSnapShot>().map_err(StoreError::LibmdbxError)?;
+        let mut cursor = tx
+            .cursor::<StorageSnapShot>()
+            .map_err(StoreError::LibmdbxError)?;
         for (account_hash, storage_key, storage_value) in storages_to_update {
-            if let Some(_) = cursor.seek_value(account_hash.clone(), storage_key.clone()).map_err(StoreError::LibmdbxError)? {
+            if let Some(_) = cursor
+                .seek_value(account_hash.clone(), storage_key.clone())
+                .map_err(StoreError::LibmdbxError)?
+            {
                 cursor.delete_current().map_err(StoreError::LibmdbxError)?;
             }
-            cursor.upsert(account_hash, (storage_key, storage_value)).map_err(StoreError::LibmdbxError)?;
+            cursor
+                .upsert(account_hash, (storage_key, storage_value))
+                .map_err(StoreError::LibmdbxError)?;
         }
         for account_hash in storages_to_remove {
             tx.delete::<StorageSnapShot>(account_hash, None)
@@ -1083,7 +1090,9 @@ impl StoreEngine for Store {
         let account_hash_rlp: Rlp<H256> = (*account_hash).into();
         let hashed_key_bytes: AccountStorageKeyBytes = (*hashed_key).into();
         let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        let cursor = tx.cursor::<StorageSnapShot>().map_err(StoreError::LibmdbxError)?;
+        let cursor = tx
+            .cursor::<StorageSnapShot>()
+            .map_err(StoreError::LibmdbxError)?;
         for found in cursor.walk_key(account_hash_rlp.clone(), Some(hashed_key_bytes.clone())) {
             let (sub_key, value) = found.map_err(StoreError::LibmdbxError)?;
             if sub_key == hashed_key_bytes {
@@ -1415,7 +1424,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(StateSnapShot),
         table_info!(StorageSnapShot),
         table_info!(StorageHealPaths),
-        table_info!(InvalidAncestors)
+        table_info!(InvalidAncestors),
     ]
     .into_iter()
     .collect();

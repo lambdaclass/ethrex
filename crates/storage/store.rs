@@ -2,9 +2,9 @@ use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{AccountHashRLP, AccountStateRLP, Rlp};
 use crate::store_db::in_memory::Store as InMemoryStore;
-use crate::store_db::libmdbx::{AccountStorageKeyBytes, AccountStorageValueBytes};
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
+use crate::store_db::libmdbx::{AccountStorageKeyBytes, AccountStorageValueBytes};
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
@@ -337,8 +337,10 @@ impl Store {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
-        if let Some(account_state) = self.state_snapshot_for_account(&H256::from_slice(&hashed_address))? {
-            return Ok(Some(account_state.nonce))
+        if let Some(account_state) =
+            self.state_snapshot_for_account(&H256::from_slice(&hashed_address))?
+        {
+            return Ok(Some(account_state.nonce));
         }
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
@@ -561,8 +563,7 @@ impl Store {
 
         // Set chain config
         self.set_chain_config(&genesis.config).await?;
-        self
-            .update_snapshot(genesis_snapshot_data)
+        self.update_snapshot(genesis_snapshot_data)
     }
 
     pub async fn get_transaction_by_hash(
@@ -613,7 +614,10 @@ impl Store {
     ) -> Result<Option<U256>, StoreError> {
         let hashed_key = hash_key_fixed_size(&storage_key);
         let hashed_address = hash_address_fixed(&address);
-        if let Some(value) = self.engine.storage_snapshot_for_hash(&hashed_address, &H256::from(hashed_key))? {
+        if let Some(value) = self
+            .engine
+            .storage_snapshot_for_hash(&hashed_address, &H256::from(hashed_key))?
+        {
             return Ok(Some(value));
         };
         tracing::debug!("Storage trie accessed");
@@ -1218,10 +1222,7 @@ impl Store {
             .is_some_and(|h| h == block_hash))
     }
 
-    pub fn update_snapshot(
-        &self,
-        updates: Vec<SnapshotUpdate>,
-    ) -> Result<(), StoreError> {
+    pub fn update_snapshot(&self, updates: Vec<SnapshotUpdate>) -> Result<(), StoreError> {
         let mut storages_to_update = vec![];
         let mut storages_to_remove = vec![];
         let mut states_to_update = vec![];

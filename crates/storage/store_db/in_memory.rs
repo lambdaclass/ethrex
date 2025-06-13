@@ -1,5 +1,8 @@
 use crate::{
-    api::StoreEngine, error::StoreError, rlp::Rlp, store::{SnapshotUpdate, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS}
+    api::StoreEngine,
+    error::StoreError,
+    rlp::Rlp,
+    store::{SnapshotUpdate, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -711,7 +714,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-
     fn write_block_snapshot(
         &self,
         storages_to_update: Vec<(Rlp<H256>, AccountStorageKeyBytes, AccountStorageValueBytes)>,
@@ -764,10 +766,13 @@ impl StoreEngine for Store {
         &self,
         account_hash: &H256,
         hashed_key: &H256,
-    ) -> Result<Option<U256>, StoreError>{
-        Ok(
-            self.inner()?.storage_snapshot.get(account_hash).map(|bmap| bmap.get(hashed_key).cloned()).flatten()
-        )
+    ) -> Result<Option<U256>, StoreError> {
+        Ok(self
+            .inner()?
+            .storage_snapshot
+            .get(account_hash)
+            .map(|bmap| bmap.get(hashed_key).cloned())
+            .flatten())
     }
 }
 

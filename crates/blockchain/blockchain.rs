@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{info, error};
+use ::tracing::{error, info};
 use constants::MAX_INITCODE_SIZE;
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -145,7 +145,9 @@ impl Blockchain {
             .add_receipts(block.hash(), execution_result.receipts)
             .await
             .map_err(ChainError::StoreError)?;
-        self.storage.update_snapshot(snapshot_updates).map_err(ChainError::StoreError)?;
+        self.storage
+            .update_snapshot(snapshot_updates)
+            .map_err(ChainError::StoreError)?;
         return Ok(());
     }
 
