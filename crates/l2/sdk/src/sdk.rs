@@ -1,12 +1,12 @@
 use std::{fs::read_to_string, path::Path, process::Command};
 
 use bytes::Bytes;
-use calldata::{encode_calldata, Value};
+use calldata::{Value, encode_calldata};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_common::types::GenericTransaction;
 use ethrex_rpc::clients::eth::WithdrawalProof;
 use ethrex_rpc::clients::eth::{
-    errors::EthClientError, eth_sender::Overrides, EthClient, WrappedTransaction,
+    EthClient, WrappedTransaction, errors::EthClientError, eth_sender::Overrides,
 };
 use ethrex_rpc::types::receipt::RpcReceipt;
 
@@ -18,7 +18,7 @@ pub mod calldata;
 pub mod l1_to_l2_tx_data;
 pub mod merkle_tree;
 
-pub use l1_to_l2_tx_data::{send_l1_to_l2_tx, L1ToL2TransactionData};
+pub use l1_to_l2_tx_data::{L1ToL2TransactionData, send_l1_to_l2_tx};
 
 // 0x8ccf74999c496e4d27a2b02941673f41dd0dab2a
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([

@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.82.0
+        uses: dtolnay/rust-toolchain@1.87.0
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
@@ -52,7 +52,7 @@ jobs:
         run: |
           cp test_data/fixtures/cache/rpc_prover/cache_22240087.json cmd/ethrex_replay
           cd cmd/ethrex_replay
-          make prove-sp1-gpu-ci BLOCK_NUMBER=22240087
+          make prove-sp1-gpu-ci BLOCK_NUMBER=3990967 NETWORK=holesky
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
@@ -70,12 +70,11 @@ jobs:
       - name: Ensure admin permissions in _work
         if: always()
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
-      # Reenable when job is stable
-      # - name: Report Status
-      #   if: always()
-      #   uses: ravsamhq/notify-slack-action@v2
-      #   with:
-      #     status: ${{ job.status }}
-      #     notify_when: 'failure'
-      #   env:
-      #     SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
+      - name: Report Status
+        if: always()
+        uses: ravsamhq/notify-slack-action@v2
+        with:
+          status: ${{ job.status }}
+          notify_when: 'failure'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}

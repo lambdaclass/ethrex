@@ -10,14 +10,14 @@
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tracing::{debug, error};
 
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        fetcher_queue::run_queue, trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT,
-        MAX_CHANNEL_MESSAGES, STORAGE_BATCH_SIZE,
+        MAX_CHANNEL_MESSAGES, STORAGE_BATCH_SIZE, fetcher_queue::run_queue,
+        trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT,
     },
 };
 
