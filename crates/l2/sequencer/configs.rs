@@ -69,4 +69,5 @@ pub struct AlignedConfig {
     pub network: Network,
     pub fee_estimate: String,
     pub aligned_sp1_elf_path: String,
+    pub aligned_sp1_vk_path: String,
 }

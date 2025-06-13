@@ -254,9 +254,15 @@ contract OnChainProposer is
         // Blob is published in the (EIP-4844) transaction that calls this function.
         bytes32 blobVersionedHash = blobhash(0);
         if (VALIDIUM) {
-            require(blobVersionedHash == 0, "L2 running as validium but blob was published");
+            require(
+                blobVersionedHash == 0,
+                "L2 running as validium but blob was published"
+            );
         } else {
-            require(blobVersionedHash != 0, "L2 running as rollup but blob was not published");
+            require(
+                blobVersionedHash != 0,
+                "L2 running as rollup but blob was not published"
+            );
         }
 
         batchCommitments[batchNumber] = BatchCommitmentInfo(
@@ -353,7 +359,6 @@ contract OnChainProposer is
     function verifyBatchAligned(
         uint256 batchNumber,
         bytes calldata alignedPublicInputs,
-        bytes32 alignedProgramVKey,
         bytes32[] calldata alignedMerkleProof
     ) external override onlySequencer {
         require(
@@ -375,7 +380,7 @@ contract OnChainProposer is
         bytes memory callData = abi.encodeWithSignature(
             "verifyProofInclusion(bytes32[],bytes32,bytes)",
             alignedMerkleProof,
-            alignedProgramVKey,
+            SP1_VERIFICATION_KEY,
             alignedPublicInputs
         );
         (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
