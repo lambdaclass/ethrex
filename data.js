@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749831916994,
+  "lastUpdate": 1749834366020,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15209,6 +15209,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0084988451995685,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a9cb97fa0dda3e8683729bb7818cd9dfc366b22c",
+          "message": "ci(levm): added eftests job trigger on changes to runner (#2696)\n\n**Motivation**\n\nProperly test changes to runner don't break test execution.\n\n**Description**\n\nCurrently we don't trigger a run of the ef tests when changes to the\ntest runner are made. This PR changes the CI so it does.\n\nCloses #2634",
+          "timestamp": "2025-06-13T14:17:30Z",
+          "tree_id": "0aaa777f61ac2609f62522da35fe8b707208cd23",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a9cb97fa0dda3e8683729bb7818cd9dfc366b22c"
+        },
+        "date": 1749834359801,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008494263611859839,
             "unit": "Mgas/s"
           }
         ]
