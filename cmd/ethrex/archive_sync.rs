@@ -110,9 +110,9 @@ pub async fn archive_sync(
     store.add_block(block).await?;
     store.set_canonical_block(block_number, block_hash).await?;
     store.update_latest_block_number(block_number).await?;
-    let sync_time = sync_start.elapsed().as_secs();
+    let sync_time = sync_start.elapsed().as_millis();
     info!(
-        "Archive Sync complete in {sync_time} seconds.\nHead of local chain is now block {block_number} with hash {block_hash}"
+        "Archive Sync complete in {sync_time} ms.\nHead of local chain is now block {block_number} with hash {block_hash}"
     );
     Ok(())
 }
