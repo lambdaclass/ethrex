@@ -73,8 +73,9 @@ const PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL: std::time::Duration =
 pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
 
 lazy_static! {
-    pub static ref ADDRESS_LEAD_SEQUENCER: Address =
-        Address::from_slice(&hex::decode("3d1e15a1a55578f7c920884a9943b3b35d0d885b").unwrap());
+    pub static ref ADDRESS_LEAD_SEQUENCER: Address = Address::from_slice(
+        &hex::decode("3d1e15a1a55578f7c920884a9943b3b35d0d885b").expect("Invalid address")
+    );
 }
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
@@ -515,8 +516,19 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 "Broadcasting new block, current: {}, last broadcasted: {}",
                 i, self.latest_block_sent
             );
-            let new_block_body = self.storage.get_block_body(i).await?.unwrap();
-            let new_block_header = self.storage.get_block_header(i)?.unwrap();
+            let new_block_body =
+                self.storage
+                    .get_block_body(i)
+                    .await?
+                    .ok_or(RLPxError::InternalError(
+                        "Block body not found after querying for the block number".to_owned(),
+                    ))?;
+            let new_block_header =
+                self.storage
+                    .get_block_header(i)?
+                    .ok_or(RLPxError::InternalError(
+                        "Block header not found after querying for the block number".to_owned(),
+                    ))?;
             let new_block = Block {
                 header: new_block_header,
                 body: new_block_body,
@@ -572,20 +584,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             {
                 return Ok(());
             }
-            let block_numbers = self
-                .store_rollup
-                .get_block_numbers_by_batch(self.latest_batch_sent + 1)
-                .await?
-                .ok_or(RLPxError::InternalError(
-                    "No batch found after containing check".to_string(),
-                ))?;
-            let withdrawal_hashes = self
-                .store_rollup
-                .get_withdrawal_hashes_by_batch(next_batch_to_send)
-                .await?
-                .ok_or(RLPxError::InternalError(
-                    "No withdrawal hashes found for the batch".to_string(),
-                ))?;
+            let Some(batch) = self.store_rollup.get_batch(next_batch_to_send).await? else {
+                return Ok(());
+            };
 
             let (signature, recovery_id) = if let Some(recovered_sig) = self
                 .store_rollup
@@ -605,11 +606,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 };
                 let (recovery_id, signature) = secp256k1::SECP256K1
                     .sign_ecdsa_recoverable(
-                        &SignedMessage::from_digest(get_hash_batch_sealed(
-                            next_batch_to_send,
-                            &block_numbers,
-                            &withdrawal_hashes,
-                        )),
+                        &SignedMessage::from_digest(get_hash_batch_sealed(&batch)),
                         &secret_key,
                     )
                     .serialize_compact();
@@ -618,9 +615,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             };
 
             let msg = Message::BatchSealed(BatchSealedMessage {
-                batch_number: next_batch_to_send,
-                block_numbers,
-                withdrawal_hashes,
+                batch,
                 signature,
                 recovery_id,
             });
@@ -851,7 +846,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             msg.recovery_id,
             &msg.signature,
             *block_hash.as_fixed_bytes(),
-        );
+        )
+        .map_err(|e| {
+            log_peer_error(
+                &self.node,
+                &format!("Failed to recover lead sequencer: {e}"),
+            );
+            RLPxError::CryptographyError(e.to_string())
+        })?;
 
         if recovered_lead_sequencer != *ADDRESS_LEAD_SEQUENCER {
             debug!(
@@ -917,18 +919,25 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn validate_batch_sealed(&mut self, msg: &BatchSealedMessage) -> Result<bool, RLPxError> {
         #[cfg(feature = "l2")]
         {
-            if self.store_rollup.contains_batch(&msg.batch_number).await? {
-                debug!("Batch {} already sealed, ignoring it", msg.batch_number);
+            if self.store_rollup.contains_batch(&msg.batch.number).await? {
+                debug!("Batch {} already sealed, ignoring it", msg.batch.number);
                 return Ok(false);
             }
-            if msg.block_numbers.is_empty() {
+            if msg.batch.first_block == msg.batch.last_block {
+                // is empty batch
                 return Ok(false);
             }
 
-            let hash =
-                get_hash_batch_sealed(msg.batch_number, &msg.block_numbers, &msg.withdrawal_hashes);
+            let hash = get_hash_batch_sealed(&msg.batch);
 
-            let recovered_lead_sequencer = get_pub_key(msg.recovery_id, &msg.signature, hash);
+            let recovered_lead_sequencer = get_pub_key(msg.recovery_id, &msg.signature, hash)
+                .map_err(|e| {
+                    log_peer_error(
+                        &self.node,
+                        &format!("Failed to recover lead sequencer: {e}"),
+                    );
+                    RLPxError::CryptographyError(e.to_string())
+                })?;
 
             if recovered_lead_sequencer != *ADDRESS_LEAD_SEQUENCER {
                 warn!(
@@ -941,7 +950,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             signature[..64].copy_from_slice(&msg.signature[..]);
             signature[64..].copy_from_slice(&msg.recovery_id[..]);
             self.store_rollup
-                .store_signature_by_batch(msg.batch_number, signature)
+                .store_signature_by_batch(msg.batch.number, signature)
                 .await?;
             Ok(true)
         }
@@ -956,23 +965,18 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn process_batch_sealed(&mut self, msg: BatchSealedMessage) -> Result<(), RLPxError> {
         #[cfg(feature = "l2")]
         {
-            let first_block_number = msg.block_numbers.first().ok_or(RLPxError::BadRequest(
-                "No block numbers found in BatchSealed message".to_string(),
-            ))?;
-            let last_block_number = msg.block_numbers.last().ok_or(RLPxError::BadRequest(
-                "No block numbers found in BatchSealed message".to_string(),
-            ))?;
-            self.store_rollup
-                .seal_batch(
-                    msg.batch_number,
-                    *first_block_number,
-                    *last_block_number,
-                    msg.withdrawal_hashes,
+            // get numbers to not copy the whole struct
+            let (batch_number, first_block, last_block) = {
+                (
+                    msg.batch.number,
+                    msg.batch.first_block,
+                    msg.batch.last_block,
                 )
-                .await?;
+            };
+            self.store_rollup.seal_batch(msg.batch).await?;
             info!(
                 "Sealed batch {} with blocks from {} to {}",
-                msg.batch_number, first_block_number, last_block_number
+                batch_number, first_block, last_block
             );
             Ok(())
         }

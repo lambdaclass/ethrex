@@ -1,5 +1,5 @@
 use bytes::BufMut;
-use ethrex_common::{types::Block, H256};
+use ethrex_common::types::{batch::Batch, Block};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -50,9 +50,7 @@ impl RLPxMessage for NewBlockMessage {
 
 #[derive(Debug)]
 pub struct BatchSealedMessage {
-    pub batch_number: u64,
-    pub block_numbers: Vec<u64>,
-    pub withdrawal_hashes: Vec<H256>,
+    pub batch: Batch,
     pub signature: [u8; 64],
     pub recovery_id: [u8; 4],
 }
@@ -62,9 +60,15 @@ impl RLPxMessage for BatchSealedMessage {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
-            .encode_field(&self.batch_number)
-            .encode_field(&self.block_numbers)
-            .encode_field(&self.withdrawal_hashes)
+            .encode_field(&self.batch.number)
+            .encode_field(&self.batch.first_block)
+            .encode_field(&self.batch.last_block)
+            .encode_field(&self.batch.state_root)
+            .encode_field(&self.batch.deposit_logs_hash)
+            .encode_field(&self.batch.withdrawal_hashes)
+            .encode_field(&self.batch.blobs_bundle.blobs)
+            .encode_field(&self.batch.blobs_bundle.commitments)
+            .encode_field(&self.batch.blobs_bundle.proofs)
             .encode_field(&self.signature)
             .encode_field(&self.recovery_id)
             .finish();
@@ -77,40 +81,53 @@ impl RLPxMessage for BatchSealedMessage {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (batch_number, decoder) = decoder.decode_field("batch_number")?;
-        let (block_numbers, decoder) = decoder.decode_field("block_numbers")?;
+        let (first_block, decoder) = decoder.decode_field("first_block")?;
+        let (last_block, decoder) = decoder.decode_field("last_block")?;
+        let (state_root, decoder) = decoder.decode_field("state_root")?;
+        let (deposit_logs_hash, decoder) = decoder.decode_field("deposit_logs_hash")?;
         let (withdrawal_hashes, decoder) = decoder.decode_field("withdrawal_hashes")?;
+        let (blobs, decoder) = decoder.decode_field("blobs")?;
+        let (commitments, decoder) = decoder.decode_field("commitments")?;
+        let (proofs, decoder) = decoder.decode_field("proofs")?;
         let (signature, decoder) = decoder.decode_field("signature")?;
         let (recovery_id, decoder) = decoder.decode_field("recovery_id")?;
         decoder.finish()?;
-        Ok(BatchSealedMessage {
-            batch_number,
-            block_numbers,
+        let batch = Batch {
+            number: batch_number,
+            first_block,
+            last_block,
+            state_root,
+            deposit_logs_hash,
             withdrawal_hashes,
+            blobs_bundle: ethrex_common::types::blobs_bundle::BlobsBundle {
+                blobs,
+                commitments,
+                proofs,
+            },
+        };
+        Ok(BatchSealedMessage {
+            batch,
             signature,
             recovery_id,
         })
     }
 }
 
-pub fn get_hash_batch_sealed(
-    batch_number: u64,
-    block_numbers: &[u64],
-    withdrawal_hashes: &[H256],
-) -> [u8; 32] {
-    let block_numbers_bytes: Vec<u8> = block_numbers
-        .iter()
-        .flat_map(|num| num.to_be_bytes().to_vec())
-        .collect();
-
-    let withdrawal_bytes: Vec<u8> = withdrawal_hashes
+pub fn get_hash_batch_sealed(batch: &Batch) -> [u8; 32] {
+    let withdrawal_bytes: Vec<u8> = batch
+        .withdrawal_hashes
         .iter()
         .flat_map(|hash| hash.as_bytes().to_vec())
         .collect();
 
     let mut hasher = Keccak256::new();
-    hasher.update(batch_number.to_be_bytes());
-    hasher.update(&block_numbers_bytes);
+    hasher.update(batch.number.to_be_bytes());
+    hasher.update(batch.first_block.to_be_bytes());
+    hasher.update(batch.last_block.to_be_bytes());
+    hasher.update(batch.state_root.as_bytes());
+    hasher.update(batch.deposit_logs_hash.as_bytes());
     hasher.update(&withdrawal_bytes);
+    // missing blobs_bundle for now
     let next_batch_hash = hasher.finalize();
     let mut hash = [0u8; 32];
     hash.copy_from_slice(&next_batch_hash);

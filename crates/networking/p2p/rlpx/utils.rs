@@ -97,21 +97,25 @@ pub(crate) fn log_peer_warn(node: &Node, text: &str) {
     warn!("[{0}]: {1}", node, text)
 }
 
-pub fn get_pub_key(recovery_id: [u8; 4], signature: &[u8; 64], payload: [u8; 32]) -> Address {
+pub fn get_pub_key(
+    recovery_id: [u8; 4],
+    signature: &[u8; 64],
+    payload: [u8; 32],
+) -> Result<Address, CryptographyError> {
     let recovery_id: i32 = i32::from_be_bytes(recovery_id);
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
         signature,
-        RecoveryId::from_i32(recovery_id).unwrap(), // cannot fail
+        RecoveryId::from_i32(recovery_id).expect("Invalid recovery ID"), // cannot fail
     )
-    .unwrap();
+    .map_err(|error| CryptographyError::CouldNotGetKeyFromSecret(error.to_string()))?;
 
     // Recover public key
     let public = secp256k1::SECP256K1
         .recover_ecdsa(&SignedMessage::from_digest(payload), &signature)
-        .unwrap();
+        .map_err(|error| CryptographyError::CouldNotGetKeyFromSecret(error.to_string()))?;
     // Hash public key to obtain address
     let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
-    Address::from_slice(&hash[12..])
+    Ok(Address::from_slice(&hash[12..]))
 }
 
 #[cfg(test)]
