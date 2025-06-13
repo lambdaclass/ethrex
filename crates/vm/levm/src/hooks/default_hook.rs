@@ -29,30 +29,38 @@ impl Hook for DefaultHook {
     ///   See 'docs' for more information about validations.
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
-        let (sender_balance, sender_nonce) = {
-            let sender_account = vm.db.get_account(sender_address)?;
-            (sender_account.info.balance, sender_account.info.nonce)
-        };
+        let sender = vm.db.get_account(sender_address)?;
+
+        // Checks on origin:
+        // SENDER_NOT_EOA
+        validate_sender_is_eoa(sender)?;
+
+        let (sender_balance, sender_nonce) = (sender.info.balance, sender.info.nonce);
+        // INSUFFICIENT_ACCOUNT_FUNDS
+        validate_sender_balance(vm, sender_balance)?;
+        // NONCE_MISMATCH
+        validate_sender_nonce(vm, sender_nonce)?;
+        // NONCE_IS_MAX
+        vm.increment_account_nonce(sender_address)
+            .map_err(|_| TxValidationError::NonceIsMax)?;
 
         if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;
         }
 
-        // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
+        // GASLIMIT_PRICE_PRODUCT_OVERFLOW
         let gaslimit_price_product = vm
             .env
             .gas_price
             .checked_mul(vm.env.gas_limit.into())
             .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
-        validate_sender_balance(vm, sender_balance)?;
-
-        // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
+        // INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = vm.env.tx_max_fee_per_blob_gas {
             validate_max_fee_per_blob_gas(vm, tx_max_fee_per_blob_gas)?;
         }
 
-        // (3) INSUFFICIENT_ACCOUNT_FUNDS
+        // INSUFFICIENT_ACCOUNT_FUNDS
         deduct_caller(vm, gaslimit_price_product, sender_address)?;
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
@@ -66,19 +74,6 @@ impl Hook for DefaultHook {
         // (6) INTRINSIC_GAS_TOO_LOW
         vm.add_intrinsic_gas()?;
 
-        // (7) NONCE_IS_MAX
-        vm.increment_account_nonce(sender_address)
-            .map_err(|_| TxValidationError::NonceIsMax)?;
-
-        // check for nonce mismatch
-        if sender_nonce != vm.env.tx_nonce {
-            return Err(TxValidationError::NonceMismatch {
-                expected: sender_nonce,
-                actual: vm.env.tx_nonce,
-            }
-            .into());
-        }
-
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
             vm.env.tx_max_priority_fee_per_gas,
@@ -88,9 +83,6 @@ impl Hook for DefaultHook {
                 return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas.into());
             }
         }
-
-        // (9) SENDER_NOT_EOA
-        validate_sender(vm.db.get_account(sender_address)?)?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;
@@ -367,8 +359,8 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     vm.eip7702_set_access_code()
 }
 
-pub fn validate_sender(sender_account: &Account) -> Result<(), VMError> {
-    if sender_account.has_code() && !has_delegation(sender_account)? {
+pub fn validate_sender_is_eoa(sender: &Account) -> Result<(), VMError> {
+    if sender.has_code() && !has_delegation(sender)? {
         return Err(TxValidationError::SenderNotEOA.into());
     }
     Ok(())
@@ -377,6 +369,18 @@ pub fn validate_sender(sender_account: &Account) -> Result<(), VMError> {
 pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> {
     if vm.env.gas_limit > vm.env.block_gas_limit {
         return Err(TxValidationError::GasAllowanceExceeded);
+    }
+    Ok(())
+}
+
+pub fn validate_sender_nonce(vm: &VM<'_>, sender_nonce: u64) -> Result<(), VMError> {
+    // check for nonce mismatch
+    if sender_nonce != vm.env.tx_nonce {
+        return Err(TxValidationError::NonceMismatch {
+            expected: sender_nonce,
+            actual: vm.env.tx_nonce,
+        }
+        .into());
     }
     Ok(())
 }
