@@ -9,11 +9,6 @@ edition = "2024"
 sp1-zkvm = "5.0.0"
 zkvm_interface = { path = "../" }
 kzg-rs = "0.2.6"
-bls12_381 = { version = "=0.8.0-sp1-4.0.0-v2", package = "sp1_bls12_381", default-features = false, features = [
-    "groups",
-    "pairings",
-    "alloc",
-] }
 
 ethrex-common = { path = "../../../../../common", default-features = false }
 ethrex-storage = { path = "../../../../../storage", default-features = false }
@@ -35,6 +30,7 @@ secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patc
 substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-5.0.0" }
 bls12_381 = { git = "https://github.com/sp1-patches/bls12_381", tag = "patch-0.8.0-sp1-5.0.0" }
 rsa = { git = "https://github.com/sp1-patches/RustCrypto-RSA", tag = "patch-0.9.6-sp1-5.0.0" }
+ecdsa = { git = "https://github.com/sp1-patches/signatures", tag = "patch-16.9-sp1-4.1.0" }
 
 [features]
 l2 = ["ethrex-vm/l2", "zkvm_interface/l2", "ethrex-blockchain/l2"]
