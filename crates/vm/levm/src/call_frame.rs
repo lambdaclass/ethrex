@@ -7,7 +7,10 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{types::Account, Address, U256};
+use ethrex_common::{
+    types::{Account},
+    Address, U256,
+};
 use keccak_hash::H256;
 use std::collections::{HashMap, HashSet};
 

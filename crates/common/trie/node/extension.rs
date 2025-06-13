@@ -1,9 +1,9 @@
 use ethrex_rlp::structs::Encoder;
 
+use crate::ValueRLP;
 use crate::nibbles::Nibbles;
 use crate::node_hash::NodeHash;
-use crate::ValueRLP;
-use crate::{error::TrieError, TrieDB};
+use crate::{TrieDB, error::TrieError};
 
 use super::{BranchNode, Node, NodeRef, ValueOrHash};
 
@@ -185,7 +185,7 @@ impl ExtensionNode {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{node::LeafNode, pmt_node, Trie};
+    use crate::{Trie, node::LeafNode, pmt_node};
 
     #[test]
     fn new() {

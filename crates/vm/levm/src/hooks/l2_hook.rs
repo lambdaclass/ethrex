@@ -4,7 +4,7 @@ use crate::{
     vm::VM,
 };
 
-use ethrex_common::{types::Fork, Address, U256};
+use ethrex_common::{Address, U256, types::Fork};
 
 pub struct L2Hook {
     pub recipient: Option<Address>,
