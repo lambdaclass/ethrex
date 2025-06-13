@@ -2,6 +2,7 @@ use crate::{
     api::StoreEngine,
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
+    store_db::libmdbx::{AccountAddress, BlockNumHash},
     UpdateBatch,
 };
 use bytes::Bytes;
@@ -90,20 +91,20 @@ impl Store {
 impl StoreEngine for Store {
     async fn store_account_info_logs(
         &self,
-        account_info_logs: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
+        _account_info_logs: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
     ) -> Result<(), StoreError> {
         todo!()
     }
     async fn store_account_storage_logs(
         &self,
-        account_storage_logs: Vec<(BlockNumHash, AccountAddress, H256, U256, U256)>,
+        _account_storage_logs: Vec<(BlockNumHash, AccountAddress, H256, U256, U256)>,
     ) -> Result<(), StoreError> {
         todo!()
     }
     async fn apply_updates(
         &self,
         update_batch: UpdateBatch,
-        _account_updates: Vec<Vec<AccountUpdate>>,
+        _account_updates: &[AccountUpdate],
     ) -> Result<(), StoreError> {
         let mut store = self.inner()?;
         {
@@ -157,6 +158,22 @@ impl StoreEngine for Store {
         }
 
         Ok(())
+    }
+
+    fn get_canonical_blocks_since(
+        &self,
+        first_block_num: &[(u64, H256)],
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
+    fn undo_writes_for_blocks(&self, invalidated_blocks: &[(u64, H256)]) -> Result<(), StoreError> {
+        todo!()
+    }
+    fn replay_writes_for_blocks(
+        &self,
+        new_canonical_blocks: &[(u64, H256)],
+    ) -> Result<(), StoreError> {
+        todo!()
     }
 
     fn get_current_account_info(&self, _: Address) -> Result<Option<AccountInfo>, StoreError> {

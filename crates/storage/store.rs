@@ -78,7 +78,9 @@ impl Store {
                 .iter()
                 .zip(account_updates.iter().map(|updates| *updates)),
         )?;
-        self.engine.store_account_info_logs(account_info_logs)?;
+        self.engine
+            .store_account_info_logs(account_info_logs)
+            .await?;
         let account_storage_logs = self.build_account_storage_logs(
             update_batch
                 .blocks
@@ -86,9 +88,15 @@ impl Store {
                 .zip(account_updates.iter().map(|updates| *updates)),
         )?;
         self.engine
-            .store_account_storage_logs(account_storage_logs)?;
+            .store_account_storage_logs(account_storage_logs)
+            .await?;
+        let account_updates: Vec<_> = account_updates
+            .iter()
+            .flat_map(|u| u.iter())
+            .cloned()
+            .collect();
         self.engine
-            .apply_updates(update_batch, account_updates)
+            .apply_updates(update_batch, &account_updates)
             .await
     }
 
@@ -146,6 +154,7 @@ impl Store {
                         .get_current_account_info(address.clone())?
                         .unwrap_or_default(),
                 };
+                // NOTE: this might also be useful as preparation for the snapshot
                 previous_account_info.insert(address.clone(), new_info.clone());
                 accounts_info_log.push((
                     (block.header.number, block.hash()).into(),
@@ -156,6 +165,22 @@ impl Store {
             }
         }
         Ok(accounts_info_log)
+    }
+
+    pub async fn reconstruct_snapshots_for_new_canonical_chain(
+        &self,
+        new_canonical_blocks: &[(u64, H256)],
+    ) -> Result<(), StoreError> {
+        let Some((first_block_num, _)) = new_canonical_blocks.first() else {
+            return Ok(());
+        };
+        let invalidated_blocks = self.engine.get_canonical_blocks_since(first_block_num)?;
+        self.engine
+            .undo_writes_for_blocks(invalidated_blocks)
+            .await?;
+        self.engine
+            .replay_writes_for_blocks(new_canonical_blocks)
+            .await
     }
 
     fn build_account_storage_logs<'a>(
@@ -177,6 +202,7 @@ impl Store {
                             .get_current_storage(address, *slot)?
                             .unwrap_or_default(),
                     };
+                    // NOTE: this might also be useful as preparation for the snapshot
                     previous_account_storage.insert((address, *slot), *new_value);
                     accounts_storage_log.push((
                         block_numhash.clone(),

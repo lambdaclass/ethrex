@@ -13,7 +13,6 @@ use crate::utils::{ChainDataIndex, SnapStateIndex};
 use crate::UpdateBatch;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
-use ethrex_common::types::Account;
 use ethrex_common::types::{
     payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash,
     BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
@@ -133,9 +132,10 @@ impl StoreEngine for Store {
     async fn apply_updates(
         &self,
         update_batch: UpdateBatch,
-        account_updates: Vec<Vec<AccountUpdate>>,
+        account_updates: &[AccountUpdate],
     ) -> Result<(), StoreError> {
         let db = self.db.clone();
+        let account_updates = account_updates.to_vec();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
@@ -145,133 +145,47 @@ impl StoreEngine for Store {
             let mut storage_cursor = tx
                 .cursor::<FlatAccountStorage>()
                 .map_err(StoreError::LibmdbxError)?;
-            let mut previous_account_infos = Vec::with_capacity(account_updates.len());
-            let mut previous_storage_values = Vec::with_capacity(account_updates.len());
-            for (block_updates, block) in account_updates.iter().zip(update_batch.blocks.iter()) {
-                let mut previous_account_infos_for_block = Vec::with_capacity(block_updates.len());
-                let mut previous_storage_values_for_block = Vec::with_capacity(block_updates.len());
-                for update in block_updates.iter() {
-                    let key = AccountAddress(update.address);
-                    let current_account_info = cursor
+            for update in account_updates.iter() {
+                let key = AccountAddress(update.address);
+                if update.removed {
+                    if cursor
                         .seek_exact(key)
                         .map_err(StoreError::LibmdbxError)?
-                        .map(|elem| elem.1 .0);
-                    if update.removed {
-                        if cursor
-                            .seek_exact(key)
-                            .map_err(StoreError::LibmdbxError)?
-                            .is_some()
-                        {
-                            cursor.delete_current().map_err(StoreError::LibmdbxError)?;
-                        }
-                    } else if let Some(info_update) = &update.info {
-                        let value = (
-                            info_update.code_hash,
-                            info_update.balance,
-                            info_update.nonce,
-                        )
-                            .into();
-                        cursor
-                            .upsert(key, value)
+                        .is_some()
+                    {
+                        cursor.delete_current().map_err(StoreError::LibmdbxError)?;
+                    }
+                } else if let Some(info_update) = &update.info {
+                    let value = (
+                        info_update.code_hash,
+                        info_update.balance,
+                        info_update.nonce,
+                    )
+                        .into();
+                    cursor
+                        .upsert(key, value)
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+
+                for (slot, value) in update.added_storage.iter() {
+                    let key = (update.address.into(), (*slot).into());
+                    if !value.is_zero() {
+                        storage_cursor
+                            .upsert(key, (*value).into())
+                            .map_err(StoreError::LibmdbxError)?;
+                    } else if let Some(_current_data) = storage_cursor
+                        .seek_exact(key)
+                        .map_err(StoreError::LibmdbxError)?
+                    {
+                        storage_cursor
+                            .delete_current()
                             .map_err(StoreError::LibmdbxError)?;
                     }
-
-                    let mut current_storage_values = Vec::with_capacity(update.added_storage.len());
-                    for (slot, value) in update.added_storage.iter() {
-                        let key = (update.address.into(), (*slot).into());
-
-                        // we will accumulate the previous storage values as we change them
-
-                        let current_value = storage_cursor
-                            .seek_exact(key)
-                            .map_err(StoreError::LibmdbxError)?
-                            .map(|elem| elem.1);
-                        if !value.is_zero() {
-                            storage_cursor
-                                .upsert(key, (*value).into())
-                                .map_err(StoreError::LibmdbxError)?;
-                        } else if let Some(_current_data) = storage_cursor
-                            .seek_exact(key)
-                            .map_err(StoreError::LibmdbxError)?
-                        {
-                            storage_cursor
-                                .delete_current()
-                                .map_err(StoreError::LibmdbxError)?;
-                        }
-                        current_storage_values.push((slot, current_value));
-                    }
-                    // we will accumulate the previous storage values as we change them
-                    previous_storage_values_for_block.push(current_storage_values);
-                    // we will accumulate the previous account infos as we change them
-                    previous_account_infos_for_block.push((update.address, current_account_info));
                 }
-                // we will accumulate the previous account infos as we change them
-                previous_account_infos.push(previous_account_infos_for_block);
-                // we will accumulate the previous storage values as we change them
-                previous_storage_values.push(previous_storage_values_for_block);
             }
 
-            let mut account_info_log = AccountInfoWriteLogSegment(Vec::new());
-            let mut storage_logs = Vec::new();
             // for each block in the update batch, we iterate over the account updates (by index)
             // we store account info changes in the table StateWriteBatch
-            for i in 0..update_batch.blocks.len() {
-                let block = &update_batch.blocks[i];
-                let account_updates = &account_updates[i];
-                let previous_account_infos = &previous_account_infos[i];
-                let storage_updates = &previous_storage_values[i];
-                for j in 0..account_updates.len() {
-                    // we can use the index to get the account update, previous account info and storage update
-                    let account_info_log_entry = AccountInfoLogEntry {
-                        address: AccountAddress(account_updates[j].address),
-                        info: previous_account_infos[j].1.clone().unwrap_or_default(),
-                        previous_info: account_updates[j].info.clone().unwrap_or_default(),
-                    };
-                    account_info_log.0.push(account_info_log_entry);
-                    let mut storage_log_entries = Vec::new();
-                    // we can use the index to get the storage updates
-                    for k in 0..storage_updates[j].len() {
-                        let (slot, value) = &storage_updates[j][k];
-                        let storage_log_entry = (
-                            AccountAddress(account_updates[j].address),
-                            *slot,
-                            previous_storage_values[i][j][k]
-                                .1
-                                .clone()
-                                .unwrap_or_default(),
-                            account_updates[j]
-                                .added_storage
-                                .get(slot)
-                                .cloned()
-                                .unwrap_or_default(),
-                        )
-                            .into();
-                        storage_log_entries.push(storage_log_entry);
-                    }
-                    storage_logs.push(StorageStateWriteLogVal(storage_log_entries));
-
-                    //StorageStateWriteLog
-                    //StorageStateWriteLogVal(Vec<(AccountAddress, H256, U256, U256)>);
-
-                    //AccountsStateWriteLog
-                    // AccountInfoWriteLog(pub Vec<AccountInfoLogEntry>);
-
-                    /*
-                    AccountInfoLogEntry {
-                        pub address: AccountAddress,
-                        pub info: AccountInfo,
-                        pub previous_info: AccountInfo,
-                    }
-                    */
-                }
-                // store account state updates
-                tx.upsert::<AccountsStateWriteLog>(
-                    BlockNumHash(block.header.number, block.hash()),
-                    account_info_log,
-                )
-                .map_err(StoreError::LibmdbxError)?;
-            }
-
             // store account updates
             for (node_hash, node_data) in update_batch.account_updates {
                 tx.upsert::<StateTrieNodes>(node_hash, node_data)
@@ -370,7 +284,7 @@ impl StoreEngine for Store {
     ) -> Result<(), StoreError> {
         let inner = || -> Result<(), _> {
             let tx = self.db.begin_readwrite()?;
-            let mut cursor = tx.cursor::<AccountStorageWriteLog>()?;
+            let mut cursor = tx.cursor::<AccountsStorageWriteLog>()?;
             for (blk, addr, slot, old_value, new_value) in account_storage_logs {
                 cursor.upsert(
                     (blk, addr),
@@ -380,6 +294,52 @@ impl StoreEngine for Store {
             tx.commit()
         };
         inner().map_err(StoreError::LibmdbxError)
+    }
+
+    fn get_canonical_blocks_since(
+        &self,
+        first_block_num: u64,
+    ) -> Result<Vec<(u64, H256)>, StoreError> {
+        let inner = || -> Result<_, _> {
+            let mut res = Vec::new();
+            let tx = self.db.begin_read()?;
+            let mut cursor = tx.cursor::<CanonicalBlockHashes>()?;
+            cursor.seek_exact(first_block_num)?;
+            while let Some((key, value)) = cursor.current()? {
+                res.push((key, value.to()?));
+                cursor.next()?;
+            }
+            Ok(res)
+        };
+        inner().map_err(StoreError::LibmdbxError)
+    }
+    fn undo_writes_for_blocks(&self, invalidated_blocks: &[(u64, H256)]) -> Result<(), StoreError> {
+        let inner = || -> Result<_, _> {
+            let tx = self.db.begin_readwrite()?;
+            let mut state_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
+            let mut storage_log_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
+            let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
+            let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
+            for (block_num, block_hash) in invalidated_blocks.iter().rev() {
+                let key = (block_num, block_hash).into();
+                state_log_cursor.seek_closest(key)?;
+                storage_log_cursor.seek_closest(key)?;
+                let (account_key, account_value) = state_log_cursor.current()?.unwrap_or_default();
+                let (storage_key, storage_value) =
+                    storage_log_cursor.current()?.unwrap_or_default();
+                if account_key.0 != key || storage_key.0 != key {
+                    anyhow::bail!("invalid arguments");
+                }
+            }
+            Ok(())
+        };
+        inner().map_err(StoreError::LibmdbxError)
+    }
+    fn replay_writes_for_blocks(
+        &self,
+        new_canonical_blocks: &[(u64, H256)],
+    ) -> Result<(), StoreError> {
+        todo!()
     }
 
     async fn add_block_header(
@@ -1552,20 +1512,13 @@ impl Decodable for AccountInfoLogEntry {
     }
 }
 
+// TODO: maybe the log tables could save 64 bytes per
+// entry by storing the address in the value instead
 dupsort!(
     /// Account codes table.
-    ( AccountsStateWriteLog ) (BlockNumHash, AccountAddress) => AccountInfoLogEntry
+    ( AccountsStateWriteLog ) (BlockNumHash, AccountAddress)[BlockNumHash] => AccountInfoLogEntry
 );
 
-/* TODO: use this instead of the tuple version below
-pub struct StorageWriteLogEntry {
-    pub address: AccountAddress,
-    pub slot: H256,
-    pub previous_value: U256,
-    pub new_value: U256,
-}
-pub struct StorageWriteLog(pub Vec<StorageWriteLogEntry>);
-*/
 pub struct AccountStorageLogEntry(pub H256, pub U256, pub U256);
 
 // implemente Encode and Decode for StorageStateWriteLogVal
@@ -1595,7 +1548,7 @@ impl Decodable for AccountStorageLogEntry {
 
 dupsort!(
     /// Storage write log table.
-    ( AccountStorageWriteLog ) (BlockNumHash, AccountAddress) => AccountStorageLogEntry
+    ( AccountsStorageWriteLog ) (BlockNumHash, AccountAddress)[BlockNumHash] => AccountStorageLogEntry
 );
 
 impl Encodable for BlockNumHash {
@@ -1864,7 +1817,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(InvalidAncestors),
         table_info!(FlatAccountStorage),
         table_info!(FlatAccountInfo),
-        table_info!(StorageStateWriteLog),
+        table_info!(AccountsStorageWriteLog),
         table_info!(AccountsStateWriteLog),
     ]
     .into_iter()

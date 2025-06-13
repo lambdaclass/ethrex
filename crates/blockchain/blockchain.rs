@@ -301,7 +301,7 @@ impl Blockchain {
         };
 
         self.storage
-            .store_block_updates(update_batch, &account_updates)
+            .store_block_updates(update_batch, &[&account_updates])
             .await
             .map_err(|e| (e.into(), None))?;
 

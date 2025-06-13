@@ -100,6 +100,19 @@ pub async fn apply_fork_choice(
 
     // Finished all validations.
 
+    // SNAPSHOT RECONSTRUCTION STRATEGY
+    // 1. From the number of the first new_canonical_block and the canonical
+    //    chain table, extract the list of (block_number, block_hash) we need
+    //    to invalidate
+    // 2. From the last block in that list, iterate backwards the log restoring
+    //    the previous values
+    // 3. From the first block in the new canonical chain to the last, apply
+    //    the log for those blocks
+    // 4. Commit the transaction
+    store
+        .reconstruct_snapshots_for_new_canonical_chain(&new_canonical_blocks)
+        .await?;
+
     // Make all ancestors to head canonical.
     for (number, hash) in new_canonical_blocks {
         store.set_canonical_block(number, hash).await?;

@@ -23,7 +23,17 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn apply_updates(
         &self,
         update_batch: UpdateBatch,
-        account_updates: Vec<Vec<AccountUpdate>>,
+        account_updates: &[AccountUpdate],
+    ) -> Result<(), StoreError>;
+
+    fn get_canonical_blocks_since(
+        &self,
+        first_block_num: u64,
+    ) -> Result<Vec<(u64, H256)>, StoreError>;
+    fn undo_writes_for_blocks(&self, invalidated_blocks: &[(u64, H256)]) -> Result<(), StoreError>;
+    fn replay_writes_for_blocks(
+        &self,
+        new_canonical_blocks: &[(u64, H256)],
     ) -> Result<(), StoreError>;
 
     async fn store_account_info_logs(
