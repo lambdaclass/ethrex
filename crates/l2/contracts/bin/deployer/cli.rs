@@ -105,7 +105,7 @@ pub struct DeployerOptions {
         env = "ETHREX_DEPLOYER_GENESIS_L1_PATH",
         required_if_eq("deposit_rich", "true"),
         help_heading = "Deployer options",
-        help = "Path to the genesis file. The default is ../../test_data/genesis-l1-dev.json"
+        help = "Path to the genesis file. The default is ../../test_data/fixtures/genesis/l1-dev.json"
     )]
     pub genesis_l1_path: Option<PathBuf>,
     #[arg(

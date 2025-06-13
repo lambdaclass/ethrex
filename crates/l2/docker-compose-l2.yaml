@@ -15,7 +15,7 @@ services:
       # NOTE: CI_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${CI_ETHREX_WORKDIR}/contracts
       - ./.env:${CI_ETHREX_WORKDIR}/.env
-      - ../../test_data/genesis-l1-dev.json:${CI_ETHREX_WORKDIR}/test_data/genesis-l1-dev.json
+      - ../../test_data/fixtures/genesis/l1-dev.json:${CI_ETHREX_WORKDIR}/test_data/fixtures/genesis/l1-dev.json
       - ../../test_data/genesis-l2.json:${CI_ETHREX_WORKDIR}/test_data/genesis-l2.json
       - ../../test_data/private_keys_l1.txt:${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
       - ./prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk:${CI_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
@@ -26,7 +26,7 @@ services:
       - ETHREX_DEPLOYER_L1_PRIVATE_KEY=${ETHREX_DEPLOYER_PRIVATE_KEY:-0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924}
       - ETHREX_DEPLOYER_CONTRACTS_PATH=${CI_ETHREX_WORKDIR}/contracts
       - ETHREX_DEPLOYER_ENV_FILE_PATH=${CI_ETHREX_WORKDIR}/.env
-      - ETHREX_DEPLOYER_GENESIS_L1_PATH=${CI_ETHREX_WORKDIR}/test_data/genesis-l1-dev.json
+      - ETHREX_DEPLOYER_GENESIS_L1_PATH=${CI_ETHREX_WORKDIR}/test_data/fixtures/genesis/l1-dev.json
       - ETHREX_DEPLOYER_GENESIS_L2_PATH=${CI_ETHREX_WORKDIR}/test_data/genesis-l2.json
       - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
       - ETHREX_DEPLOYER_DEPLOY_RICH=${ETHREX_DEPLOYER_DEPLOY_RICH:-false}

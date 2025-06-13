@@ -177,7 +177,7 @@ For reference on each individual check see the [assertoor-wiki](https://github.c
 
 Example run:
 ```bash
-cargo run --bin ethrex -- --network test_data/genesis-kurtosis.json
+cargo run --bin ethrex -- --network test_data/fixtures/genesis/kurtosis.json
 ```
 
 The `network` argument is mandatory, as it defines the parameters of the chain.

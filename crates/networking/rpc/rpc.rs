@@ -563,7 +563,7 @@ mod tests {
 
     // Reads genesis file taken from https://github.com/ethereum/execution-apis/blob/main/tests/genesis.json
     fn read_execution_api_genesis_file() -> Genesis {
-        let file = File::open("../../../test_data/genesis-execution-api.json")
+        let file = File::open("../../../test_data/fixtures/genesis/execution-api.json")
             .expect("Failed to open genesis file");
         let reader = BufReader::new(file);
         serde_json::from_reader(reader).expect("Failed to deserialize genesis file")
