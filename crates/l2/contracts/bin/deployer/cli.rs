@@ -7,6 +7,8 @@ use hex::FromHexError;
 use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
 
+// TODO(Feda): Waiting on the issue https://github.com/lambdaclass/rex/issues/129
+// of rex so that deploying contracts with rex can actually be done with web3signer
 #[derive(Parser)]
 pub struct DeployerOptions {
     #[arg(
@@ -39,31 +41,8 @@ pub struct DeployerOptions {
         env = "ETHREX_DEPLOYER_L1_PRIVATE_KEY",
         help_heading = "Deployer options",
         help = "Private key corresponding of a funded account that will be used for L1 contract deployment.",
-        conflicts_with_all = &["remote_signer_url", "remote_signer_public_key"],
-        required_unless_present = "remote_signer_url",
     )]
-    pub private_key: Option<SecretKey>,
-    #[arg(
-        long,
-        value_name = "URL",
-        value_parser = parse_url,
-        env = "ETHREX_DEPLOYER_REMOTE_SIGNER_URL",
-        help_heading = "Deployer options",
-        help = "URL of a Web3Signer-compatible server to use instead of a local private key.",
-        requires = "remote_signer_public_key",
-        required_unless_present = "private_key"
-    )]
-    pub remote_signer_url: Option<Url>,
-    #[arg(
-        long,
-        value_name = "PUBLIC_KEY",
-        value_parser = parse_public_key,
-        env = "ETHREX_DEPLOYER_REMOTE_SIGNER_PUBLIC_KEY",
-        help_heading = "Deployer options",
-        help = "Public key to request the remote signature from.",
-        requires = "remote_signer_url",
-    )]
-    pub remote_signer_public_key: Option<PublicKey>,
+    pub private_key: SecretKey,
     #[arg(
         long,
         default_value = "10",
@@ -299,9 +278,7 @@ impl Default for DeployerOptions {
                 ])
                 .as_bytes(),
             )
-            .ok(),
-            remote_signer_url: None,
-            remote_signer_public_key: None,
+            .unwrap(),
             env_file_path: None,
             deposit_rich: false,
             private_keys_file_path: None,

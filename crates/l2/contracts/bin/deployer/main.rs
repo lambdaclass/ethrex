@@ -43,15 +43,7 @@ async fn main() -> Result<(), DeployerError> {
 
     trace!("Starting deployer binary");
     let opts = DeployerOptions::parse();
-    let signer = match &opts.remote_signer_url {
-        Some(url) => RemoteSigner::new(
-            url.clone(),
-            opts.remote_signer_public_key
-                .ok_or(DeployerError::RemoteUrlWithoutPubkey)?,
-        )
-        .into(),
-        None => LocalSigner::new(opts.private_key.ok_or(DeployerError::NoSigner)?).into(),
-    };
+    let signer: Signer = LocalSigner::new(opts.private_key).into();
 
     let eth_client = EthClient::new_with_config(
         vec![&opts.rpc_url],
@@ -73,7 +65,7 @@ async fn main() -> Result<(), DeployerError> {
         sp1_verifier_address,
         risc0_verifier_address,
         tdx_verifier_address,
-    ) = deploy_contracts(&eth_client, &opts).await?;
+    ) = deploy_contracts(&eth_client, &opts, &signer).await?;
 
     initialize_contracts(
         on_chain_proposer_address,
@@ -366,8 +358,7 @@ async fn initialize_contracts(
         })?
         .into();
 
-    // TODO(FEDA): this may not work because we don't always have the private key
-    let deployer_address = get_address_from_secret_key(&opts.private_key)?;
+    let deployer_address = initializer.address();
 
     let initialize_tx_hash = {
         let calldata_values = vec![
@@ -445,7 +436,7 @@ async fn initialize_contracts(
                 )
                 .await?;
             let accept_tx_hash = eth_client
-                .send_eip1559_transaction(&accept_tx, &owner_pk)
+                .send_eip1559_transaction(&accept_tx, initializer)
                 .await?;
 
             eth_client

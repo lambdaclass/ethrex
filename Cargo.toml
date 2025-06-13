@@ -21,7 +21,7 @@ members = [
   "crates/storage",
   "crates/vm",
   "crates/vm/levm",
-  "crates/web3signer"
+  "crates/web3signer",
   "crates/vm/levm/bench/revm_comparison",
   "tooling/genesis",
   "tooling/hive_report",

@@ -1,5 +1,5 @@
-use ethrex_common::{types::signer::Signer, Address, U256};
 use aligned_sdk::common::types::Network;
+use ethrex_common::{types::signer::Signer, Address, U256};
 use secp256k1::SecretKey;
 use std::net::IpAddr;
 
@@ -57,6 +57,7 @@ pub struct ProofCoordinatorConfig {
     pub dev_mode: bool,
     pub signer: Signer,
     pub validium: bool,
+    pub tdx_private_key: SecretKey,
 }
 
 #[derive(Clone, Debug)]

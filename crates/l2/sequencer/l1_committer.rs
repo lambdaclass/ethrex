@@ -3,8 +3,8 @@ use crate::{sequencer::errors::CommitterError, CommitterConfig, EthConfig, Seque
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     types::{
-        batch::Batch, blobs_bundle, fake_exponential_checked, signer::Signer, AccountUpdate, BlobsBundle, Block,
-        BlockNumber, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
+        batch::Batch, blobs_bundle, fake_exponential_checked, signer::Signer, AccountUpdate,
+        BlobsBundle, Block, BlockNumber, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
 };
@@ -23,8 +23,8 @@ use ethrex_rpc::{
 };
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use keccak_hash::keccak;
 use ethrex_vm::{Evm, EvmEngine};
+use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
@@ -484,10 +484,10 @@ async fn send_commitment(
             .eth_client
             .build_eip4844_transaction(
                 state.on_chain_proposer_address,
-                state.l1_address,
+                state.signer.address(),
                 calldata.into(),
                 Overrides {
-                    from: Some(state.l1_address),
+                    from: Some(state.signer.address()),
                     gas_price_per_blob: Some(gas_price_per_blob),
                     max_fee_per_gas: Some(gas_price),
                     max_priority_fee_per_gas: Some(gas_price),
@@ -505,10 +505,10 @@ async fn send_commitment(
             .eth_client
             .build_eip1559_transaction(
                 state.on_chain_proposer_address,
-                state.l1_address,
+                state.signer.address(),
                 calldata.into(),
                 Overrides {
-                    from: Some(state.l1_address),
+                    from: Some(state.signer.address()),
                     max_fee_per_gas: Some(gas_price),
                     max_priority_fee_per_gas: Some(gas_price),
                     ..Default::default()
@@ -522,12 +522,12 @@ async fn send_commitment(
 
     state
         .eth_client
-        .set_gas_for_wrapped_tx(&mut tx, state.l1_address)
+        .set_gas_for_wrapped_tx(&mut tx, state.signer.address())
         .await?;
 
     let commit_tx_hash = state
         .eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut tx, &state.l1_private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut tx, &state.signer)
         .await?;
 
     info!("Commitment sent: {commit_tx_hash:#x}");

@@ -9,12 +9,12 @@ use ethrex_l2::{
     BlockProducerConfig, CommitterConfig, EthConfig, L1WatcherConfig, ProofCoordinatorConfig,
     SequencerConfig,
 };
-use reqwest::Url;
-use secp256k1::{PublicKey, SecretKey};
 use ethrex_rpc::clients::eth::{
     get_address_from_secret_key, BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY,
     MIN_RETRY_DELAY,
 };
+use reqwest::Url;
+use secp256k1::{PublicKey, SecretKey};
 use std::net::{IpAddr, Ipv4Addr};
 
 #[derive(Parser)]
@@ -156,6 +156,9 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
                 dev_mode: opts.proof_coordinator_opts.dev_mode,
                 signer: proof_coordinator_signer,
+                tdx_private_key: opts
+                    .proof_coordinator_opts
+                    .proof_coordinator_tdx_private_key,
                 validium: opts.validium,
             },
             aligned: AlignedConfig {
@@ -416,6 +419,15 @@ pub struct ProofCoordinatorOptions {
     )]
     pub proof_coordinator_l1_private_key: Option<SecretKey>,
     #[arg(
+        long = "proof-coordinator.tdx-private-key",
+        value_name = "PRIVATE_KEY",
+        value_parser = utils::parse_private_key,
+        env = "ETHREX_PROOF_COORDINATOR_TDX_PRIVATE_KEY",
+        help_heading = "Proof coordinator options",
+        long_help = "Private key of of a funded account that the TDX tool that will use to send the tdx attestation to L1.",
+    )]
+    pub proof_coordinator_tdx_private_key: SecretKey,
+    #[arg(
         long = "proof-coordinator.remote-signer-url",
         value_name = "URL",
         env = "ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_URL",
@@ -484,6 +496,10 @@ impl Default for ProofCoordinatorOptions {
             listen_port: 3900,
             proof_send_interval_ms: 5000,
             dev_mode: true,
+            proof_coordinator_tdx_private_key:
+                "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
+                    .parse()
+                    .ok(),
         }
     }
 }
