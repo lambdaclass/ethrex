@@ -376,7 +376,7 @@ pub async fn import_blocks(
         utils::read_chain_file(path)
     };
     let size = blocks.len();
-    for block in &blocks {
+    for (i, block) in blocks.iter().enumerate() {
         let hash = block.hash();
         let number = block.header.number;
         info!("Adding block {number} with hash {hash:#x}.");
@@ -390,6 +390,12 @@ pub async fn import_blocks(
         if block_number.is_some() {
             info!("Block {} is already in the blockchain", block.hash());
             continue;
+        }
+
+        if i % 1000 == 0 {
+            let _ = apply_fork_choice(&store, hash, hash, hash)
+                .await
+                .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
         }
 
         blockchain
