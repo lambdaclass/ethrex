@@ -165,26 +165,26 @@ impl MDBXFork {
     }
 
     // Helper method to read from a libmdbx table
-    // async fn read_bulk<T: RethTable>(
-    //     &self,
-    //     keys: Vec<T::Key>,
-    // ) -> Result<Vec<T::Value>, StoreError> {
-    //     let db = self.env.clone();
-    //     tokio::task::spawn_blocking(move || {
-    //         let mut res = Vec::new();
-    //         let tx = db.tx()?;
-    //         for key in keys {
-    //             let val = tx.get::<T>(key)?;
-    //             match val {
-    //                 Some(val) => res.push(val),
-    //                 None => Err(StoreError::ReadError)?,
-    //             }
-    //         }
-    //         Ok(res)
-    //     })
-    //     .await
-    //     .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
-    // }
+    async fn read_bulk<T: RethTable>(
+        &self,
+        keys: Vec<T::Key>,
+    ) -> Result<Vec<T::Value>, StoreError> {
+        let db = self.env.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut res = Vec::new();
+            let tx = db.tx()?;
+            for key in keys {
+                let val = tx.get::<T>(key)?;
+                match val {
+                    Some(val) => res.push(val),
+                    None => Err(StoreError::ReadError)?,
+                }
+            }
+            Ok(res)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
 
     // Helper method to read from a libmdbx table
     fn read_sync<T: RethTable>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
@@ -247,7 +247,7 @@ impl StoreEngine for MDBXFork {
                 // consider implementing it too
                 for (index, receipt) in receipts.into_iter().enumerate() {
                     let receipt_bytes = receipt.encode_to_vec();
-                    let receipt_db_key = (block_hash, index).encode_to_vec();
+                    let receipt_db_key = (block_hash, index as u64).encode_to_vec();
                     tx.put::<Receipts>(receipt_db_key, receipt_bytes)?;
                 }
             }
@@ -331,37 +331,23 @@ impl StoreEngine for MDBXFork {
     }
 
     async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        let key_values: Vec<_> = blocks
+        let key_values = blocks
             .iter()
             .map(|e| (e.header.number, e.hash().encode_to_vec()))
             .collect();
-        let db = self.env.clone();
 
-        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
-            let tx = db.tx_mut()?;
-            for (k, v) in key_values {
-                tx.put::<CanonicalBlockHashes>(k, v)?;
-            }
-            tx.commit()?;
-            Ok(())
-        })
-        .await??;
-        Ok(())
+        self.write_batch::<CanonicalBlockHashes>(key_values).await
     }
 
     async fn get_block_body(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError> {
-        let Some(hash) = self.read::<CanonicalBlockHashes>(block_number).await? else {
-            return Ok(None);
-        };
-
-        let Some(encoded_body) = self.read::<Bodies>(hash).await? else {
-            return Ok(None);
-        };
-        let decoded = BlockBody::decode(&encoded_body)?;
-        Ok(Some(decoded))
+        if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
+            self.get_block_body_by_hash(hash).await
+        } else {
+            Ok(None)
+        }
     }
 
     async fn get_block_bodies(
@@ -369,22 +355,10 @@ impl StoreEngine for MDBXFork {
         from: BlockNumber,
         to: BlockNumber,
     ) -> Result<Vec<BlockBody>, StoreError> {
-        let mut encoded_bodies = vec![];
-        {
-            let tx = self.env.tx()?;
-            let mut hashes_cursor = tx.cursor_read::<CanonicalBlockHashes>()?;
-            let iterator = hashes_cursor.walk_range(from..=to)?;
-            for next in iterator {
-                let Ok((_, encoded_hash)) = next else {
-                    break;
-                };
-                let Ok(Some(encoded_body)) = tx.get::<Bodies>(encoded_hash) else {
-                    break;
-                };
-                encoded_bodies.push(encoded_body)
-            }
-        }
-        let bodies: Result<Vec<BlockBody>, _> = encoded_bodies
+        let numbers = (from..=to).collect();
+        let hashes = self.read_bulk::<CanonicalBlockHashes>(numbers).await?;
+        let blocks = self.read_bulk::<Bodies>(hashes).await?;
+        let bodies: Result<Vec<BlockBody>, _> = blocks
             .into_iter()
             .map(|eb| RLPDecode::decode(&eb))
             .collect();
@@ -395,21 +369,9 @@ impl StoreEngine for MDBXFork {
         &self,
         hashes: Vec<BlockHash>,
     ) -> Result<Vec<BlockBody>, StoreError> {
-        let mut encoded_result = vec![];
-        {
-            let encoded_hashes: Vec<Vec<u8>> = hashes
-                .into_iter()
-                .map(|h| RLPEncode::encode_to_vec(&h))
-                .collect();
-            let tx = self.env.tx()?;
-            for eh in encoded_hashes {
-                let Some(encoded_body) = tx.get::<Bodies>(eh)? else {
-                    break;
-                };
-                encoded_result.push(encoded_body);
-            }
-        }
-        let bodies: Result<Vec<_>, _> = encoded_result
+        let hashes = hashes.into_iter().map(|h| h.encode_to_vec()).collect();
+        let blocks = self.read_bulk::<Bodies>(hashes).await?;
+        let bodies: Result<Vec<_>, _> = blocks
             .into_iter()
             .map(|encoded| RLPDecode::decode(&encoded))
             .collect();
@@ -443,13 +405,11 @@ impl StoreEngine for MDBXFork {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        let encoded_hash = block_hash.encode_to_vec();
-        let tx = self.env.tx()?;
-        let Some(encoded_body) = tx.get::<Bodies>(encoded_hash)? else {
-            return Ok(None);
-        };
-        let decoded = BlockBody::decode(&encoded_body)?;
-        Ok(Some(decoded))
+        self.read::<Bodies>(block_hash.encode_to_vec())
+            .await?
+            .map(|encoded_body| BlockBody::decode(&encoded_body))
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     fn get_block_header_by_hash(
@@ -528,13 +488,13 @@ impl StoreEngine for MDBXFork {
         block_number: u64,
         receipt_index: u64,
     ) -> Result<Option<Receipt>, StoreError> {
-        let Some(key) = self.read::<CanonicalBlockHashes>(block_number).await? else {
-            return Ok(None);
-        };
-        let decoded_hash: BlockHash = RLPDecode::decode(&key)?;
-        let key_for_receipt = (decoded_hash, receipt_index).encode_to_vec();
-        let encoded_receipt = self.read::<Receipts>(key_for_receipt).await?;
-        Ok(encoded_receipt.map(|r| RLPDecode::decode(&r)).transpose()?)
+        if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
+            let key_for_receipt = (hash, receipt_index).encode_to_vec();
+            let encoded_receipt = self.read::<Receipts>(key_for_receipt).await?;
+            Ok(encoded_receipt.map(|r| RLPDecode::decode(&r)).transpose()?)
+        } else {
+            Ok(None)
+        }
     }
 
     async fn add_transaction_location(
@@ -733,10 +693,8 @@ impl StoreEngine for MDBXFork {
         number: BlockNumber,
         hash: BlockHash,
     ) -> Result<(), StoreError> {
-        let tx = self.env.tx_mut()?;
-        tx.put::<CanonicalBlockHashes>(number, hash.encode_to_vec())?;
-        tx.commit()?;
-        Ok(())
+        self.write::<CanonicalBlockHashes>(number, hash.encode_to_vec())
+            .await
     }
 
     async fn get_canonical_block_hash(
