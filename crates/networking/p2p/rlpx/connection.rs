@@ -1,10 +1,12 @@
 #[cfg(feature = "l2")]
+use crate::rlpx::based::BatchSealedMessage;
+#[cfg(feature = "l2")]
 use crate::rlpx::based::get_hash_batch_sealed;
 use crate::rlpx::utils::get_pub_key;
 use crate::{
     kademlia::PeerChannels,
     rlpx::{
-        based::{BatchSealedMessage, NewBlockMessage},
+        based::NewBlockMessage,
         error::RLPxError,
         eth::{
             backend,
@@ -40,7 +42,9 @@ use futures::SinkExt;
 use k256::{PublicKey, SecretKey, ecdsa::SigningKey};
 use lazy_static::lazy_static;
 use rand::random;
+#[cfg(feature = "l2")]
 use secp256k1::Message as SignedMessage;
+#[cfg(feature = "l2")]
 use secp256k1::SecretKey as SigningKeySecp256k1;
 use std::collections::BTreeMap;
 use std::{collections::HashSet, sync::Arc};
@@ -56,7 +60,9 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, info, warn};
+use tracing::debug;
+#[cfg(feature = "l2")]
+use tracing::{info, warn};
 
 use super::{
     eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
@@ -115,6 +121,7 @@ pub(crate) struct RLPxConnection<S> {
     latest_block_sent: u64,
     latest_block_added: u64,
     blocks_on_queue: BTreeMap<u64, Block>,
+    #[cfg(feature = "l2")]
     latest_batch_sent: u64,
     client_version: String,
     /// Send end of the channel used to broadcast messages
@@ -129,6 +136,7 @@ pub(crate) struct RLPxConnection<S> {
     #[cfg(feature = "l2")]
     store_rollup: StoreRollup,
     based: bool,
+    #[cfg(feature = "l2")]
     secret_key: Option<SigningKeySecp256k1>,
 }
 
@@ -145,7 +153,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         connection_broadcast: RLPxConnBroadcastSender,
         #[cfg(feature = "l2")] store_rollup: StoreRollup,
         based: bool,
-        secret_key: Option<SigningKeySecp256k1>,
+        #[cfg(feature = "l2")] secret_key: Option<SigningKeySecp256k1>,
     ) -> Self {
         Self {
             signer,
@@ -165,12 +173,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             latest_block_sent: 0,
             latest_block_added: 0,
             blocks_on_queue: BTreeMap::new(),
+            #[cfg(feature = "l2")]
             latest_batch_sent: 0,
             client_version,
             connection_broadcast_send: connection_broadcast,
             #[cfg(feature = "l2")]
             store_rollup,
             based,
+            #[cfg(feature = "l2")]
             secret_key,
         }
     }
@@ -517,25 +527,25 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 "Broadcasting new block, current: {}, last broadcasted: {}",
                 i, self.latest_block_sent
             );
-            let new_block_body =
-                self.storage
-                    .get_block_body(i)
-                    .await?
-                    .ok_or(RLPxError::InternalError(
-                        "Block body not found after querying for the block number".to_owned(),
-                    ))?;
-            let new_block_header =
-                self.storage
-                    .get_block_header(i)?
-                    .ok_or(RLPxError::InternalError(
-                        "Block header not found after querying for the block number".to_owned(),
-                    ))?;
-            let new_block = Block {
-                header: new_block_header,
-                body: new_block_body,
-            };
             #[cfg(feature = "l2")]
             {
+                let new_block_body =
+                    self.storage
+                        .get_block_body(i)
+                        .await?
+                        .ok_or(RLPxError::InternalError(
+                            "Block body not found after querying for the block number".to_owned(),
+                        ))?;
+                let new_block_header =
+                    self.storage
+                        .get_block_header(i)?
+                        .ok_or(RLPxError::InternalError(
+                            "Block header not found after querying for the block number".to_owned(),
+                        ))?;
+                let new_block = Block {
+                    header: new_block_header,
+                    body: new_block_body,
+                };
                 let (signature, recovery_id) = if let Some(recovered_sig) = self
                     .store_rollup
                     .get_signature_by_block(new_block.hash())
@@ -779,11 +789,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     // self.broadcast_message(Message::NewBlock(req))?;
                 }
             }
-            Message::BatchSealed(req) => {
+            Message::BatchSealed(_req) => {
                 #[cfg(feature = "l2")]
                 {
-                    if self.validate_batch_sealed(&req).await? {
-                        self.process_batch_sealed(req).await?;
+                    if self.validate_batch_sealed(&_req).await? {
+                        self.process_batch_sealed(_req).await?;
                     }
                 }
             }
@@ -917,76 +927,60 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(())
     }
 
+    #[cfg(feature = "l2")]
     async fn validate_batch_sealed(&mut self, msg: &BatchSealedMessage) -> Result<bool, RLPxError> {
-        #[cfg(feature = "l2")]
-        {
-            if self.store_rollup.contains_batch(&msg.batch.number).await? {
-                debug!("Batch {} already sealed, ignoring it", msg.batch.number);
-                return Ok(false);
-            }
-            if msg.batch.first_block == msg.batch.last_block {
-                // is empty batch
-                return Ok(false);
-            }
+        if self.store_rollup.contains_batch(&msg.batch.number).await? {
+            debug!("Batch {} already sealed, ignoring it", msg.batch.number);
+            return Ok(false);
+        }
+        if msg.batch.first_block == msg.batch.last_block {
+            // is empty batch
+            return Ok(false);
+        }
 
-            let hash = get_hash_batch_sealed(&msg.batch);
+        let hash = get_hash_batch_sealed(&msg.batch);
 
-            let recovered_lead_sequencer = get_pub_key(msg.recovery_id, &msg.signature, hash)
-                .map_err(|e| {
-                    log_peer_error(
-                        &self.node,
-                        &format!("Failed to recover lead sequencer: {e}"),
-                    );
-                    RLPxError::CryptographyError(e.to_string())
-                })?;
-
-            if recovered_lead_sequencer != *ADDRESS_LEAD_SEQUENCER {
-                warn!(
-                    "Received batch from wrong lead sequencer: {}. Expected: {}",
-                    recovered_lead_sequencer, *ADDRESS_LEAD_SEQUENCER
+        let recovered_lead_sequencer =
+            get_pub_key(msg.recovery_id, &msg.signature, hash).map_err(|e| {
+                log_peer_error(
+                    &self.node,
+                    &format!("Failed to recover lead sequencer: {e}"),
                 );
-                return Ok(false);
-            }
-            let mut signature = [0u8; 68];
-            signature[..64].copy_from_slice(&msg.signature[..]);
-            signature[64..].copy_from_slice(&msg.recovery_id[..]);
-            self.store_rollup
-                .store_signature_by_batch(msg.batch.number, signature)
-                .await?;
-            Ok(true)
+                RLPxError::CryptographyError(e.to_string())
+            })?;
+
+        if recovered_lead_sequencer != *ADDRESS_LEAD_SEQUENCER {
+            warn!(
+                "Received batch from wrong lead sequencer: {}. Expected: {}",
+                recovered_lead_sequencer, *ADDRESS_LEAD_SEQUENCER
+            );
+            return Ok(false);
         }
-        #[cfg(not(feature = "l2"))]
-        {
-            Err(RLPxError::InternalError(
-                "This function cannot won't be called without the l2 feature flag".to_string(),
-            ))
-        }
+        let mut signature = [0u8; 68];
+        signature[..64].copy_from_slice(&msg.signature[..]);
+        signature[64..].copy_from_slice(&msg.recovery_id[..]);
+        self.store_rollup
+            .store_signature_by_batch(msg.batch.number, signature)
+            .await?;
+        Ok(true)
     }
 
+    #[cfg(feature = "l2")]
     async fn process_batch_sealed(&mut self, msg: BatchSealedMessage) -> Result<(), RLPxError> {
-        #[cfg(feature = "l2")]
-        {
-            // get numbers to not copy the whole struct
-            let (batch_number, first_block, last_block) = {
-                (
-                    msg.batch.number,
-                    msg.batch.first_block,
-                    msg.batch.last_block,
-                )
-            };
-            self.store_rollup.seal_batch(msg.batch).await?;
-            info!(
-                "Sealed batch {} with blocks from {} to {}",
-                batch_number, first_block, last_block
-            );
-            Ok(())
-        }
-        #[cfg(not(feature = "l2"))]
-        {
-            Err(RLPxError::InternalError(
-                "This function cannot won't be called without the l2 feature flag".to_string(),
-            ))
-        }
+        // get numbers to not copy the whole struct
+        let (batch_number, first_block, last_block) = {
+            (
+                msg.batch.number,
+                msg.batch.first_block,
+                msg.batch.last_block,
+            )
+        };
+        self.store_rollup.seal_batch(msg.batch).await?;
+        info!(
+            "Sealed batch {} with blocks from {} to {}",
+            batch_number, first_block, last_block
+        );
+        Ok(())
     }
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
