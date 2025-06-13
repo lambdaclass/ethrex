@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749820800588,
+  "lastUpdate": 1749825079575,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12625,6 +12625,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 186141967346,
             "range": "± 1398964117",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "630a39a9f9b40872e98da9b0a731e97b50bfbc5e",
+          "message": "feat(l1, l2): switch to rust edition 2024 (#3147)\n\n**Motivation**\n\nSwitches to Rust edition 2024. This adds an `unsafe` block in our L2\nintegration test code because we are explicitly setting an environment\nvariable. This should be looked into to remove it in the future.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: juanbono <juanbono94@gmail.com>\nCo-authored-by: fedacking <francisco.gauna@lambdaclass.com>",
+          "timestamp": "2025-06-13T13:37:34Z",
+          "tree_id": "3fd7219bd30459bdefcc6cca4915478d20525080",
+          "url": "https://github.com/lambdaclass/ethrex/commit/630a39a9f9b40872e98da9b0a731e97b50bfbc5e"
+        },
+        "date": 1749825072616,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182249779202,
+            "range": "± 312356086",
             "unit": "ns/iter"
           }
         ]
