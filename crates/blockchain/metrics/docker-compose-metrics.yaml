@@ -10,5 +10,8 @@ services:
     volumes:
       - ./provisioning/grafana_provisioning/datasources:/etc/grafana/provisioning/datasources
     #ports: defined in the .overrides file
+    environment:
+      - GF_PLUGINS_PREINSTALL=yesoreyeram-infinity-datasource
+      - L1_RPC_URL=http://eth-testnet-rpc:8545
     depends_on:
       - prometheus
