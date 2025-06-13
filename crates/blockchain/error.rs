@@ -20,6 +20,8 @@ pub enum ChainError {
     EvmError(#[from] EvmError),
     #[error("Invalid Transaction: {0}")]
     InvalidTransaction(String),
+    #[error("Failed to generate witness: {0}")]
+    WitnessGeneration(String),
     #[error("{0}")]
     Custom(String),
 }
@@ -73,6 +75,8 @@ pub enum MempoolError {
     #[error("Blob transaction submited without blobs bundle")]
     BlobTxNoBlobsBundle,
     #[error("Nonce for account too low")]
+    NonceTooLow,
+    #[error("Nonce already used")]
     InvalidNonce,
     #[error("Transaction chain id mismatch, expected chain id: {0}")]
     InvalidChainId(u64),

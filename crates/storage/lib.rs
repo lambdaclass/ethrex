@@ -9,5 +9,5 @@ mod utils;
 
 pub mod error;
 pub use store::{
-    hash_address, hash_key, EngineType, Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS,
+    EngineType, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store, UpdateBatch, hash_address, hash_key,
 };

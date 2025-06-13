@@ -1,4 +1,4 @@
-use crate::{error::TrieError, NodeHash};
+use crate::{NodeHash, error::TrieError};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},

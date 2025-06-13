@@ -4,8 +4,8 @@ use super::{
     server::DiscoveryError,
 };
 use crate::{
-    kademlia::{bucket_number, MAX_NODES_PER_BUCKET},
-    network::{public_key_from_signing_key, P2PContext},
+    kademlia::{MAX_NODES_PER_BUCKET, bucket_number},
+    network::{P2PContext, public_key_from_signing_key},
     rlpx::utils::node_id,
     types::Node,
 };
@@ -269,11 +269,11 @@ mod tests {
 
     use super::*;
     use crate::discv4::server::{
+        Discv4Server,
         tests::{
             connect_servers, fill_table_with_random_nodes, insert_random_node_on_custom_bucket,
             start_discovery_server,
         },
-        Discv4Server,
     };
 
     fn lookup_handler_from_server(server: Discv4Server) -> Discv4LookupHandler {

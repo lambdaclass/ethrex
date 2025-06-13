@@ -1,4 +1,5 @@
 use crate::{
+    UpdateBatch,
     api::StoreEngine,
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
@@ -6,8 +7,8 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Index, Receipt,
+    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+    Receipt, payload::PayloadBundle,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
@@ -80,14 +81,67 @@ impl Store {
         Self::default()
     }
     fn inner(&self) -> Result<MutexGuard<'_, StoreInner>, StoreError> {
-        self.0
-            .lock()
-            .map_err(|_| StoreError::Custom("Lock Error".to_string()))
+        self.0.lock().map_err(|_| StoreError::LockError)
     }
 }
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+        {
+            // store account updates
+            let mut state_trie_store = store
+                .state_trie_nodes
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            for (node_hash, node_data) in update_batch.account_updates {
+                state_trie_store.insert(node_hash, node_data);
+            }
+        }
+
+        for (hashed_address, nodes) in update_batch.storage_updates {
+            let mut addr_store = store
+                .storage_trie_nodes
+                .entry(hashed_address)
+                .or_default()
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            for (node_hash, node_data) in nodes {
+                addr_store.insert(node_hash, node_data);
+            }
+        }
+
+        for block in update_batch.blocks {
+            // store block
+            let number = block.header.number;
+            let hash = block.hash();
+
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                store
+                    .transaction_locations
+                    .entry(transaction.compute_hash())
+                    .or_default()
+                    .push((number, hash, index as u64));
+            }
+            store.bodies.insert(hash, block.body);
+            store.headers.insert(hash, block.header);
+            store.block_numbers.insert(hash, number);
+        }
+
+        for (block_hash, receipts) in update_batch.receipts {
+            for (index, receipt) in receipts.into_iter().enumerate() {
+                store
+                    .receipts
+                    .entry(block_hash)
+                    .or_default()
+                    .insert(index as u64, receipt);
+            }
+        }
+
+        Ok(())
+    }
+
     fn get_block_header(&self, block_number: u64) -> Result<Option<BlockHeader>, StoreError> {
         let store = self.inner()?;
         if let Some(hash) = store.canonical_hashes.get(&block_number) {
@@ -477,17 +531,6 @@ impl StoreEngine for Store {
         for (index, receipt) in receipts.into_iter().enumerate() {
             entry.insert(index as u64, receipt);
         }
-        Ok(())
-    }
-
-    async fn add_receipts_for_blocks(
-        &self,
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-    ) -> Result<(), StoreError> {
-        for (block_hash, receipts) in receipts.into_iter() {
-            self.add_receipts(block_hash, receipts).await?;
-        }
-
         Ok(())
     }
 
