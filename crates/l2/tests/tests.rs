@@ -34,7 +34,7 @@ use std::{ops::Mul, str::FromStr, time::Duration};
 /// ETHREX_WATCHER_BRIDGE_ADDRESS: The address of the l1 bridge contract
 /// INTEGRATION_TEST_PROPOSER_COINBASE_ADDRESS: The address of the l2 coinbase
 ///
-/// Test parameters
+/// Test parameters:
 ///
 /// INTEGRATION_TEST_DEPOSIT_VALUE: amount in wei to deposit from L1_RICH_WALLET_PRIVATE_KEY to the l2, this amount will be deposited 3 times over the course of the test
 /// INTEGRATION_TEST_TRANSFER_VALUE: amount in wei to transfer to INTEGRATION_TEST_RETURN_TRANSFER_PRIVATE_KEY, this amount will be returned to the account
