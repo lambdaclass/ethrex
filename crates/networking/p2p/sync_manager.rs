@@ -11,7 +11,7 @@ use tokio::{
     time::{sleep, Duration},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::{
     peer_handler::PeerHandler,
@@ -70,7 +70,7 @@ impl SyncManager {
             syncer: Arc::new(Mutex::new(Syncer::dummy())),
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: Store::new("temp.db", ethrex_storage::EngineType::InMemory)
-                .expect("Failed to create test DB"),
+                .expect("Failed to start Storage Engine"),
         }
     }
 
@@ -115,7 +115,7 @@ impl SyncManager {
 
         tokio::spawn(async move {
             let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
-                tracing::error!("Failed to fetch latest canonical block, unable to sync");
+                error!("Failed to fetch latest canonical block, unable to sync");
                 return;
             };
 
@@ -127,7 +127,7 @@ impl SyncManager {
                 let sync_head = {
                     // Read latest fcu head without holding the lock for longer than needed
                     let Ok(sync_head) = sync_head.try_lock() else {
-                        tracing::error!("Failed to read latest fcu head, unable to sync");
+                        error!("Failed to read latest fcu head, unable to sync");
                         return;
                     };
                     *sync_head

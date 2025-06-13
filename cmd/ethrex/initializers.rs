@@ -1,12 +1,10 @@
 use crate::{
     cli::Options,
-    networks,
-    utils::{
-        get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
-        read_node_config_file,
-    },
+    networks::{self, Network, PublicNetwork},
+    utils::{get_client_version, parse_socket_addr, read_jwtsecret_file, read_node_config_file},
 };
 use ethrex_blockchain::Blockchain;
+use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{public_key_from_signing_key, P2PContext},
@@ -22,7 +20,6 @@ use rand::rngs::OsRng;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
-    future::IntoFuture,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
@@ -38,19 +35,7 @@ use crate::l2::L2Options;
 use ::{
     ethrex_common::Address,
     ethrex_storage_rollup::{EngineTypeRollup, StoreRollup},
-    secp256k1::SecretKey,
 };
-
-#[cfg(feature = "based")]
-use crate::l2::BasedOptions;
-#[cfg(feature = "based")]
-use ethrex_common::Public;
-#[cfg(feature = "based")]
-use ethrex_rpc::clients::eth::errors::EthClientError;
-#[cfg(feature = "based")]
-use ethrex_rpc::{EngineClient, EthClient};
-#[cfg(feature = "based")]
-use std::str::FromStr;
 
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
@@ -75,9 +60,20 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub async fn init_store(data_dir: &str, network: &str) -> Store {
+/// Opens a New or Pre-exsisting Store and loads the initial state provided by the network
+pub async fn init_store(data_dir: &str, genesis: Genesis) -> Store {
+    let store = open_store(data_dir);
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("Failed to create genesis block");
+    store
+}
+
+/// Opens a Pre-exsisting Store or creates a new one
+pub fn open_store(data_dir: &str) -> Store {
     let path = PathBuf::from(data_dir);
-    let store = if path.ends_with("memory") {
+    if path.ends_with("memory") {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
     } else {
         cfg_if::cfg_if! {
@@ -91,13 +87,7 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
             }
         }
         Store::new(data_dir, engine_type).expect("Failed to create Store")
-    };
-    let genesis = read_genesis_file(network);
-    store
-        .add_initial_state(genesis.clone())
-        .await
-        .expect("Failed to create genesis block");
-    store
+    }
 }
 
 #[cfg(feature = "l2")]
@@ -160,53 +150,22 @@ pub async fn init_rpc_api(
         syncer,
         peer_handler,
         get_client_version(),
-        #[cfg(feature = "based")]
-        get_gateway_http_client(&l2_opts.based_opts).expect("Failed to get gateway http client"),
-        #[cfg(feature = "based")]
-        get_gateway_auth_client(&l2_opts.based_opts),
-        #[cfg(feature = "based")]
-        get_gateway_public_key(&l2_opts.based_opts),
         #[cfg(feature = "l2")]
         get_valid_delegation_addresses(l2_opts),
         #[cfg(feature = "l2")]
-        get_sponsor_pk(l2_opts),
+        l2_opts.sponsor_private_key,
         #[cfg(feature = "l2")]
         rollup_store,
-    )
-    .into_future();
+    );
 
     tracker.spawn(rpc_api);
-}
-
-#[cfg(feature = "based")]
-fn get_gateway_http_client(opts: &BasedOptions) -> Result<EthClient, EthClientError> {
-    let gateway_http_socket_addr = parse_socket_addr(&opts.gateway_addr, &opts.gateway_eth_port)
-        .expect("Failed to parse gateway http address and port");
-
-    EthClient::new(&gateway_http_socket_addr.to_string())
-}
-
-#[cfg(feature = "based")]
-fn get_gateway_auth_client(opts: &BasedOptions) -> EngineClient {
-    let gateway_authrpc_socket_addr =
-        parse_socket_addr(&opts.gateway_addr, &opts.gateway_auth_port)
-            .expect("Failed to parse gateway authrpc address and port");
-
-    let gateway_jwtsecret = read_jwtsecret_file(&opts.gateway_jwtsecret);
-
-    EngineClient::new(&gateway_authrpc_socket_addr.to_string(), gateway_jwtsecret)
-}
-
-#[cfg(feature = "based")]
-fn get_gateway_public_key(based_opts: &BasedOptions) -> Public {
-    Public::from_str(&based_opts.gateway_pubkey).expect("Failed to parse gateway pubkey")
 }
 
 #[allow(clippy::too_many_arguments)]
 #[allow(dead_code)]
 pub async fn init_network(
     opts: &Options,
-    network: &str,
+    network: &Network,
     data_dir: &str,
     local_p2p_node: Node,
     local_node_record: Arc<Mutex<NodeRecord>>,
@@ -235,6 +194,8 @@ pub async fn init_network(
         blockchain,
         get_client_version(),
     );
+
+    context.set_fork_id().await.expect("Set fork id");
 
     ethrex_p2p::start_network(context, bootnodes)
         .await
@@ -276,58 +237,39 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
     }
 }
 
-pub fn get_network(opts: &Options) -> String {
-    let mut network = opts
-        .network
-        .clone()
-        .expect("--network is required and it was not provided");
-
-    // Set preset genesis from known networks
-    if network == "holesky" {
-        network = String::from(networks::HOLESKY_GENESIS_PATH);
-    }
-    if network == "sepolia" {
-        network = String::from(networks::SEPOLIA_GENESIS_PATH);
-    }
-    if network == "hoodi" {
-        network = String::from(networks::HOODI_GENESIS_PATH);
-    }
-    if network == "mainnet" {
-        network = String::from(networks::MAINNET_GENESIS_PATH);
-    }
-
-    network
+pub fn get_network(opts: &Options) -> Network {
+    opts.network.clone()
 }
 
 #[allow(dead_code)]
-pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node> {
+pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
-    if network == networks::HOLESKY_GENESIS_PATH {
-        info!("Adding holesky preset bootnodes");
-        bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
-    }
-
-    if network == networks::SEPOLIA_GENESIS_PATH {
-        info!("Adding sepolia preset bootnodes");
-        bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
-    }
-
-    if network == networks::HOODI_GENESIS_PATH {
-        info!("Adding hoodi preset bootnodes");
-        bootnodes.extend(networks::HOODI_BOOTNODES.clone());
-    }
-
-    if network == networks::MAINNET_GENESIS_PATH {
-        info!("Adding mainnet preset bootnodes");
-        bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
+    match network {
+        Network::PublicNetwork(PublicNetwork::Holesky) => {
+            info!("Adding holesky preset bootnodes");
+            bootnodes.extend(networks::HOLESKY_BOOTNODES.clone());
+        }
+        Network::PublicNetwork(PublicNetwork::Hoodi) => {
+            info!("Addig hoodi preset bootnodes");
+            bootnodes.extend(networks::HOODI_BOOTNODES.clone());
+        }
+        Network::PublicNetwork(PublicNetwork::Mainnet) => {
+            info!("Adding mainnet preset bootnodes");
+            bootnodes.extend(networks::MAINNET_BOOTNODES.clone());
+        }
+        Network::PublicNetwork(PublicNetwork::Sepolia) => {
+            info!("Adding sepolia preset bootnodes");
+            bootnodes.extend(networks::SEPOLIA_BOOTNODES.clone());
+        }
+        _ => {}
     }
 
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
 
-    let config_file = PathBuf::from(data_dir.to_owned() + "/config.json");
+    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
 
     info!("Reading known peers from config file {:?}", config_file);
 
@@ -442,12 +384,4 @@ pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
         warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
     }
     addresses
-}
-
-#[cfg(feature = "l2")]
-pub fn get_sponsor_pk(opts: &L2Options) -> SecretKey {
-    if let Some(pk) = opts.sponsor_private_key {
-        return pk;
-    }
-    opts.sequencer_opts.watcher_opts.l2_proposer_private_key
 }

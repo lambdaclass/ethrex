@@ -2,20 +2,25 @@ use crate::{
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
-    errors::{ExecutionReport, OpcodeResult, PrecompileError, VMError},
-    hooks::hook::Hook,
+    errors::{ExecutionReport, OpcodeResult, VMError},
+    hooks::{
+        backup_hook::BackupHook,
+        hook::{get_hooks, Hook},
+    },
     precompiles::execute_precompile,
+    tracing::LevmCallTracer,
     TransientStorage,
 };
 use bytes::Bytes;
 use ethrex_common::{
+    tracing::CallType,
     types::{Transaction, TxKind},
     Address, H256, U256,
 };
 use std::{
+    cell::RefCell,
     collections::{BTreeSet, HashMap, HashSet},
-    fmt::Debug,
-    sync::Arc,
+    rc::Rc,
 };
 
 pub type Storage = HashMap<U256, H256>;
@@ -24,8 +29,8 @@ pub type Storage = HashMap<U256, H256>;
 /// Information that changes during transaction execution
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
-    pub touched_accounts: HashSet<Address>,
-    pub touched_storage_slots: HashMap<Address, BTreeSet<H256>>,
+    pub accessed_addresses: HashSet<Address>,
+    pub accessed_storage_slots: HashMap<Address, BTreeSet<H256>>,
     pub created_accounts: HashSet<Address>,
     pub refunded_gas: u64,
     pub transient_storage: TransientStorage,
@@ -37,15 +42,23 @@ pub struct VM<'a> {
     pub substate: Substate,
     pub db: &'a mut GeneralizedDatabase,
     pub tx: Transaction,
-    pub hooks: Vec<Arc<dyn Hook>>,
+    pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
+    /// When enabled, it "logs" relevant information during execution
+    pub tracer: LevmCallTracer,
 }
 
 impl<'a> VM<'a> {
-    pub fn new(env: Environment, db: &'a mut GeneralizedDatabase, tx: &Transaction) -> Self {
-        let hooks = Self::get_hooks(tx);
+    pub fn new(
+        env: Environment,
+        db: &'a mut GeneralizedDatabase,
+        tx: &Transaction,
+        tracer: LevmCallTracer,
+    ) -> Self {
+        let hooks = get_hooks(tx);
+        db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
         Self {
             call_frames: vec![],
@@ -56,20 +69,25 @@ impl<'a> VM<'a> {
             hooks,
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
+            tracer,
         }
+    }
+
+    fn add_hook(&mut self, hook: impl Hook + 'static) {
+        self.hooks.push(Rc::new(RefCell::new(hook)));
     }
 
     /// Initializes substate and creates first execution callframe.
     pub fn setup_vm(&mut self) -> Result<(), VMError> {
         self.initialize_substate()?;
 
-        let (callee, bytecode) = self.get_callee_and_code()?;
+        let callee = self.get_tx_callee()?;
 
         let initial_call_frame = CallFrame::new(
             self.env.origin,
             callee,
-            callee,
-            bytecode,
+            Address::default(), // Will be assigned at the end of prepare_execution
+            Bytes::new(),       // Will be assigned at the end of prepare_execution
             self.tx.value(),
             self.tx.data().clone(),
             false,
@@ -82,6 +100,20 @@ impl<'a> VM<'a> {
         );
 
         self.call_frames.push(initial_call_frame);
+
+        let call_type = if self.is_create() {
+            CallType::CREATE
+        } else {
+            CallType::CALL
+        };
+        self.tracer.enter(
+            call_type,
+            self.env.origin,
+            callee,
+            self.tx.value(),
+            self.env.gas_limit,
+            self.tx.data(),
+        );
 
         Ok(())
     }
@@ -112,12 +144,13 @@ impl<'a> VM<'a> {
         let mut report = self.run_execution()?;
 
         self.finalize_execution(&mut report)?;
+
         Ok(report)
     }
 
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
-        if self.is_precompile()? {
+        if self.is_precompile(&self.current_call_frame()?.to) {
             return self.execute_precompile();
         }
 
@@ -137,6 +170,7 @@ impl<'a> VM<'a> {
 
             // Return the ExecutionReport if the executed callframe was the first one.
             if self.is_initial_call_frame() {
+                self.handle_state_backup(&result)?;
                 return Ok(result);
             }
 
@@ -145,41 +179,22 @@ impl<'a> VM<'a> {
         }
     }
 
+    /// Executes precompile and handles the output that it returns, generating a report.
     pub fn execute_precompile(&mut self) -> Result<ExecutionReport, VMError> {
-        let precompile_address = self.current_call_frame()?.code_address;
+        let callframe = self.current_call_frame_mut()?;
 
-        let precompile_result = match self.is_delegation_target(precompile_address) {
-            // Avoid executing precompile if it is target of a delegation in EIP-7702 transaction.
-            true => {
-                let gas_limit = self.current_call_frame()?.gas_limit;
-                if gas_limit == 0 {
-                    // `pointer_to_precompile.json` tests that it should fail in a call with zero gas limit.
-                    Err(VMError::PrecompileError(PrecompileError::NotEnoughGas))
-                } else {
-                    Ok(Bytes::new())
-                }
-            }
-            // Otherwise, execute precompile
-            false => {
-                let callframe = self.current_call_frame_mut()?;
-                execute_precompile(
-                    precompile_address,
-                    &callframe.calldata,
-                    &mut callframe.gas_used,
-                    callframe.gas_limit,
-                )
-            }
+        let precompile_result = {
+            execute_precompile(
+                callframe.code_address,
+                &callframe.calldata,
+                &mut callframe.gas_used,
+                callframe.gas_limit,
+            )
         };
 
         let report = self.handle_precompile_result(precompile_result)?;
 
         Ok(report)
-    }
-
-    pub fn restore_state(&mut self, backup: Substate) -> Result<(), VMError> {
-        self.restore_cache_state()?;
-        self.substate = backup;
-        Ok(())
     }
 
     /// True if external transaction is a contract creation
@@ -189,30 +204,28 @@ impl<'a> VM<'a> {
 
     /// Executes without making changes to the cache.
     pub fn stateless_execute(&mut self) -> Result<ExecutionReport, VMError> {
-        let cache_backup = self.db.cache.clone();
+        // Add backup hook to restore state after execution.
+        self.add_hook(BackupHook::default());
         let report = self.execute()?;
-        // Restore the cache to its original state
-        self.db.cache = cache_backup;
+        // Restore cache to the state before execution.
+        self.db.undo_last_transaction()?;
         Ok(report)
     }
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {
-        // NOTE: ATTOW the default hook is created in VM::new(), so
-        // (in theory) _at least_ the default prepare execution should
-        // run
         for hook in self.hooks.clone() {
-            hook.prepare_execution(self)?;
+            hook.borrow_mut().prepare_execution(self)?;
         }
+
         Ok(())
     }
 
     fn finalize_execution(&mut self, report: &mut ExecutionReport) -> Result<(), VMError> {
-        // NOTE: ATTOW the default hook is created in VM::new(), so
-        // (in theory) _at least_ the default finalize execution should
-        // run
         for hook in self.hooks.clone() {
-            hook.finalize_execution(self, report)?;
+            hook.borrow_mut().finalize_execution(self, report)?;
         }
+
+        self.tracer.exit_report(report, true)?;
 
         Ok(())
     }

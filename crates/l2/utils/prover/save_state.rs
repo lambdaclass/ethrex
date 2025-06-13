@@ -1,7 +1,7 @@
 use crate::utils::prover::errors::SaveStateError;
-use crate::utils::prover::proving_systems::{ProofCalldata, ProverType};
+use crate::utils::prover::proving_systems::ProverType;
 use directories::ProjectDirs;
-use ethrex_storage::AccountUpdate;
+use ethrex_common::types::AccountUpdate;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::fs::{create_dir, read_dir, File};
@@ -12,6 +12,8 @@ use std::{
     io::{BufWriter, Write},
 };
 use tracing::info;
+
+use super::proving_systems::BatchProof;
 
 #[cfg(not(test))]
 /// The default directory for data storage when not running tests.
@@ -51,24 +53,24 @@ fn create_datadir(dir_name: &str) -> Result<PathBuf, SaveStateError> {
 // All the files are saved at the path defined by [ProjectDirs::data_local_dir]
 // and the [DEFAULT_DATADIR] when calling [create_datadir]
 
-/// Enum used to differentiate between the possible types of data we can store per block.
+/// Enum used to differentiate between the possible types of data we can store per batch.
 #[derive(Serialize, Deserialize, Debug)]
 pub enum StateType {
-    Proof(ProofCalldata),
+    BatchProof(BatchProof),
     AccountUpdates(Vec<AccountUpdate>),
 }
 
-/// Enum used to differentiate between the possible types of files we can have per block.
+/// Enum used to differentiate between the possible types of files we can have per batch.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum StateFileType {
-    Proof(ProverType),
+    BatchProof(ProverType),
     AccountUpdates,
 }
 
 impl From<&StateType> for StateFileType {
     fn from(state_type: &StateType) -> Self {
         match state_type {
-            StateType::Proof(proof) => StateFileType::Proof(proof.prover_type),
+            StateType::BatchProof(proof) => StateFileType::BatchProof(proof.prover_type()),
             StateType::AccountUpdates(_) => StateFileType::AccountUpdates,
         }
     }
@@ -78,9 +80,10 @@ impl From<&StateType> for StateFileType {
 fn get_proof_file_name_from_prover_type(prover_type: &ProverType, batch_number: u64) -> String {
     match prover_type {
         ProverType::Exec => format!("proof_exec_{batch_number}.json"),
+        ProverType::TDX => format!("proof_tdx_{batch_number}.json"),
         ProverType::RISC0 => format!("proof_risc0_{batch_number}.json"),
         ProverType::SP1 => format!("proof_sp1_{batch_number}.json").to_owned(),
-        ProverType::Pico => format!("proof_pico_{batch_number}.json").to_owned(),
+        ProverType::Aligned => format!("proof_aligned_{batch_number}.json").to_owned(),
     }
 }
 
@@ -109,7 +112,7 @@ fn get_state_file_name(batch_number: u64, state_file_type: &StateFileType) -> St
         StateFileType::AccountUpdates => format!("account_updates_{batch_number}.json"),
         // If we have more proving systems we have to match them an create a file name with the following structure:
         // proof_<ProverType>_<batch_number>.json
-        StateFileType::Proof(prover_type) => {
+        StateFileType::BatchProof(prover_type) => {
             get_proof_file_name_from_prover_type(prover_type, batch_number)
         }
     }
@@ -160,7 +163,7 @@ pub fn write_state(batch_number: u64, state_type: &StateType) -> Result<(), Save
     let inner = create_state_file_for_batch_number(batch_number, state_type.into())?;
 
     match state_type {
-        StateType::Proof(value) => {
+        StateType::BatchProof(value) => {
             let mut writer = BufWriter::new(inner);
             serde_json::to_writer(&mut writer, value)?;
             writer.flush()?;
@@ -229,9 +232,9 @@ pub fn read_state(
     reader.read_to_string(&mut buf)?;
 
     let state = match state_file_type {
-        StateFileType::Proof(_) => {
-            let state: ProofCalldata = serde_json::from_str(&buf)?;
-            StateType::Proof(state)
+        StateFileType::BatchProof(_) => {
+            let state: BatchProof = serde_json::from_str(&buf)?;
+            StateType::BatchProof(state)
         }
         StateFileType::AccountUpdates => {
             let state: Vec<AccountUpdate> = serde_json::from_str(&buf)?;
@@ -246,9 +249,9 @@ pub fn read_state(
 pub fn read_proof(
     batch_number: u64,
     state_file_type: StateFileType,
-) -> Result<ProofCalldata, SaveStateError> {
+) -> Result<BatchProof, SaveStateError> {
     match read_state(batch_number, state_file_type)? {
-        StateType::Proof(p) => Ok(p),
+        StateType::BatchProof(p) => Ok(p),
         StateType::AccountUpdates(_) => Err(SaveStateError::Custom(
             "Failed in read_proof(), make sure that the state_file_type is a Proof".to_owned(),
         )),
@@ -369,7 +372,7 @@ pub fn batch_number_has_all_needed_proofs(
     let mut has_all_proofs = true;
     for prover_type in needed_proof_types {
         let file_name_to_seek: OsString =
-            get_state_file_name(batch_number, &StateFileType::Proof(*prover_type)).into();
+            get_state_file_name(batch_number, &StateFileType::BatchProof(*prover_type)).into();
 
         // Check if the proof exists
         let proof_exists = std::fs::read_dir(&batch_state_path)?
@@ -390,16 +393,16 @@ pub fn batch_number_has_all_needed_proofs(
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use ethrex_blockchain::Blockchain;
+    use ethrex_blockchain::{vm::StoreVmDatabase, Blockchain};
     use ethrex_levm::db::gen_db::GeneralizedDatabase;
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::{
         backends::levm::{CacheDB, LEVM},
-        StoreWrapper,
+        DynVmDatabase,
     };
 
     use super::*;
-    use crate::utils::test_data_io;
+    use crate::utils::{prover::proving_systems::ProofCalldata, test_data_io};
     use std::{
         fs::{self},
         sync::Arc,
@@ -437,31 +440,25 @@ mod tests {
 
         let mut account_updates_vec: Vec<Vec<AccountUpdate>> = Vec::new();
 
-        let exec_calldata = ProofCalldata {
+        let exec_calldata = BatchProof::ProofCalldata(ProofCalldata {
             prover_type: ProverType::Exec,
             calldata: Vec::new(),
-        };
-        let risc0_calldata = ProofCalldata {
+        });
+        let risc0_calldata = BatchProof::ProofCalldata(ProofCalldata {
             prover_type: ProverType::RISC0,
             calldata: Vec::new(),
-        };
-        let sp1_calldata = ProofCalldata {
+        });
+        let sp1_calldata = BatchProof::ProofCalldata(ProofCalldata {
             prover_type: ProverType::SP1,
             calldata: Vec::new(),
-        };
-        let pico_calldata = ProofCalldata {
-            prover_type: ProverType::Pico,
-            calldata: Vec::new(),
-        };
+        });
 
         // Write all the account_updates and proofs for each block
         // TODO: Update. We are executing only the last block and using the block_number as batch_number
         for block in &blocks {
-            let store = StoreWrapper {
-                store: in_memory_db.clone(),
-                block_hash: block.hash(),
-            };
-            let mut db = GeneralizedDatabase::new(Arc::new(store.clone()), CacheDB::new());
+            let store: DynVmDatabase =
+                Box::new(StoreVmDatabase::new(in_memory_db.clone(), block.hash()));
+            let mut db = GeneralizedDatabase::new(Arc::new(store), CacheDB::new());
             LEVM::execute_block(blocks.last().unwrap(), &mut db)?;
             let account_updates = LEVM::get_state_transitions(&mut db)?;
 
@@ -474,19 +471,17 @@ mod tests {
 
             write_state(
                 block.header.number,
-                &StateType::Proof(exec_calldata.clone()),
+                &StateType::BatchProof(exec_calldata.clone()),
             )?;
 
             write_state(
                 block.header.number,
-                &StateType::Proof(risc0_calldata.clone()),
+                &StateType::BatchProof(risc0_calldata.clone()),
             )?;
-
-            write_state(block.header.number, &StateType::Proof(sp1_calldata.clone()))?;
 
             write_state(
                 block.header.number,
-                &StateType::Proof(pico_calldata.clone()),
+                &StateType::BatchProof(sp1_calldata.clone()),
             )?;
         }
 
@@ -533,7 +528,7 @@ mod tests {
 
         // Read account_updates back
         let read_account_updates_blk2 = match read_state(2, StateFileType::AccountUpdates)? {
-            StateType::Proof(_) => unimplemented!(),
+            StateType::BatchProof(_) => unimplemented!(),
             StateType::AccountUpdates(a) => a,
         };
 
@@ -553,20 +548,16 @@ mod tests {
         }
 
         // Read Exec Proof back
-        let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::Exec))?;
+        let read_proof_updates_blk2 = read_proof(2, StateFileType::BatchProof(ProverType::Exec))?;
         assert_eq!(read_proof_updates_blk2, exec_calldata);
 
         // Read RISC0 Proof back
-        let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::RISC0))?;
+        let read_proof_updates_blk2 = read_proof(2, StateFileType::BatchProof(ProverType::RISC0))?;
         assert_eq!(read_proof_updates_blk2, risc0_calldata);
 
         // Read SP1 Proof back
-        let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::SP1))?;
+        let read_proof_updates_blk2 = read_proof(2, StateFileType::BatchProof(ProverType::SP1))?;
         assert_eq!(read_proof_updates_blk2, sp1_calldata);
-
-        // Read Pico Proof back
-        let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::Pico))?;
-        assert_eq!(read_proof_updates_blk2, pico_calldata);
 
         fs::remove_dir_all(default_datadir()?)?;
 

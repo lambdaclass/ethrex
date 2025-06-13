@@ -1,6 +1,6 @@
 use crate::{
     clients::eth::get_address_from_secret_key,
-    eth::{fee_calculator::estimate_gas_tip, gas_price::GasPrice, transaction::EstimateGasRequest},
+    eth::{gas_price::GasPrice, transaction::EstimateGasRequest},
     rpc::{RpcApiContext, RpcHandler},
     types::transaction::SendRawTransactionRequest,
     utils::RpcErr,
@@ -133,20 +133,26 @@ impl RpcHandler for SponsoredTx {
             .await
             .map_err(RpcErr::from)?
             .ok_or(RpcErr::InvalidEthrexL2Message("Invalid nonce".to_string()))?;
-        let max_priority_fee_per_gas = estimate_gas_tip(&context.storage)
+        let max_priority_fee_per_gas = context
+            .gas_tip_estimator
+            .lock()
             .await
-            .map_err(RpcErr::from)?
-            .unwrap_or_default();
+            .estimate_gas_tip(&context.storage)
+            .await
+            .map_err(RpcErr::from)?;
         let gas_price_request = GasPrice {}.handle(context.clone()).await?;
-        let max_fee_per_gas = u64::from_str_radix(
-            gas_price_request
-                .as_str()
-                .unwrap_or("0x0")
-                .strip_prefix("0x")
-                .unwrap(),
-            16,
-        )
-        .map_err(|err| RpcErr::Internal(err.to_string()))?;
+
+        let gas_price_request = gas_price_request
+            .as_str()
+            .unwrap_or("0x0")
+            .strip_prefix("0x")
+            .ok_or(RpcErr::InvalidEthrexL2Message(
+                "Gas price request has invalid format".to_string(),
+            ))?;
+
+        let max_fee_per_gas = u64::from_str_radix(gas_price_request, 16).map_err(|error| {
+            RpcErr::InvalidEthrexL2Message(format!("Gas price request has invalid size: {error}"))
+        })?;
 
         let mut tx = if let Some(auth_list) = &self.authorization_list {
             SendRawTransactionRequest::EIP7702(EIP7702Transaction {
@@ -192,15 +198,20 @@ impl RpcHandler for SponsoredTx {
         }
         .handle(context.clone())
         .await?;
-        let gas_limit = u64::from_str_radix(
-            estimate_gas_request
-                .as_str()
-                .unwrap_or("0x0")
-                .strip_prefix("0x")
-                .unwrap(),
-            16,
-        )
-        .unwrap();
+
+        let estimate_gas_request = estimate_gas_request
+            .as_str()
+            .unwrap_or("0x0")
+            .strip_prefix("0x")
+            .ok_or(RpcErr::InvalidEthrexL2Message(
+                "Estimate gas request has invalid format".to_string(),
+            ))?;
+
+        let gas_limit = u64::from_str_radix(estimate_gas_request, 16).map_err(|error| {
+            RpcErr::InvalidEthrexL2Message(format!(
+                "Estimate gas request has invalid size: {error}"
+            ))
+        })?;
         if gas_limit == 0 || gas_limit > GAS_LIMIT_HARD_LIMIT {
             return Err(RpcErr::InvalidEthrexL2Message(
                 "tx too expensive".to_string(),

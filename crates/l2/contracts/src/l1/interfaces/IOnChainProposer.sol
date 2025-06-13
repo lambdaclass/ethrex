@@ -35,17 +35,17 @@ interface IOnChainProposer {
     /// and to publish withdrawals if any.
     /// @param batchNumber the number of the batch to be committed.
     /// @param newStateRoot the new state root of the batch to be committed.
-    /// @param stateDiffKZGVersionedHash of the block to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the batch to be committed.
     /// @param processedDepositLogsRollingHash the rolling hash of the processed
     /// deposits logs of the batch to be committed.
+    /// @param lastBlockHash the hash of the last block of the batch to be committed.
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
-        bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 processedDepositLogsRollingHash
+        bytes32 processedDepositLogsRollingHash,
+        bytes32 lastBlockHash
     ) external;
 
     /// @notice Method used to verify a batch of L2 blocks.
@@ -60,23 +60,32 @@ interface IOnChainProposer {
     /// @param sp1PublicValues Values used to perform the execution
     /// @param sp1ProofBytes Groth16 proof
     /// ----------------------------------------------------------------------
-    /// @param picoRiscvVkey Public verifying key
-    /// @param picoPublicValues Values used to perform the execution
-    /// @param picoProof Groth16 proof
+    /// @param tdxPublicValues Values used to perform the execution
+    /// @param tdxSignature TDX signature
     function verifyBatch(
         uint256 batchNumber,
         //risc0
-        bytes calldata risc0BlockProof,
+        bytes memory risc0BlockProof,
         bytes32 risc0ImageId,
         bytes calldata risc0Journal,
         //sp1
         bytes calldata sp1PublicValues,
-        bytes calldata sp1ProofBytes,
-        //pico
-        bytes32 picoRiscvVkey,
-        bytes calldata picoPublicValues,
-        uint256[8] calldata picoProof
+        bytes memory sp1ProofBytes,
+        //tdx
+        bytes calldata tdxPublicValues,
+        bytes memory tdxSignature
     ) external;
     // TODO: imageid, programvkey and riscvvkey should be constants
     // TODO: organize each zkvm proof arguments in their own structs
+
+    /// @notice Method used to verify a batch of L2 blocks in Aligned.
+    /// @param alignedPublicInputs The public inputs bytes of the proof.
+    /// @param alignedProgramVKey The public verifying key.
+    /// @param alignedMerkleProof  The Merkle proof (sibling hashes) needed to reconstruct the Merkle root.
+    function verifyBatchAligned(
+        uint256 batchNumber,
+        bytes calldata alignedPublicInputs,
+        bytes32 alignedProgramVKey,
+        bytes32[] calldata alignedMerkleProof
+    ) external;
 }

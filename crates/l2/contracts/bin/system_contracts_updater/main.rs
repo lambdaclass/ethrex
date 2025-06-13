@@ -1,3 +1,5 @@
+use std::{collections::HashMap, io::ErrorKind, path::Path, path::PathBuf};
+
 use bytes::Bytes;
 use clap::Parser;
 use cli::SystemContractsUpdaterOptions;
@@ -6,8 +8,7 @@ use ethrex_common::types::GenesisAccount;
 use ethrex_common::U256;
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::{compile_contract, COMMON_BRIDGE_L2_ADDRESS};
-use std::{collections::HashMap, io::ErrorKind, path::Path};
-use tools::genesis::write_genesis_as_json;
+use genesis_tool::genesis::write_genesis_as_json;
 mod cli;
 mod error;
 
@@ -18,8 +19,12 @@ fn main() -> Result<(), SystemContractsUpdaterError> {
     Ok(())
 }
 
-fn update_genesis_file(l2_genesis_path: &str) -> Result<(), SystemContractsUpdaterError> {
-    let mut genesis = read_genesis_file(l2_genesis_path);
+fn update_genesis_file(l2_genesis_path: &PathBuf) -> Result<(), SystemContractsUpdaterError> {
+    let mut genesis = read_genesis_file(l2_genesis_path.to_str().ok_or(
+        SystemContractsUpdaterError::InvalidPath(
+            "Failed to convert l2 genesis path to string".to_string(),
+        ),
+    )?);
 
     let runtime_code = std::fs::read("contracts/solc_out/CommonBridgeL2.bin-runtime")?;
 

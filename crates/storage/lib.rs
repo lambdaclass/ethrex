@@ -1,7 +1,5 @@
 mod api;
 
-mod account_update;
-
 #[cfg(any(feature = "libmdbx", feature = "redb"))]
 mod rlp;
 mod store;
@@ -10,7 +8,6 @@ mod trie_db;
 mod utils;
 
 pub mod error;
-pub use account_update::AccountUpdate;
 pub use store::{
-    hash_address, hash_key, EngineType, Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS,
+    hash_address, hash_key, EngineType, Store, UpdateBatch, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS,
 };

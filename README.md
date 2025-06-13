@@ -1,6 +1,6 @@
 # ethrex
 
-Ethereum Rust Execution L1 and L2 client.
+Minimalist, stable, modular and fast implementation of the Ethereum protocol in Rust.
 
 [![Telegram Chat][tg-badge]][tg-url]
 [![license](https://img.shields.io/github/license/lambdaclass/ethrex)](/LICENSE)
@@ -13,7 +13,7 @@ Ethereum Rust Execution L1 and L2 client.
 This client supports running in two different modes:
 
 - As a regular Ethereum execution client
-- As a ZK-Rollup, where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security.
+- As a multi-prover ZK-Rollup (supporting SP1, RISC Zero and TEEs), where block execution is proven and the proof sent to an L1 network for verification, thus inheriting the L1's security. Support for based sequencing is currently in the works.
 
 We call the first one ethrex L1 and the second one ethrex L2.
 
@@ -114,7 +114,7 @@ make test CRATE="ethrex-blockchain"
 
 #### Load tests
 
-More information in the [load test documentation](cmd/load_test/README.md).
+More information in the [load test documentation](tooling/load_test/README.md).
 
 #### Hive Tests
 
@@ -194,8 +194,9 @@ Usage: ethrex [OPTIONS] [COMMAND]
 Commands:
   removedb  Remove the database
   import    Import blocks to the database
+  export    Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
-  help      Print this message or the help of the given subcommand(s)
+  help                Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help
@@ -209,6 +210,7 @@ Node options:
           Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.
 
           [env: ETHREX_NETWORK=]
+          [default: mainnet]
 
       --datadir <DATABASE_DIRECTORY>
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
@@ -358,8 +360,8 @@ In this mode, the ethrex code is repurposed to run a rollup that settles on Ethe
 
 The main differences between this mode and regular ethrex are:
 
-- There is no consensus, the node is turned into a sequencer that proposes blocks for the network.
-- Block execution is proven using a RISC-V zkVM and its proofs are sent to L1 for verification.
+- In regular rollup mode, there is no consensus; the node is turned into a sequencer that proposes blocks for the network. In based rollup mode, consensus is achieved by a mechanism that rotates sequencers, enforced by the L1.
+- Block execution is proven using a RISC-V zkVM (or attested to using TDX, a Trusted Execution Environment) and its proofs (or signatures/attestations) are sent to L1 for verification.
 - A set of Solidity contracts to be deployed to the L1 are included as part of network initialization.
 - Two new types of transactions are included: deposits (native token mints) and withdrawals.
 
@@ -417,7 +419,6 @@ Most of them are [here](https://github.com/ethpandaops/ethereum-package/blob/mai
 ## ethrex L2 Docs
 
 - [ethrex L2 Docs](./crates/l2/docs/README.md)
-- [ethrex L2 CLI Docs](./cmd/ethrex_l2/README.md)
 
 
 ## 📚 References and acknowledgements

@@ -63,10 +63,7 @@ pub async fn apply_fork_choice(
 
     // Find blocks that will be part of the new canonical chain.
     let Some(new_canonical_blocks) = find_link_with_canonical_chain(store, &head).await? else {
-        return Err(InvalidForkChoice::Disconnected(
-            error::ForkChoiceElement::Head,
-            error::ForkChoiceElement::Safe,
-        ));
+        return Err(InvalidForkChoice::UnlinkedHead);
     };
 
     let link_block_number = match new_canonical_blocks.last() {
@@ -161,11 +158,10 @@ fn check_order(
 //   descendant.
 async fn find_link_with_canonical_chain(
     store: &Store,
-    block: &BlockHeader,
+    block_header: &BlockHeader,
 ) -> Result<Option<Vec<(BlockNumber, BlockHash)>>, StoreError> {
-    let mut block_number = block.number;
-    let block_hash = block.compute_block_hash();
-    let mut header = block.clone();
+    let mut block_number = block_header.number;
+    let block_hash = block_header.hash();
     let mut branch = Vec::new();
 
     if is_canonical(store, block_number, block_hash).await? {
@@ -173,6 +169,7 @@ async fn find_link_with_canonical_chain(
     }
 
     let genesis_number = store.get_earliest_block_number().await?;
+    let mut header = block_header.clone();
 
     while block_number > genesis_number {
         block_number -= 1;
