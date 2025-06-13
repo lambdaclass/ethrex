@@ -9,3 +9,5 @@ edition = "2024"
 
 [output.html]
 git-repository-url = "https://github.com/lambdaclass/ethrex"
+# make sections collapsible, and start with the first section uncollapsed
+fold = { enable = true, level = 0 }
