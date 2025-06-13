@@ -34,7 +34,7 @@ contract SequencerRegistry is
         ON_CHAIN_PROPOSER = onChainProposer;
 
         require(
-            potentialOwner != address(0),
+            owner != address(0),
             "SequencerRegistry: Invalid owner"
         );
 
@@ -47,7 +47,7 @@ contract SequencerRegistry is
             "SequencerRegistry: Already registered"
         );
         require(
-            amount >= MIN_COLLATERAL,
+            msg.value >= MIN_COLLATERAL,
             "SequencerRegistry: Insufficient collateral"
         );
 
