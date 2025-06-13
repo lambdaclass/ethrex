@@ -1,19 +1,19 @@
 use std::{sync::Arc, time::Duration};
 
 use ethrex_blockchain::fork_choice::apply_fork_choice;
-use ethrex_common::{types::Block, Address};
+use ethrex_common::{Address, types::Block};
 use ethrex_l2_sdk::calldata::encode_calldata;
-use ethrex_rpc::{clients::Overrides, EthClient};
+use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerError};
+use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerError, send_after};
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::utils::node_is_up_to_date,
     utils::parse::hash_to_address,
-    SequencerConfig,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -244,7 +244,9 @@ async fn revert_uncommitted_state(state: &mut StateUpdaterState) -> Result<(), S
 
     let last_l2_committed_batch_block_hash = last_l2_committed_batch_block.hash();
 
-    info!("Reverting uncommitted state to the last committed batch block {last_l2_committed_block_number} with hash {last_l2_committed_batch_block_hash:#x}");
+    info!(
+        "Reverting uncommitted state to the last committed batch block {last_l2_committed_block_number} with hash {last_l2_committed_batch_block_hash:#x}"
+    );
     state
         .store
         .update_latest_block_number(*last_l2_committed_block_number)

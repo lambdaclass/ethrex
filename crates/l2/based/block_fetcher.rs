@@ -1,27 +1,27 @@
 use std::{cmp::min, collections::HashMap, sync::Arc, time::Duration};
 
-use ethrex_blockchain::{fork_choice::apply_fork_choice, vm::StoreVmDatabase, Blockchain};
+use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice, vm::StoreVmDatabase};
 use ethrex_common::{
-    types::{
-        batch::Batch, AccountUpdate, Block, BlockNumber, PrivilegedL2Transaction, Transaction,
-    },
     Address, H160, H256, U256,
+    types::{
+        AccountUpdate, Block, BlockNumber, PrivilegedL2Transaction, Transaction, batch::Batch,
+    },
 };
 use ethrex_l2_common::{deposits::compute_deposit_logs_hash, state_diff::prepare_state_diff};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_rpc::{types::receipt::RpcLog, utils::get_withdrawal_hash, EthClient};
+use ethrex_rpc::{EthClient, types::receipt::RpcLog, utils::get_withdrawal_hash};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmEngine};
 use keccak_hash::keccak;
-use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer};
+use spawned_concurrency::{CallResponse, CastResponse, GenServer, send_after};
 use tracing::{debug, error, info};
 
 use crate::{
+    SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::{l1_committer::generate_blobs_bundle, utils::node_is_up_to_date},
     utils::helpers::is_withdrawal_l2,
-    SequencerConfig,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -194,7 +194,9 @@ async fn fetch(state: &mut BlockFetcherState) -> Result<(), BlockFetcherError> {
             ),
         )?;
 
-        info!("Node is {l2_batches_behind} batches behind. Last batch number known: {last_l2_batch_number_known}, last committed batch number: {last_l2_committed_batch_number}");
+        info!(
+            "Node is {l2_batches_behind} batches behind. Last batch number known: {last_l2_batch_number_known}, last committed batch number: {last_l2_committed_batch_number}"
+        );
 
         let batch_committed_logs = get_logs(state).await?;
 
