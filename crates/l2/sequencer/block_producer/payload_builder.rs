@@ -18,13 +18,13 @@ use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{
     metrics_blocks::METRICS_BLOCKS,
-    metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX},
+    metrics_transactions::{MetricsTxType, METRICS_TX},
 };
 use ethrex_storage::Store;
 use ethrex_vm::{Evm, EvmError};
 use std::ops::Div;
 use tokio::time::Instant;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 use crate::{
     sequencer::errors::BlockProducerError,
@@ -194,20 +194,11 @@ pub async fn fill_transactions(
 
         // Execute tx
         let receipt = match apply_plain_transaction(&head_tx, context) {
-            Ok(receipt) => {
-                metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                    MetricsTxStatus::Succeeded,
-                    MetricsTxType(head_tx.tx_type())
-                ));
-                receipt
-            }
-            // Ignore following txs from sender
+            Ok(receipt) => receipt,
             Err(e) => {
                 debug!("Failed to execute transaction: {}, {e}", tx_hash);
-                metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                    MetricsTxStatus::Failed,
-                    MetricsTxType(head_tx.tx_type())
-                ));
+                metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
+                // Ignore following txs from sender
                 txs.pop();
                 continue;
             }
@@ -254,6 +245,14 @@ pub async fn fill_transactions(
         // Save receipt for hash calculation
         context.receipts.push(receipt);
     }
+
+    metrics!(context
+        .payload
+        .body
+        .transactions
+        .iter()
+        .for_each(|tx| METRICS_TX.inc_tx_with_type(MetricsTxType(tx.tx_type()))));
+
     Ok(())
 }
 
