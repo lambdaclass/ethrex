@@ -1,11 +1,10 @@
 use ethrex_common::{
-    types::{tx_fields::AccessList, BlockHeader, GenericTransaction, INITIAL_BASE_FEE},
     Address, H256,
+    types::{BlockHeader, GenericTransaction, INITIAL_BASE_FEE, tx_fields::AccessList},
 };
 use revm::{
-    inspector_handle_register,
+    Evm, inspector_handle_register,
     primitives::{BlockEnv, TxEnv},
-    Evm,
 };
 
 // Rename imported types for clarity
