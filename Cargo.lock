@@ -3796,6 +3796,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-rlp",
+ "ethrex-sdk",
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",

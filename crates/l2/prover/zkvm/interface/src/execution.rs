@@ -24,9 +24,9 @@ use ethrex_common::types::{
 use ethrex_l2_common::{
     deposits::{compute_deposit_logs_hash, get_block_deposits, DepositError},
     state_diff::{prepare_state_diff, StateDiff, StateDiffError},
-    withdrawals::{
-        compute_withdrawals_merkle_root, get_block_withdrawals, get_withdrawal_hash,
-        WithdrawalError,
+    l1messages::{
+        compute_merkle_root, get_block_messages, get_block_message_hashes,
+        L1MessagingError,
     },
 };
 #[cfg(feature = "l2")]
