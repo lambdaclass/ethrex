@@ -539,7 +539,12 @@ impl Blockchain {
 
         info!(
             "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
-            blocks_len, last_block_number, last_block_gas_limit, transactions_count, total_gas_used, throughput
+            blocks_len,
+            last_block_number,
+            last_block_gas_limit,
+            transactions_count,
+            total_gas_used,
+            throughput
         );
 
         Ok(())
