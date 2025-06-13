@@ -40,6 +40,7 @@ use std::{ops::Mul, str::FromStr, time::Duration};
 /// INTEGRATION_TEST_TRANSFER_VALUE: amount in wei to transfer to INTEGRATION_TEST_RETURN_TRANSFER_PRIVATE_KEY, this amount will be returned to the account
 /// INTEGRATION_TEST_WITHDRAW_VALUE: amount in wei to withdraw from the l2 back to the l1 from L1_RICH_WALLET_PRIVATE_KEY this will be done INTEGRATION_TEST_WITHDRAW_COUNT times
 /// INTEGRATION_TEST_WITHDRAW_COUNT: amount of withdraw transactions to send
+/// INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH: if set the integration test will not check for total eth in the chain, only to be used if we don't know all the accounts that exist in l2
 const DEFAULT_ETH_URL: &str = "http://localhost:8545";
 const DEFAULT_PROPOSER_URL: &str = "http://localhost:1729";
 // 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
@@ -117,7 +118,9 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    test_total_eth_l2(&eth_client, &proposer_client).await?;
+    if std::env::var("INTEGRATION_TEST_SKIP_TEST_TOTAL_ETH").is_err() {
+        test_total_eth_l2(&eth_client, &proposer_client).await?;
+    }
 
     println!("l2_integration_test is done");
     Ok(())
