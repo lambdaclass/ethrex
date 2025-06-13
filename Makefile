@@ -40,7 +40,7 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := e9abded922320ab3293d07857aad9dcbd0b896bd
+ETHEREUM_PACKAGE_REVISION := 7d7864cf1cc34138b427c3c7d0e36623efc19300
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
@@ -55,7 +55,7 @@ checkout-ethereum-package: ethereum-package ## 📦 Checkout specific Ethereum p
 ENCLAVE ?= lambdanet
 
 localnet: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network
-	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file test_data/network_params.yaml
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file test_data/fixtures/network/network_params.yaml
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
 localnet-assertoor-blob: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
@@ -103,9 +103,9 @@ SIM_PARALLELISM ?= 16
 # The evm can be selected by using seting HIVE_ETHREX_FLAGS='--evm revm' (the default is levm)
 # The log level can be selected by switching SIM_LOG_LEVEL from 1 up to 4
 
-HIVE_CLIENT_FILE := ../test_data/network/hive_clients/ethrex.yml
-HIVE_CLIENT_FILE_GIT := ../test_data/network/hive_clients/ethrex_git.yml
-HIVE_CLIENT_FILE_LOCAL := ../test_data/network/hive_clients/ethrex_local.yml
+HIVE_CLIENT_FILE := ../test_data/fixtures/network/hive_clients/ethrex.yml
+HIVE_CLIENT_FILE_GIT := ../test_data/fixtures/network/hive_clients/ethrex_git.yml
+HIVE_CLIENT_FILE_LOCAL := ../test_data/fixtures/network/hive_clients/ethrex_local.yml
 
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
