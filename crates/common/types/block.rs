@@ -19,7 +19,6 @@ use ethrex_rlp::{
 };
 use ethrex_trie::Trie;
 use keccak_hash::keccak;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
 use std::cmp::{Ordering, max};
