@@ -6,7 +6,7 @@ use std::{
 
 use ethrex_common::{
     H256,
-    types::{Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -74,6 +74,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
         table_info!(StateRoots),
         table_info!(DepositLogsHash),
         table_info!(LastSentBatchProof),
+        table_info!(AccountUpdatesByBlockNumber),
     ]
     .into_iter()
     .collect();
@@ -271,6 +272,27 @@ impl StoreEngineRollup for Store {
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
         self.write::<LastSentBatchProof>(0, batch_number).await
     }
+
+    async fn get_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<Vec<AccountUpdate>>, StoreError> {
+        self.read::<AccountUpdatesByBlockNumber>(block_number)
+            .await?
+            .map(|s| bincode::deserialize(&s))
+            .transpose()
+            .map_err(StoreError::from)
+    }
+
+    async fn store_account_updates_by_block_number(
+        &self,
+        block_number: BlockNumber,
+        account_updates: Vec<AccountUpdate>,
+    ) -> Result<(), StoreError> {
+        let serialized = bincode::serialize(&account_updates)?;
+        self.write::<AccountUpdatesByBlockNumber>(block_number, serialized)
+            .await
+    }
 }
 
 table!(
@@ -311,4 +333,9 @@ table!(
 table!(
     /// Last sent batch proof
     ( LastSentBatchProof ) u64 => u64
+);
+
+table!(
+    /// List of serialized account updates by block number
+    ( AccountUpdatesByBlockNumber ) BlockNumber => Vec<u8>
 );
