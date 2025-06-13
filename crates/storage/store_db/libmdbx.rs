@@ -258,6 +258,7 @@ impl StoreEngine for Store {
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
+
     async fn store_account_info_logs(
         &self,
         account_info_logs: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
@@ -313,7 +314,10 @@ impl StoreEngine for Store {
         };
         inner().map_err(StoreError::LibmdbxError)
     }
-    fn undo_writes_for_blocks(&self, invalidated_blocks: &[(u64, H256)]) -> Result<(), StoreError> {
+    async fn undo_writes_for_blocks(
+        &self,
+        invalidated_blocks: &[(u64, H256)],
+    ) -> Result<(), StoreError> {
         let inner = || -> Result<_, _> {
             let tx = self.db.begin_readwrite()?;
             let mut state_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
@@ -321,7 +325,7 @@ impl StoreEngine for Store {
             let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
             let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
             for (block_num, block_hash) in invalidated_blocks.iter().rev() {
-                let key = (block_num, block_hash).into();
+                let key = (*block_num, *block_hash).into();
                 state_log_cursor.seek_closest(key)?;
                 storage_log_cursor.seek_closest(key)?;
                 let (account_key, account_value) = state_log_cursor.current()?.unwrap_or_default();
@@ -330,12 +334,34 @@ impl StoreEngine for Store {
                 if account_key.0 != key || storage_key.0 != key {
                     anyhow::bail!("invalid arguments");
                 }
+
+                // loop over log_entries, take log_value and restore it in the flat tables
+
+                while let Some((read_key_num_hash, read_key_address, log_entry)) = state_log_cursor
+                    .next()?
+                    .and_then(|((key_num_hash, key_address), value)| {
+                        Some((key_num_hash, key_address, value))
+                    })
+                {
+                    if read_key_num_hash != key {
+                        break;
+                    }
+
+                    // TODO: detect deletions
+                    let old_info = log_entry.previous_info;
+                    flat_info_cursor
+                        .upsert(read_key_address, EncodableAccountInfo(old_info))
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+
+                // @@@@@@
             }
             tx.commit()
         };
+
         inner().map_err(StoreError::LibmdbxError)
     }
-    fn replay_writes_for_blocks(
+    async fn replay_writes_for_blocks(
         &self,
         new_canonical_blocks: &[(u64, H256)],
     ) -> Result<(), StoreError> {
@@ -1457,7 +1483,7 @@ table!(
     ( AccountCodes ) AccountCodeHashRLP => AccountCodeRLP
 );
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct BlockNumHash(pub BlockNumber, pub BlockHash);
 impl From<(BlockNumber, BlockHash)> for BlockNumHash {
     fn from(value: (BlockNumber, BlockHash)) -> Self {
@@ -1465,6 +1491,7 @@ impl From<(BlockNumber, BlockHash)> for BlockNumHash {
     }
 }
 
+#[derive(Default)]
 pub struct AccountInfoLogEntry {
     pub info: AccountInfo,
     pub previous_info: AccountInfo,
@@ -1519,6 +1546,7 @@ dupsort!(
     ( AccountsStateWriteLog ) (BlockNumHash, AccountAddress)[BlockNumHash] => AccountInfoLogEntry
 );
 
+#[derive(Default)]
 pub struct AccountStorageLogEntry(pub H256, pub U256, pub U256);
 
 // implemente Encode and Decode for StorageStateWriteLogVal
@@ -1653,11 +1681,14 @@ table!(
 // As they are stored in a dupsort table, they need to have a fixed size, and encoding them doesn't preserve their size
 #[derive(Clone)]
 pub struct AccountStorageKeyBytes(pub [u8; 32]);
+
 #[derive(Clone)]
 pub struct AccountStorageValueBytes(pub [u8; 32]);
-#[derive(Clone)]
+
+#[derive(Clone, Default, PartialEq, Eq, Hash)]
 pub struct AccountAddress(pub H160);
-#[derive(Clone)]
+
+#[derive(Clone, Default, PartialEq, Eq, Hash)]
 pub struct EncodableAccountInfo(pub AccountInfo);
 
 impl From<H160> for AccountAddress {

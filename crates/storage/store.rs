@@ -174,9 +174,9 @@ impl Store {
         let Some((first_block_num, _)) = new_canonical_blocks.first() else {
             return Ok(());
         };
-        let invalidated_blocks = self.engine.get_canonical_blocks_since(first_block_num)?;
+        let invalidated_blocks = self.engine.get_canonical_blocks_since(*first_block_num)?;
         self.engine
-            .undo_writes_for_blocks(invalidated_blocks)
+            .undo_writes_for_blocks(&invalidated_blocks)
             .await?;
         self.engine
             .replay_writes_for_blocks(new_canonical_blocks)
