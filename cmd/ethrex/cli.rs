@@ -15,11 +15,7 @@ use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
-    archive_sync::{archive_sync, archive_sync_2},
-    initializers::{init_blockchain, init_store, open_store},
-    networks::{Network, PublicNetwork},
-    utils::{self, get_client_version, read_jwtsecret_file, set_datadir},
-    DEFAULT_DATADIR,
+    archive_sync::archive_sync, initializers::{init_blockchain, init_store, open_store}, networks::{Network, PublicNetwork}, utils::{self, get_client_version, set_datadir}, DEFAULT_DATADIR
 };
 
 #[cfg(feature = "l2")]
@@ -340,7 +336,7 @@ impl Subcommand {
             } => {
                 let data_dir = set_datadir(&opts.datadir);
                 let store = open_store(&data_dir);
-                archive_sync_2(&archive_node_ipc, block_number, store).await?;
+                archive_sync(&archive_node_ipc, block_number, store).await?;
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
