@@ -15,7 +15,7 @@ contract SequencerRegistry is
 {
     uint256 public constant MIN_COLLATERAL = 1 ether;
 
-    uint256 public constant BATCHES_PER_SEQUENCER = 3;
+    uint256 public constant BATCHES_PER_SEQUENCER = 32;
 
     address public ON_CHAIN_PROPOSER;
 

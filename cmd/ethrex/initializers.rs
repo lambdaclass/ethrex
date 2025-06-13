@@ -177,7 +177,7 @@ pub async fn init_network(
     blockchain: Arc<Blockchain>,
     based: bool,
     #[cfg(feature = "l2")] store_rollup: StoreRollup,
-    secret_key: Option<SecretKey>,
+    committer_key: Option<SecretKey>,
 ) {
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -200,7 +200,7 @@ pub async fn init_network(
         based,
         #[cfg(feature = "l2")]
         store_rollup,
-        secret_key,
+        committer_key,
     );
 
     context.set_fork_id().await.expect("Set fork id");
