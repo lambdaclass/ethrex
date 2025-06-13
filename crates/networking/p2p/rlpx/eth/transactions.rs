@@ -4,7 +4,6 @@ use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::P2PTransaction;
-use ethrex_common::types::WrappedEIP4844Transaction;
 use ethrex_common::{types::Transaction, H256};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::{

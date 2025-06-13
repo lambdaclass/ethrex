@@ -3,6 +3,7 @@ use super::{
     p2p::DisconnectReason,
     utils::log_peer_warn,
 };
+use crate::rlpx::eth::transactions::PooledTransactions;
 use crate::{
     kademlia::PeerChannels,
     rlpx::{
@@ -29,10 +30,12 @@ use crate::{
     types::Node,
 };
 use ethrex_blockchain::Blockchain;
+use ethrex_common::types::WrappedEIP4844Transaction;
 use ethrex_common::{
-    types::{MempoolTransaction, Transaction},
+    types::{MempoolTransaction, P2PTransaction, Transaction},
     H256, H512,
 };
+use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
@@ -577,7 +580,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 // avoid requesting multiple times the same hash
                 let mut hashes_to_request = vec![];
                 for hash in hashes {
-                    if self::get_p2p_transaction(&hash, &self.blockchain)?.is_none() {
+                    if self.get_p2p_transaction(&hash)?.is_none() {
                         hashes_to_request.push(hash);
                     }
                 }
@@ -610,9 +613,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 if self.blockchain.is_synced() {
                     if let Some(requested) = self.requested_pooled_txs.get(&msg.id) {
                         //use error
-                        if let Err(_) = msg.validate_request(requested).await {
+                        if msg.validate_request(requested).await.is_err() {
                             //add reason
-                            log_peer_warn(&self.node, "disconnected".into());
+                            log_peer_warn(&self.node, "disconnected");
                             self.send_disconnect_message(None).await;
                             return Err(RLPxError::Disconnected());
                         }
