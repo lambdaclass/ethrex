@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::SequencerConfig;
-use crate::utils::prover::proving_systems::ProverType;
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_l2_common::prover::ProverType;

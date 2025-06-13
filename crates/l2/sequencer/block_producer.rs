@@ -42,7 +42,7 @@ impl BlockProducerState {
     pub fn new(
         config: &BlockProducerConfig,
         store: Store,
-        rollup_store: Store,
+        rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
     ) -> Self {
         let BlockProducerConfig {
