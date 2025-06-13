@@ -2,7 +2,7 @@
 authors = ["lambdaclass"]
 language = "en"
 src = "docs"
-title = "Ethrex Documentation"
+title = "Ethrex"
 
 [rust]
 edition = "2024"
