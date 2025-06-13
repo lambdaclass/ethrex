@@ -5,7 +5,7 @@ use k256::{
     EncodedPoint, PublicKey, SecretKey,
     elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
 };
-use secp256k1::{ecdsa::RecoveryId, Message as SignedMessage};
+use secp256k1::{Message as SignedMessage, ecdsa::RecoveryId};
 use sha3::{Digest, Keccak256};
 use snap::raw::{Decoder as SnappyDecoder, Encoder as SnappyEncoder, max_compress_len};
 use tracing::{debug, error, warn};
