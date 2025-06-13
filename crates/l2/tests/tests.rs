@@ -69,7 +69,17 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    test_n_withdraws(&rich_wallet_private_key, &eth_client, &proposer_client, 5).await?;
+    let withdrawals_count = std::env::var("INTEGRATION_TEST_WITHDRAW_COUNT")
+        .map(|amount| amount.parse().expect("Invalid withdrawal amount value"))
+        .unwrap_or(5);
+
+    test_n_withdraws(
+        &rich_wallet_private_key,
+        &eth_client,
+        &proposer_client,
+        withdrawals_count,
+    )
+    .await?;
 
     test_deposit_with_contract_call(deposit_recipient_address, &proposer_client, &eth_client)
         .await?;
