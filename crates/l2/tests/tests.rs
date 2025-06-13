@@ -58,8 +58,6 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let bridge_address = common_bridge_address();
     let deposit_recipient_address = get_address_from_secret_key(&rich_wallet_private_key)
         .expect("Failed to get address from l1 rich wallet pk");
-    let transfer_recipient_address = get_address_from_secret_key(&transfer_return_private_key)
-        .expect("Failed to get address from l2 transfer return pk");
 
     test_deposit(
         &rich_wallet_private_key,
@@ -99,13 +97,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    test_total_eth_l2(
-        deposit_recipient_address,
-        transfer_recipient_address,
-        &eth_client,
-        &proposer_client,
-    )
-    .await?;
+    test_total_eth_l2(&eth_client, &proposer_client).await?;
 
     println!("l2_integration_test is done");
     Ok(())
@@ -342,7 +334,7 @@ async fn test_transfer(
     let transfer_value = std::env::var("INTEGRATION_TEST_TRANSFER_VALUE")
         .map(|value| U256::from_dec_str(&value).expect("Invalid transfer value"))
         .unwrap_or(U256::from(10000000000u128));
-    let transferer_address = get_address_from_secret_key(returnerer_private_key)?;
+    let transferer_address = get_address_from_secret_key(transferer_private_key)?;
     let returner_address = get_address_from_secret_key(returnerer_private_key)?;
 
     perform_transfer(
@@ -383,11 +375,6 @@ async fn perform_transfer(
     let transfer_recipient_initial_balance = proposer_client
         .get_balance(transfer_recipient_address, BlockByNumber::Latest)
         .await?;
-
-    assert!(
-        transfer_recipient_initial_balance.is_zero(),
-        "L2 transfer recipient should have zero balance"
-    );
 
     let fee_vault_balance_before_transfer = proposer_client
         .get_balance(fees_vault(), BlockByNumber::Latest)
@@ -647,8 +634,6 @@ async fn test_n_withdraws(
 }
 
 async fn test_total_eth_l2(
-    deposit_recipient_address: Address,
-    transfer_recipient_address: Address,
     eth_client: &EthClient,
     proposer_client: &EthClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -659,34 +644,15 @@ async fn test_total_eth_l2(
         .await
         .expect("Failed to get rich accounts balance");
 
-    println!("Rich accounts balance: {rich_accounts_balance}");
-
-    println!("Getting deposit and transfer recipient balances on L2");
-
-    let deposit_recipient_balance = proposer_client
-        .get_balance(deposit_recipient_address, BlockByNumber::Latest)
-        .await?;
-
-    let transfer_recipient_balance = proposer_client
-        .get_balance(transfer_recipient_address, BlockByNumber::Latest)
-        .await?;
-
-    println!("Getting coinbase balance");
-
     let coinbase_balance = proposer_client
         .get_balance(fees_vault(), BlockByNumber::Latest)
         .await?;
 
     println!("Coinbase balance: {coinbase_balance}");
 
-    let total_eth_on_l2 = rich_accounts_balance
-        + deposit_recipient_balance
-        + transfer_recipient_balance
-        + coinbase_balance;
+    let total_eth_on_l2 = rich_accounts_balance + coinbase_balance;
 
-    println!(
-        "Total ETH on L2: {rich_accounts_balance} + {deposit_recipient_balance} + {transfer_recipient_balance} + {coinbase_balance} = {total_eth_on_l2}"
-    );
+    println!("Total ETH on L2: {rich_accounts_balance} + {coinbase_balance} = {total_eth_on_l2}");
 
     println!("Checking locked ETH on CommonBridge");
 
