@@ -1,7 +1,7 @@
 use bytes::BufMut;
 use bytes::Bytes;
-use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::error::MempoolError;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::P2PTransaction;
 use ethrex_common::{types::Transaction, H256};
@@ -302,7 +302,7 @@ impl RLPxMessage for PooledTransactions {
 
 #[cfg(test)]
 mod tests {
-    use ethrex_common::{types::P2PTransaction, H256};
+    use ethrex_common::{H256, types::P2PTransaction};
 
     use crate::rlpx::{
         eth::transactions::{GetPooledTransactions, PooledTransactions},

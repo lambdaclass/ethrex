@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::{
     discv4::messages::FindNodeRequest,
     rlpx::{message::Message as RLPxMessage, p2p::Capability},
@@ -7,8 +5,9 @@ use crate::{
 };
 use ethrex_common::{H256, U256};
 use rand::random;
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tracing::debug;
 
 pub const MAX_NODES_PER_BUCKET: usize = 16;
@@ -165,12 +164,10 @@ impl KademliaTable {
     }
 
     pub fn pong_answered(&mut self, node_id: H256, pong_at: u64) {
-        let peer = self.get_by_node_id_mut(node_id);
-        if peer.is_none() {
+        let Some(peer) = self.get_by_node_id_mut(node_id) else {
             return;
-        }
+        };
 
-        let peer = peer.unwrap();
         peer.is_proven = true;
         peer.last_pong = pong_at;
         peer.last_ping_hash = None;
@@ -178,12 +175,10 @@ impl KademliaTable {
     }
 
     pub fn update_peer_ping(&mut self, node_id: H256, ping_hash: Option<H256>, ping_at: u64) {
-        let peer = self.get_by_node_id_mut(node_id);
-        if peer.is_none() {
+        let Some(peer) = self.get_by_node_id_mut(node_id) else {
             return;
-        }
+        };
 
-        let peer = peer.unwrap();
         peer.last_ping_hash = ping_hash;
         peer.last_ping = ping_at;
     }
@@ -530,8 +525,12 @@ mod tests {
 
     #[test]
     fn bucket_number_works_as_expected() {
-        let public_key_1 = H512(hex!("4dc429669029ceb17d6438a35c80c29e09ca2c25cc810d690f5ee690aa322274043a504b8d42740079c4f4cef50777c991010208b333b80bee7b9ae8e5f6b6f0"));
-        let public_key_2 = H512(hex!("034ee575a025a661e19f8cda2b6fd8b2fd4fe062f6f2f75f0ec3447e23c1bb59beb1e91b2337b264c7386150b24b621b8224180c9e4aaf3e00584402dc4a8386"));
+        let public_key_1 = H512(hex!(
+            "4dc429669029ceb17d6438a35c80c29e09ca2c25cc810d690f5ee690aa322274043a504b8d42740079c4f4cef50777c991010208b333b80bee7b9ae8e5f6b6f0"
+        ));
+        let public_key_2 = H512(hex!(
+            "034ee575a025a661e19f8cda2b6fd8b2fd4fe062f6f2f75f0ec3447e23c1bb59beb1e91b2337b264c7386150b24b621b8224180c9e4aaf3e00584402dc4a8386"
+        ));
         let node_id_1 = node_id(&public_key_1);
         let node_id_2 = node_id(&public_key_2);
         let expected_bucket = 255;
