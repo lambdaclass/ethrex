@@ -2,11 +2,3 @@
   dockerfile: git
   build_args:
     tag: main
-- client: ethrex-revm
-  dockerfile: git
-  build_args:
-    tag: main
-- client: ethrex-snap
-  dockerfile: git
-  build_args:
-    tag: main

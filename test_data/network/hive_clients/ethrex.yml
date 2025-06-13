@@ -1,9 +1,3 @@
 - client: ethrex
   build_args:
     baseimage: ethrex
-- client: ethrex-revm
-  build_args:
-    baseimage: ethrex
-- client: ethrex-snap
-  build_args:
-    baseimage: ethrex
