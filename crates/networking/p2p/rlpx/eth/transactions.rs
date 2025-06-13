@@ -177,60 +177,6 @@ impl GetPooledTransactions {
             id,
         }
     }
-
-    pub fn handle(&self, blockchain: &Blockchain) -> Result<PooledTransactions, StoreError> {
-        // TODO(#1615): get transactions in batch instead of iterating over them.
-        let txs = self
-            .transaction_hashes
-            .iter()
-            .map(|hash| Self::get_p2p_transaction(hash, blockchain))
-            // Return an error in case anything failed.
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            // As per the spec, Nones are perfectly acceptable, for example if a transaction was
-            // taken out of the mempool due to payload building after being advertised.
-            .flatten()
-            .collect();
-
-        Ok(PooledTransactions {
-            id: self.id,
-            pooled_transactions: txs,
-        })
-    }
-
-    /// Gets a p2p transaction given a hash.
-    fn get_p2p_transaction(
-        hash: &H256,
-        blockchain: &Blockchain,
-    ) -> Result<Option<P2PTransaction>, StoreError> {
-        let Some(tx) = blockchain.mempool.get_transaction_by_hash(*hash)? else {
-            return Ok(None);
-        };
-        let result = match tx {
-            Transaction::LegacyTransaction(itx) => P2PTransaction::LegacyTransaction(itx),
-            Transaction::EIP2930Transaction(itx) => P2PTransaction::EIP2930Transaction(itx),
-            Transaction::EIP1559Transaction(itx) => P2PTransaction::EIP1559Transaction(itx),
-            Transaction::EIP4844Transaction(itx) => {
-                let Some(bundle) = blockchain.mempool.get_blobs_bundle(*hash)? else {
-                    return Err(StoreError::Custom(format!(
-                        "Blob transaction present without its bundle: hash {}",
-                        hash
-                    )));
-                };
-
-                P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
-                    tx: itx,
-                    blobs_bundle: bundle,
-                })
-            }
-            Transaction::EIP7702Transaction(itx) => P2PTransaction::EIP7702Transaction(itx),
-            Transaction::PrivilegedL2Transaction(itx) => {
-                P2PTransaction::PrivilegedL2Transaction(itx)
-            }
-        };
-
-        Ok(Some(result))
-    }
 }
 
 impl RLPxMessage for GetPooledTransactions {
