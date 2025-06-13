@@ -5,8 +5,8 @@ use super::{
     utils::ecdh_xchng,
 };
 use aes::{
-    cipher::{BlockEncrypt as _, KeyInit as _, KeyIvInit, StreamCipher as _},
     Aes256Enc,
+    cipher::{BlockEncrypt as _, KeyInit as _, KeyIvInit, StreamCipher as _},
 };
 use bytes::{Buf, BytesMut};
 use ethrex_common::{H128, H256};
@@ -204,10 +204,7 @@ impl Decoder for RLPxCodec {
                 if buf.is_empty() {
                     Ok(None)
                 } else {
-                    Err(
-                        std::io::Error::new(std::io::ErrorKind::Other, "bytes remaining on stream")
-                            .into(),
-                    )
+                    Err(std::io::Error::other("bytes remaining on stream").into())
                 }
             }
         }

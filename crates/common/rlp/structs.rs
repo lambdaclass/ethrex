@@ -1,6 +1,6 @@
 use super::{
-    decode::{decode_rlp_item, get_item_with_prefix, RLPDecode},
-    encode::{encode_length, RLPEncode},
+    decode::{RLPDecode, decode_rlp_item, get_item_with_prefix},
+    encode::{RLPEncode, encode_length},
     error::RLPDecodeError,
 };
 use bytes::BufMut;

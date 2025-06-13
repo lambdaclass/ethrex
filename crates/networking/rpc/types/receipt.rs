@@ -1,11 +1,11 @@
 use ethrex_common::{
+    Address, Bloom, Bytes, H256,
     constants::GAS_PER_BLOB,
     serde_utils,
     types::{
-        bloom_from_logs, BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind,
-        TxType,
+        BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType,
+        bloom_from_logs,
     },
-    Address, Bloom, Bytes, H256,
 };
 use ethrex_vm::create_contract_address;
 
@@ -205,8 +205,8 @@ impl RpcReceiptTxInfo {
 mod tests {
     use super::*;
     use ethrex_common::{
-        types::{Log, TxType},
         Bytes,
+        types::{Log, TxType},
     };
     use hex_literal::hex;
 
