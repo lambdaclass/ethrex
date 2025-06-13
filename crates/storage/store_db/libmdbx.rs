@@ -326,8 +326,8 @@ impl StoreEngine for Store {
             let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
             for (block_num, block_hash) in invalidated_blocks.iter().rev() {
                 let key = (*block_num, *block_hash).into();
-                state_log_cursor.seek_closest(key)?;
-                storage_log_cursor.seek_closest(key)?;
+                let mut found_state_log = state_log_cursor.seek_closest(key)?;
+                let mut found_storage_log = storage_log_cursor.seek_closest(key)?;
                 let (account_key, account_value) = state_log_cursor.current()?.unwrap_or_default();
                 let (storage_key, storage_value) =
                     storage_log_cursor.current()?.unwrap_or_default();
@@ -336,25 +336,37 @@ impl StoreEngine for Store {
                 }
 
                 // loop over log_entries, take log_value and restore it in the flat tables
-
-                while let Some((read_key_num_hash, read_key_address, log_entry)) = state_log_cursor
-                    .next()?
-                    .and_then(|((key_num_hash, key_address), value)| {
-                        Some((key_num_hash, key_address, value))
-                    })
+                while let Some(((read_key_num_hash, read_key_address), log_entry)) = found_state_log
                 {
                     if read_key_num_hash != key {
                         break;
                     }
 
-                    // TODO: detect deletions
+                    // TODO: detect account deletions
                     let old_info = log_entry.previous_info;
                     flat_info_cursor
                         .upsert(read_key_address, EncodableAccountInfo(old_info))
                         .map_err(StoreError::LibmdbxError)?;
+
+                    found_state_log = state_log_cursor.next()?;
                 }
 
-                // @@@@@@
+                // TODO: detect storage deletions
+                while let Some(((read_key_num_hash, read_key_address), log_entry)) =
+                    found_storage_log
+                {
+                    if read_key_num_hash != key {
+                        break;
+                    }
+
+                    let old_value = log_entry.1;
+                    let slot = log_entry.0;
+                    flat_storage_cursor
+                        .upsert((read_key_address.into(), slot.into()), old_value.into())
+                        .map_err(StoreError::LibmdbxError)?;
+
+                    found_storage_log = storage_log_cursor.next()?;
+                }
             }
             tx.commit()
         };
