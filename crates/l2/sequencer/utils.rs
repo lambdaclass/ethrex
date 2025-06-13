@@ -1,8 +1,8 @@
 use aligned_sdk::common::types::Network;
 use ethrex_common::{Address, H160, H256};
 use ethrex_rpc::{
-    clients::{eth::WrappedTransaction, EthClientError, Overrides},
     EthClient,
+    clients::{EthClientError, Overrides, eth::WrappedTransaction},
 };
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::StoreRollup;

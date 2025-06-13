@@ -15,7 +15,7 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use k256::{
     ecdsa::SigningKey,
-    elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
+    elliptic_curve::{PublicKey, sec1::ToEncodedPoint},
 };
 use secp256k1::SecretKey;
 use std::{io, net::SocketAddr, sync::Arc};
@@ -221,7 +221,9 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
                         .any(|cap| peer.supported_capabilities.contains(cap))
             })
             .count();
-        info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");
+        info!(
+            "Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}"
+        );
         interval.tick().await;
     }
 }

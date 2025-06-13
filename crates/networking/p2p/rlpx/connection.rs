@@ -807,7 +807,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     ) -> Result<(), RLPxError> {
         if id != tokio::task::id() {
             match broadcasted_msg.as_ref() {
-                Message::Transactions(ref txs) => {
+                Message::Transactions(txs) => {
                     // TODO(#1131): Avoid cloning this vector.
                     let cloned = txs.transactions.clone();
                     let new_msg = Message::Transactions(Transactions {
@@ -1009,12 +1009,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     return Err(RLPxError::HandshakeError(format!(
                         "Peer disconnected due to: {}",
                         disconnect.reason()
-                    )))
+                    )));
                 }
                 _ => {
                     return Err(RLPxError::HandshakeError(
                         "Expected a Status message".to_string(),
-                    ))
+                    ));
                 }
             }
         }

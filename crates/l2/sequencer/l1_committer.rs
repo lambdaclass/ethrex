@@ -1,30 +1,30 @@
 use crate::{
+    CommitterConfig, EthConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::errors::CommitterError,
-    CommitterConfig, EthConfig, SequencerConfig,
 };
 
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
-    types::{
-        batch::Batch, blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, Block,
-        BlockNumber, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
-    },
     Address, H256, U256,
+    types::{
+        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber,
+        MIN_BASE_FEE_PER_BLOB_GAS, batch::Batch, blobs_bundle, fake_exponential_checked,
+    },
 };
 use ethrex_l2_common::{
     deposits::{compute_deposit_logs_hash, get_block_deposits},
-    state_diff::{prepare_state_diff, StateDiff},
+    state_diff::{StateDiff, prepare_state_diff},
     withdrawals::{compute_withdrawals_merkle_root, get_block_withdrawals},
 };
-use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_l2_sdk::calldata::{Value, encode_calldata};
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};
+use ethrex_metrics::metrics_l2::{METRICS_L2, MetricsL2BlockType};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
-    clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
+    clients::eth::{BlockByNumber, EthClient, WrappedTransaction, eth_sender::Overrides},
     utils::get_withdrawal_hash,
 };
 use ethrex_storage::Store;
@@ -35,7 +35,7 @@ use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::random_duration};
-use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
+use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
 use spawned_rt::mpsc::Sender;
 
 const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
@@ -337,21 +337,22 @@ async fn prepare_batch_from_block(
 
         // Get block account updates.
         let block_to_commit = Block::new(block_to_commit_header.clone(), block_to_commit_body);
-        let account_updates =
-            if let Some(account_updates) = state.execution_cache.get(block_to_commit.hash())? {
-                account_updates
-            } else {
-                warn!(
+        let account_updates = if let Some(account_updates) =
+            state.execution_cache.get(block_to_commit.hash())?
+        {
+            account_updates
+        } else {
+            warn!(
                 "Could not find execution cache result for block {}, falling back to re-execution",
                 last_added_block_number + 1
             );
 
-                let vm_db =
-                    StoreVmDatabase::new(state.store.clone(), block_to_commit.header.parent_hash);
-                let mut vm = Evm::new(EvmEngine::default(), vm_db);
-                vm.execute_block(&block_to_commit)?;
-                vm.get_state_transitions()?
-            };
+            let vm_db =
+                StoreVmDatabase::new(state.store.clone(), block_to_commit.header.parent_hash);
+            let mut vm = Evm::new(EvmEngine::default(), vm_db);
+            vm.execute_block(&block_to_commit)?;
+            vm.get_state_transitions()?
+        };
 
         acc_withdrawals.extend(withdrawals.clone());
         acc_deposits.extend(deposits.clone());
@@ -388,7 +389,9 @@ async fn prepare_batch_from_block(
         };
 
         let Ok((bundle, latest_blob_size)) = result else {
-            warn!("Batch size limit reached. Any remaining blocks will be processed in the next batch.");
+            warn!(
+                "Batch size limit reached. Any remaining blocks will be processed in the next batch."
+            );
             // Break loop. Use the previous generated blobs_bundle.
             break;
         };
