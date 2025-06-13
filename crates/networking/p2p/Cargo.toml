@@ -1,7 +1,7 @@
 [package]
 name = "ethrex-p2p"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -11,10 +11,10 @@ ethrex-blockchain.workspace = true
 ethrex-rlp.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
-
+ethereum-types.workspace = true
 tracing.workspace = true
-tokio.workspace = true
-tokio-util.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true, features = ["codec"] }
 bytes.workspace = true
 hex.workspace = true
 thiserror.workspace = true
@@ -46,3 +46,6 @@ path = "./p2p.rs"
 default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
+
+[lints.clippy] 
+unwrap_used = "deny" 

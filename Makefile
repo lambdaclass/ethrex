@@ -9,7 +9,7 @@ build: ## 🔨 Build the client
 	cargo build --workspace
 
 lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
+	cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain -- -D warnings
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
@@ -40,7 +40,9 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
+
 ETHEREUM_PACKAGE_REVISION := 7d7864cf1cc34138b427c3c7d0e36623efc19300
+
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
@@ -79,66 +81,50 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-HIVE_REVISION := 4a1ed079ce5ebb46240e4ef9141d72e7236bca36
-# Shallow clones can't specify a single revision, but at least we avoid working
-# the whole history by making it shallow since a given date (one day before our
-# target revision).
-HIVE_SHALLOW_SINCE := 2025-05-21
-QUIET ?= false
+HIVE_BRANCH ?= master
 
-hive:
-	if [ "$(QUIET)" = "true" ]; then \
-		git clone --quiet --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
-		cd hive && git checkout --quiet --detach $(HIVE_REVISION) && go build .; \
+setup-hive: ## 🐝 Set up Hive testing framework
+	if [ -d "hive" ]; then \
+		cd hive && \
+		git fetch origin && \
+		git checkout $(HIVE_BRANCH) && \
+		git pull origin $(HIVE_BRANCH) && \
+		go build .; \
 	else \
-		git clone --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
-		cd hive && git checkout --detach $(HIVE_REVISION) && go build .; \
-	fi
-
-setup-hive: hive ## 🐝 Set up Hive testing framework
-	if [ "$$(cd hive && git rev-parse HEAD)" != "$(HIVE_REVISION)" ]; then \
-		if [ "$(QUIET)" = "true" ]; then \
-			cd hive && \
-			git checkout --quiet master && \
-			git fetch --quiet --shallow-since=$(HIVE_SHALLOW_SINCE) && \
-			git checkout --quiet --detach $(HIVE_REVISION) && go build .;\
-		else \
-			cd hive && \
-			git checkout master && \
-			git fetch --shallow-since=$(HIVE_SHALLOW_SINCE) && \
-			git checkout --detach $(HIVE_REVISION) && go build .;\
-		fi \
+		git clone --branch $(HIVE_BRANCH) https://github.com/lambdaclass/hive && \
+		cd hive && \
+		git checkout $(HIVE_BRANCH) && \
+		go build .; \
 	fi
 
 TEST_PATTERN ?= /
-SIM_LOG_LEVEL ?= 4
-EVM_BACKEND := levm
-SIM_PARALLELISM := 16
-SYNCMODE := full
+SIM_LOG_LEVEL ?= 1
+SIM_PARALLELISM ?= 16
 
 # Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080
 # The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
+# The evm can be selected by using seting HIVE_ETHREX_FLAGS='--evm revm' (the default is levm)
+# The log level can be selected by switching SIM_LOG_LEVEL from 1 up to 4
+
+HIVE_CLIENT_FILE := ../test_data/network/hive_clients/ethrex.yml
+HIVE_CLIENT_FILE_GIT := ../test_data/network/hive_clients/ethrex_git.yml
+HIVE_CLIENT_FILE_LOCAL := ../test_data/network/hive_clients/ethrex_local.yml
+
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
-	- cd hive && ./hive --client-file ../test_data/hive_clients.yml --client ethrex --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
 	$(MAKE) view-hive
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
-	- cd hive && ./hive --client-file ../test_data/hive_clients.yml --client ethrex --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ".*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) 
 	$(MAKE) view-hive
-
-run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive && ./hive --sim $(SIMULATION) --client-file ../test_data/hive_clients.yml --client ethrex --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
 
 view-hive: ## 🛠️ Builds hiveview with the logs from the hive execution
 	cd hive && go build ./cmd/hiveview && ./hiveview --serve --logdir ./workspace/logs
-
-install-cli: ## 🛠️ Installs the ethrex-l2 cli
-	cargo install --path cmd/ethrex_l2/ --force --locked
 
 start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
 	@if [ -z "$$L" ]; then \

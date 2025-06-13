@@ -3,7 +3,6 @@ members = [
   "cmd/ef_tests/blockchain",
   "cmd/ef_tests/state",
   "cmd/ethrex",
-  "cmd/ethrex_l2",
   "cmd/ethrex_replay",
   "crates/blockchain",
   "crates/blockchain/dev",
@@ -12,6 +11,7 @@ members = [
   "crates/common/trie",
   "crates/l2/",
   "crates/l2/contracts",
+  "crates/l2/common",
   "crates/l2/prover",
   "crates/l2/prover/zkvm/interface",
   "crates/l2/sdk",
@@ -25,7 +25,7 @@ members = [
   "tooling/genesis",
   "tooling/hive_report",
   "tooling/load_test",
-  "tooling/loc"
+  "tooling/loc",
 ]
 resolver = "2"
 
@@ -33,7 +33,7 @@ default-members = ["cmd/ethrex"]
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [profile.release-with-debug]
 inherits = "release"
@@ -50,6 +50,7 @@ ethrex-levm = { path = "./crates/vm/levm" }
 ethrex-trie = { path = "./crates/common/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
 ethrex-l2 = { path = "./crates/l2" }
+ethrex-l2-common = { path = "./crates/l2/common" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }

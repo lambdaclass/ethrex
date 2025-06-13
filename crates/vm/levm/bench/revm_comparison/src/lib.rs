@@ -1,19 +1,23 @@
 use bytes::Bytes;
+use ethrex_blockchain::vm::StoreVmDatabase;
+use ethrex_common::H256;
 use ethrex_common::{
-    types::{code_hash, Account, AccountInfo, EIP1559Transaction, Transaction, TxKind},
     Address as EthrexAddress, U256,
+    types::{Account, AccountInfo, EIP1559Transaction, Transaction, TxKind, code_hash},
 };
 use ethrex_levm::{
-    db::{cache, gen_db::GeneralizedDatabase, CacheDB},
-    errors::TxResult,
-    vm::VM,
     Environment,
+    db::{CacheDB, cache, gen_db::GeneralizedDatabase},
+    errors::TxResult,
+    tracing::LevmCallTracer,
+    vm::VM,
 };
-use ethrex_vm::ProverDB;
+use ethrex_storage::Store;
+use ethrex_vm::DynVmDatabase;
 use revm::{
-    db::BenchmarkDB,
-    primitives::{address, Address, Bytecode, TransactTo},
     Evm,
+    db::BenchmarkDB,
+    primitives::{Address, Bytecode, TransactTo, address},
 };
 use sha3::{Digest, Keccak256};
 use std::hint::black_box;
@@ -55,13 +59,10 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
         ),
     ];
 
-    let mut prover_db = ProverDB::default();
-
-    accounts.iter().for_each(|(address, account)| {
-        prover_db.accounts.insert(*address, account.info.clone());
-    });
-
-    let mut db = GeneralizedDatabase::new(Arc::new(prover_db), CacheDB::new());
+    // The store type for this bench shouldn't matter as all operations use the LEVM cache
+    let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
+    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
+    let mut db = GeneralizedDatabase::new(Arc::new(store), CacheDB::new());
 
     cache::insert_account(
         &mut db.cache,
@@ -193,5 +194,5 @@ fn new_vm_with_ops_addr_bal_db(
         data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx)
+    VM::new(env, db, &tx, LevmCallTracer::disabled())
 }
