@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749847319745,
+  "lastUpdate": 1749847674891,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12835,6 +12835,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 186002213949,
             "range": "± 566561215",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a899320875557cd7e293db2e81c1ad10360a4a5c",
+          "message": "fix(l2): bump sp1 to 5.0.0 (#3028)\n\n**Motivation**\n\nAddresses the recently discovered vulnerability in Plonky3\n\n\nhttps://github.com/succinctlabs/sp1/security/advisories/GHSA-6248-228x-mmvh\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>",
+          "timestamp": "2025-06-13T19:54:48Z",
+          "tree_id": "5e98655f6c74da3d8f23c32b586d703d68ce3cb7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a899320875557cd7e293db2e81c1ad10360a4a5c"
+        },
+        "date": 1749847668375,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182452589335,
+            "range": "± 382106435",
             "unit": "ns/iter"
           }
         ]
