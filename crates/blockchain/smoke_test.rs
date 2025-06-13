@@ -314,7 +314,7 @@ mod blockchain_integration_test {
 
     async fn test_store() -> Store {
         // Get genesis
-        let file = File::open("../../test_data/genesis-execution-api.json")
+        let file = File::open("../../test_data/fixtures/genesis/execution-api.json")
             .expect("Failed to open genesis file");
         let reader = BufReader::new(file);
         let genesis = serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
