@@ -1,10 +1,9 @@
 use ethrex_common::{
-    types::{Block, BlockHeader},
     H256,
+    types::{Block, block_execution_witness::ExecutionWitnessResult},
 };
-use ethrex_vm::ProverDB;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_with::{serde_as, DeserializeAs, SerializeAs};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_with::{DeserializeAs, SerializeAs, serde_as};
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::blobs_bundle;
@@ -16,11 +15,8 @@ pub struct ProgramInput {
     /// blocks to execute
     #[serde_as(as = "SerdeJSON")]
     pub blocks: Vec<Block>,
-    /// header of the previous block
-    #[serde_as(as = "SerdeJSON")]
-    pub parent_block_header: BlockHeader,
-    /// database containing only the data necessary to execute
-    pub db: ProverDB,
+    /// database containing all the data necessary to execute
+    pub db: ExecutionWitnessResult,
     /// value used to calculate base fee
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
@@ -37,7 +33,6 @@ impl Default for ProgramInput {
     fn default() -> Self {
         Self {
             blocks: Default::default(),
-            parent_block_header: Default::default(),
             db: Default::default(),
             elasticity_multiplier: Default::default(),
             #[cfg(feature = "l2")]

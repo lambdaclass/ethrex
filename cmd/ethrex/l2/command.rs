@@ -1,27 +1,28 @@
 use crate::{
+    DEFAULT_L2_DATADIR,
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
         init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
     },
     l2::options::Options,
-    utils::{set_datadir, store_node_config_file, NodeConfigFile},
-    DEFAULT_L2_DATADIR,
+    utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
 use clap::Subcommand;
 use ethrex_common::{
-    types::{batch::Batch, bytes_from_blob, BlobsBundle, BlockHeader, BYTES_PER_BLOB},
     Address, U256,
+    types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
 };
 use ethrex_l2::SequencerConfig;
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
-    clients::{beacon::BeaconClient, eth::BlockByNumber},
     EthClient,
+    clients::{beacon::BeaconClient, eth::BlockByNumber},
 };
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{EngineType, Store, UpdateBatch};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+use ethrex_vm::EvmEngine;
 use eyre::OptionExt;
 use itertools::Itertools;
 use keccak_hash::keccak;
@@ -52,9 +53,7 @@ pub enum Command {
         #[arg(long = "force", required = false, action = clap::ArgAction::SetTrue)]
         force: bool,
     },
-    #[command(
-        about = "Launch a server that listens for Blobs submissions and saves them offline."
-    )]
+    #[command(about = "Launch a server that listens for Blobs submissions and saves them offline.")]
     BlobsSaver {
         #[arg(
             short = 'c',
@@ -86,6 +85,10 @@ impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             Command::Init { opts } => {
+                if opts.node_opts.evm == EvmEngine::REVM {
+                    panic!("L2 Doesn't support REVM, use LEVM instead.");
+                }
+
                 let data_dir = set_datadir(&opts.node_opts.datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
@@ -332,11 +335,29 @@ impl Command {
                             let state_diff = StateDiff::decode(&blob)?;
 
                             // Apply all account updates to trie
-                            let account_updates: Vec<_> = state_diff.to_account_updates(&new_trie)?.into_values().collect();
-                            new_trie = store
-                                .apply_account_updates_from_trie(new_trie, &account_updates)
+                            let account_updates = state_diff.to_account_updates(&new_trie)?;
+                            let account_updates_list = store
+                                .apply_account_updates_from_trie_batch(new_trie, account_updates.values())
                                 .await
                                 .expect("Error applying account updates");
+
+                            let (new_state_root, state_updates, accounts_updates) =
+                                (
+                                    account_updates_list.state_trie_hash,
+                                    account_updates_list.state_updates,
+                                    account_updates_list.storage_updates
+                                );
+
+                            let pseudo_update_batch = UpdateBatch {
+                                account_updates: state_updates,
+                                storage_updates: accounts_updates,
+                                blocks: vec![],
+                                receipts: vec![],
+                            };
+
+                            store.store_block_updates(pseudo_update_batch).await.expect("Error storing trie updates");
+
+                            new_trie = store.open_state_trie(new_state_root).expect("Error opening new state trie");
 
                             // Get withdrawal hashes
                             let withdrawal_hashes = state_diff

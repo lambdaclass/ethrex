@@ -1,8 +1,7 @@
 use super::transaction::RpcTransaction;
 use ethrex_common::{
-    serde_utils,
+    H256, serde_utils,
     types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Withdrawal},
-    H256,
 };
 use ethrex_rlp::encode::RLPEncode;
 
@@ -127,8 +126,8 @@ mod test {
 
     use bytes::Bytes;
     use ethrex_common::{
-        types::{EIP1559Transaction, Transaction, TxKind, EMPTY_KECCACK_HASH},
         Address, Bloom, H256, U256,
+        types::{EIP1559Transaction, EMPTY_KECCACK_HASH, Transaction, TxKind},
     };
     use std::str::FromStr;
 

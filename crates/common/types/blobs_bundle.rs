@@ -1,12 +1,12 @@
 use std::ops::AddAssign;
 
 use crate::serde_utils;
-use crate::{types::constants::VERSIONED_HASH_VERSION_KZG, Bytes, H256};
+use crate::{Bytes, H256, types::constants::VERSIONED_HASH_VERSION_KZG};
 
 #[cfg(feature = "c-kzg")]
 use {
     crate::types::transaction::EIP4844Transaction,
-    c_kzg::{ethereum_kzg_settings, KzgCommitment, KzgProof, KzgSettings},
+    c_kzg::{KzgCommitment, KzgProof, KzgSettings, ethereum_kzg_settings},
     lazy_static::lazy_static,
 };
 
@@ -243,8 +243,8 @@ pub enum BlobsBundleError {
 mod tests {
     use super::*;
     use crate::{
-        types::{blobs_bundle, transaction::EIP4844Transaction},
         Address, Bytes, U256,
+        types::{blobs_bundle, transaction::EIP4844Transaction},
     };
     mod shared {
         pub fn convert_str_to_bytes48(s: &str) -> [u8; 48] {

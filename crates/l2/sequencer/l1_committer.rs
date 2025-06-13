@@ -1,27 +1,24 @@
-use crate::{
-    sequencer::{blobs_bundle_cache::BlobsBundleCache, errors::CommitterError},
-    CommitterConfig, EthConfig, SequencerConfig,
-};
+use crate::{CommitterConfig, EthConfig, SequencerConfig, sequencer::errors::CommitterError};
 
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
-    types::{
-        batch::Batch, blobs_bundle, fake_exponential_checked, AccountUpdate, BlobsBundle, Block,
-        BlockNumber, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
-    },
     Address, H256, U256,
+    types::{
+        AccountUpdate, BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber,
+        MIN_BASE_FEE_PER_BLOB_GAS, batch::Batch, blobs_bundle, fake_exponential_checked,
+    },
 };
 use ethrex_l2_common::{
     deposits::{compute_deposit_logs_hash, get_block_deposits},
-    state_diff::{prepare_state_diff, StateDiff},
+    state_diff::{StateDiff, prepare_state_diff},
     withdrawals::{compute_withdrawals_merkle_root, get_block_withdrawals},
 };
-use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_l2_sdk::calldata::{Value, encode_calldata};
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};
+use ethrex_metrics::metrics_l2::{METRICS_L2, MetricsL2BlockType};
 use ethrex_rpc::{
-    clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
+    clients::eth::{BlockByNumber, EthClient, WrappedTransaction, eth_sender::Overrides},
     utils::get_withdrawal_hash,
 };
 use ethrex_storage::Store;
@@ -32,7 +29,7 @@ use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::random_duration};
-use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
+use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
 use spawned_rt::mpsc::Sender;
 
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
@@ -49,7 +46,6 @@ pub struct CommitterState {
     arbitrary_base_blob_gas_price: u64,
     execution_cache: Arc<ExecutionCache>,
     validium: bool,
-    blobs_bundle_cache: Arc<BlobsBundleCache>,
 }
 
 impl CommitterState {
@@ -59,7 +55,6 @@ impl CommitterState {
         store: Store,
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
-        blobs_bundle_cache: Arc<BlobsBundleCache>,
     ) -> Result<Self, CommitterError> {
         Ok(Self {
             eth_client: EthClient::new_with_config(
@@ -80,7 +75,6 @@ impl CommitterState {
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
             validium: committer_config.validium,
-            blobs_bundle_cache,
         })
     }
 }
@@ -104,7 +98,6 @@ impl L1Committer {
         store: Store,
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
-        blobs_bundle_cache: Arc<BlobsBundleCache>,
         cfg: SequencerConfig,
     ) -> Result<(), CommitterError> {
         let state = CommitterState::new(
@@ -113,7 +106,6 @@ impl L1Committer {
             store.clone(),
             rollup_store.clone(),
             execution_cache.clone(),
-            blobs_bundle_cache.clone(),
         )?;
         let mut l1_committer = L1Committer::start(state);
         l1_committer
@@ -192,7 +184,7 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                 withdrawal_hashes,
                 deposit_logs_hash,
                 last_block_of_batch,
-            ) = prepare_batch_from_block(state, *last_block, batch_to_commit).await?;
+            ) = prepare_batch_from_block(state, *last_block).await?;
 
             if *last_block == last_block_of_batch {
                 debug!("No new blocks to commit, skipping");
@@ -261,7 +253,6 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
 async fn prepare_batch_from_block(
     state: &mut CommitterState,
     mut last_added_block_number: BlockNumber,
-    batch_number: u64,
 ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
     let first_block_of_batch = last_added_block_number + 1;
     let mut blobs_bundle = BlobsBundle::default();
@@ -326,21 +317,22 @@ async fn prepare_batch_from_block(
 
         // Get block account updates.
         let block_to_commit = Block::new(block_to_commit_header.clone(), block_to_commit_body);
-        let account_updates =
-            if let Some(account_updates) = state.execution_cache.get(block_to_commit.hash())? {
-                account_updates
-            } else {
-                warn!(
+        let account_updates = if let Some(account_updates) =
+            state.execution_cache.get(block_to_commit.hash())?
+        {
+            account_updates
+        } else {
+            warn!(
                 "Could not find execution cache result for block {}, falling back to re-execution",
                 last_added_block_number + 1
             );
 
-                let vm_db =
-                    StoreVmDatabase::new(state.store.clone(), block_to_commit.header.parent_hash);
-                let mut vm = Evm::new(EvmEngine::default(), vm_db);
-                vm.execute_block(&block_to_commit)?;
-                vm.get_state_transitions()?
-            };
+            let vm_db =
+                StoreVmDatabase::new(state.store.clone(), block_to_commit.header.parent_hash);
+            let mut vm = Evm::new(EvmEngine::default(), vm_db);
+            vm.execute_block(&block_to_commit)?;
+            vm.get_state_transitions()?
+        };
 
         // Accumulate block data with the rest of the batch.
         acc_withdrawals.extend(withdrawals.clone());
@@ -378,7 +370,9 @@ async fn prepare_batch_from_block(
         };
 
         let Ok((bundle, latest_blob_size)) = result else {
-            warn!("Batch size limit reached. Any remaining blocks will be processed in the next batch.");
+            warn!(
+                "Batch size limit reached. Any remaining blocks will be processed in the next batch."
+            );
             // Break loop. Use the previous generated blobs_bundle.
             break;
         };
@@ -408,12 +402,6 @@ async fn prepare_batch_from_block(
             .hash_no_commit();
 
         last_added_block_number += 1;
-    }
-
-    if !state.validium {
-        state
-            .blobs_bundle_cache
-            .push(batch_number, blobs_bundle.clone())?;
     }
 
     metrics!(if let (Ok(deposits_count), Ok(withdrawals_count)) = (
@@ -485,6 +473,7 @@ async fn send_commitment(
     // Validium: EIP1559 Transaction.
     // Rollup: EIP4844 Transaction -> For on-chain Data Availability.
     let mut tx = if !state.validium {
+        info!("L2 is in rollup mode, sending EIP-4844 (including blob) tx to commit block");
         let le_bytes = estimate_blob_gas(
             &state.eth_client,
             state.arbitrary_base_blob_gas_price,
@@ -515,6 +504,7 @@ async fn send_commitment(
 
         WrappedTransaction::EIP4844(wrapped_tx)
     } else {
+        info!("L2 is in validium mode, sending EIP-1559 (no blob) tx to commit block");
         let wrapped_tx = state
             .eth_client
             .build_eip1559_transaction(

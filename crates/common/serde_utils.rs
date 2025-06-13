@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use serde::{de::Error, ser::SerializeSeq, Deserialize, Deserializer, Serializer};
+use serde::{Deserialize, Deserializer, Serializer, de::Error, ser::SerializeSeq};
 
 pub mod u256 {
     use super::*;
@@ -82,9 +82,8 @@ pub mod u64 {
             D: Deserializer<'de>,
         {
             let value = String::deserialize(d)?;
-            let res = u64::from_str_radix(value.trim_start_matches("0x"), 16)
-                .map_err(|_| D::Error::custom("Failed to deserialize u64 value"));
-            res
+            u64::from_str_radix(value.trim_start_matches("0x"), 16)
+                .map_err(|_| D::Error::custom("Failed to deserialize u64 value"))
         }
 
         pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
@@ -194,9 +193,8 @@ pub mod u128 {
             D: Deserializer<'de>,
         {
             let value = String::deserialize(d)?;
-            let res = u128::from_str_radix(value.trim_start_matches("0x"), 32)
-                .map_err(|_| D::Error::custom("Failed to deserialize u128 value"));
-            res
+            u128::from_str_radix(value.trim_start_matches("0x"), 16)
+                .map_err(|_| D::Error::custom("Failed to deserialize u128 value"))
         }
 
         pub fn serialize<S>(value: &u128, serializer: S) -> Result<S::Ok, S::Error>

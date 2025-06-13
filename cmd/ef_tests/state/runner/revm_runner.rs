@@ -1,33 +1,33 @@
 use crate::{
     report::{ComparisonReport, EFTestReport, EFTestReportForkResult, TestReRunReport, TestVector},
-    runner::{levm_runner::post_state_root, EFTestRunnerError, InternalError},
+    runner::{EFTestRunnerError, InternalError, levm_runner::post_state_root},
     types::EFTest,
     utils::{effective_gas_price, load_initial_state, load_initial_state_levm},
 };
 use alloy_rlp::Encodable;
 use bytes::Bytes;
 use ethrex_common::{
-    types::{Account, AccountUpdate, Fork, TxKind},
     Address, H256,
+    types::{Account, AccountUpdate, Fork, TxKind},
 };
 use ethrex_levm::errors::{ExecutionReport, TxResult};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::{
-    self,
+    self, DynVmDatabase, EvmError,
     backends::{self, revm::db::EvmState},
-    fork_to_spec_id, DynVmDatabase, EvmError,
+    fork_to_spec_id,
 };
 use keccak_hash::keccak;
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 use revm::{
+    Evm as Revm,
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
     primitives::{
-        AccessListItem, Authorization, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv,
+        AccessListItem, Authorization, B256, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv,
         EVMError as REVMError, ExecutionResult as RevmExecutionResult, SignedAuthorization,
-        TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
+        TxEnv as RevmTxEnv, TxKind as RevmTxKind,
     },
-    Evm as Revm,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -63,23 +63,38 @@ pub async fn re_run_failed_ef_test(
             match vector_failure {
                 // We only want to re-run tests that failed in the post-state validation.
                 EFTestRunnerError::FailedToEnsurePostState(transaction_report, _, levm_cache) => {
-                    match re_run_failed_ef_test_tx(levm_cache.clone(), vector, test, transaction_report, &mut re_run_report, fork).await {
+                    match re_run_failed_ef_test_tx(
+                        levm_cache.clone(),
+                        vector,
+                        test,
+                        transaction_report,
+                        &mut re_run_report,
+                        fork,
+                    )
+                    .await
+                    {
                         Ok(_) => continue,
                         Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
                             return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
-                                format!("REVM initialization failed when re-running failed test: {reason}"), re_run_report.clone()
+                                format!(
+                                    "REVM initialization failed when re-running failed test: {reason}"
+                                ),
+                                re_run_report.clone(),
                             )));
                         }
                         Err(EFTestRunnerError::Internal(reason)) => {
                             return Err(EFTestRunnerError::Internal(reason));
                         }
                         unexpected_error => {
-                            return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(format!(
-                                "Unexpected error when re-running failed test: {unexpected_error:?}"
-                            ), re_run_report.clone())));
+                            return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
+                                format!(
+                                    "Unexpected error when re-running failed test: {unexpected_error:?}"
+                                ),
+                                re_run_report.clone(),
+                            )));
                         }
                     }
-                },
+                }
                 // Currently, we decided not to re-execute the test when the Expected exception does not match
                 // with the received. This can change in the future.
                 EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_) => continue,
@@ -87,9 +102,17 @@ pub async fn re_run_failed_ef_test(
                 | EFTestRunnerError::ExecutionFailedUnexpectedly(_)
                 | EFTestRunnerError::FailedToEnsurePreState(_)
                 | EFTestRunnerError::EIP7702ShouldNotBeCreateType => continue,
-                EFTestRunnerError::VMExecutionMismatch(reason) => return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
-                    format!("VM execution mismatch errors should only happen when running with revm. This failed during levm's execution: {reason}"), re_run_report.clone()))),
-                EFTestRunnerError::Internal(reason) => return Err(EFTestRunnerError::Internal(reason.to_owned())),
+                EFTestRunnerError::VMExecutionMismatch(reason) => {
+                    return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
+                        format!(
+                            "VM execution mismatch errors should only happen when running with revm. This failed during levm's execution: {reason}"
+                        ),
+                        re_run_report.clone(),
+                    )));
+                }
+                EFTestRunnerError::Internal(reason) => {
+                    return Err(EFTestRunnerError::Internal(reason.to_owned()));
+                }
             }
         }
     }
@@ -451,7 +474,7 @@ pub async fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunn
                     levm_cache,
                 )) => {
                     ef_test_report_fork.register_post_state_validation_failure(
-                        transaction_report,
+                        *transaction_report,
                         reason,
                         *vector,
                         levm_cache,
@@ -513,13 +536,13 @@ pub async fn _ensure_post_state_revm(
                 Some(expected_exception) => {
                     let error_reason = format!("Expected exception: {expected_exception:?}");
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
-                        ExecutionReport {
+                        Box::new(ExecutionReport {
                             result: TxResult::Success,
                             gas_used: 42,
                             gas_refunded: 42,
                             logs: vec![],
                             output: Bytes::new(),
-                        },
+                        }),
                         //TODO: This is not a TransactionReport because it is REVM
                         error_reason,
                         HashMap::new(),
@@ -535,13 +558,13 @@ pub async fn _ensure_post_state_revm(
                     if expected_post_state_root_hash != pos_state_root {
                         println!("Post-state root mismatch",);
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
-                            ExecutionReport {
+                            Box::new(ExecutionReport {
                                 result: TxResult::Success,
                                 gas_used: 42,
                                 gas_refunded: 42,
                                 logs: vec![],
                                 output: Bytes::new(),
-                            },
+                            }),
                             //TODO: This is not a TransactionReport because it is REVM
                             "Post-state root mismatch".to_string(),
                             HashMap::new(),
@@ -562,8 +585,10 @@ pub async fn _ensure_post_state_revm(
                         &test.name, vector, err
                     );
                     return Err(EFTestRunnerError::ExecutionFailedUnexpectedly(
-                        ethrex_levm::errors::VMError::AddressAlreadyOccupied,
-                        //TODO: Use another kind of error for this.
+                        ethrex_levm::errors::InternalError::Custom(format!(
+                            "Unexpected exception: {err:?}",
+                        ))
+                        .into(), //TODO: Use another kind of error for this.
                     ));
                 }
             }
