@@ -331,61 +331,62 @@ impl StoreEngine for Store {
                 let (account_key, account_value) = state_log_cursor.current()?.unwrap_or_default();
                 let (storage_key, storage_value) =
                     storage_log_cursor.current()?.unwrap_or_default();
-                if account_key.0 != key || storage_key.0 != key {
-                    anyhow::bail!("invalid arguments");
-                }
-
                 // loop over log_entries, take log_value and restore it in the flat tables
-                while let Some(((read_key_num_hash, read_key_address), log_entry)) = found_state_log
-                {
-                    if read_key_num_hash != key {
-                        break;
-                    }
+                if account_key.0 == key {
+                    while let Some(((read_key_num_hash, read_key_address), log_entry)) =
+                        found_state_log
+                    {
+                        if read_key_num_hash != key {
+                            break;
+                        }
 
-                    let old_info = log_entry.previous_info;
-                    if !(old_info.balance.is_zero()
-                        && old_info.code_hash.is_zero()
-                        && old_info.nonce == 0)
-                    {
-                        flat_info_cursor
-                            .upsert(read_key_address, EncodableAccountInfo(old_info))
-                            .map_err(StoreError::LibmdbxError)?;
-                    } else if let Some(_current_info) = flat_info_cursor
-                        .seek_exact(read_key_address)
-                        .map_err(StoreError::LibmdbxError)?
-                    {
-                        flat_info_cursor
-                            .delete_current()
+                        let old_info = log_entry.previous_info;
+                        if !(old_info.balance.is_zero()
+                            && old_info.code_hash.is_zero()
+                            && old_info.nonce == 0)
+                        {
+                            flat_info_cursor
+                                .upsert(read_key_address, EncodableAccountInfo(old_info))
+                                .map_err(StoreError::LibmdbxError)?;
+                        } else if let Some(_current_info) = flat_info_cursor
+                            .seek_exact(read_key_address)
                             .map_err(StoreError::LibmdbxError)?
-                    }
+                        {
+                            flat_info_cursor
+                                .delete_current()
+                                .map_err(StoreError::LibmdbxError)?
+                        }
 
-                    found_state_log = state_log_cursor.next()?;
+                        found_state_log = state_log_cursor.next()?;
+                    }
                 }
 
-                while let Some(((read_key_num_hash, read_key_address), log_entry)) =
-                    found_storage_log
-                {
-                    if read_key_num_hash != key {
-                        break;
-                    }
-
-                    let old_value = log_entry.1;
-                    let slot = log_entry.0;
-                    let storage_key = (read_key_address.into(), slot.into());
-                    if !old_value.is_zero() {
-                        flat_storage_cursor
-                            .upsert(storage_key, old_value.into())
-                            .map_err(StoreError::LibmdbxError)?;
-                    } else if let Some(_current_data) = flat_storage_cursor
-                        .seek_exact(storage_key)
-                        .map_err(StoreError::LibmdbxError)?
+                if storage_key.0 == key {
+                    while let Some(((read_key_num_hash, read_key_address), log_entry)) =
+                        found_storage_log
                     {
-                        flat_storage_cursor
-                            .delete_current()
-                            .map_err(StoreError::LibmdbxError)?;
-                    }
+                        if read_key_num_hash != key {
+                            break;
+                        }
 
-                    found_storage_log = storage_log_cursor.next()?;
+                        let old_value = log_entry.1;
+                        let slot = log_entry.0;
+                        let storage_key = (read_key_address.into(), slot.into());
+                        if !old_value.is_zero() {
+                            flat_storage_cursor
+                                .upsert(storage_key, old_value.into())
+                                .map_err(StoreError::LibmdbxError)?;
+                        } else if let Some(_current_data) = flat_storage_cursor
+                            .seek_exact(storage_key)
+                            .map_err(StoreError::LibmdbxError)?
+                        {
+                            flat_storage_cursor
+                                .delete_current()
+                                .map_err(StoreError::LibmdbxError)?;
+                        }
+
+                        found_storage_log = storage_log_cursor.next()?;
+                    }
                 }
             }
             tx.commit()
@@ -410,61 +411,62 @@ impl StoreEngine for Store {
                 let (account_key, account_value) = state_log_cursor.current()?.unwrap_or_default();
                 let (storage_key, storage_value) =
                     storage_log_cursor.current()?.unwrap_or_default();
-                if account_key.0 != key || storage_key.0 != key {
-                    anyhow::bail!("invalid arguments");
-                }
-
                 // loop over log_entries, take log_value and restore it in the flat tables
-                while let Some(((read_key_num_hash, read_key_address), log_entry)) = found_state_log
-                {
-                    if read_key_num_hash != key {
-                        break;
-                    }
+                if account_key.0 == key {
+                    while let Some(((read_key_num_hash, read_key_address), log_entry)) =
+                        found_state_log
+                    {
+                        if read_key_num_hash != key {
+                            break;
+                        }
 
-                    let new_info = log_entry.info;
-                    if !(new_info.balance.is_zero()
-                        && new_info.code_hash.is_zero()
-                        && new_info.nonce == 0)
-                    {
-                        flat_info_cursor
-                            .upsert(read_key_address, EncodableAccountInfo(new_info))
-                            .map_err(StoreError::LibmdbxError)?;
-                    } else if let Some(_current_info) = flat_info_cursor
-                        .seek_exact(read_key_address)
-                        .map_err(StoreError::LibmdbxError)?
-                    {
-                        flat_info_cursor
-                            .delete_current()
+                        let new_info = log_entry.info;
+                        if !(new_info.balance.is_zero()
+                            && new_info.code_hash.is_zero()
+                            && new_info.nonce == 0)
+                        {
+                            flat_info_cursor
+                                .upsert(read_key_address, EncodableAccountInfo(new_info))
+                                .map_err(StoreError::LibmdbxError)?;
+                        } else if let Some(_current_info) = flat_info_cursor
+                            .seek_exact(read_key_address)
                             .map_err(StoreError::LibmdbxError)?
-                    }
+                        {
+                            flat_info_cursor
+                                .delete_current()
+                                .map_err(StoreError::LibmdbxError)?
+                        }
 
-                    found_state_log = state_log_cursor.next()?;
+                        found_state_log = state_log_cursor.next()?;
+                    }
                 }
 
-                while let Some(((read_key_num_hash, read_key_address), log_entry)) =
-                    found_storage_log
-                {
-                    if read_key_num_hash != key {
-                        break;
-                    }
-
-                    let new_value = log_entry.2;
-                    let slot = log_entry.0;
-                    let storage_key = (read_key_address.into(), slot.into());
-                    if !new_value.is_zero() {
-                        flat_storage_cursor
-                            .upsert(storage_key, new_value.into())
-                            .map_err(StoreError::LibmdbxError)?;
-                    } else if let Some(_current_data) = flat_storage_cursor
-                        .seek_exact(storage_key)
-                        .map_err(StoreError::LibmdbxError)?
+                if storage_key.0 == key {
+                    while let Some(((read_key_num_hash, read_key_address), log_entry)) =
+                        found_storage_log
                     {
-                        flat_storage_cursor
-                            .delete_current()
-                            .map_err(StoreError::LibmdbxError)?;
-                    }
+                        if read_key_num_hash != key {
+                            break;
+                        }
 
-                    found_storage_log = storage_log_cursor.next()?;
+                        let new_value = log_entry.2;
+                        let slot = log_entry.0;
+                        let storage_key = (read_key_address.into(), slot.into());
+                        if !new_value.is_zero() {
+                            flat_storage_cursor
+                                .upsert(storage_key, new_value.into())
+                                .map_err(StoreError::LibmdbxError)?;
+                        } else if let Some(_current_data) = flat_storage_cursor
+                            .seek_exact(storage_key)
+                            .map_err(StoreError::LibmdbxError)?
+                        {
+                            flat_storage_cursor
+                                .delete_current()
+                                .map_err(StoreError::LibmdbxError)?;
+                        }
+
+                        found_storage_log = storage_log_cursor.next()?;
+                    }
                 }
             }
             tx.commit()
