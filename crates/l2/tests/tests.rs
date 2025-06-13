@@ -367,11 +367,14 @@ async fn test_transfer(
         transfer_value,
     )
     .await?;
+    // Only return 99% of the transfer, other amount is for fees
+    let return_amount = (transfer_value * 99) / 100;
+
     perform_transfer(
         proposer_client,
         returnerer_private_key,
         transferer_address,
-        transfer_value,
+        return_amount,
     )
     .await?;
 
