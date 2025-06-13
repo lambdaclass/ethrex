@@ -861,7 +861,7 @@
             "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "series",
-            "axisLabel": "Gas Used %",
+            "axisLabel": "",
             "axisPlacement": "auto",
             "fillOpacity": 50,
             "hideFrom": {
@@ -872,13 +872,13 @@
             "lineWidth": 2,
             "pointShape": "circle",
             "pointSize": {
-              "fixed": 5
+              "fixed": 11
             },
             "pointStrokeWidth": 1,
             "scaleDistribution": {
               "type": "linear"
             },
-            "show": "lines"
+            "show": "points+lines"
           },
           "mappings": [],
           "thresholds": {
@@ -910,10 +910,6 @@
                 "value": "right"
               },
               {
-                "id": "custom.axisColorMode",
-                "value": "series"
-              },
-              {
                 "id": "custom.axisSoftMin",
                 "value": 0
               },
@@ -941,15 +937,12 @@
                 "value": "Ggas/s"
               },
               {
-                "id": "custom.axisSoftMax",
-                "value": 0.6
+                "id": "custom.axisSoftMin",
+                "value": 0
               },
               {
-                "id": "color",
-                "value": {
-                  "fixedColor": "semi-dark-green",
-                  "mode": "fixed"
-                }
+                "id": "custom.axisSoftMax",
+                "value": 0.7
               }
             ]
           }
@@ -1014,7 +1007,6 @@
         ],
         "tooltip": {
           "hideZeros": false,
-          "maxWidth": 200,
           "mode": "single",
           "sort": "none"
         }
@@ -1148,5 +1140,5 @@
   "timezone": "browser",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 1
+  "version": 2
 }

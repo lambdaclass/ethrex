@@ -1,5 +1,5 @@
 global:
-  scrape_interval: 15s
+  scrape_interval: 5s
 
 scrape_configs:
   - job_name: "ethrex L1"
@@ -11,11 +11,11 @@ scrape_configs:
   - job_name: "lighthouse consensus"
     static_configs:
       - targets: ["host.docker.internal:5054"]
-    scrape_interval: 15s
+    scrape_interval: 5s
     metrics_path: /metrics
 
   - job_name: "ethereum-metrics-exporter"
     static_configs:
       - targets: ["ethereum-metrics-exporter:9093"]
-    scrape_interval: 10s
+    scrape_interval: 5s
     metrics_path: /metrics
