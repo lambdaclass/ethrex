@@ -377,7 +377,60 @@ impl StoreEngine for Store {
         &self,
         new_canonical_blocks: &[(u64, H256)],
     ) -> Result<(), StoreError> {
-        todo!()
+        let inner = || -> Result<_, _> {
+            let tx = self.db.begin_readwrite()?;
+            let mut state_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
+            let mut storage_log_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
+            let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
+            let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
+            for (block_num, block_hash) in new_canonical_blocks.iter() {
+                let key = (*block_num, *block_hash).into();
+                let mut found_state_log = state_log_cursor.seek_closest(key)?;
+                let mut found_storage_log = storage_log_cursor.seek_closest(key)?;
+                let (account_key, account_value) = state_log_cursor.current()?.unwrap_or_default();
+                let (storage_key, storage_value) =
+                    storage_log_cursor.current()?.unwrap_or_default();
+                if account_key.0 != key || storage_key.0 != key {
+                    anyhow::bail!("invalid arguments");
+                }
+
+                // loop over log_entries, take log_value and restore it in the flat tables
+                while let Some(((read_key_num_hash, read_key_address), log_entry)) = found_state_log
+                {
+                    if read_key_num_hash != key {
+                        break;
+                    }
+
+                    // TODO: detect account deletions
+                    let new_info = log_entry.info;
+                    flat_info_cursor
+                        .upsert(read_key_address, EncodableAccountInfo(new_info))
+                        .map_err(StoreError::LibmdbxError)?;
+
+                    found_state_log = state_log_cursor.next()?;
+                }
+
+                // TODO: detect storage deletions
+                while let Some(((read_key_num_hash, read_key_address), log_entry)) =
+                    found_storage_log
+                {
+                    if read_key_num_hash != key {
+                        break;
+                    }
+
+                    let new_value = log_entry.2;
+                    let slot = log_entry.0;
+                    flat_storage_cursor
+                        .upsert((read_key_address.into(), slot.into()), new_value.into())
+                        .map_err(StoreError::LibmdbxError)?;
+
+                    found_storage_log = storage_log_cursor.next()?;
+                }
+            }
+            tx.commit()
+        };
+
+        inner().map_err(StoreError::LibmdbxError)
     }
 
     async fn add_block_header(
