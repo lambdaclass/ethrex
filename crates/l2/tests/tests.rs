@@ -72,7 +72,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     test_transfer(
         &rich_wallet_private_key,
-        transfer_recipient_address,
+        &transfer_return_private_key,
         &proposer_client,
     )
     .await?;
@@ -331,15 +331,41 @@ async fn test_deposit(
 
 async fn test_transfer(
     transferer_private_key: &SecretKey,
-    transfer_recipient_address: Address,
+    returnerer_private_key: &SecretKey,
     proposer_client: &EthClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Transferring funds on L2");
-
-    let transferer_address = ethrex_l2_sdk::get_address_from_secret_key(transferer_private_key)?;
     let transfer_value = std::env::var("INTEGRATION_TEST_TRANSFER_VALUE")
         .map(|value| U256::from_dec_str(&value).expect("Invalid transfer value"))
         .unwrap_or(U256::from(10000000000u128));
+    let transferer_address = get_address_from_secret_key(returnerer_private_key)?;
+    let returner_address = get_address_from_secret_key(returnerer_private_key)?;
+
+    perform_transfer(
+        proposer_client,
+        transferer_private_key,
+        returner_address,
+        transfer_value,
+    )
+    .await?;
+    perform_transfer(
+        proposer_client,
+        returnerer_private_key,
+        transferer_address,
+        transfer_value,
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn perform_transfer(
+    proposer_client: &EthClient,
+    transferer_private_key: &SecretKey,
+    transfer_recipient_address: Address,
+    transfer_value: U256,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let transferer_address = ethrex_l2_sdk::get_address_from_secret_key(transferer_private_key)?;
 
     let transferer_initial_l2_balance = proposer_client
         .get_balance(transferer_address, BlockByNumber::Latest)
