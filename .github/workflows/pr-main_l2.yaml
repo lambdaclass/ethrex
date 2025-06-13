@@ -164,10 +164,14 @@ jobs:
       - name: Start Sequencer
         run: |
           cd crates/l2
+          SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
+          export SEQUENCER_REGISTRY
+
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_VALIDIUM=false \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_BASED=true \
+          ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS="$SEQUENCER_REGISTRY" \
           docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
 
       - name: Run test
