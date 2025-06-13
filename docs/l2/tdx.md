@@ -30,7 +30,7 @@ It's easy to silently overlook non-verified areas such as accidentally leaving l
 
 ## Boot sequence
 
-- Firmware (OVMF here) is loaded (and hashed into RTMR[0])
+- Firmware (OVMF here) is loaded (and hashed into RTMR\[0\])
 - [UKI](https://uapi-group.org/specifications/specs/unified_kernel_image/) is loaded (and hashed into a RTMR)
 - kernel and initrd are extracted from the UKI and executed
 - root partition is verified using the `roothash=` value provided on the kernel cmdline and the `hash` partition with the dm-verity merkle tree
