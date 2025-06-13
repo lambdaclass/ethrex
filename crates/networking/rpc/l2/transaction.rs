@@ -9,8 +9,8 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, U256,
     types::{
-        signer::LocalSigner, AuthorizationList, EIP1559Transaction, EIP7702Transaction,
-        GenericTransaction, Signable, TxKind,
+        AuthorizationList, EIP1559Transaction, EIP7702Transaction, GenericTransaction, Signable,
+        TxKind, signer::LocalSigner,
     },
 };
 use serde::Deserialize;

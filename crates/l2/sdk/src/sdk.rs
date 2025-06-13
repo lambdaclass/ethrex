@@ -3,8 +3,8 @@ use std::{fs::read_to_string, path::Path, process::Command};
 use bytes::Bytes;
 use calldata::{Value, encode_calldata};
 use ethereum_types::{Address, H160, H256, U256};
-use ethrex_common::types::signer::{LocalSigner, Signer};
 use ethrex_common::types::GenericTransaction;
+use ethrex_common::types::signer::{LocalSigner, Signer};
 use ethrex_rpc::clients::eth::WithdrawalProof;
 use ethrex_rpc::clients::eth::{
     EthClient, WrappedTransaction, errors::EthClientError, eth_sender::Overrides,

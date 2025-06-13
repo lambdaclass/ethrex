@@ -1,5 +1,5 @@
 use aligned_sdk::common::types::Network;
-use ethrex_common::{types::signer::Signer, Address, U256};
+use ethrex_common::{Address, U256, types::signer::Signer};
 use secp256k1::SecretKey;
 use std::net::IpAddr;
 

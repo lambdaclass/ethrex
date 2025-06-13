@@ -1,5 +1,5 @@
 use aligned_sdk::common::types::Network;
-use ethrex_common::{types::signer::Signer, Address, H160, H256};
+use ethrex_common::{Address, H160, H256, types::signer::Signer};
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides, eth::WrappedTransaction},
@@ -7,7 +7,6 @@ use ethrex_rpc::{
 use ethrex_storage_rollup::StoreRollup;
 use keccak_hash::keccak;
 use rand::Rng;
-use secp256k1::SecretKey;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;

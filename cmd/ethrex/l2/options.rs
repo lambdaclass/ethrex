@@ -1,8 +1,11 @@
-use crate::{cli::Options as NodeOptions, utils};
+use crate::{
+    cli::Options as NodeOptions,
+    utils::{self, parse_private_key},
+};
 use clap::Parser;
 use ethrex_common::{
-    types::signer::{LocalSigner, RemoteSigner},
     Address,
+    types::signer::{LocalSigner, RemoteSigner},
 };
 use ethrex_l2::{
     BlockProducerConfig, CommitterConfig, EthConfig, L1WatcherConfig, ProofCoordinatorConfig,
@@ -11,7 +14,6 @@ use ethrex_l2::{
 };
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
-    get_address_from_secret_key,
 };
 use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
@@ -486,10 +488,10 @@ pub struct ProofCoordinatorOptions {
 impl Default for ProofCoordinatorOptions {
     fn default() -> Self {
         Self {
-            proof_coordinator_l1_private_key:
-                "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
-                    .parse()
-                    .ok(),
+            proof_coordinator_l1_private_key: parse_private_key(
+                "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
+            )
+            .ok(),
             remote_signer_url: None,
             remote_signer_public_key: None,
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
@@ -499,7 +501,7 @@ impl Default for ProofCoordinatorOptions {
             proof_coordinator_tdx_private_key:
                 "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
                     .parse()
-                    .ok(),
+                    .unwrap(),
         }
     }
 }

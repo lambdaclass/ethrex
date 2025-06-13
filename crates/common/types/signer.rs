@@ -1,10 +1,10 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Signature};
 use keccak_hash::keccak;
-use secp256k1::{Message, PublicKey, SecretKey, SECP256K1};
+use secp256k1::{Message, PublicKey, SECP256K1, SecretKey};
 use url::Url;
 #[cfg(feature = "web3sign")]
-use web3signer::{web3sign, WebsignError};
+use web3signer::{WebsignError, web3sign};
 
 #[derive(Clone, Debug)]
 pub enum Signer {

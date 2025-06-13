@@ -11,14 +11,13 @@ use clap::Parser;
 use cli::{DeployerOptions, parse_private_key};
 use error::DeployerError;
 use ethrex_common::{
-    types::signer::{LocalSigner, RemoteSigner, Signer},
     Address, U256,
+    types::signer::{LocalSigner, Signer},
 };
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::{
     calldata::{Value, encode_calldata},
-    compile_contract, deploy_contract, deploy_with_proxy, get_address_from_secret_key,
-    initialize_contract,
+    compile_contract, deploy_contract, deploy_with_proxy, initialize_contract,
 };
 use ethrex_rpc::{
     EthClient,
@@ -363,8 +362,6 @@ async fn initialize_contracts(
         })?
         .into();
 
-    let deployer_address = initializer.address();
-
     let initialize_tx_hash = {
         let calldata_values = vec![
             Value::Bool(opts.validium),
@@ -431,6 +428,7 @@ async fn initialize_contracts(
         };
 
         if let Some(owner_pk) = opts.on_chain_proposer_owner_pk {
+            let signer = Signer::Local(LocalSigner::new(owner_pk));
             let accept_ownership_calldata = encode_calldata(ACCEPT_OWNERSHIP_SIGNATURE, &[])?;
             let accept_tx = eth_client
                 .build_eip1559_transaction(
@@ -441,7 +439,7 @@ async fn initialize_contracts(
                 )
                 .await?;
             let accept_tx_hash = eth_client
-                .send_eip1559_transaction(&accept_tx, initializer)
+                .send_eip1559_transaction(&accept_tx, &signer)
                 .await?;
 
             eth_client

@@ -1,6 +1,6 @@
 use crate::calldata::{self, Value};
 use bytes::Bytes;
-use ethrex_common::{types::signer::LocalSigner, Address, U256};
+use ethrex_common::{Address, U256, types::signer::LocalSigner};
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides, eth::errors::CalldataEncodeError},

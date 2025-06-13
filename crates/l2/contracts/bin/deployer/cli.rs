@@ -1,11 +1,10 @@
-use std::{path::PathBuf, str::FromStr};
+use std::path::PathBuf;
 
 use bytes::Bytes;
 use clap::{ArgAction, Parser};
 use ethrex_common::{Address, H160, H256};
 use hex::FromHexError;
-use reqwest::Url;
-use secp256k1::{PublicKey, SecretKey};
+use secp256k1::SecretKey;
 
 // TODO(Feda): Waiting on the issue https://github.com/lambdaclass/rex/issues/129
 // of rex so that deploying contracts with rex can actually be done with web3signer
@@ -338,17 +337,9 @@ pub fn parse_private_key(s: &str) -> eyre::Result<SecretKey> {
     Ok(SecretKey::from_slice(&parse_hex(s)?)?)
 }
 
-pub fn parse_public_key(s: &str) -> eyre::Result<PublicKey> {
-    Ok(PublicKey::from_slice(&parse_hex(s)?)?)
-}
-
 pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
     match s.strip_prefix("0x") {
         Some(s) => hex::decode(s).map(Into::into),
         None => hex::decode(s).map(Into::into),
     }
-}
-
-pub fn parse_url(s: &str) -> eyre::Result<Option<Url>> {
-    Ok(Some(Url::from_str(s)?))
 }

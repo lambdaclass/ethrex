@@ -16,10 +16,11 @@ use errors::{
 };
 use eth_sender::Overrides;
 use ethrex_common::{
-    Address, Signature, H160, H256, U256,
+    Address, H160, H256, Signature, U256,
     types::{
-        signer::Signer, BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
+        BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
         PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction,
+        signer::Signer,
     },
 };
 use ethrex_rlp::encode::{PayloadRLPEncode, RLPEncode};
@@ -90,7 +91,7 @@ impl WrappedTransaction {
             Self::L2(_) => {
                 return Err(EthClientError::InternalError(
                     "L2 Privileged transaction not supported".to_string(),
-                ))
+                ));
             }
         }
 

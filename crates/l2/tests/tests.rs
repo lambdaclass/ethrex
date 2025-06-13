@@ -3,7 +3,10 @@
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_common::H160;
-use ethrex_common::types::BlockNumber;
+use ethrex_common::types::{
+    BlockNumber,
+    signer::{LocalSigner, Signer},
+};
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
 use ethrex_l2_sdk::{get_address_from_secret_key, wait_for_transaction_receipt};

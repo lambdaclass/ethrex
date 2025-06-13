@@ -1,10 +1,10 @@
 use std::cmp::min;
 
 use bytes::Bytes;
-use ethereum_types::{Address, Signature, H256, U256};
+use ethereum_types::{Address, H256, Signature, U256};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
-use secp256k1::{Message, SecretKey, ecdsa::RecoveryId};
+use secp256k1::{Message, ecdsa::RecoveryId};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{AccessListEntry, GenericTransaction};
 use sha3::{Digest, Keccak256};
