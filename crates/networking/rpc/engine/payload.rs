@@ -685,10 +685,6 @@ async fn try_execute_payload(
             error!("{e} for block {block_hash}");
             Err(RpcErr::Internal(e.to_string()))
         }
-        Err(ChainError::Genesis(e)) => {
-            error!(e);
-            Err(RpcErr::Internal(e))
-        }
         Err(ChainError::InvalidTransaction(e)) => {
             error!("{e} for block {block_hash}");
             Err(RpcErr::Internal(e.to_string()))
