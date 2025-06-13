@@ -17,7 +17,7 @@
 - [Layer 2]()
   - [Quickstart]()
 
-- [Developers]()
+- [Developers](./developers/README.md)
   - [Quickstart](./developers/quickstart.md)
 
 - [CLI reference]()
