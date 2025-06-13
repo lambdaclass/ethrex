@@ -700,9 +700,15 @@ impl Blockchain {
     }
 
     /// Marks the node's chain as up to date with the current chain
-    /// Once the initial sync has taken place, the node will be consireded as sync
+    /// Once the initial sync has taken place, the node will be considered as sync
     pub fn set_synced(&self) {
         self.is_synced.store(true, Ordering::Relaxed);
+    }
+
+    /// Marks the node's chain as not up to date with the current chain.
+    /// This will be used when the node is one batch or more behind the current chain.
+    pub fn set_not_synced(&self) {
+        self.is_synced.store(false, Ordering::Relaxed);
     }
 
     /// Returns whether the node's chain is up to date with the current chain

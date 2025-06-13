@@ -70,6 +70,8 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
         table_info!(WithdrawalHashesByBatch),
         table_info!(BlockNumbersByBatch),
         table_info!(OperationsCount),
+        table_info!(SignatureByBlockHash),
+        table_info!(SignatureByBatch),
         table_info!(BlobsBundles),
         table_info!(StateRoots),
         table_info!(DepositLogsHash),
@@ -262,6 +264,38 @@ impl StoreEngineRollup for Store {
         }
     }
 
+    async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: [u8; 68],
+    ) -> Result<(), StoreError> {
+        let key = block_hash.as_fixed_bytes();
+        self.write::<SignatureByBlockHash>(*key, signature).await
+    }
+
+    async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<[u8; 68]>, StoreError> {
+        let key = block_hash.as_fixed_bytes();
+        self.read::<SignatureByBlockHash>(*key).await
+    }
+
+    async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: [u8; 68],
+    ) -> Result<(), StoreError> {
+        self.write::<SignatureByBatch>(batch_number, signature)
+            .await
+    }
+
+    async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<[u8; 68]>, StoreError> {
+        self.read::<SignatureByBatch>(batch_number).await
+    }
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
         self.read::<LastSentBatchProof>(0)
             .await
@@ -291,6 +325,16 @@ table!(
 table!(
     /// Transaction, deposits, withdrawals count
     ( OperationsCount ) u64 => OperationsCountRLP
+);
+
+table!(
+    /// Signature by block hash
+    ( SignatureByBlockHash ) [u8; 32] => [u8; 68]
+);
+
+table!(
+    /// Signature by batch number
+    ( SignatureByBatch ) u64 => [u8; 68]
 );
 
 table!(

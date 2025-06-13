@@ -34,6 +34,12 @@ const DEPOSIT_LOGS_HASHES: TableDefinition<u64, Rlp<H256>> =
 
 const LAST_SENT_BATCH_PROOF: TableDefinition<u64, u64> = TableDefinition::new("LastSentBatchProof");
 
+const SIGNATURES_BY_BLOCK: TableDefinition<[u8; 32], [u8; 68]> =
+    TableDefinition::new("SignaturesByBlock");
+
+const SIGNATURES_BY_BATCH: TableDefinition<u64, [u8; 68]> =
+    TableDefinition::new("SignaturesByBatch");
+
 #[derive(Debug)]
 pub struct RedBStoreRollup {
     db: Arc<Database>,
@@ -112,6 +118,8 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_table(DEPOSIT_LOGS_HASHES)?;
     table_creation_txn.open_table(BLOCK_NUMBERS_BY_BATCH)?;
     table_creation_txn.open_table(LAST_SENT_BATCH_PROOF)?;
+    table_creation_txn.open_table(SIGNATURES_BY_BLOCK)?;
+    table_creation_txn.open_table(SIGNATURES_BY_BATCH)?;
     table_creation_txn.commit()?;
 
     Ok(db)
@@ -299,5 +307,40 @@ impl StoreEngineRollup for RedBStoreRollup {
 
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
         self.write(LAST_SENT_BATCH_PROOF, 0, batch_number).await
+    }
+
+    async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: [u8; 68],
+    ) -> Result<(), StoreError> {
+        self.write(SIGNATURES_BY_BLOCK, block_hash.into(), signature)
+            .await
+    }
+    async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<[u8; 68]>, StoreError> {
+        Ok(self
+            .read(SIGNATURES_BY_BLOCK, block_hash.into())
+            .await?
+            .map(|s| s.value()))
+    }
+    async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: [u8; 68],
+    ) -> Result<(), StoreError> {
+        self.write(SIGNATURES_BY_BATCH, batch_number, signature)
+            .await
+    }
+    async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<[u8; 68]>, StoreError> {
+        Ok(self
+            .read(SIGNATURES_BY_BATCH, batch_number)
+            .await?
+            .map(|s| s.value()))
     }
 }

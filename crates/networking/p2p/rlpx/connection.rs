@@ -1,6 +1,12 @@
+#[cfg(feature = "l2")]
+use crate::rlpx::based::BatchSealedMessage;
+#[cfg(feature = "l2")]
+use crate::rlpx::based::get_hash_batch_sealed;
+use crate::rlpx::utils::get_pub_key;
 use crate::{
     kademlia::PeerChannels,
     rlpx::{
+        based::NewBlockMessage,
         error::RLPxError,
         eth::{
             backend,
@@ -13,7 +19,8 @@ use crate::{
         message::Message,
         p2p::{
             self, Capability, DisconnectMessage, PingMessage, PongMessage,
-            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
+            SUPPORTED_BASED_CAPABILITIES, SUPPORTED_ETH_CAPABILITIES, SUPPORTED_P2P_CAPABILITIES,
+            SUPPORTED_SNAP_CAPABILITIES,
         },
         utils::{log_peer_debug, log_peer_error},
     },
@@ -23,15 +30,22 @@ use crate::{
     },
     types::Node,
 };
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
 use ethrex_common::{
-    H256, H512,
-    types::{MempoolTransaction, Transaction},
+    Address, H256, H512,
+    types::{Block, MempoolTransaction, Transaction},
 };
 use ethrex_storage::Store;
+#[cfg(feature = "l2")]
+use ethrex_storage_rollup::StoreRollup;
 use futures::SinkExt;
 use k256::{PublicKey, SecretKey, ecdsa::SigningKey};
 use rand::random;
+#[cfg(feature = "l2")]
+use secp256k1::Message as SignedMessage;
+#[cfg(feature = "l2")]
+use secp256k1::SecretKey as SigningKeySecp256k1;
+use std::collections::BTreeMap;
 use std::{collections::HashSet, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -46,6 +60,8 @@ use tokio::{
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 use tracing::debug;
+#[cfg(feature = "l2")]
+use tracing::info;
 
 use super::{
     eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
@@ -55,6 +71,10 @@ use super::{
 
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const PERIODIC_BLOCK_BROADCAST_INTERVAL: std::time::Duration =
+    std::time::Duration::from_millis(500);
+const PERIODIC_BATCH_BROADCAST_INTERVAL: std::time::Duration =
+    std::time::Duration::from_millis(500);
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(60);
@@ -92,6 +112,14 @@ pub(crate) struct RLPxConnection<S> {
     next_block_range_update: Instant,
     last_block_range_update_block: u64,
     broadcasted_txs: HashSet<H256>,
+    next_block_broadcast: Instant,
+    next_batch_broadcast: Instant,
+    #[cfg(feature = "l2")]
+    latest_block_sent: u64,
+    latest_block_added: u64,
+    blocks_on_queue: BTreeMap<u64, Block>,
+    #[cfg(feature = "l2")]
+    latest_batch_sent: u64,
     client_version: String,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
@@ -102,6 +130,11 @@ pub(crate) struct RLPxConnection<S> {
     /// The receive end is instantiated after the handshake is completed
     /// under `handle_peer`.
     connection_broadcast_send: RLPxConnBroadcastSender,
+    #[cfg(feature = "l2")]
+    store_rollup: StoreRollup,
+    based: bool,
+    #[cfg(feature = "l2")]
+    committer_key: Option<SigningKeySecp256k1>,
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
@@ -115,6 +148,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         blockchain: Arc<Blockchain>,
         client_version: String,
         connection_broadcast: RLPxConnBroadcastSender,
+        #[cfg(feature = "l2")] store_rollup: StoreRollup,
+        based: bool,
+        #[cfg(feature = "l2")] committer_key: Option<SigningKeySecp256k1>,
     ) -> Self {
         Self {
             signer,
@@ -127,11 +163,24 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             negotiated_snap_capability: None,
             next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
             next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
+            next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
+            next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL,
             next_block_range_update: Instant::now() + PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL,
             last_block_range_update_block: 0,
             broadcasted_txs: HashSet::new(),
+            #[cfg(feature = "l2")]
+            latest_block_sent: 0,
+            latest_block_added: 0,
+            blocks_on_queue: BTreeMap::new(),
+            #[cfg(feature = "l2")]
+            latest_batch_sent: 0,
             client_version,
             connection_broadcast_send: connection_broadcast,
+            #[cfg(feature = "l2")]
+            store_rollup,
+            based,
+            #[cfg(feature = "l2")]
+            committer_key,
         }
     }
 
@@ -256,12 +305,15 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn exchange_hello_messages(&mut self) -> Result<(), RLPxError> {
-        let supported_capabilities: Vec<Capability> = [
+        let mut supported_capabilities: Vec<Capability> = [
             &SUPPORTED_ETH_CAPABILITIES[..],
             &SUPPORTED_SNAP_CAPABILITIES[..],
             &SUPPORTED_P2P_CAPABILITIES[..],
         ]
         .concat();
+        if self.based {
+            supported_capabilities.push(SUPPORTED_BASED_CAPABILITIES);
+        }
         let hello_msg = Message::Hello(p2p::HelloMessage::new(
             supported_capabilities,
             PublicKey::from(self.signer.verifying_key()),
@@ -377,7 +429,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     self.send(message).await?;
                 }
                 // This is not ideal, but using the receiver without
-                // this function call, causes the loop to take ownwership
+                // this function call, causes the loop to take ownership
                 // of the variable and the compiler will complain about it,
                 // with this function, we avoid that.
                 // If the broadcaster is Some (i.e. we're connected to a peer that supports an eth protocol),
@@ -412,7 +464,15 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         if Instant::now() >= self.next_tx_broadcast {
             self.send_new_pooled_tx_hashes().await?;
             self.next_tx_broadcast = Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL;
-        };
+        }
+        if Instant::now() >= self.next_block_broadcast {
+            self.send_new_block().await?;
+            self.next_block_broadcast = Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL;
+        }
+        if Instant::now() >= self.next_batch_broadcast {
+            self.send_sealed_batch().await?;
+            self.next_batch_broadcast = Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL;
+        }
         if Instant::now() >= self.next_block_range_update {
             self.next_block_range_update = Instant::now() + PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL;
             if self.should_send_block_range_update().await? {
@@ -427,8 +487,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             .iter()
             .any(|cap| self.capabilities.contains(cap))
         {
-            let filter =
-                |tx: &Transaction| -> bool { !self.broadcasted_txs.contains(&tx.compute_hash()) };
+            // Exclude privileged transactions as they are created via the OnChainProposer contract
+            let filter = |tx: &Transaction| -> bool {
+                !self.broadcasted_txs.contains(&tx.compute_hash())
+                    && !matches!(&tx, Transaction::PrivilegedL2Transaction(_))
+            };
             let txs: Vec<MempoolTransaction> = self
                 .blockchain
                 .mempool
@@ -455,6 +518,134 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(())
     }
 
+    async fn send_new_block(&mut self) -> Result<(), RLPxError> {
+        // This section is conditionally compiled based on the "l2" feature flag due to dependencies on the rollup store.
+        #[cfg(feature = "l2")]
+        {
+            if !self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
+                return Ok(());
+            }
+            let latest_block_number = self.storage.get_latest_block_number().await?;
+            for i in self.latest_block_sent + 1..=latest_block_number {
+                debug!(
+                    "Broadcasting new block, current: {}, last broadcasted: {}",
+                    i, self.latest_block_sent
+                );
+
+                let new_block_body =
+                    self.storage
+                        .get_block_body(i)
+                        .await?
+                        .ok_or(RLPxError::InternalError(
+                            "Block body not found after querying for the block number".to_owned(),
+                        ))?;
+                let new_block_header =
+                    self.storage
+                        .get_block_header(i)?
+                        .ok_or(RLPxError::InternalError(
+                            "Block header not found after querying for the block number".to_owned(),
+                        ))?;
+                let new_block = Block {
+                    header: new_block_header,
+                    body: new_block_body,
+                };
+                let (signature, recovery_id) = if let Some(recovered_sig) = self
+                    .store_rollup
+                    .get_signature_by_block(new_block.hash())
+                    .await?
+                {
+                    let mut signature = [0u8; 64];
+                    let mut recovery_id = [0u8; 4];
+                    signature.copy_from_slice(&recovered_sig[..64]);
+                    recovery_id.copy_from_slice(&recovered_sig[64..68]);
+                    (signature, recovery_id)
+                } else {
+                    let Some(secret_key) = self.committer_key else {
+                        return Err(RLPxError::InternalError(
+                            "Secret key is not set for based connection".to_string(),
+                        ));
+                    };
+                    let (recovery_id, signature) = secp256k1::SECP256K1
+                        .sign_ecdsa_recoverable(
+                            &SignedMessage::from_digest(new_block.hash().to_fixed_bytes()),
+                            &secret_key,
+                        )
+                        .serialize_compact();
+                    let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+                    (signature, recovery_id)
+                };
+                self.send(Message::NewBlock(NewBlockMessage {
+                    block: new_block,
+                    signature,
+                    recovery_id,
+                }))
+                .await?;
+            }
+            self.latest_block_sent = latest_block_number;
+
+            Ok(())
+        }
+        #[cfg(not(feature = "l2"))]
+        {
+            Ok(())
+        }
+    }
+
+    async fn send_sealed_batch(&mut self) -> Result<(), RLPxError> {
+        #[cfg(feature = "l2")]
+        {
+            let next_batch_to_send = self.latest_batch_sent + 1;
+            if !self
+                .store_rollup
+                .contains_batch(&next_batch_to_send)
+                .await?
+            {
+                return Ok(());
+            }
+            let Some(batch) = self.store_rollup.get_batch(next_batch_to_send).await? else {
+                return Ok(());
+            };
+
+            let (signature, recovery_id) = if let Some(recovered_sig) = self
+                .store_rollup
+                .get_signature_by_batch(next_batch_to_send)
+                .await?
+            {
+                let mut signature = [0u8; 64];
+                let mut recovery_id = [0u8; 4];
+                signature.copy_from_slice(&recovered_sig[..64]);
+                recovery_id.copy_from_slice(&recovered_sig[64..68]);
+                (signature, recovery_id)
+            } else {
+                let Some(secret_key) = self.committer_key else {
+                    return Err(RLPxError::InternalError(
+                        "Secret key is not set for based connection".to_string(),
+                    ));
+                };
+                let (recovery_id, signature) = secp256k1::SECP256K1
+                    .sign_ecdsa_recoverable(
+                        &SignedMessage::from_digest(get_hash_batch_sealed(&batch)),
+                        &secret_key,
+                    )
+                    .serialize_compact();
+                let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+                (signature, recovery_id)
+            };
+
+            let msg = Message::BatchSealed(BatchSealedMessage {
+                batch,
+                signature,
+                recovery_id,
+            });
+            self.send(msg).await?;
+            self.latest_batch_sent += 1;
+            Ok(())
+        }
+        #[cfg(not(feature = "l2"))]
+        {
+            Ok(())
+        }
+    }
     async fn send_block_range_update(&mut self) -> Result<(), RLPxError> {
         // BlockRangeUpdate was introduced in eth/69
         if let Some(eth) = &self.negotiated_eth_capability {
@@ -485,6 +676,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         sender: mpsc::Sender<Message>,
     ) -> Result<(), RLPxError> {
         let peer_supports_eth = self.negotiated_eth_capability.is_some();
+        let peer_supports_based = self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES);
         match message {
             Message::Disconnect(msg_data) => {
                 log_peer_debug(
@@ -597,6 +789,24 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let response = process_trie_nodes_request(req, self.storage.clone())?;
                 self.send(Message::TrieNodes(response)).await?
             }
+            Message::NewBlock(req) if peer_supports_based => {
+                if self.should_process_new_block(&req).await? {
+                    self.process_new_block(&req).await?;
+                    // for now we broadcast valid messages
+                    self.broadcast_message(Message::NewBlock(req))?;
+                }
+            }
+            Message::BatchSealed(_req) => {
+                #[cfg(feature = "l2")]
+                {
+                    if self.should_process_batch_sealed(&_req).await? {
+                        self.process_batch_sealed(&_req).await?;
+                        // for now we broadcast valid messages
+                        self.broadcast_message(Message::BatchSealed(_req))?;
+                    }
+                }
+            }
+
             // Send response messages to the backend
             message @ Message::AccountRange(_)
             | message @ Message::StorageRanges(_)
@@ -625,6 +835,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     });
                     self.send(new_msg).await?;
                 }
+                Message::NewBlock(block_msg) => {
+                    let new_msg = Message::NewBlock(block_msg.clone());
+                    self.send(new_msg).await?;
+                }
+                Message::BatchSealed(batch_msg) => {
+                    let new_msg = Message::BatchSealed(batch_msg.clone());
+                    self.send(new_msg).await?;
+                }
                 msg => {
                     let error_message = format!("Non-supported message broadcasted: {msg}");
                     log_peer_error(&self.node, &error_message);
@@ -635,6 +853,149 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(())
     }
 
+    async fn should_process_new_block(&mut self, msg: &NewBlockMessage) -> Result<bool, RLPxError> {
+        if !self.blockchain.is_synced() {
+            debug!("Not processing new block, blockchain is not synced");
+            return Ok(false);
+        }
+        if self.latest_block_added >= msg.block.header.number
+            || self.blocks_on_queue.contains_key(&msg.block.header.number)
+        {
+            debug!(
+                "Block {} received by peer already stored, ignoring it",
+                msg.block.header.number
+            );
+            return Ok(false);
+        }
+
+        let block_hash = msg.block.hash();
+
+        let recovered_lead_sequencer = get_pub_key(
+            msg.recovery_id,
+            &msg.signature,
+            *block_hash.as_fixed_bytes(),
+        )
+        .map_err(|e| {
+            log_peer_error(
+                &self.node,
+                &format!("Failed to recover lead sequencer: {e}"),
+            );
+            RLPxError::CryptographyError(e.to_string())
+        })?;
+
+        if !Self::validate_signature(recovered_lead_sequencer) {
+            return Ok(false);
+        }
+        #[cfg(feature = "l2")]
+        {
+            let mut signature = [0u8; 68];
+            signature[..64].copy_from_slice(&msg.signature[..]);
+            signature[64..].copy_from_slice(&msg.recovery_id[..]);
+            self.store_rollup
+                .store_signature_by_block(block_hash, signature)
+                .await?;
+        }
+        Ok(true)
+    }
+
+    fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
+        // Until the RPC module can be included in the P2P crate, we skip the validation
+        true
+    }
+
+    async fn process_new_block(&mut self, msg: &NewBlockMessage) -> Result<(), RLPxError> {
+        self.blocks_on_queue
+            .entry(msg.block.header.number)
+            .or_insert_with(|| msg.block.clone());
+
+        let mut next_block_to_add = self.latest_block_added + 1;
+        while let Some(block) = self.blocks_on_queue.remove(&next_block_to_add) {
+            // This check is necessary if a connection to another peer already applied the block but this connection
+            // did not register that update.
+            if let Ok(Some(_)) = self.storage.get_block_body(next_block_to_add).await {
+                self.latest_block_added = next_block_to_add;
+                next_block_to_add += 1;
+                continue;
+            }
+            self.blockchain.add_block(&block).await.inspect_err(|e| {
+                log_peer_error(
+                    &self.node,
+                    &format!(
+                        "Error adding new block {} with hash {:?}, error: {e}",
+                        block.header.number,
+                        block.hash()
+                    ),
+                );
+            })?;
+            let block_hash = block.hash();
+
+            apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
+                .await
+                .map_err(|e| {
+                    RLPxError::BadRequest(format!(
+                        "Error adding new block {} with hash {:?}, error: {e}",
+                        block.header.number,
+                        block.hash()
+                    ))
+                })?;
+
+            self.latest_block_added = next_block_to_add;
+            next_block_to_add += 1;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "l2")]
+    async fn should_process_batch_sealed(
+        &mut self,
+        msg: &BatchSealedMessage,
+    ) -> Result<bool, RLPxError> {
+        if !self.blockchain.is_synced() {
+            debug!("Not processing new block, blockchain is not synced");
+            return Ok(false);
+        }
+        if self.store_rollup.contains_batch(&msg.batch.number).await? {
+            debug!("Batch {} already sealed, ignoring it", msg.batch.number);
+            return Ok(false);
+        }
+        if msg.batch.first_block == msg.batch.last_block {
+            // is empty batch
+            return Ok(false);
+        }
+
+        let hash = get_hash_batch_sealed(&msg.batch);
+
+        let recovered_lead_sequencer =
+            get_pub_key(msg.recovery_id, &msg.signature, hash).map_err(|e| {
+                log_peer_error(
+                    &self.node,
+                    &format!("Failed to recover lead sequencer: {e}"),
+                );
+                RLPxError::CryptographyError(e.to_string())
+            })?;
+
+        if !Self::validate_signature(recovered_lead_sequencer) {
+            return Ok(false);
+        }
+
+        let mut signature = [0u8; 68];
+        signature[..64].copy_from_slice(&msg.signature[..]);
+        signature[64..].copy_from_slice(&msg.recovery_id[..]);
+        self.store_rollup
+            .store_signature_by_batch(msg.batch.number, signature)
+            .await?;
+        Ok(true)
+    }
+
+    #[cfg(feature = "l2")]
+    async fn process_batch_sealed(&mut self, msg: &BatchSealedMessage) -> Result<(), RLPxError> {
+        self.store_rollup.seal_batch(msg.batch.clone()).await?;
+        info!(
+            "Sealed batch {} with blocks from {} to {}",
+            msg.batch.number, msg.batch.first_block, msg.batch.last_block
+        );
+        Ok(())
+    }
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
         if let Some(eth) = self.negotiated_eth_capability.clone() {
@@ -696,6 +1057,26 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let task_id = tokio::task::id();
                 let Ok(_) = self.connection_broadcast_send.send((task_id, txs)) else {
                     let error_message = "Could not broadcast received transactions";
+                    log_peer_error(&self.node, error_message);
+                    return Err(RLPxError::BroadcastError(error_message.to_owned()));
+                };
+                Ok(())
+            }
+            block_msg @ Message::NewBlock(_) => {
+                let block = Arc::new(block_msg);
+                let task_id = tokio::task::id();
+                let Ok(_) = self.connection_broadcast_send.send((task_id, block)) else {
+                    let error_message = "Could not broadcast received block";
+                    log_peer_error(&self.node, error_message);
+                    return Err(RLPxError::BroadcastError(error_message.to_owned()));
+                };
+                Ok(())
+            }
+            batch_msg @ Message::BatchSealed(_) => {
+                let batch = Arc::new(batch_msg);
+                let task_id = tokio::task::id();
+                let Ok(_) = self.connection_broadcast_send.send((task_id, batch)) else {
+                    let error_message = "Could not broadcast received batch";
                     log_peer_error(&self.node, error_message);
                     return Err(RLPxError::BroadcastError(error_message.to_owned()));
                 };

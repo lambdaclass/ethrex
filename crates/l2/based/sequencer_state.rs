@@ -21,10 +21,11 @@ impl From<SequencerStatus> for SequencerState {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub enum SequencerStatus {
     Sequencing,
     #[default]
+    Syncing,
     Following,
 }
 
@@ -32,6 +33,7 @@ impl std::fmt::Display for SequencerStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SequencerStatus::Sequencing => write!(f, "Sequencing"),
+            SequencerStatus::Syncing => write!(f, "Syncing"),
             SequencerStatus::Following => write!(f, "Following"),
         }
     }
