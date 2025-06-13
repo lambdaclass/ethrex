@@ -4,6 +4,7 @@ use ethrex_common::{
     H256,
     types::{AccountUpdate, Blob, BlockNumber},
 };
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use redb::{AccessGuard, Database, Key, TableDefinition, Value};
@@ -36,6 +37,9 @@ const LAST_SENT_BATCH_PROOF: TableDefinition<u64, u64> = TableDefinition::new("L
 
 const ACCOUNT_UPDATES_BY_BLOCK_NUMBER: TableDefinition<BlockNumber, Vec<u8>> =
     TableDefinition::new("AccountUpdatesByBlockNumber");
+
+const BATCH_PROOF_BY_BATCH_AND_TYPE: TableDefinition<(u64, u32), Vec<u8>> =
+    TableDefinition::new("BatchProofByBatchAndType");
 
 #[derive(Debug)]
 pub struct RedBStoreRollup {
@@ -116,6 +120,7 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_table(BLOCK_NUMBERS_BY_BATCH)?;
     table_creation_txn.open_table(LAST_SENT_BATCH_PROOF)?;
     table_creation_txn.open_table(ACCOUNT_UPDATES_BY_BLOCK_NUMBER)?;
+    table_creation_txn.open_table(BATCH_PROOF_BY_BATCH_AND_TYPE)?;
     table_creation_txn.commit()?;
 
     Ok(db)
@@ -324,5 +329,34 @@ impl StoreEngineRollup for RedBStoreRollup {
         let serialized = bincode::serialize(&account_updates)?;
         self.write(ACCOUNT_UPDATES_BY_BLOCK_NUMBER, block_number, serialized)
             .await
+    }
+    async fn store_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+        proof: BatchProof,
+    ) -> Result<(), StoreError> {
+        let serialized = bincode::serialize(&proof)?;
+        self.write(
+            BATCH_PROOF_BY_BATCH_AND_TYPE,
+            (batch_number, proof_type.into()),
+            serialized,
+        )
+        .await
+    }
+
+    async fn get_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<Option<BatchProof>, StoreError> {
+        self.read(
+            BATCH_PROOF_BY_BATCH_AND_TYPE,
+            (batch_number, proof_type.into()),
+        )
+        .await?
+        .map(|s| bincode::deserialize(&s.value()))
+        .transpose()
+        .map_err(StoreError::from)
     }
 }

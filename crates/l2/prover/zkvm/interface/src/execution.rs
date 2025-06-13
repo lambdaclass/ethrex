@@ -20,7 +20,6 @@ use ethrex_common::types::{
     BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, Transaction,
     blob_from_bytes, kzg_commitment_to_versioned_hash,
 };
-#[cfg(feature = "l2")]
 use ethrex_l2_common::{
     deposits::{DepositError, compute_deposit_logs_hash, get_block_deposits},
     state_diff::{StateDiff, StateDiffError, prepare_state_diff},

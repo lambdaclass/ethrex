@@ -1,10 +1,9 @@
 use crate::utils::error::UtilsError;
-use crate::utils::prover::errors::SaveStateError;
-use crate::utils::prover::proving_systems::ProverType;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::deposits::DepositError;
+use ethrex_l2_common::prover::ProverType;
 use ethrex_l2_common::state_diff::StateDiffError;
 use ethrex_l2_common::withdrawals::WithdrawalError;
 use ethrex_l2_sdk::merkle_tree::MerkleError;
@@ -81,8 +80,6 @@ pub enum ProverServerError {
     WriteError(String),
     #[error("ProverServer failed to get data from Store: {0}")]
     ItemNotFoundInStore(String),
-    #[error("ProverServer encountered a SaveStateError: {0}")]
-    SaveStateError(#[from] SaveStateError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Unexpected Error: {0}")]
@@ -109,8 +106,6 @@ pub enum ProofSenderError {
     EthClientError(#[from] EthClientError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
-    #[error("Failed with a SaveStateError: {0}")]
-    SaveStateError(#[from] SaveStateError),
     #[error("{0} proof is not present")]
     ProofNotPresent(ProverType),
     #[error("Unexpected Error: {0}")]
@@ -140,9 +135,9 @@ pub enum ProofVerifierError {
     #[error("ProofVerifier decoding error: {0}")]
     DecodingError(String),
     #[error("Failed with a SaveStateError: {0}")]
-    SaveStateError(#[from] SaveStateError),
-    #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("Store error: {0}")]
+    StoreError(#[from] StoreError),
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -6,6 +6,7 @@ use ethrex_common::{
     H256,
     types::{AccountUpdate, Blob, BlockNumber},
 };
+use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_storage::error::StoreError;
 
 // We need async_trait because the stabilized feature lacks support for object safety
@@ -110,4 +111,17 @@ pub trait StoreEngineRollup: Debug + Send + Sync + RefUnwindSafe {
         block_number: BlockNumber,
         account_updates: Vec<AccountUpdate>,
     ) -> Result<(), StoreError>;
+
+    async fn store_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+        proof: BatchProof,
+    ) -> Result<(), StoreError>;
+
+    async fn get_proof_by_batch_and_type(
+        &self,
+        batch_number: u64,
+        proof_type: ProverType,
+    ) -> Result<Option<BatchProof>, StoreError>;
 }

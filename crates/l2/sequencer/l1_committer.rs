@@ -9,11 +9,12 @@ use ethrex_common::{
     },
 };
 use ethrex_l2_common::{
+    calldata::Value,
     deposits::{compute_deposit_logs_hash, get_block_deposits},
     state_diff::{StateDiff, prepare_state_diff},
     withdrawals::{compute_withdrawals_merkle_root, get_block_withdrawals},
 };
-use ethrex_l2_sdk::calldata::{Value, encode_calldata};
+use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_l2::{METRICS_L2, MetricsL2BlockType};
