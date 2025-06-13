@@ -279,6 +279,7 @@ impl Store {
         self.engine.contains_batch(batch_number).await
     }
 
+    /// Stores the sequencer signature for a given block hash.
     pub async fn store_signature_by_block(
         &self,
         block_hash: H256,
@@ -289,6 +290,7 @@ impl Store {
             .await
     }
 
+    /// Returns the sequencer signature for a given block hash.
     pub async fn get_signature_by_block(
         &self,
         block_hash: H256,
@@ -296,6 +298,7 @@ impl Store {
         self.engine.get_signature_by_block(block_hash).await
     }
 
+    /// Stores the sequencer signature for a given batch number.
     pub async fn store_signature_by_batch(
         &self,
         batch_number: u64,
@@ -306,6 +309,7 @@ impl Store {
             .await
     }
 
+    /// Returns the sequencer signature for a given batch number.
     pub async fn get_signature_by_batch(
         &self,
         batch_number: u64,
