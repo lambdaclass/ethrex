@@ -89,8 +89,15 @@ impl<'a> VM<'a> {
 
     // MSTORE operation
     pub fn op_mstore(&mut self) -> Result<OpcodeResult, VMError> {
+        let offset = self.current_call_frame_mut()?.stack.pop()?;
+        let value = self.current_call_frame_mut()?.stack.pop()?;
+
+        // This is only for debugging purposes of special solidity contracts that enable printing text on screen.
+        if self.debug_mode.handle_debug(offset, value)? {
+            return Ok(OpcodeResult::Continue { pc_increment: 1 });
+        }
+
         let current_call_frame = self.current_call_frame_mut()?;
-        let offset = current_call_frame.stack.pop()?;
 
         let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
 
@@ -98,8 +105,6 @@ impl<'a> VM<'a> {
             new_memory_size,
             current_call_frame.memory.len(),
         )?)?;
-
-        let value = current_call_frame.stack.pop()?;
 
         memory::try_store_data(
             &mut current_call_frame.memory,
