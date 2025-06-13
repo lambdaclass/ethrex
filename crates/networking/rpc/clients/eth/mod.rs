@@ -16,18 +16,18 @@ use errors::{
 };
 use eth_sender::Overrides;
 use ethrex_common::{
+    Address, H160, H256, U256,
     types::{
         BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
         PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction,
     },
-    Address, H160, H256, U256,
 };
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
 use reqwest::{Client, Url};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{ops::Div, str::FromStr};
 use tracing::warn;
 
