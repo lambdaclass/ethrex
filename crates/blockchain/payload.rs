@@ -297,8 +297,8 @@ impl Blockchain {
             if interval != 0 {
                 let throughput = (as_gigas) / (interval as f64) * 1000_f64;
                 tracing::info!(
-                "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
-            );
+                    "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
+                );
             }
         }
 
@@ -313,10 +313,7 @@ impl Blockchain {
             .withdrawals
             .as_ref()
             .unwrap_or(&binding);
-        context
-            .vm
-            .process_withdrawals(withdrawals)
-            .map_err(EvmError::from)
+        context.vm.process_withdrawals(withdrawals)
     }
 
     // This function applies system level operations:

@@ -10,12 +10,12 @@ use super::{
 };
 use crate::{
     kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
-    network::{handle_peer_as_initiator, P2PContext},
+    network::{P2PContext, handle_peer_as_initiator},
     rlpx::{connection::MAX_PEERS_TCP_CONNECTIONS, utils::node_id},
     types::{Endpoint, Node},
 };
 use ethrex_common::H256;
-use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
+use k256::ecdsa::{Signature, VerifyingKey, signature::hazmat::PrehashVerifier};
 use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -610,7 +610,7 @@ impl Discv4Server {
     /// - If the node is **not found** in the table and there is enough space, it will be added,
     ///   and a ping message will be sent to verify connectivity.
     /// - If the node is **already present**, no action is taken.
-    async fn try_add_peer_and_ping<'a>(&self, node: Node) -> Result<(), DiscoveryError> {
+    async fn try_add_peer_and_ping(&self, node: Node) -> Result<(), DiscoveryError> {
         // sanity check to make sure we are not storing ourselves
         // a case that may happen in a neighbor message for example
         if node.node_id() == self.ctx.local_node.node_id() {
@@ -629,7 +629,7 @@ impl Discv4Server {
         Ok(())
     }
 
-    async fn ping<'a>(&self, node: &Node) -> Result<(), DiscoveryError> {
+    async fn ping(&self, node: &Node) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
         let expiration: u64 = get_msg_expiration_from_seconds(20);
         let from = Endpoint {
@@ -725,16 +725,16 @@ impl Discv4Server {
 pub(super) mod tests {
     use super::*;
     use crate::{
-        network::{public_key_from_signing_key, serve_p2p_requests, MAX_MESSAGES_TO_BROADCAST},
+        network::{MAX_MESSAGES_TO_BROADCAST, public_key_from_signing_key, serve_p2p_requests},
         rlpx::message::Message as RLPxMessage,
         types::NodeRecord,
     };
     use ethrex_blockchain::Blockchain;
-    use ethrex_common::types::{BlockHeader, ChainConfig, ForkId};
     use ethrex_common::H32;
-    use ethrex_storage::error::StoreError;
+    use ethrex_common::types::{BlockHeader, ChainConfig, ForkId};
     use ethrex_storage::EngineType;
     use ethrex_storage::Store;
+    use ethrex_storage::error::StoreError;
 
     use k256::ecdsa::SigningKey;
     use rand::rngs::OsRng;
@@ -917,9 +917,11 @@ pub(super) mod tests {
 
         // finally, `a`` should not exist anymore
         let table = server_b.ctx.table.lock().await;
-        assert!(table
-            .get_by_node_id(server_a.ctx.local_node.node_id())
-            .is_none());
+        assert!(
+            table
+                .get_by_node_id(server_a.ctx.local_node.node_id())
+                .is_none()
+        );
         Ok(())
     }
 
@@ -1068,21 +1070,25 @@ pub(super) mod tests {
         // wait some time for the enr request-response finishes
         sleep(Duration::from_millis(2500)).await;
 
-        assert!(server_a
-            .ctx
-            .table
-            .lock()
-            .await
-            .get_by_node_id(server_b.ctx.local_node.node_id())
-            .is_some());
+        assert!(
+            server_a
+                .ctx
+                .table
+                .lock()
+                .await
+                .get_by_node_id(server_b.ctx.local_node.node_id())
+                .is_some()
+        );
 
-        assert!(server_a
-            .ctx
-            .table
-            .lock()
-            .await
-            .get_by_node_id(server_c.ctx.local_node.node_id())
-            .is_none());
+        assert!(
+            server_a
+                .ctx
+                .table
+                .lock()
+                .await
+                .get_by_node_id(server_c.ctx.local_node.node_id())
+                .is_none()
+        );
 
         Ok(())
     }

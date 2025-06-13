@@ -7,8 +7,8 @@ use crate::store_db::libmdbx::Store as LibmdbxStoreRollup;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStoreRollup;
 use ethrex_common::{
-    types::{batch::Batch, Blob, BlobsBundle, BlockNumber},
     H256,
+    types::{Blob, BlobsBundle, BlockNumber, batch::Batch},
 };
 use ethrex_storage::error::StoreError;
 use tracing::info;

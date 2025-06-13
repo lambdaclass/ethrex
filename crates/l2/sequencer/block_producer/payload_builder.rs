@@ -267,7 +267,7 @@ fn get_account_diffs_in_tx(
         Evm::REVM { .. } => {
             return Err(BlockProducerError::EvmError(EvmError::InvalidEVM(
                 "REVM not supported for L2".to_string(),
-            )))
+            )));
         }
         Evm::LEVM { db } => {
             let transaction_backup = db.get_tx_backup().map_err(|e| {
