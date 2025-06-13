@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use ethrex_common::types::Transaction;
 
 use crate::{
-    errors::{ExecutionReport, VMError},
+    errors::{ContextResult, VMError},
     vm::VM,
 };
 
@@ -13,7 +13,7 @@ pub trait Hook {
     fn finalize_execution(
         &mut self,
         vm: &mut VM<'_>,
-        report: &mut ExecutionReport,
+        report: &mut ContextResult,
     ) -> Result<(), VMError>;
 }
 
