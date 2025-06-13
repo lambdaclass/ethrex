@@ -5,6 +5,7 @@ use crate::{
         init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
     },
     l2::options::Options,
+    networks::Network,
     utils::{parse_private_key, set_datadir, store_node_config_file, NodeConfigFile},
     DEFAULT_L2_DATADIR,
 };
@@ -15,8 +16,8 @@ use ethrex_common::{
 };
 use ethrex_l2::SequencerConfig;
 use ethrex_l2_common::state_diff::StateDiff;
-use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::{get_address_from_secret_key, wait_for_transaction_receipt};
+use ethrex_l2_sdk::call_contract;
+use ethrex_l2_sdk::calldata::Value;
 use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
     clients::{beacon::BeaconClient, eth::BlockByNumber},
@@ -91,7 +92,7 @@ pub enum Command {
         #[arg(help = "The address of the OnChainProposer contract")]
         contract_address: Address,
         #[arg(long, value_parser = parse_private_key, env = "PRIVATE_KEY", help = "The private key of the owner. Assumed to have sequencing permission.")]
-        private_key: SecretKey,
+        private_key: Option<SecretKey>,
         #[arg(
             long,
             default_value = "http://localhost:8545",
@@ -99,8 +100,23 @@ pub enum Command {
             help = "URL of the L1 RPC"
         )]
         rpc_url: Url,
-        #[command(flatten)]
-        node_opts: NodeOptions,
+        #[arg(
+            long = "network",
+            default_value_t = Network::default(),
+            value_name = "GENESIS_FILE_PATH",
+            help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
+            env = "ETHREX_NETWORK",
+            value_parser = clap::value_parser!(Network),
+        )]
+        network: Network,
+        #[arg(
+            long = "datadir",
+            value_name = "DATABASE_DIRECTORY",
+            default_value = DEFAULT_L2_DATADIR,
+            help = "Receives the name of the directory where the Database is located.",
+            env = "ETHREX_DATADIR"
+        )]
+        datadir: String,
     },
 }
 
@@ -456,23 +472,29 @@ impl Command {
                 contract_address,
                 rpc_url,
                 private_key,
-                node_opts,
+                datadir,
+                network,
             } => {
-                let data_dir = set_datadir(&node_opts.datadir);
+                let data_dir = set_datadir(&datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
                 let client = EthClient::new(rpc_url.as_str())?;
-                info!("Pausing OnChainProposer...");
-                call_contract(&client, &private_key, contract_address, "pause()", vec![]).await?;
-                info!("Doing revert on OnChainProposer...");
-                call_contract(
-                    &client,
-                    &private_key,
-                    contract_address,
-                    "revertBatch(uint256)",
-                    vec![Value::Uint(batch.into())],
-                )
-                .await?;
+                if let Some(private_key) = private_key {
+                    info!("Pausing OnChainProposer...");
+                    call_contract(&client, &private_key, contract_address, "pause()", vec![])
+                        .await?;
+                    info!("Doing revert on OnChainProposer...");
+                    call_contract(
+                        &client,
+                        &private_key,
+                        contract_address,
+                        "revertBatch(uint256)",
+                        vec![Value::Uint(batch.into())],
+                    )
+                    .await?;
+                } else {
+                    info!("Private key not given, not updating contract.");
+                }
                 info!("Updating store...");
                 let rollup_store = init_rollup_store(&rollup_store_dir).await;
                 let last_kept_block = rollup_store
@@ -481,7 +503,6 @@ impl Command {
                     .and_then(|kept_blocks| kept_blocks.iter().max().cloned())
                     .unwrap_or(0);
 
-                let network = get_network(&node_opts);
                 let genesis = network.get_genesis();
                 let store = init_store(&data_dir, genesis).await;
 
@@ -497,32 +518,13 @@ impl Command {
                     store.remove_block(block_to_delete).await?;
                     block_to_delete += 1;
                 }
-
-                info!("Unpausing OnChainProposer...");
-                call_contract(&client, &private_key, contract_address, "unpause()", vec![]).await?;
+                if let Some(private_key) = private_key {
+                    info!("Unpausing OnChainProposer...");
+                    call_contract(&client, &private_key, contract_address, "unpause()", vec![])
+                        .await?;
+                }
             }
         }
         Ok(())
     }
-}
-
-async fn call_contract(
-    client: &EthClient,
-    private_key: &SecretKey,
-    to: Address,
-    signature: &str,
-    parameters: Vec<Value>,
-) -> eyre::Result<()> {
-    let calldata = encode_calldata(signature, &parameters)?.into();
-    let from = get_address_from_secret_key(private_key)?;
-    let tx = client
-        .build_eip1559_transaction(to, from, calldata, Default::default())
-        .await?;
-
-    let tx_hash = client.send_eip1559_transaction(&tx, private_key).await?;
-
-    info!("TxID: {tx_hash:#x}",);
-
-    wait_for_transaction_receipt(tx_hash, client, 100).await?;
-    Ok(())
 }
