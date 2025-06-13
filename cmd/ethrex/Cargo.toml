@@ -39,12 +39,14 @@ lazy_static.workspace = true
 secp256k1 = { workspace = true }
 keccak-hash.workspace = true
 reqwest.workspace = true
+thiserror = { workspace = true, optional = true }
 itertools = "0.14.0"
 
 cfg-if = "1.0.0"
 
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
+url.workspace = true
 
 [[bin]]
 name = "ethrex"
@@ -75,6 +77,7 @@ l2 = [
   "ethrex-blockchain/l2",
   "ethrex-rpc/l2",
   "ethrex-storage-rollup",
+  "dep:thiserror",
 ]
 rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
 rollup_storage_redb = ["ethrex-storage-rollup/redb"]

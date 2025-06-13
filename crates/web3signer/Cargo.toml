@@ -1,0 +1,16 @@
+[package]
+name = "web3signer"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+reqwest.workspace = true
+hex.workspace = true
+secp256k1.workspace = true
+bytes.workspace = true
+ethereum-types.workspace = true
+thiserror.workspace = true
+rustc-hex.workspace = true
+
+[lib]
+path = "./web3signer.rs"

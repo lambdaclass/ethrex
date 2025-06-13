@@ -198,7 +198,7 @@ rm-db-l2: ## 🛑 Removes the DB used by the L2
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
 	cargo test l2_integration_test --release -- --nocapture || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
 
-integration-test: rm-db-l2 rm-db-l1# We create an empty .env file simply because if the file
+integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply because if the file
 	# does not exist, the container fails to write to it.
 	touch .env
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down

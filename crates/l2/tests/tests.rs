@@ -3,7 +3,10 @@
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
 use ethrex_common::H160;
-use ethrex_common::types::BlockNumber;
+use ethrex_common::types::{
+    BlockNumber,
+    signer::{LocalSigner, Signer},
+};
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
 use ethrex_l2_sdk::{get_address_from_secret_key, wait_for_transaction_receipt};
@@ -662,10 +665,10 @@ async fn test_deploy(
 ) -> Result<Address, Box<dyn std::error::Error>> {
     println!("Deploying contract on L2");
 
-    let deployer_address = ethrex_l2_sdk::get_address_from_secret_key(deployer_private_key)?;
+    let deployer: Signer = LocalSigner::new(*deployer_private_key).into();
 
     let deployer_balance_before_deploy = proposer_client
-        .get_balance(deployer_address, BlockByNumber::Latest)
+        .get_balance(deployer.address(), BlockByNumber::Latest)
         .await?;
 
     let fee_vault_balance_before_deploy = proposer_client
@@ -673,12 +676,7 @@ async fn test_deploy(
         .await?;
 
     let (deploy_tx_hash, contract_address) = proposer_client
-        .deploy(
-            deployer_address,
-            *deployer_private_key,
-            init_code.to_vec().into(),
-            Overrides::default(),
-        )
+        .deploy(&deployer, init_code.to_vec().into(), Overrides::default())
         .await?;
 
     let deploy_tx_receipt =
@@ -687,7 +685,7 @@ async fn test_deploy(
     let deploy_fees = get_fees_details_l2(deploy_tx_receipt, proposer_client).await;
 
     let deployer_balance_after_deploy = proposer_client
-        .get_balance(deployer_address, BlockByNumber::Latest)
+        .get_balance(deployer.address(), BlockByNumber::Latest)
         .await?;
 
     assert_eq!(

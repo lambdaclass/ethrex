@@ -4,6 +4,7 @@ use bytes::Bytes;
 use calldata::{Value, encode_calldata};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_common::types::GenericTransaction;
+use ethrex_common::types::signer::{LocalSigner, Signer};
 use ethrex_rpc::clients::eth::WithdrawalProof;
 use ethrex_rpc::clients::eth::{
     EthClient, WrappedTransaction, errors::EthClientError, eth_sender::Overrides,
@@ -112,7 +113,8 @@ pub async fn transfer(
     tx_generic.from = from;
     let gas_limit = client.estimate_gas(tx_generic).await?;
     tx.gas_limit = gas_limit;
-    client.send_eip1559_transaction(&tx, private_key).await
+    let signer = LocalSigner::new(*private_key).into();
+    client.send_eip1559_transaction(&tx, &signer).await
 }
 
 pub async fn deposit_through_transfer(
@@ -175,8 +177,9 @@ pub async fn withdraw(
         )
         .await?;
 
+    let signer = LocalSigner::new(from_pk).into();
     proposer_client
-        .send_eip1559_transaction(&withdraw_transaction, &from_pk)
+        .send_eip1559_transaction(&withdraw_transaction, &signer)
         .await
 }
 
@@ -228,8 +231,9 @@ pub async fn claim_withdraw(
         )
         .await?;
 
+    let signer = LocalSigner::new(from_pk).into();
     eth_client
-        .send_eip1559_transaction(&claim_tx, &from_pk)
+        .send_eip1559_transaction(&claim_tx, &signer)
         .await
 }
 
@@ -381,19 +385,19 @@ pub enum DeployError {
 pub async fn deploy_contract(
     constructor_args: &[u8],
     contract_path: &Path,
-    deployer_private_key: &SecretKey,
+    deployer: &Signer,
     salt: &[u8],
     eth_client: &EthClient,
 ) -> Result<(H256, Address), DeployError> {
     let bytecode = hex::decode(read_to_string(contract_path)?)?;
     let init_code = [&bytecode, constructor_args].concat();
     let (deploy_tx_hash, contract_address) =
-        create2_deploy(salt, &init_code, deployer_private_key, eth_client).await?;
+        create2_deploy(salt, &init_code, deployer, eth_client).await?;
     Ok((deploy_tx_hash, contract_address))
 }
 
 async fn deploy_proxy(
-    deployer_private_key: SecretKey,
+    deployer: &Signer,
     eth_client: &EthClient,
     contract_binaries: &Path,
     implementation_address: Address,
@@ -409,20 +413,16 @@ async fn deploy_proxy(
     init_code.extend(H256::from_low_u64_be(0x40).0);
     init_code.extend(H256::zero().0);
 
-    let (deploy_tx_hash, proxy_address) = create2_deploy(
-        salt,
-        &Bytes::from(init_code),
-        &deployer_private_key,
-        eth_client,
-    )
-    .await
-    .map_err(DeployError::from)?;
+    let (deploy_tx_hash, proxy_address) =
+        create2_deploy(salt, &Bytes::from(init_code), deployer, eth_client)
+            .await
+            .map_err(DeployError::from)?;
 
     Ok((deploy_tx_hash, proxy_address))
 }
 
 pub async fn deploy_with_proxy(
-    deployer_private_key: SecretKey,
+    deployer: &Signer,
     eth_client: &EthClient,
     contract_binaries: &Path,
     contract_name: &str,
@@ -431,14 +431,14 @@ pub async fn deploy_with_proxy(
     let (implementation_tx_hash, implementation_address) = deploy_contract(
         &[],
         &contract_binaries.join(contract_name),
-        &deployer_private_key,
+        deployer,
         salt,
         eth_client,
     )
     .await?;
 
     let (proxy_tx_hash, proxy_address) = deploy_proxy(
-        deployer_private_key,
+        deployer,
         eth_client,
         contract_binaries,
         implementation_address,
@@ -457,7 +457,7 @@ pub async fn deploy_with_proxy(
 async fn create2_deploy(
     salt: &[u8],
     init_code: &[u8],
-    deployer_private_key: &SecretKey,
+    deployer: &Signer,
     eth_client: &EthClient,
 ) -> Result<(H256, Address), EthClientError> {
     let calldata = [salt, init_code].concat();
@@ -469,12 +469,10 @@ async fn create2_deploy(
             EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
         })?;
 
-    let deployer_address = get_address_from_secret_key(deployer_private_key)?;
-
     let deploy_tx = eth_client
         .build_eip1559_transaction(
             DETERMINISTIC_CREATE2_ADDRESS,
-            deployer_address,
+            deployer.address(),
             calldata.into(),
             Overrides {
                 max_fee_per_gas: Some(gas_price),
@@ -486,10 +484,10 @@ async fn create2_deploy(
 
     let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(deploy_tx);
     eth_client
-        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer_address)
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer.address())
         .await?;
     let deploy_tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, deployer_private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, deployer)
         .await?;
 
     wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
@@ -518,11 +516,9 @@ fn create2_address(salt: &[u8], init_code_hash: H256) -> Address {
 pub async fn initialize_contract(
     contract_address: Address,
     initialize_calldata: Vec<u8>,
-    initializer_private_key: &SecretKey,
+    initializer: &Signer,
     eth_client: &EthClient,
 ) -> Result<H256, EthClientError> {
-    let initializer_address = get_address_from_secret_key(initializer_private_key)?;
-
     let gas_price = eth_client
         .get_gas_price_with_extra(20)
         .await?
@@ -534,7 +530,7 @@ pub async fn initialize_contract(
     let initialize_tx = eth_client
         .build_eip1559_transaction(
             contract_address,
-            initializer_address,
+            initializer.address(),
             initialize_calldata.into(),
             Overrides {
                 max_fee_per_gas: Some(gas_price),
@@ -547,11 +543,11 @@ pub async fn initialize_contract(
     let mut wrapped_tx = WrappedTransaction::EIP1559(initialize_tx);
 
     eth_client
-        .set_gas_for_wrapped_tx(&mut wrapped_tx, initializer_address)
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, initializer.address())
         .await?;
 
     let initialize_tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, initializer_private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, initializer)
         .await?;
 
     Ok(initialize_tx_hash)
