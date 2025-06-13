@@ -108,7 +108,6 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
 	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
-	--sequencer-registry-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--deposit-rich \
 	--private-keys-file-path ../../test_data/private_keys_l1.txt \
 	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
