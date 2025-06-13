@@ -69,7 +69,7 @@ impl RLPxMessage for Transactions {
 pub(crate) struct NewPooledTransactionHashes {
     transaction_types: Bytes,
     transaction_sizes: Vec<usize>,
-    transaction_hashes: Vec<H256>,
+    pub(crate) transaction_hashes: Vec<H256>,
 }
 
 impl NewPooledTransactionHashes {

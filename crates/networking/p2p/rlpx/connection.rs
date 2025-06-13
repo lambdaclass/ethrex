@@ -581,7 +581,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 // avoid requesting the same hash multiple times
                 let mut hashes_to_request = vec![];
                 for hash in hashes {
-                    if self.get_p2p_transaction(&hash)?.is_none() {
+                    let mut should_request = true;
+                    for (_, tx) in &self.requested_pooled_txs {
+                        if tx.transaction_hashes.contains(&hash) {
+                            should_request = false;
+                            break;
+                        }
+                    }
+                    if should_request {
                         hashes_to_request.push(hash);
                     }
                 }
