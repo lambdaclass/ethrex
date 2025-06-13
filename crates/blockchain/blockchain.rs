@@ -182,7 +182,8 @@ impl Blockchain {
             let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
             metrics!(
                 let _ = METRICS_BLOCKS.set_block_number(block.header.number);
-                METRICS_BLOCKS.set_latest_gas_used(as_gigas);
+                METRICS_BLOCKS.set_latest_gas_used(block.header.gas_used as f64);
+                METRICS_BLOCKS.set_latest_block_gas_limit(block.header.gas_limit as f64);
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
             );
             let base_log =
@@ -287,6 +288,9 @@ impl Blockchain {
             .last()
             .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
 
+        let last_block_number = last_block.header.number;
+        let last_block_gas_limit = last_block.header.gas_limit;
+
         // Apply the account updates over all blocks and compute the new state root
         let account_updates_list = self
             .storage
@@ -322,12 +326,16 @@ impl Blockchain {
         }
 
         metrics!(
+            let _ = METRICS_BLOCKS.set_block_number(last_block_number);
+            METRICS_BLOCKS.set_latest_block_gas_limit(last_block_gas_limit as f64);
+            // Set the latest gas used as the average gas used per block in the batch
+            METRICS_BLOCKS.set_latest_gas_used(total_gas_used as f64 / blocks_len as f64);
             METRICS_BLOCKS.set_latest_gigagas(throughput);
         );
 
         info!(
-            "[METRICS] Executed and stored: Range: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
-            blocks_len, transactions_count, total_gas_used, throughput
+            "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
+            blocks_len, last_block_number, last_block_gas_limit, transactions_count, total_gas_used, throughput
         );
 
         Ok(())
