@@ -4,11 +4,12 @@
 
 > [!NOTE]
 >
-> - Running the following without an L2 running will continuously throw the error: `Error sending quote: Failed to get ProverSetupAck: Connection refused (os error 111)`. If you want to run this in a proper setup go to the [Running](#Running) section.
+> - Running the following without an L2 running will continuously throw the error: `Error sending quote: Failed to get ProverSetupAck: Connection refused (os error 111)`. If you want to run this in a proper setup go to the [Running](#running) section.
 > - The quote generator runs in a QEMU, to quit it press `CTRL+A X`.
 
 On a machine with TDX support [with the required setup](https://github.com/canonical/tdx) go to quote-gen and run
-```
+
+```sh
 make run
 ```
 
@@ -33,7 +34,7 @@ It's easy to silently overlook non-verified areas such as accidentally leaving l
 - Firmware (OVMF here) is loaded (and hashed into RTMR\[0\])
 - [UKI](https://uapi-group.org/specifications/specs/unified_kernel_image/) is loaded (and hashed into a RTMR)
 - kernel and initrd are extracted from the UKI and executed
-- root partition is verified using the `roothash=` value provided on the kernel cmdline and the `hash` partition with the dm-verity merkle tree
+- root partition is verified using the `roothash=` value provided on the kernel cmdline and the `hash` partition with the dm-verity merkle tree
 - root partition is mounted read-only
 - (WIP) systemd executes the payload
 
@@ -61,14 +62,14 @@ For development purposes, you can use the flag `ETHREX_TDX_DEV_MODE=true` to dis
 
 Ensure the proof coordinator is reachable at 172.17.0.1. You can bring up the network by first starting the L2 components:
 
-```
+```sh
 // cd crates/l2
 make init ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER=true ETHREX_PROOF_COORDINATOR_DEV_MODE=false PROOF_COORDINATOR_ADDRESS=0.0.0.0
 ```
 
 And in another terminal, running the VM:
 
-```
+```sh
 // cd crates/l2
 make -C tee/quote-gen run
 ```
@@ -79,7 +80,7 @@ make -C tee/quote-gen run
 
 If you get this error when building the image, it's probably because your OS has unprivileged userns restricted by default. You can undo this by running the following commands as root, or running the build as root while disabling sandboxing.
 
-```
+```sh
 sysctl kernel.unprivileged_userns_apparmor_policy=0
 sysctl kernel.apparmor_restrict_unprivileged_userns=0
 ```
@@ -98,7 +99,7 @@ Look at bytes 341..485 of the output for RTMRs and bytes 149..197 for the MRTD.
 
 For example, the file `quote.example` contains a quote, which can be turned into the following report:
 
-```
+```text
 00048100000000b0c06f000000060103000000000000000000000000005b38e33a6487958b72c3c12a938eaa5e3fd4510c51aeeab58c7d5ecee41d7c436489d6c8e4f92f160b7cad34207b00c100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000e702060000000000
 
 91eb2b44d141d4ece09f0c75c2c53d247a3c68edd7fafe8a3520c942a604a407de03ae6dc5f87f27428b2538873118b7 # MRTD
