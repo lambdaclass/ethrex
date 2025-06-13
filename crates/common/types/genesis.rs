@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap},
-    fs::File,
     io::BufReader,
+    path::Path,
 };
 
 use super::{
@@ -48,13 +48,16 @@ pub struct Genesis {
     pub requests_hash: Option<H256>,
 }
 
-impl TryFrom<BufReader<File>> for Genesis {
+impl TryFrom<&Path> for Genesis {
     type Error = String;
 
-    fn try_from(genesis_reader: BufReader<File>) -> Result<Self, Self::Error> {
+    fn try_from(genesis_file_path: &Path) -> Result<Self, Self::Error> {
+        let genesis_file =
+            std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
+        let genesis_reader = BufReader::new(genesis_file);
         let genesis: Genesis =
             serde_json::from_reader(genesis_reader).map_err(|m| m.to_string())?;
-        if !genesis.is_post_merge() {
+        if genesis.config.merge_netsplit_block != Some(0) {
             return Err(String::from(
                 "Fork not supported. Only post-merge networks are supported.",
             ));
@@ -390,17 +393,6 @@ impl Genesis {
             )
         });
         Trie::compute_hash_from_unsorted_iter(iter)
-    }
-
-    fn is_post_merge(&self) -> bool {
-        let chain_config = self.config;
-        let is_post_paris = chain_config.is_prague_activated(self.timestamp)
-            || chain_config.is_cancun_activated(self.timestamp)
-            || chain_config.is_shanghai_activated(self.timestamp);
-        let is_at_paris = chain_config.merge_netsplit_block == Some(0)
-            || chain_config.terminal_total_difficulty_passed
-            || self.difficulty.is_zero();
-        is_post_paris || is_at_paris
     }
 }
 #[cfg(test)]

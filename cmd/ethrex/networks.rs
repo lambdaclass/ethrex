@@ -7,8 +7,6 @@ use ethrex_common::types::Genesis;
 use ethrex_p2p::types::Node;
 use lazy_static::lazy_static;
 
-use crate::utils;
-
 pub const HOLESKY_GENESIS_PATH: &str = "cmd/ethrex/networks/holesky/genesis.json";
 const HOLESKY_BOOTNODES_PATH: &str = "cmd/ethrex/networks/holesky/bootnodes.json";
 
@@ -99,6 +97,6 @@ impl Network {
         }
     }
     pub fn get_genesis(&self) -> Genesis {
-        utils::read_genesis_file(self.get_genesis_path())
+        Genesis::try_from(self.get_genesis_path()).unwrap_or_else(|e| panic!("{}", e))
     }
 }
