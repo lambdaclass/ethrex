@@ -244,7 +244,7 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     /// - The block bodies are invalid given the block headers
-    pub async fn request_and_validate_block_bodies<'a>(
+    pub async fn request_and_validate_block_bodies(
         &self,
         block_headers: &[BlockHeader],
     ) -> Option<Vec<BlockBody>> {

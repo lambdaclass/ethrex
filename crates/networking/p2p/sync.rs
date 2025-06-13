@@ -551,9 +551,14 @@ impl FullBlockSyncState {
                 .iter()
                 .map(|b| (b.header.number, b.hash()))
                 .collect::<Vec<_>>();
-            let (last_block_number, last_block_hash) = numbers_and_hashes.last().cloned().unwrap();
-            let (first_block_number, first_block_hash) =
-                numbers_and_hashes.first().cloned().unwrap();
+            let (last_block_number, last_block_hash) = numbers_and_hashes
+                .last()
+                .cloned()
+                .ok_or(SyncError::InvalidRangeReceived)?;
+            let (first_block_number, first_block_hash) = numbers_and_hashes
+                .first()
+                .cloned()
+                .ok_or(SyncError::InvalidRangeReceived)?;
             // Run the batch
             if let Err((err, batch_failure)) =
                 Syncer::add_blocks(blockchain.clone(), block_batch, sync_head_found).await
@@ -625,7 +630,9 @@ impl SnapBlockSyncState {
     ) -> Result<(), SyncError> {
         let block_hashes = block_headers.iter().map(|h| h.hash()).collect::<Vec<_>>();
         self.store
-            .set_header_download_checkpoint(*block_hashes.last().unwrap())
+            .set_header_download_checkpoint(
+                *block_hashes.last().ok_or(SyncError::InvalidRangeReceived)?,
+            )
             .await?;
         self.block_hashes.extend_from_slice(&block_hashes);
         self.store.add_block_headers(block_headers).await?;
