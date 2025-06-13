@@ -143,6 +143,8 @@ pub enum ProofVerifierError {
     SaveStateError(#[from] SaveStateError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("Failed to parse verification: {0}")]
+    MissingVerificationKey(String),
 }
 
 #[derive(Debug, thiserror::Error)]

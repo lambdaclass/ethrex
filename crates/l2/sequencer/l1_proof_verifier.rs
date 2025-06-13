@@ -23,8 +23,7 @@ use super::{
     utils::{send_verify_tx, sleep_random},
 };
 
-const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatchAligned(uint256,bytes,bytes32,bytes32[])";
+const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatchAligned(uint256,bytes,bytes32[])";
 
 pub async fn start_l1_proof_verifier(cfg: SequencerConfig) -> Result<(), SequencerError> {
     let l1_proof_verifier = L1ProofVerifier::new(
@@ -46,6 +45,7 @@ struct L1ProofVerifier {
     on_chain_proposer_address: Address,
     proof_verify_interval_ms: u64,
     network: Network,
+    sp1_vk: Vec<u8>,
 }
 
 impl L1ProofVerifier {
@@ -56,6 +56,8 @@ impl L1ProofVerifier {
         aligned_cfg: &AlignedConfig,
     ) -> Result<Self, ProofVerifierError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
+        let sp1_vk = std::fs::read(aligned_cfg.aligned_sp1_vk_path.clone())
+            .map_err(|e| ProofVerifierError::MissingVerificationKey(e.to_string()))?;
 
         Ok(Self {
             eth_client,
@@ -65,6 +67,7 @@ impl L1ProofVerifier {
             l1_private_key: proof_coordinator_cfg.l1_private_key,
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             proof_verify_interval_ms: aligned_cfg.aligned_verifier_interval_ms,
+            sp1_vk,
         })
     }
 
@@ -115,11 +118,9 @@ impl L1ProofVerifier {
     ) -> Result<Option<H256>, ProofVerifierError> {
         let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
         let public_inputs = proof.public_values();
-        // TODO: use a hardcoded vk
-        let vk = proof.vk();
 
         let verification_data = AggregationModeVerificationData::SP1 {
-            vk: vk.clone().try_into().map_err(|e| {
+            vk: self.sp1_vk.clone().try_into().map_err(|e| {
                 ProofVerifierError::DecodingError(format!("Failed to decode vk: {e:?}"))
             })?,
             public_inputs: public_inputs.clone(),
@@ -170,7 +171,6 @@ impl L1ProofVerifier {
         let calldata_values = [
             Value::Uint(U256::from(batch_number)),
             Value::Bytes(public_inputs.into()),
-            Value::FixedBytes(vk.into()),
             Value::Array(merkle_path),
         ];
 

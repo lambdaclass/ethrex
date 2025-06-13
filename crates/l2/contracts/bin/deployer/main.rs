@@ -348,6 +348,7 @@ async fn initialize_contracts(
         );
         "0x00".to_string()
     });
+    // TODO: ask if aligned is enabled and use the correct SP1 vk
     let sp1_vk = hex::decode(sp1_vk_string.trim_start_matches("0x"))
         .map_err(|err| {
             DeployerError::DecodingError(format!(
