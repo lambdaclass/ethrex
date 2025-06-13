@@ -64,7 +64,7 @@ impl RpcHandler for ExchangeTransitionConfigV1Req {
         let block = context
             .storage
             .get_block_header(payload.terminal_block_number)?;
-        let terminal_block_hash = block.map_or(H256::zero(), |block| block.compute_block_hash());
+        let terminal_block_hash = block.map_or(H256::zero(), |block| block.hash());
 
         serde_json::to_value(ExchangeTransitionConfigPayload {
             terminal_block_hash,

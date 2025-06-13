@@ -31,6 +31,7 @@ use once_cell::sync::OnceCell;
 lazy_static! {
     pub static ref DEFAULT_OMMERS_HASH: H256 = H256::from_slice(&hex::decode("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347").unwrap()); // = Keccak256(RLP([])) as of EIP-3675
     pub static ref DEFAULT_REQUESTS_HASH: H256 = H256::from_slice(&hex::decode("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855").unwrap()); // = Sha256([])) as of EIP-7685
+    pub static ref EMPTY_WITHDRAWALS_HASH: H256 = H256::from_slice(&hex::decode("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421").unwrap()); // = Root of empty Trie as of EIP-4895
 }
 #[derive(PartialEq, Eq, Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Block {
@@ -255,7 +256,7 @@ pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
     let iter = receipts
         .iter()
         .enumerate()
-        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner()));
+        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom()));
     Trie::compute_hash_from_unsorted_iter(iter)
 }
 
@@ -296,13 +297,13 @@ impl RLPDecode for BlockBody {
 }
 
 impl BlockHeader {
-    pub fn compute_block_hash(&self) -> H256 {
+    fn compute_block_hash(&self) -> H256 {
         let mut buf = vec![];
         self.encode(&mut buf);
         keccak(buf)
     }
 
-    fn hash(&self) -> H256 {
+    pub fn hash(&self) -> H256 {
         *self.hash.get_or_init(|| self.compute_block_hash())
     }
 }
@@ -511,6 +512,16 @@ pub enum InvalidBlockHeaderError {
     RequestsHashPresent,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum InvalidBlockBodyError {
+    #[error("Withdrawals root does not match")]
+    WithdrawalsRootNotMatch,
+    #[error("Transactions root does not match")]
+    TransactionsRootNotMatch,
+    #[error("Ommers is not empty")]
+    OmmersIsNotEmpty,
+}
+
 /// Validates that the header fields are correct in reference to the parent_header
 pub fn validate_block_header(
     header: &BlockHeader,
@@ -561,8 +572,42 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::OmmersHashNotDefault);
     }
 
-    if header.parent_hash != parent_header.compute_block_hash() {
+    if header.parent_hash != parent_header.hash() {
         return Err(InvalidBlockHeaderError::ParentHashIncorrect);
+    }
+
+    Ok(())
+}
+
+/// Validates that the body matches with the header
+pub fn validate_block_body(block: &Block) -> Result<(), InvalidBlockBodyError> {
+    // Validates that:
+    //  - Transactions root and withdrawals root matches with the header
+    //  - Ommers is empty -> https://eips.ethereum.org/EIPS/eip-3675
+    let computed_tx_root = compute_transactions_root(&block.body.transactions);
+
+    if block.header.transactions_root != computed_tx_root {
+        return Err(InvalidBlockBodyError::TransactionsRootNotMatch);
+    }
+
+    if !block.body.ommers.is_empty() {
+        return Err(InvalidBlockBodyError::OmmersIsNotEmpty);
+    }
+
+    match (block.header.withdrawals_root, &block.body.withdrawals) {
+        (Some(withdrawals_root), Some(withdrawals)) => {
+            let computed_withdrawals_root = compute_withdrawals_root(withdrawals);
+            if withdrawals_root != computed_withdrawals_root {
+                return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
+            }
+        }
+        (Some(withdrawals_root), None) => {
+            if withdrawals_root != *EMPTY_WITHDRAWALS_HASH {
+                return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
+            }
+        }
+        (None, None) => {}
+        _ => return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch),
     }
 
     Ok(())

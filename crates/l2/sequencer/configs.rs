@@ -1,4 +1,5 @@
 use ethrex_common::{types::signer::Signer, Address, U256};
+use aligned_sdk::common::types::Network;
 use secp256k1::SecretKey;
 use std::net::IpAddr;
 
@@ -9,6 +10,7 @@ pub struct SequencerConfig {
     pub eth: EthConfig,
     pub l1_watcher: L1WatcherConfig,
     pub proof_coordinator: ProofCoordinatorConfig,
+    pub aligned: AlignedConfig,
 }
 
 // TODO: Move to blockchain/dev
@@ -44,7 +46,6 @@ pub struct L1WatcherConfig {
     pub bridge_address: Address,
     pub check_interval_ms: u64,
     pub max_block_step: U256,
-    pub l2_proposer_private_key: SecretKey,
     pub watcher_block_delay: u64,
 }
 
@@ -55,4 +56,15 @@ pub struct ProofCoordinatorConfig {
     pub proof_send_interval_ms: u64,
     pub dev_mode: bool,
     pub signer: Signer,
+    pub validium: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct AlignedConfig {
+    pub aligned_mode: bool,
+    pub aligned_verifier_interval_ms: u64,
+    pub beacon_url: String,
+    pub network: Network,
+    pub fee_estimate: String,
+    pub aligned_sp1_elf_path: String,
 }

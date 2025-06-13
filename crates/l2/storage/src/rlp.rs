@@ -1,3 +1,6 @@
+// TODO: Remove this after `l2` feature is gone.
+#![allow(dead_code)]
+
 #[cfg(feature = "redb")]
 use std::any::type_name;
 use std::{fmt::Debug, marker::PhantomData};
@@ -11,6 +14,7 @@ use redb::TypeName;
 
 pub type WithdrawalHashesRLP = Rlp<Vec<H256>>;
 pub type BlockNumbersRLP = Rlp<Vec<BlockNumber>>;
+pub type OperationsCountRLP = Rlp<Vec<u64>>;
 
 #[derive(Clone, Debug)]
 pub struct Rlp<T>(Vec<u8>, PhantomData<T>);

@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 ethrex-common.workspace = true
-ethrex-storage.workspace = true
 ethrex-levm.workspace = true
 ethrex-trie.workspace = true
 ethrex-rlp.workspace = true
@@ -30,9 +29,11 @@ hex.workspace = true
 lazy_static.workspace = true
 cfg-if.workspace = true
 tracing.workspace = true
-
 serde.workspace = true
+sha3.workspace = true
+
 bincode = "1"
+dyn-clone = "1.0"
 
 ethereum-types.workspace = true
 
@@ -44,3 +45,6 @@ default = []
 l2 = ["ethrex-levm/l2"]
 c-kzg = ["revm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 blst = ["revm/blst"]
+
+[lints.clippy]
+unwrap_used = "deny"

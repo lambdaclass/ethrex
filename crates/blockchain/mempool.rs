@@ -199,6 +199,59 @@ impl Mempool {
 
         Ok(nonce)
     }
+
+    pub fn get_mempool_size(&self) -> Result<(usize, usize), MempoolError> {
+        let txs_size = {
+            let pool_lock = self
+                .transaction_pool
+                .read()
+                .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+            pool_lock.len()
+        };
+        let blobs_size = {
+            let pool_lock = self
+                .blobs_bundle_pool
+                .lock()
+                .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+            pool_lock.len()
+        };
+
+        Ok((txs_size, blobs_size))
+    }
+
+    /// Returns all transactions currently in the pool
+    pub fn content(&self) -> Result<Vec<Transaction>, MempoolError> {
+        let pooled_transactions = self
+            .transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+        Ok(pooled_transactions
+            .iter()
+            .map(|(_, mem_tx)| mem_tx.transaction())
+            .cloned()
+            .collect())
+    }
+
+    pub fn contains_sender_nonce(
+        &self,
+        sender: Address,
+        nonce: u64,
+        received_hash: H256,
+    ) -> Result<bool, MempoolError> {
+        let pooled_transactions = self
+            .transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+
+        let count = pooled_transactions
+            .iter()
+            .filter(|(hash, tx)| {
+                tx.sender() == sender && tx.nonce() == nonce && *hash != &received_hash
+            })
+            .count();
+
+        Ok(count > 0)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -294,7 +347,7 @@ mod tests {
     async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
         let store = Store::new("test", EngineType::InMemory)?;
         let block_number = header.number;
-        let block_hash = header.compute_block_hash();
+        let block_hash = header.hash();
         store.add_block_header(block_hash, header).await?;
         store.set_canonical_block(block_number, block_hash).await?;
         store.update_latest_block_number(block_number).await?;

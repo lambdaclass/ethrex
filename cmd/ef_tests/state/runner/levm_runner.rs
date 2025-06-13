@@ -5,17 +5,20 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_common::{
-    types::{tx_fields::*, EIP1559Transaction, EIP7702Transaction, Fork, Transaction, TxKind},
+    types::{
+        tx_fields::*, AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction,
+        TxKind,
+    },
     H256, U256,
 };
 use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
+    tracing::LevmCallTracer,
     vm::VM,
     EVMConfig, Environment,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::AccountUpdate;
 use ethrex_vm::backends;
 use keccak_hash::keccak;
 
@@ -189,6 +192,7 @@ pub fn prepare_vm_for_tx<'a>(
         },
         db,
         &tx,
+        LevmCallTracer::disabled(),
     ))
 }
 
@@ -400,12 +404,11 @@ pub async fn ensure_post_state(
 }
 
 pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
-    let (initial_state, block_hash) = utils::load_initial_state(test).await;
-    initial_state
-        .database()
-        .unwrap()
-        .apply_account_updates(block_hash, account_updates)
+    let (_initial_state, block_hash, store) = utils::load_initial_state(test).await;
+    let ret_account_updates_batch = store
+        .apply_account_updates_batch(block_hash, account_updates)
         .await
         .unwrap()
-        .unwrap()
+        .unwrap();
+    ret_account_updates_batch.state_trie_hash
 }

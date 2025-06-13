@@ -1231,6 +1231,10 @@ impl Transaction {
         }
     }
 
+    pub fn is_privileged(&self) -> bool {
+        matches!(self, Transaction::PrivilegedL2Transaction(_))
+    }
+
     pub fn max_fee_per_gas(&self) -> Option<u64> {
         match self {
             Transaction::LegacyTransaction(_tx) => None,
