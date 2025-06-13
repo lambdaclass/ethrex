@@ -17,7 +17,7 @@ services:
 
   prometheus:
     volumes:
-      - ./provisioning/prometheus/prometheus_l1_sync_docker.yaml:/etc/prometheus/prometheus.yaml
+      - ./provisioning/prometheus/prometheus_l1_sync_docker.yaml:/etc/prometheus/prometheus_docker.yaml
     ports:
       - "9091:9090"
     extra_hosts:

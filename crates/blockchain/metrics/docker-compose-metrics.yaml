@@ -2,7 +2,7 @@
 services:
   prometheus:
     image: prom/prometheus
-    command: --config.file=/etc/prometheus/prometheus.yaml
+    command: --config.file=/etc/prometheus/prometheus_docker.yaml
     #volumes: defined in the .overrides file
     #ports: defined in the .overrides file
   grafana:
