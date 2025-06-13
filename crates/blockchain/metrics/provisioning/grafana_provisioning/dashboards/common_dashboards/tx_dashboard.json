@@ -245,7 +245,7 @@
                     },
                     "disableTextWrap": false,
                     "editorMode": "code",
-                    "expr": "transac",
+                    "expr": "floor(increase(transactions_tracker[$__range]))",
                     "fullMetaSearch": false,
                     "hide": false,
                     "includeNullMetadata": true,
