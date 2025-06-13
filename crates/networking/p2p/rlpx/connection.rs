@@ -32,12 +32,11 @@ use crate::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::WrappedEIP4844Transaction;
 use ethrex_common::{
-    types::{MempoolTransaction, P2PTransaction, Transaction},
     H256, H512,
-    types::{MempoolTransaction, Transaction},
+    types::{MempoolTransaction, P2PTransaction, Transaction},
 };
-use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
+use ethrex_storage::error::StoreError;
 use futures::SinkExt;
 use k256::{PublicKey, SecretKey, ecdsa::SigningKey};
 use rand::random;
@@ -614,11 +613,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::PooledTransactions(msg) if peer_supports_eth => {
                 if self.blockchain.is_synced() {
                     if let Some(requested) = self.requested_pooled_txs.get(&msg.id) {
-                        //use error
-                        if msg.validate_request(requested).await.is_err() {
-                            //add reason
-                            log_peer_warn(&self.node, "disconnected");
-                            self.send_disconnect_message(None).await;
+                        if let Err(error) = msg.validate_requested(requested).await {
+                            log_peer_warn(
+                                &self.node,
+                                &format!("disconnected from peer. Reason: {}", error.to_string()),
+                            );
+                            self.send_disconnect_message(Some(DisconnectReason::SubprotocolError))
+                                .await;
                             return Err(RLPxError::Disconnected());
                         }
                     }

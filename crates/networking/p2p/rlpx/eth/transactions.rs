@@ -4,7 +4,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::P2PTransaction;
-use ethrex_common::{types::Transaction, H256};
+use ethrex_common::{H256, types::Transaction};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
@@ -219,7 +219,8 @@ impl PooledTransactions {
         }
     }
 
-    pub async fn validate_request(
+    /// validates if the received TXs match the request
+    pub async fn validate_requested(
         &self,
         requested: &NewPooledTransactionHashes,
     ) -> Result<(), MempoolError> {
