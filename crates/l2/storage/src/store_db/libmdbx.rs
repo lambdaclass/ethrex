@@ -326,14 +326,17 @@ table!(
     /// Transaction, deposits, withdrawals count
     ( OperationsCount ) u64 => OperationsCountRLP
 );
+
 table!(
     /// Signature by block hash
     ( SignatureByBlockHash ) [u8; 32] => [u8; 68]
 );
+
 table!(
     /// Signature by batch number
     ( SignatureByBatch ) u64 => [u8; 68]
 );
+
 table!(
     /// Blobs bundles by batch number
     ( BlobsBundles ) u64 => Rlp<Vec<Blob>>
