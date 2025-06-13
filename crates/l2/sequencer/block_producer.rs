@@ -56,7 +56,7 @@ impl BlockProducerState {
             block_time_ms: *block_time_ms,
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
-            rollup_store
+            rollup_store,
         }
     }
 }
@@ -80,8 +80,7 @@ impl BlockProducer {
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
     ) -> Result<(), BlockProducerError> {
-        let state =
-            BlockProducerState::new(&cfg.block_producer, store, rollup_store, blockchain);
+        let state = BlockProducerState::new(&cfg.block_producer, store, rollup_store, blockchain);
         let mut block_producer = BlockProducer::start(state);
         block_producer
             .cast(InMessage::Produce)
@@ -193,7 +192,8 @@ pub async fn produce_block(state: &BlockProducerState) -> Result<(), BlockProduc
     info!("Stored new block {:x}", block.hash());
     // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
-    state.rollup_store
+    state
+        .rollup_store
         .store_account_updates_by_block_number(block.header.number, account_updates)
         .await?;
 

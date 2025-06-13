@@ -85,16 +85,11 @@ pub async fn start_l2(
     .inspect_err(|err| {
         error!("Error starting Proof Coordinator: {err}");
     });
-    let _ = BlockProducer::spawn(
-        store.clone(),
-        rollup_store.clone(),
-        blockchain,
-        cfg.clone(),
-    )
-    .await
-    .inspect_err(|err| {
-        error!("Error starting Block Producer: {err}");
-    });
+    let _ = BlockProducer::spawn(store.clone(), rollup_store.clone(), blockchain, cfg.clone())
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Block Producer: {err}");
+        });
 
     let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     if needed_proof_types.contains(&ProverType::Aligned) {

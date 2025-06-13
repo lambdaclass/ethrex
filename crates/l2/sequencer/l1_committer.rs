@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, utils::random_duration};
-use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
+use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
 use spawned_rt::mpsc::Sender;
 
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
