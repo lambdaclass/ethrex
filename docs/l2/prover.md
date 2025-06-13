@@ -1,28 +1,26 @@
-# ethrex L2 Prover
+# Ethrex L2 prover
 
 ## Table of Contents
 
-- [ethrex L2 Prover](#ethrex-l2-prover)
+- [Ethrex L2 prover](#ethrex-l2-prover)
   - [Table of Contents](#table-of-contents)
   - [Intro](#intro)
   - [Workflow](#workflow)
   - [How](#how)
-    - [Test](#test)
     - [L1 block proving](#l1-block-proving)
     - [Dev Mode](#dev-mode)
       - [Run the whole system with the prover - In one Machine](#run-the-whole-system-with-the-prover---in-one-machine)
     - [GPU mode](#gpu-mode)
-      - [Proving Process Test](#proving-process-test)
       - [Run the whole system with a GPU Prover](#run-the-whole-system-with-a-gpu-prover)
   - [Configuration](#configuration)
   - [How it works](#how-it-works)
     - [Program inputs](#program-inputs)
       - [Execution witness](#execution-witness)
-    - [Blocks execution program](#block-execution-program)
+    - [Blocks execution program](#blocks-execution-program)
       - [Prelude 1: state trie basics](#prelude-1-state-trie-basics)
       - [Prelude 2: deposits, withdrawals and state diffs](#prelude-2-deposits-withdrawals-and-state-diffs)
       - [Step 1: initial state validation](#step-1-initial-state-validation)
-      - [Step 2: blocks execution](#step-2-block-execution)
+      - [Step 2: blocks execution](#step-2-blocks-execution)
       - [Step 3: final state validation](#step-3-final-state-validation)
       - [Step 4: deposit hash calculation](#step-4-deposit-hash-calculation)
       - [Step 5: withdrawals Merkle root calculation](#step-5-withdrawals-merkle-root-calculation)

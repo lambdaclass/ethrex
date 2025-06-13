@@ -1,11 +1,14 @@
-# ethrex L2 Contracts
+# Ethrex L2 contracts
 
 ## ToC
 
-- [ethrex L2 Contracts](#ethrex-l2-contracts)
+- [Ethrex L2 contracts](#ethrex-l2-contracts)
   - [ToC](#toc)
   - [L1 side](#l1-side)
     - [`CommonBridge`](#commonbridge)
+      - [Deposit Functions](#deposit-functions)
+        - [Simple Deposits](#simple-deposits)
+        - [Deposits with Contract Interaction](#deposits-with-contract-interaction)
     - [`OnChainOperator`](#onchainoperator)
     - [`Verifier`](#verifier)
   - [L2 side](#l2-side)

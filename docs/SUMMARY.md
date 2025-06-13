@@ -14,8 +14,14 @@
   - [Sync modes]()
   - [Pruning]()
 
-- [Layer 2]()
-  - [Quickstart]()
+- [Layer 2](./l2/README.md)
+  - [General overview](./l2/overview.md)
+  - [Sequencer](./l2/sequencer.md)
+  - [Contracts](./l2/contracts.md)
+  - [Prover](./l2/prover.md)
+  - [State Diffs](./l2/state_diffs.md)
+  - [Withdrawals](./l2/withdrawals.md)
+  - [Aligned mode](./l2/aligned_mode.md)
 
 - [Developers](./developers/README.md)
   - [Quickstart](./developers/quickstart.md)
