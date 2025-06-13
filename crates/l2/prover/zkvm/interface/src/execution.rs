@@ -3,34 +3,34 @@ use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::{
     validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
 };
+use ethrex_common::Address;
 use ethrex_common::types::AccountUpdate;
 use ethrex_common::types::{
     block_execution_witness::ExecutionWitnessError, block_execution_witness::ExecutionWitnessResult,
 };
-use ethrex_common::Address;
 use ethrex_common::{
-    types::{Block, BlockHeader},
     H256,
+    types::{Block, BlockHeader},
 };
 use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDBError};
 use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
-    blob_from_bytes, kzg_commitment_to_versioned_hash, BlobsBundleError, Commitment,
-    PrivilegedL2Transaction, Proof, Receipt, Transaction,
+    BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, Transaction,
+    blob_from_bytes, kzg_commitment_to_versioned_hash,
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
-    deposits::{compute_deposit_logs_hash, get_block_deposits, DepositError},
-    state_diff::{prepare_state_diff, StateDiff, StateDiffError},
+    deposits::{DepositError, compute_deposit_logs_hash, get_block_deposits},
+    state_diff::{StateDiff, StateDiffError, prepare_state_diff},
     withdrawals::{
-        compute_withdrawals_merkle_root, get_block_withdrawals, get_withdrawal_hash,
-        WithdrawalError,
+        WithdrawalError, compute_withdrawals_merkle_root, get_block_withdrawals,
+        get_withdrawal_hash,
     },
 };
 #[cfg(feature = "l2")]
-use kzg_rs::{get_kzg_settings, Blob, Bytes48, KzgProof};
+use kzg_rs::{Blob, Bytes48, KzgProof, get_kzg_settings};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StatelessExecutionError {

@@ -4,7 +4,7 @@ use crate::{
     network::Network,
     types::{BlockWithRLP, TestUnit},
 };
-use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
+use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
 use ethrex_common::types::{
     Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader, EMPTY_KECCACK_HASH,
 };
@@ -111,7 +111,7 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         block_fixture
             .expect_exception
             .as_ref()
-            .map_or(false, |s| s.starts_with(case))
+            .is_some_and(|s| s.starts_with(case))
     });
 
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
