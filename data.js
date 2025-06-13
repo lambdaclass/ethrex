@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749847674891,
+  "lastUpdate": 1749857006383,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12865,6 +12865,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182452589335,
             "range": "± 382106435",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fdfbcc29ef12dcdd7c167a3d3562f707e16f81ff",
+          "message": "docs(l2): move L2 docs and quickstart guide to mdbook (#3171)\n\n**Motivation**\n\nOur documentation is scattered around the repo. We want it to be easy to\nfind.\n\n**Description**\n\nThis PR puts L2 documentation under `docs/l2` and the developer\nquickstart guide under `docs/developers`.\n\nIt also adds `linkcheck` as an optional renderer, which checks for\nbroken links and fixes a stale part of the L2 prover documentation.\n\nNote that I also had to cherry-pick\n67ce6262178c7a37dc8328536bd9e5f34abcc9f1 from #3163\n\nThis is the current structure:\n\n<img width=\"293\" alt=\"Screenshot 2025-06-13 at 18 46 03\"\nsrc=\"https://github.com/user-attachments/assets/efb29ab0-b79d-4106-8e27-5c5d60fb6287\"\n/>",
+          "timestamp": "2025-06-13T22:30:17Z",
+          "tree_id": "bf84952d171fb2a88f359ce017d4a0fcdc579444",
+          "url": "https://github.com/lambdaclass/ethrex/commit/fdfbcc29ef12dcdd7c167a3d3562f707e16f81ff"
+        },
+        "date": 1749856999906,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183498451451,
+            "range": "± 501824378",
             "unit": "ns/iter"
           }
         ]
