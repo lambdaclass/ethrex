@@ -17,5 +17,5 @@ interface IL1Messenger {
 
     /// @notice Sends the given data to the L1
     /// @param data data to be sent to L1
-    function send(bytes calldata data) external;
+    function sendMessageToL1(bytes calldata data) external;
 }
