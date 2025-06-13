@@ -7,7 +7,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::error::ChainError;
-use ethrex_common::types::Genesis;
+use ethrex_common::types::{BlockNumber, Genesis};
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -15,8 +15,8 @@ use ethrex_vm::EvmEngine;
 use tracing::{Level, info, warn};
 
 use crate::{
-    archive_sync::archive_sync,
     DEFAULT_DATADIR,
+    archive_sync::archive_sync,
     initializers::{init_blockchain, init_store, open_store},
     networks::{Network, PublicNetwork},
     utils::{self, get_client_version, set_datadir},

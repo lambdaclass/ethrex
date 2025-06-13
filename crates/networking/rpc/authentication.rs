@@ -5,7 +5,7 @@ use axum_extra::{
 };
 use bytes::Bytes;
 use jsonwebtoken::{
-    decode, encode, Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation,
+    Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation, decode, encode,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -42,11 +42,11 @@ struct Claims {
 
 /// Generate a jwt token based on the secret key
 /// This should be used to perform authenticated requests to a node with known jwt secret
-pub fn generate_jwt_token<'a>(secret: &Bytes) -> Result<String, jsonwebtoken::errors::Error> {
+pub fn generate_jwt_token(secret: &Bytes) -> Result<String, jsonwebtoken::errors::Error> {
     let claims = Claims {
         iat: SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("Failed to measure time")
             .as_secs() as usize,
         id: None,
         clv: None,
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn generated_token_is_valid() {
-        let jwt_secret = Bytes::from(generate_jwt_secret());
+        let jwt_secret = generate_jwt_secret();
         let jwt_token = generate_jwt_token(&jwt_secret).unwrap();
         assert!(validate_jwt_authentication(&jwt_token, &jwt_secret).is_ok())
     }
