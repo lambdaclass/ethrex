@@ -556,3 +556,22 @@ pub async fn initialize_contract(
 
     Ok(initialize_tx_hash)
 }
+
+pub async fn call_contract(
+    client: &EthClient,
+    private_key: &SecretKey,
+    to: Address,
+    signature: &str,
+    parameters: Vec<Value>,
+) -> Result<H256, EthClientError> {
+    let calldata = encode_calldata(signature, &parameters)?.into();
+    let from = get_address_from_secret_key(private_key)?;
+    let tx = client
+        .build_eip1559_transaction(to, from, calldata, Default::default())
+        .await?;
+
+    let tx_hash = client.send_eip1559_transaction(&tx, private_key).await?;
+
+    wait_for_transaction_receipt(tx_hash, client, 100).await?;
+    Ok(tx_hash)
+}
