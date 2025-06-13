@@ -1,7 +1,3 @@
-use ethrex_l2::utils::prover::proving_systems::{
-    BatchProof, ProofBytes, ProofCalldata, ProverType,
-};
-use ethrex_l2_sdk::calldata::Value;
 use sp1_sdk::{
     EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
@@ -9,6 +5,11 @@ use sp1_sdk::{
 use std::{fmt::Debug, sync::LazyLock};
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
+
+use ethrex_l2_common::{
+    calldata::Value,
+    prover::{BatchProof, ProofBytes, ProofCalldata, ProverType},
+};
 
 static PROGRAM_ELF: &[u8] =
     include_bytes!("../../zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf");
