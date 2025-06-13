@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749825079575,
+  "lastUpdate": 1749827464213,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12655,6 +12655,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182249779202,
             "range": "± 312356086",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a9cb97fa0dda3e8683729bb7818cd9dfc366b22c",
+          "message": "ci(levm): added eftests job trigger on changes to runner (#2696)\n\n**Motivation**\n\nProperly test changes to runner don't break test execution.\n\n**Description**\n\nCurrently we don't trigger a run of the ef tests when changes to the\ntest runner are made. This PR changes the CI so it does.\n\nCloses #2634",
+          "timestamp": "2025-06-13T14:17:30Z",
+          "tree_id": "0aaa777f61ac2609f62522da35fe8b707208cd23",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a9cb97fa0dda3e8683729bb7818cd9dfc366b22c"
+        },
+        "date": 1749827457025,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182561983988,
+            "range": "± 3466238695",
             "unit": "ns/iter"
           }
         ]
