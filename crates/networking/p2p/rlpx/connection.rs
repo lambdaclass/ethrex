@@ -137,7 +137,7 @@ pub(crate) struct RLPxConnection<S> {
     store_rollup: StoreRollup,
     based: bool,
     #[cfg(feature = "l2")]
-    secret_key: Option<SigningKeySecp256k1>,
+    committer_key: Option<SigningKeySecp256k1>,
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
@@ -153,7 +153,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         connection_broadcast: RLPxConnBroadcastSender,
         #[cfg(feature = "l2")] store_rollup: StoreRollup,
         based: bool,
-        #[cfg(feature = "l2")] secret_key: Option<SigningKeySecp256k1>,
+        #[cfg(feature = "l2")] committer_key: Option<SigningKeySecp256k1>,
     ) -> Self {
         Self {
             signer,
@@ -181,7 +181,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             store_rollup,
             based,
             #[cfg(feature = "l2")]
-            secret_key,
+            committer_key,
         }
     }
 
@@ -557,7 +557,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     recovery_id.copy_from_slice(&recovered_sig[64..68]);
                     (signature, recovery_id)
                 } else {
-                    let Some(secret_key) = self.secret_key else {
+                    let Some(secret_key) = self.committer_key else {
                         return Err(RLPxError::InternalError(
                             "Secret key is not set for based connection".to_string(),
                         ));
@@ -610,7 +610,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 recovery_id.copy_from_slice(&recovered_sig[64..68]);
                 (signature, recovery_id)
             } else {
-                let Some(secret_key) = self.secret_key else {
+                let Some(secret_key) = self.committer_key else {
                     return Err(RLPxError::InternalError(
                         "Secret key is not set for based connection".to_string(),
                     ));

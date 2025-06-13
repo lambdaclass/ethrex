@@ -68,7 +68,7 @@ where
         context.store_rollup.clone(),
         context.based,
         #[cfg(feature = "l2")]
-        context.secret_key,
+        context.committer_key,
     ))
 }
 
@@ -101,7 +101,7 @@ where
         context.store_rollup.clone(),
         context.based,
         #[cfg(feature = "l2")]
-        context.secret_key,
+        context.committer_key,
     ))
 }
 

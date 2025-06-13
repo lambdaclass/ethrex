@@ -801,7 +801,7 @@ pub(super) mod tests {
             based: false,
             #[cfg(feature = "l2")]
             store_rollup: StoreRollup::default(),
-            secret_key: None,
+            committer_key: None,
         };
 
         let discv4 = Discv4Server::try_new(ctx.clone()).await?;
