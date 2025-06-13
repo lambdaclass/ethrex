@@ -2,7 +2,7 @@ use ethrex_common::types::ChainConfig;
 use eyre::WrapErr;
 
 use crate::{
-    cache::{load_cache, write_cache, Cache},
+    cache::{Cache, load_cache, write_cache},
     rpc::{get_block, get_latest_block_number, get_witness, get_witness_range},
 };
 

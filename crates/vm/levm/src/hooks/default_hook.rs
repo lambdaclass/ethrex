@@ -8,8 +8,8 @@ use crate::{
 };
 
 use ethrex_common::{
-    types::{Account, Fork},
     Address, U256,
+    types::{Account, Fork},
 };
 
 use std::cmp::max;

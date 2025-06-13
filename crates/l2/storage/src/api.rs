@@ -3,8 +3,8 @@
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use ethrex_common::{
-    types::{Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 use ethrex_storage::error::StoreError;
 

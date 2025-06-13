@@ -4,7 +4,7 @@ use directories::ProjectDirs;
 use ethrex_common::types::AccountUpdate;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
-use std::fs::{create_dir, read_dir, File};
+use std::fs::{File, create_dir, read_dir};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::{
@@ -83,7 +83,6 @@ fn get_proof_file_name_from_prover_type(prover_type: &ProverType, batch_number: 
         ProverType::TDX => format!("proof_tdx_{batch_number}.json"),
         ProverType::RISC0 => format!("proof_risc0_{batch_number}.json"),
         ProverType::SP1 => format!("proof_sp1_{batch_number}.json").to_owned(),
-        ProverType::Pico => format!("proof_pico_{batch_number}.json").to_owned(),
         ProverType::Aligned => format!("proof_aligned_{batch_number}.json").to_owned(),
     }
 }
@@ -394,12 +393,12 @@ pub fn batch_number_has_all_needed_proofs(
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use ethrex_blockchain::{vm::StoreVmDatabase, Blockchain};
+    use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
     use ethrex_levm::db::gen_db::GeneralizedDatabase;
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::{
-        backends::levm::{CacheDB, LEVM},
         DynVmDatabase,
+        backends::levm::{CacheDB, LEVM},
     };
 
     use super::*;
@@ -453,10 +452,6 @@ mod tests {
             prover_type: ProverType::SP1,
             calldata: Vec::new(),
         });
-        let pico_calldata = BatchProof::ProofCalldata(ProofCalldata {
-            prover_type: ProverType::Pico,
-            calldata: Vec::new(),
-        });
 
         // Write all the account_updates and proofs for each block
         // TODO: Update. We are executing only the last block and using the block_number as batch_number
@@ -487,11 +482,6 @@ mod tests {
             write_state(
                 block.header.number,
                 &StateType::BatchProof(sp1_calldata.clone()),
-            )?;
-
-            write_state(
-                block.header.number,
-                &StateType::BatchProof(pico_calldata.clone()),
             )?;
         }
 
@@ -568,10 +558,6 @@ mod tests {
         // Read SP1 Proof back
         let read_proof_updates_blk2 = read_proof(2, StateFileType::BatchProof(ProverType::SP1))?;
         assert_eq!(read_proof_updates_blk2, sp1_calldata);
-
-        // Read Pico Proof back
-        let read_proof_updates_blk2 = read_proof(2, StateFileType::BatchProof(ProverType::Pico))?;
-        assert_eq!(read_proof_updates_blk2, pico_calldata);
 
         fs::remove_dir_all(default_datadir()?)?;
 

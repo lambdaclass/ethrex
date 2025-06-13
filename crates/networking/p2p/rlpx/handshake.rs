@@ -14,7 +14,7 @@ use crate::{
     types::Node,
 };
 use aes::cipher::{KeyIvInit, StreamCipher};
-use ethrex_common::{Signature, H128, H256, H512};
+use ethrex_common::{H128, H256, H512, Signature};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -22,9 +22,9 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use k256::{
+    PublicKey, SecretKey,
     ecdsa::{self, RecoveryId, SigningKey, VerifyingKey},
     elliptic_curve::sec1::ToEncodedPoint,
-    PublicKey, SecretKey,
 };
 use rand::Rng;
 use sha3::{Digest, Keccak256};
@@ -53,7 +53,7 @@ where
         peer_addr.port(),
         remote_state.public_key,
     );
-    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
+    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
     log_peer_debug(&node, "Completed handshake as receiver!");
     Ok(RLPxConnection::new(
         context.signer,
@@ -81,7 +81,7 @@ where
     // keccak256(nonce || initiator-nonce)
     let hashed_nonces: [u8; 32] =
         Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
-    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
+    let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces)?;
     log_peer_debug(&node, "Completed handshake as initiator!");
     Ok(RLPxConnection::new(
         context.signer,
@@ -218,7 +218,9 @@ fn encode_auth_message(
     let public_key = decompress_pubkey(&static_key.public_key());
 
     // Derive a shared secret from the static keys.
-    let static_shared_secret = ecdh_xchng(static_key, remote_static_pubkey);
+    let static_shared_secret = ecdh_xchng(static_key, remote_static_pubkey).map_err(|error| {
+        RLPxError::CryptographyError(format!("Invalid generated static shared secret: {error}"))
+    })?;
 
     // Create the signature included in the message.
     let signature = sign_shared_secret(
@@ -249,7 +251,9 @@ fn decode_auth_message(
 
     // Derive a shared secret from the static keys.
     let peer_pk = compress_pubkey(auth.public_key).ok_or(RLPxError::InvalidPeerId())?;
-    let static_shared_secret = ecdh_xchng(static_key, &peer_pk);
+    let static_shared_secret = ecdh_xchng(static_key, &peer_pk).map_err(|error| {
+        RLPxError::CryptographyError(format!("Invalid generated static shared secret: {error}"))
+    })?;
     let remote_ephemeral_key =
         retrieve_remote_ephemeral_key(static_shared_secret.into(), auth.nonce, auth.signature)?;
     Ok((auth, remote_ephemeral_key))
@@ -299,16 +303,22 @@ fn decrypt_message(
     let (c, d) = rest.split_at(rest.len() - 32);
 
     // Derive the message shared secret.
-    let shared_secret = ecdh_xchng(static_key, &PublicKey::from_sec1_bytes(pk)?);
+    let shared_secret =
+        ecdh_xchng(static_key, &PublicKey::from_sec1_bytes(pk)?).map_err(|error| {
+            RLPxError::CryptographyError(format!("Invalid generated shared secret: {error}"))
+        })?;
 
     // Derive the AES and MAC keys from the message shared secret.
     let mut buf = [0; 32];
-    kdf(&shared_secret, &mut buf);
+    kdf(&shared_secret, &mut buf).map_err(|error| {
+        RLPxError::CryptographyError(format!("Couldn't get keys from shared secret: {error}"))
+    })?;
     let aes_key = &buf[..16];
     let mac_key = sha256(&buf[16..]);
 
     // Verify the MAC.
-    let expected_d = sha256_hmac(&mac_key, &[iv, c], size_data);
+    let expected_d = sha256_hmac(&mac_key, &[iv, c], size_data)
+        .map_err(|error| RLPxError::CryptographyError(error.to_string()))?;
     if d != expected_d {
         return Err(RLPxError::HandshakeError(String::from("Invalid MAC")));
     }
@@ -346,11 +356,15 @@ fn encrypt_message(
     let message_secret_key = SecretKey::random(&mut rng);
 
     // Derive a shared secret for this message.
-    let message_secret = ecdh_xchng(&message_secret_key, remote_static_pubkey);
+    let message_secret =
+        ecdh_xchng(&message_secret_key, remote_static_pubkey).map_err(|error| {
+            RLPxError::CryptographyError(format!("Invalid generated message secret:  {error}"))
+        })?;
 
     // Derive the AES and MAC keys from the message secret.
     let mut secret_keys = [0; 32];
-    kdf(&message_secret, &mut secret_keys);
+    kdf(&message_secret, &mut secret_keys)
+        .map_err(|error| RLPxError::CryptographyError(error.to_string()))?;
     let aes_key = &secret_keys[..16];
     let mac_key = sha256(&secret_keys[16..]);
 
@@ -362,7 +376,8 @@ fn encrypt_message(
 
     // Use the MAC secret to compute the MAC.
     let r_public_key = message_secret_key.public_key().to_encoded_point(false);
-    let mac_footer = sha256_hmac(&mac_key, &[&iv.0, &encrypted_auth_msg], &auth_size_bytes);
+    let mac_footer = sha256_hmac(&mac_key, &[&iv.0, &encrypted_auth_msg], &auth_size_bytes)
+        .map_err(|error| RLPxError::CryptographyError(error.to_string()))?;
 
     // Return the message
     Ok([
@@ -525,7 +540,9 @@ mod tests {
     fn test_ack_decoding() {
         // This is the Ack₂ message from EIP-8.
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-8.md
-        let msg = hex!("01ea0451958701280a56482929d3b0757da8f7fbe5286784beead59d95089c217c9b917788989470b0e330cc6e4fb383c0340ed85fab836ec9fb8a49672712aeabbdfd1e837c1ff4cace34311cd7f4de05d59279e3524ab26ef753a0095637ac88f2b499b9914b5f64e143eae548a1066e14cd2f4bd7f814c4652f11b254f8a2d0191e2f5546fae6055694aed14d906df79ad3b407d94692694e259191cde171ad542fc588fa2b7333313d82a9f887332f1dfc36cea03f831cb9a23fea05b33deb999e85489e645f6aab1872475d488d7bd6c7c120caf28dbfc5d6833888155ed69d34dbdc39c1f299be1057810f34fbe754d021bfca14dc989753d61c413d261934e1a9c67ee060a25eefb54e81a4d14baff922180c395d3f998d70f46f6b58306f969627ae364497e73fc27f6d17ae45a413d322cb8814276be6ddd13b885b201b943213656cde498fa0e9ddc8e0b8f8a53824fbd82254f3e2c17e8eaea009c38b4aa0a3f306e8797db43c25d68e86f262e564086f59a2fc60511c42abfb3057c247a8a8fe4fb3ccbadde17514b7ac8000cdb6a912778426260c47f38919a91f25f4b5ffb455d6aaaf150f7e5529c100ce62d6d92826a71778d809bdf60232ae21ce8a437eca8223f45ac37f6487452ce626f549b3b5fdee26afd2072e4bc75833c2464c805246155289f4");
+        let msg = hex!(
+            "01ea0451958701280a56482929d3b0757da8f7fbe5286784beead59d95089c217c9b917788989470b0e330cc6e4fb383c0340ed85fab836ec9fb8a49672712aeabbdfd1e837c1ff4cace34311cd7f4de05d59279e3524ab26ef753a0095637ac88f2b499b9914b5f64e143eae548a1066e14cd2f4bd7f814c4652f11b254f8a2d0191e2f5546fae6055694aed14d906df79ad3b407d94692694e259191cde171ad542fc588fa2b7333313d82a9f887332f1dfc36cea03f831cb9a23fea05b33deb999e85489e645f6aab1872475d488d7bd6c7c120caf28dbfc5d6833888155ed69d34dbdc39c1f299be1057810f34fbe754d021bfca14dc989753d61c413d261934e1a9c67ee060a25eefb54e81a4d14baff922180c395d3f998d70f46f6b58306f969627ae364497e73fc27f6d17ae45a413d322cb8814276be6ddd13b885b201b943213656cde498fa0e9ddc8e0b8f8a53824fbd82254f3e2c17e8eaea009c38b4aa0a3f306e8797db43c25d68e86f262e564086f59a2fc60511c42abfb3057c247a8a8fe4fb3ccbadde17514b7ac8000cdb6a912778426260c47f38919a91f25f4b5ffb455d6aaaf150f7e5529c100ce62d6d92826a71778d809bdf60232ae21ce8a437eca8223f45ac37f6487452ce626f549b3b5fdee26afd2072e4bc75833c2464c805246155289f4"
+        );
         let static_key_a = SecretKey::from_slice(&hex!(
             "49a7b37aa6f6645917e7b807e9d1c00d4fa71f18343b0d4122a4d2df64dd6fee"
         ))

@@ -1,9 +1,9 @@
-use axum::{routing::get, Router};
+use axum::{Router, routing::get};
 
 #[cfg(feature = "l2")]
 use crate::metrics_l2::METRICS_L2;
 
-use crate::{metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX, MetricsApiError};
+use crate::{MetricsApiError, metrics_blocks::METRICS_BLOCKS, metrics_transactions::METRICS_TX};
 
 pub async fn start_prometheus_metrics_api(
     address: String,
