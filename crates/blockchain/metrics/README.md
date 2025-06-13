@@ -27,3 +27,12 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l2.overr
       - pwd: `admin` 
     - PORT `9092` &rarr; Prometheus
 
+
+### Alerts
+
+An extra `overrides` file is available that enable alerts about the chain status. The alerts notify via Slack when the L2 is not advancing, the mempool is increasing fast (probably meaning that transactions are not getting processed), and if the chain is not advancing in L1.
+To enable this feature, add the `docker-compose-metrics-alerts.override.yaml` file to the Docker Compose command. Also, the following environment variables **must** be set up:
+
+- `GRAFANA_SLACK_CHANNEL`: The name of the channel (or user ID) where the will be sent.
+- `GRAFANA_SLACK_TOKEN`: A Slack token with write permissions on the desired channel's chat. This token starts with `xoxb-`.
+
