@@ -10,18 +10,27 @@ fn main() {
 
 #[cfg(feature = "risc0")]
 fn build_risc0_program() {
+    use risc0_build::{DockerOptionsBuilder, GuestOptionsBuilder, embed_methods_with_options};
+
     let features = if cfg!(feature = "l2") {
         vec!["l2".to_string()]
     } else {
         vec![]
     };
 
-    risc0_build::embed_methods_with_options(std::collections::HashMap::from([(
+    let docker_options = DockerOptionsBuilder::default()
+        .root_dir(format!("{}/../../../../../", env!("CARGO_MANIFEST_DIR")))
+        .build()
+        .unwrap();
+    let guest_options = GuestOptionsBuilder::default()
+        .features(features)
+        //.use_docker(docker_options)
+        .build()
+        .unwrap();
+
+    embed_methods_with_options(std::collections::HashMap::from([(
         "zkvm-risc0-program",
-        risc0_build::GuestOptions {
-            features,
-            ..Default::default()
-        },
+        guest_options,
     )]));
 }
 
