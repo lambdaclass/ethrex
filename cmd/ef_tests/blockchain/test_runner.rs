@@ -156,9 +156,9 @@ fn exception_is_expected(
     })
 }
 
-fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &String) -> bool {
+fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> bool {
     matches!(
-        (msg.as_str(), expected_msg.as_str()),
+        (msg, expected_msg.as_str()),
         (
             "reject transactions from senders with deployed code",
             "Sender account shouldn't be a contract"
