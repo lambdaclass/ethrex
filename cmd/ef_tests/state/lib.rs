@@ -1,4 +1,4 @@
-pub mod deserialize;
+mod deserialize;
 pub mod parser;
 mod report;
 pub mod runner;
