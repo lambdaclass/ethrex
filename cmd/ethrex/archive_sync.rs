@@ -35,6 +35,7 @@ struct Dump {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct DumpAccount {
+    #[serde(deserialize_with = "serde_utils::u256::deser_dec_str")]
     balance: U256,
     nonce: u64,
     #[serde(rename = "root")]
