@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749834366020,
+  "lastUpdate": 1749836800156,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15238,6 +15238,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.008494263611859839,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "68ff2edc7680b0016da86e1cde1b0c444864d026",
+          "message": "ci(l2): follow logs before running tests (#3157)\n\n**Motivation**\n\nThe integration test is running forever and timing out because we are\nrunning `docker logs --follow ethrex_l2` this command never exits so the\nstep never ends\n\n**Description**\n\nModify the order of execution, first follow the logs then run the test",
+          "timestamp": "2025-06-13T14:43:37Z",
+          "tree_id": "28df4086659bdd616972671ea394efd537d83e51",
+          "url": "https://github.com/lambdaclass/ethrex/commit/68ff2edc7680b0016da86e1cde1b0c444864d026"
+        },
+        "date": 1749836799733,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008544934381778743,
             "unit": "Mgas/s"
           }
         ]
