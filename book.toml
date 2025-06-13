@@ -10,6 +10,8 @@ edition = "2024"
 # To render GitHub style alerts
 # https://github.com/lambdalisue/rs-mdbook-alerts
 [preprocessor.alerts]
+# This is to avoid warnings about incomplete links on each alert
+renderers = ["html", "linkcheck"]
 
 [output.html]
 git-repository-url = "https://github.com/lambdaclass/ethrex"
