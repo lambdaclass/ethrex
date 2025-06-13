@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749772438342,
+  "lastUpdate": 1749820198664,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12595,6 +12595,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 185207442697,
             "range": "± 591461202",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d18d897b6f32a7f66221024c5189101a95f78d7d",
+          "message": "fix(l2): intrinsic gas overflow (#3152)\n\n**Motivation**\n\nSometimes, when running the L2, the `l1_committer` gets stuck with the\nfollowing logs:\n\n```\n2025-06-12T17:52:42.387911Z  WARN ethrex_rpc::clients::eth: max_fee_per_gas exceeds the allowed limit, adjusting it to 10000000000\n2025-06-12T17:52:42.398521Z ERROR ethrex_l2::sequencer::l1_committer: L1 Committer Error: Committer failed to send transaction: Failed to send commitment for batch 6. first_block: 50 last_block: 61: Committer failed because of an EthClient error: eth_sendRawTransaction request error: Invalid params: Transaction intrinsic gas overflow\n```\n\nThe reason is that during transaction bumping, we increase both\n`max_fee_per_gas` and `max_priority_fee_per_gas`. However, when\n`max_fee_per_gas` reaches the `maximum_allowed_max_fee_per_gas`, we cap\nonly `max_fee_per_gas`, leaving `max_priority_fee_per_gas` with an\ninvalid value (exceeding `max_fee_per_gas`).\n\n**Description**\n\n- Ensure that `max_priority_fee_per_gas` doesn't exceed\n`max_fee_per_gas`.\n\nCloses None",
+          "timestamp": "2025-06-13T12:14:26Z",
+          "tree_id": "802cadca8c101e41020a1316a39af3a4d574220a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d18d897b6f32a7f66221024c5189101a95f78d7d"
+        },
+        "date": 1749820190032,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 186141967346,
+            "range": "± 1398964117",
             "unit": "ns/iter"
           }
         ]
