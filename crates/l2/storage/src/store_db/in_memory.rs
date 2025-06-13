@@ -35,7 +35,7 @@ struct StoreInner {
     /// Metrics for transaction, deposits and withdrawals count
     operations_counts: [u64; 3],
     /// Map of block number to account updates
-    account_updates_by_block: HashMap<BlockNumber, Vec<AccountUpdate>>,
+    account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
 }
 
 impl Store {
