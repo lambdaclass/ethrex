@@ -7,6 +7,10 @@ title = "Ethrex"
 [rust]
 edition = "2024"
 
+# To render GitHub style alerts
+# https://github.com/lambdalisue/rs-mdbook-alerts
+[preprocessor.alerts]
+
 [output.html]
 git-repository-url = "https://github.com/lambdaclass/ethrex"
 # make sections collapsible, and start with the first section uncollapsed
