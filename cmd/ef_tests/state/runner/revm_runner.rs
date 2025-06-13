@@ -101,7 +101,8 @@ pub async fn re_run_failed_ef_test(
                 EFTestRunnerError::VMInitializationFailed(_)
                 | EFTestRunnerError::ExecutionFailedUnexpectedly(_)
                 | EFTestRunnerError::FailedToEnsurePreState(_)
-                | EFTestRunnerError::EIP7702ShouldNotBeCreateType => continue,
+                | EFTestRunnerError::EIP7702ShouldNotBeCreateType
+                | EFTestRunnerError::CITestsFailed => continue,
                 EFTestRunnerError::VMExecutionMismatch(reason) => {
                     return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
                         format!(
@@ -458,7 +459,7 @@ pub async fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunn
                 continue;
             }
             match _run_ef_test_tx_revm(vector, test, fork).await {
-                Ok(_) => continue,
+                Ok(_) | Err(EFTestRunnerError::CITestsFailed) => continue, // An EFTestRunnerError::CITestsFailed can't happen at this point.
                 Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
                     ef_test_report_fork.register_vm_initialization_failure(reason, *vector);
                 }

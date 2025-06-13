@@ -40,7 +40,7 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                 continue;
             }
             match run_ef_test_tx(vector, test, fork).await {
-                Ok(_) => continue,
+                Ok(_) | Err(EFTestRunnerError::CITestsFailed) => continue, // An EFTestRunnerError::CITestsFailed can't happen at this point.
                 Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
                     ef_test_report_fork.register_vm_initialization_failure(reason, *vector);
                 }
@@ -177,7 +177,7 @@ pub fn prepare_vm_for_tx<'a>(
             timestamp: test.env.current_timestamp,
             prev_randao: test.env.current_random,
             difficulty: test.env.current_difficulty,
-            chain_id: U256::from(1),
+            chain_id: U256::from(10),
             base_fee_per_gas: test.env.current_base_fee.unwrap_or_default(),
             gas_price: effective_gas_price(test, &test_tx)?,
             block_excess_blob_gas: test.env.current_excess_blob_gas,
