@@ -17,6 +17,29 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::{ops::Mul, str::FromStr, time::Duration};
 
+/// Test the full flow of depositing, depositing with contract call, transferring, and withdrawing funds
+/// from L1 to L2 and back.
+/// The test can be configured with the following environment variables
+///
+/// RPC urls:
+/// INTEGRATION_TEST_ETH_URL: The url of the l1 rpc server
+/// INTEGRATION_TEST_PROPOSER_URL: The url of the l2 rpc server
+///
+/// Accounts private keys:
+/// INTEGRATION_TEST_L1_RICH_WALLET_PRIVATE_KEY: The l1 private key that will make the deposit to the l2 and the transfer to the second l2 account
+/// INTEGRATION_TEST_RETURN_TRANSFER_PRIVATE_KEY: The l2 private key that will receive the deposit and the transfer it back to the L1_RICH_WALLET_PRIVATE_KEY
+/// ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH: The path to a file with pks that are rich accounts in the l2
+///
+/// Contract addresses:
+/// ETHREX_WATCHER_BRIDGE_ADDRESS: The address of the l1 bridge contract
+/// INTEGRATION_TEST_PROPOSER_COINBASE_ADDRESS: The address of the l2 coinbase
+///
+/// Test parameters
+///
+/// INTEGRATION_TEST_DEPOSIT_VALUE: amount in wei to deposit from L1_RICH_WALLET_PRIVATE_KEY to the l2, this amount will be deposited 3 times over the course of the test
+/// INTEGRATION_TEST_TRANSFER_VALUE: amount in wei to transfer to INTEGRATION_TEST_RETURN_TRANSFER_PRIVATE_KEY, this amount will be returned to the account
+/// INTEGRATION_TEST_WITHDRAW_VALUE: amount in wei to withdraw from the l2 back to the l1 from L1_RICH_WALLET_PRIVATE_KEY this will be done INTEGRATION_TEST_WITHDRAW_COUNT times
+/// INTEGRATION_TEST_WITHDRAW_COUNT: amount of withdraw transactions to send
 const DEFAULT_ETH_URL: &str = "http://localhost:8545";
 const DEFAULT_PROPOSER_URL: &str = "http://localhost:1729";
 // 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
@@ -43,9 +66,6 @@ const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
 const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 
 const DEFAULT_PRIVATE_KEYS_FILE_PATH: &str = "../../test_data/private_keys_l1.txt";
-
-/// Test the full flow of depositing, depositing with contract call, transferring, and withdrawing funds
-/// from L1 to L2 and back.
 
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
