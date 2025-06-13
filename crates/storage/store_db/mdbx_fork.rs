@@ -196,10 +196,13 @@ impl MDBXFork {
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        self.read_sync::<CanonicalBlockHashes>(number)?
+        let r = self
+            .read_sync::<CanonicalBlockHashes>(number)?
             .map(|block_hash| Rlp::<BlockHash>::from_bytes(block_hash).to())
             .transpose()
-            .map_err(StoreError::from)
+            .map_err(StoreError::from);
+
+        r
     }
 }
 
@@ -521,33 +524,32 @@ impl StoreEngine for MDBXFork {
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
-        let db = self.env.clone();
+        let key = transaction_hash.encode_to_vec();
+        let tx = self.env.tx()?;
 
-        let res = tokio::task::spawn_blocking(
-            move || -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
-                let key = transaction_hash.encode_to_vec();
-                let tx = db.tx()?;
-                let mut cursor = tx.cursor_dup_read::<TransactionLocations>()?;
-                if cursor.seek_exact(key.clone())?.is_none() {
-                    return Ok(None);
-                }
-                let walker = cursor.walk(Some(key))?;
-                for elem in walker {
-                    let (_, encoded_tuple) = elem?;
-                    let (bn, bh, indx) = <(BlockNumber, BlockHash, Index)>::decode(&encoded_tuple)?;
-                    if let Some(block_hash) = tx.get::<CanonicalBlockHashes>(bn)? {
-                        let block_hash: BlockHash = RLPDecode::decode(&block_hash)?;
-                        if block_hash == bh {
-                            return Ok(Some((bn, bh, indx)));
-                        }
-                    }
-                }
-                Ok(None)
-            },
-        )
-        .await??;
+        let mut transaction_hashes: Vec<(BlockNumber, BlockHash, Index)> = Vec::new();
+        let mut cursor = tx.cursor_dup_read::<TransactionLocations>()?;
+        cursor.seek_exact(key.clone())?;
 
-        Ok(res)
+        while let Some((hash, encoded_tuple)) = cursor.current()? {
+            if hash != key {
+                break;
+            }
+
+            let (bn, bh, indx) = <(BlockNumber, BlockHash, Index)>::decode(&encoded_tuple)?;
+            transaction_hashes.push((bn, bh, indx));
+
+            if cursor.next_dup_val()?.is_none() {
+                break;
+            }
+        }
+
+        Ok(transaction_hashes
+            .into_iter()
+            .find(|(number, hash, _index)| {
+                self.get_block_hash_by_block_number(*number)
+                    .is_ok_and(|o| o == Some(*hash))
+            }))
     }
 
     async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
