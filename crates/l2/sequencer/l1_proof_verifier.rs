@@ -14,8 +14,8 @@ use secp256k1::SecretKey;
 use tracing::{error, info};
 
 use crate::{
-    sequencer::errors::ProofVerifierError, CommitterConfig, EthConfig, ProofCoordinatorConfig,
-    SequencerConfig,
+    CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
+    sequencer::errors::ProofVerifierError,
 };
 
 use super::{

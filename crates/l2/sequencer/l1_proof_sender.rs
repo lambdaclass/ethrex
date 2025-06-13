@@ -4,8 +4,8 @@ use super::{
     utils::{get_latest_sent_batch, random_duration, send_verify_tx},
 };
 use crate::{
-    sequencer::errors::ProofSenderError, CommitterConfig, EthConfig, ProofCoordinatorConfig,
-    SequencerConfig,
+    CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
+    sequencer::errors::ProofSenderError,
 };
 use aligned_sdk::{
     common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
