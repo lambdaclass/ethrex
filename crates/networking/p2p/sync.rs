@@ -6,22 +6,23 @@ mod storage_fetcher;
 mod storage_healing;
 mod trie_rebuild;
 
+use crate::peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler};
 use bytecode_fetcher::bytecode_fetcher;
-use ethrex_blockchain::{error::ChainError, BatchBlockProcessingFailure, Blockchain};
+use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
-    types::{Block, BlockHash, BlockHeader},
     BigEndianHash, H256, U256, U512,
+    types::{Block, BlockHash, BlockHeader},
 };
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_storage::{error::StoreError, EngineType, Store, STATE_TRIE_SEGMENTS};
+use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
 use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
 use std::{
     array,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 use storage_healing::storage_healer;
@@ -32,8 +33,6 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use trie_rebuild::TrieRebuilder;
-
-use crate::peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
@@ -118,7 +117,7 @@ impl Syncer {
             // This won't be used
             cancel_token: CancellationToken::new(),
             blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).unwrap(),
+                Store::new("", EngineType::InMemory).expect("Failed to start Sotre Engine"),
             )),
         }
     }
@@ -609,16 +608,19 @@ impl Syncer {
                     .any(|(ch, end)| ch < end)
             })
         {
+            let storage_trie_rebuilder_sender = self
+                .trie_rebuilder
+                .as_ref()
+                .ok_or(SyncError::Trie(TrieError::InconsistentTree))?
+                .storage_rebuilder_sender
+                .clone();
+
             let stale_pivot = state_sync(
                 state_root,
                 store.clone(),
                 self.peers.clone(),
                 key_checkpoints,
-                self.trie_rebuilder
-                    .as_ref()
-                    .unwrap()
-                    .storage_rebuilder_sender
-                    .clone(),
+                storage_trie_rebuilder_sender,
             )
             .await?;
             if stale_pivot {
@@ -631,7 +633,12 @@ impl Syncer {
         // Wait for the trie rebuilder to finish
         info!("Waiting for the trie rebuild to finish");
         let rebuild_start = Instant::now();
-        self.trie_rebuilder.take().unwrap().complete().await?;
+        let rebuilder = self
+            .trie_rebuilder
+            .take()
+            .ok_or(SyncError::Trie(TrieError::InconsistentTree))?;
+        rebuilder.complete().await?;
+
         info!(
             "State trie rebuilt from snapshot, overtime: {}",
             rebuild_start.elapsed().as_secs()
@@ -714,6 +721,8 @@ enum SyncError {
     CorruptDB,
     #[error("No bodies were found for the given headers")]
     BodiesNotFound,
+    #[error("Range received is invalid")]
+    InvalidRangeReceived,
 }
 
 impl<T> From<SendError<T>> for SyncError {

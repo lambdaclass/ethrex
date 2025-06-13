@@ -2,8 +2,8 @@ use crate::EvmError;
 use bytes::Bytes;
 use dyn_clone::DynClone;
 use ethrex_common::{
-    types::{AccountInfo, ChainConfig},
     Address, H256, U256,
+    types::{AccountInfo, ChainConfig},
 };
 
 pub trait VmDatabase: Send + Sync + DynClone {

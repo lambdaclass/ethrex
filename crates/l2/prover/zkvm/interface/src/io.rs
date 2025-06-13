@@ -1,9 +1,9 @@
 use ethrex_common::{
-    types::{block_execution_witness::ExecutionWitnessResult, Block},
     H256,
+    types::{Block, block_execution_witness::ExecutionWitnessResult},
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_with::{serde_as, DeserializeAs, SerializeAs};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_with::{DeserializeAs, SerializeAs, serde_as};
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::blobs_bundle;
