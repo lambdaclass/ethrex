@@ -18,6 +18,7 @@ impl LEVM {
         for (index, (tx, sender)) in block
             .body
             .get_transactions_with_sender()
+            .map_err(|error| EvmError::Transaction(error.to_string()))?
             .into_iter()
             .enumerate()
         {
@@ -46,7 +47,14 @@ impl LEVM {
         only_top_call: bool,
         with_log: bool,
     ) -> Result<CallTrace, EvmError> {
-        let env = Self::setup_env(tx, tx.sender(), block_header, db)?;
+        let env = Self::setup_env(
+            tx,
+            tx.sender().map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?,
+            block_header,
+            db,
+        )?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::new(only_top_call, with_log));
 
         vm.execute()?;

@@ -174,7 +174,7 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
             Some(block_number),
             block_header.hash(),
             Some(self.transaction_index),
-        );
+        )?;
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -221,7 +221,7 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
             Some(block_number),
             self.block,
             Some(self.transaction_index),
-        );
+        )?;
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -268,7 +268,7 @@ impl RpcHandler for GetTransactionByHashRequest {
             Some(block_number),
             block_hash,
             Some(index as usize),
-        );
+        )?;
         serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

@@ -74,7 +74,9 @@ impl REVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for (tx, sender) in block.body.get_transactions_with_sender() {
+        for (tx, sender) in block.body.get_transactions_with_sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })? {
             let result = Self::execute_tx(tx, block_header, state, spec_id, sender)?;
             cumulative_gas_used += result.gas_used();
             let receipt = Receipt::new(
