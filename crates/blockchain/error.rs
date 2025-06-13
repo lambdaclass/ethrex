@@ -84,10 +84,12 @@ pub enum MempoolError {
     NotEnoughBalance,
     #[error("Transaction gas fields are invalid")]
     InvalidTxGasvalues,
-    #[error("Invalid Pooled TxType, expected: {0}")]
-    InvalidPooledTxType(TxType),
-    #[error("Invalid Pooled transation size, differs from expected")]
+    #[error("Invalid pooled TxType, expected: {0}")]
+    InvalidPooledTxType(u8),
+    #[error("Invalid pooled transaction size, differs from expected")]
     InvalidPooledTxSize,
+    #[error("Requested pooled transaction was not received")]
+    RequestedPooledTxNotFound,
 }
 
 #[derive(Debug)]

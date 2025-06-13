@@ -19,7 +19,7 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use crate::types::Node;
-use tracing::warn;
+
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
 // Broadcast message
 #[derive(Debug, Clone)]
@@ -291,17 +291,13 @@ impl PooledTransactions {
                 .iter()
                 .position(|&hash| hash == tx_hash)
             else {
-                warn!(
-                    "HASH NOT FOUND {} in {:?}",
-                    tx_hash, requested.transaction_hashes
-                );
-                continue;
+                return Err(MempoolError::RequestedPooledTxNotFound);
             };
 
             let tx_type = requested.transaction_types[pos];
             let size = requested.transaction_sizes[pos];
             if tx.tx_type() as u8 != tx_type {
-                return Err(MempoolError::InvalidTxType(tx_type));
+                return Err(MempoolError::InvalidPooledTxType(tx_type));
             }
             if tx.encode_to_vec().len() - 4 != size {
                 return Err(MempoolError::InvalidPooledTxSize);
