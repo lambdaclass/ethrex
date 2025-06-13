@@ -1,21 +1,21 @@
 use crate::{
+    TransientStorage,
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
     errors::{ExecutionReport, OpcodeResult, VMError},
     hooks::{
         backup_hook::BackupHook,
-        hook::{get_hooks, Hook},
+        hook::{Hook, get_hooks},
     },
     precompiles::execute_precompile,
     tracing::LevmCallTracer,
-    TransientStorage,
 };
 use bytes::Bytes;
 use ethrex_common::{
+    Address, H256, U256,
     tracing::CallType,
     types::{Transaction, TxKind},
-    Address, H256, U256,
 };
 use std::{
     cell::RefCell,
@@ -29,8 +29,8 @@ pub type Storage = HashMap<U256, H256>;
 /// Information that changes during transaction execution
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
-    pub touched_accounts: HashSet<Address>,
-    pub touched_storage_slots: HashMap<Address, BTreeSet<H256>>,
+    pub accessed_addresses: HashSet<Address>,
+    pub accessed_storage_slots: HashMap<Address, BTreeSet<H256>>,
     pub created_accounts: HashSet<Address>,
     pub refunded_gas: u64,
     pub transient_storage: TransientStorage,

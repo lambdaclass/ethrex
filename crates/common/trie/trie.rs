@@ -1,5 +1,6 @@
 pub mod db;
 pub mod error;
+pub mod logger;
 mod nibbles;
 mod node;
 mod node_hash;
@@ -12,8 +13,10 @@ use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
+pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
 pub use self::verify_range::verify_range;
 pub use self::{
@@ -50,6 +53,12 @@ pub type TrieNode = (NodeHash, NodeRLP);
 pub struct Trie {
     db: Box<dyn TrieDB>,
     root: NodeRef,
+}
+
+impl Default for Trie {
+    fn default() -> Self {
+        Self::new_temp()
+    }
 }
 
 impl Trie {
@@ -238,7 +247,7 @@ impl Trie {
         }
     }
 
-    /// Builds a trie from a set of nodes.
+    /// Builds a trie from a set of nodes with an InMemoryTrieDB as a backend.
     ///
     /// Note: This method will not ensure that all node references are valid. Invalid references
     ///   will cause other methods (including, but not limited to `Trie::get`, `Trie::insert` and
@@ -246,10 +255,6 @@ impl Trie {
     /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
     ///   root node are considered dangling.
     pub fn from_nodes(root: Option<&NodeRLP>, nodes: &[NodeRLP]) -> Result<Self, TrieError> {
-        let Some(root) = root else {
-            return Ok(Trie::stateless());
-        };
-
         let mut storage = nodes
             .iter()
             .map(|node| {
@@ -259,6 +264,14 @@ impl Trie {
                 )
             })
             .collect::<HashMap<_, _>>();
+        let nodes = storage
+            .iter()
+            .map(|(node_hash, nodes)| (*node_hash, (*nodes).clone()))
+            .collect::<HashMap<_, _>>();
+        let Some(root) = root else {
+            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
+            return Ok(Trie::new(in_memory_trie));
+        };
 
         fn inner(
             storage: &mut HashMap<NodeHash, &Vec<u8>>,
@@ -279,7 +292,7 @@ impl Trie {
                         }
                     }
 
-                    node.into()
+                    (*node).into()
                 }
                 Node::Extension(mut node) => {
                     let NodeRef::Hash(hash) = node.child else {
@@ -297,8 +310,15 @@ impl Trie {
             })
         }
 
-        let mut trie = Trie::stateless();
-        trie.root = inner(&mut storage, root)?.into();
+        let root = inner(&mut storage, root)?.into();
+        let nodes = storage
+            .into_iter()
+            .map(|(node_hash, nodes)| (node_hash, nodes.clone()))
+            .collect::<HashMap<_, _>>();
+        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
+
+        let mut trie = Trie::new(in_memory_trie);
+        trie.root = root;
 
         Ok(trie)
     }
@@ -402,7 +422,13 @@ impl Trie {
         }
     }
 
-    #[cfg(test)]
+    pub fn root_node(&self) -> Result<Option<Node>, TrieError> {
+        if self.hash_no_commit() == *EMPTY_TRIE_HASH {
+            return Ok(None);
+        }
+        self.root.get_node(self.db.as_ref())
+    }
+
     /// Creates a new Trie based on a temporary InMemory DB
     fn new_temp() -> Self {
         use std::collections::HashMap;

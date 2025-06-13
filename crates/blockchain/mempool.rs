@@ -12,8 +12,8 @@ use crate::{
     error::MempoolError,
 };
 use ethrex_common::{
-    types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
     Address, H256, U256,
+    types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
 };
 use ethrex_storage::error::StoreError;
 
@@ -100,9 +100,9 @@ impl Mempool {
 
             // Filter by tip & base_fee
             if let Some(min_tip) = filter.min_tip {
-                if !tx
+                if tx
                     .effective_gas_tip(filter.base_fee)
-                    .is_some_and(|tip| tip >= min_tip)
+                    .is_none_or(|tip| tip < min_tip)
                 {
                     return false;
                 }
@@ -115,7 +115,7 @@ impl Mempool {
 
             // Filter by blob gas fee
             if let (true, Some(blob_fee)) = (is_blob_tx, filter.blob_fee) {
-                if !tx.max_fee_per_blob_gas().is_some_and(|fee| fee >= blob_fee) {
+                if tx.max_fee_per_blob_gas().is_none_or(|fee| fee < blob_fee) {
                     return false;
                 }
             }
@@ -336,6 +336,7 @@ pub fn transaction_intrinsic_gas(
 }
 #[cfg(test)]
 mod tests {
+    use crate::Blockchain;
     use crate::constants::MAX_INITCODE_SIZE;
     use crate::error::MempoolError;
     use crate::mempool::{
@@ -343,17 +344,16 @@ mod tests {
         TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
         TX_INIT_CODE_WORD_GAS_COST,
     };
-    use crate::Blockchain;
     use std::collections::HashMap;
 
     use super::transaction_intrinsic_gas;
     use ethrex_common::types::{
-        BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
-        MempoolTransaction, Transaction, TxKind, BYTES_PER_BLOB,
+        BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction,
+        EIP4844Transaction, MempoolTransaction, Transaction, TxKind,
     };
     use ethrex_common::{Address, Bytes, H256, U256};
     use ethrex_storage::EngineType;
-    use ethrex_storage::{error::StoreError, Store};
+    use ethrex_storage::{Store, error::StoreError};
 
     async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
         let store = Store::new("test", EngineType::InMemory)?;
