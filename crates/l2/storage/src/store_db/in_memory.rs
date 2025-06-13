@@ -7,7 +7,6 @@ use std::{
 use ethrex_common::{
     types::{AccountUpdate, Blob, BlockNumber},
     H256,
-    types::{Blob, BlockNumber},
 };
 use ethrex_storage::error::StoreError;
 
@@ -209,7 +208,7 @@ impl StoreEngineRollup for Store {
     ) -> Result<Option<Vec<AccountUpdate>>, StoreError> {
         Ok(self
             .inner()?
-            .account_updates_by_block
+            .account_updates_by_block_number
             .get(&block_number)
             .cloned())
     }
@@ -220,7 +219,7 @@ impl StoreEngineRollup for Store {
         account_updates: Vec<AccountUpdate>,
     ) -> Result<(), StoreError> {
         self.inner()?
-            .account_updates_by_block
+            .account_updates_by_block_number
             .insert(block_number, account_updates);
         Ok(())
     }

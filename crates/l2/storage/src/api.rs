@@ -3,7 +3,7 @@
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use ethrex_common::{
-    types::{AccountUpdate, Blob, BlockNumber},
+    types::{AccountUpdate, Blob, BlockNumber}, H256,
 };
 use ethrex_storage::error::StoreError;
 

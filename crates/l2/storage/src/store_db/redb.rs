@@ -3,7 +3,6 @@ use std::{panic::RefUnwindSafe, sync::Arc};
 use ethrex_common::{
     types::{AccountUpdate, Blob, BlockNumber},
     H256,
-    types::{Blob, BlockNumber},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
