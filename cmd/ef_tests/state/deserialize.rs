@@ -20,55 +20,56 @@ where
     if let Some(value) = option {
         let exceptions = value
             .split('|')
-            .map(|s| match s.trim() {
-                "TransactionException.INITCODE_SIZE_EXCEEDED" => {
-                    TransactionExpectedException::InitcodeSizeExceeded
+            .map(|s| {
+                match s.trim() {
+                    "TransactionException.INITCODE_SIZE_EXCEEDED" => {
+                        TransactionExpectedException::InitcodeSizeExceeded
+                    }
+                    "TransactionException.NONCE_IS_MAX" => TransactionExpectedException::NonceIsMax,
+                    "TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED" => {
+                        TransactionExpectedException::Type3TxBlobCountExceeded
+                    }
+                    "TransactionException.TYPE_3_TX_ZERO_BLOBS" => {
+                        TransactionExpectedException::Type3TxZeroBlobs
+                    }
+                    "TransactionException.TYPE_3_TX_CONTRACT_CREATION" => {
+                        TransactionExpectedException::Type3TxContractCreation
+                    }
+                    "TransactionException.TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH" => {
+                        TransactionExpectedException::Type3TxInvalidBlobVersionedHash
+                    }
+                    "TransactionException.INTRINSIC_GAS_TOO_LOW" => {
+                        TransactionExpectedException::IntrinsicGasTooLow
+                    }
+                    "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
+                        TransactionExpectedException::InsufficientAccountFunds
+                    }
+                    "TransactionException.SENDER_NOT_EOA" => {
+                        TransactionExpectedException::SenderNotEoa
+                    }
+                    "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS" => {
+                        TransactionExpectedException::PriorityGreaterThanMaxFeePerGas
+                    }
+                    "TransactionException.GAS_ALLOWANCE_EXCEEDED" => {
+                        TransactionExpectedException::GasAllowanceExceeded
+                    }
+                    "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS" => {
+                        TransactionExpectedException::InsufficientMaxFeePerGas
+                    }
+                    "TransactionException.GASLIMIT_PRICE_PRODUCT_OVERFLOW" => {
+                        TransactionExpectedException::GasLimitPriceProductOverflow
+                    }
+                    "TransactionException.TYPE_3_TX_PRE_FORK" => {
+                        TransactionExpectedException::Type3TxPreFork
+                    }
+                    "TransactionException.TYPE_4_TX_CONTRACT_CREATION" => {
+                        TransactionExpectedException::Type4TxContractCreation
+                    }
+                    "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
+                        TransactionExpectedException::InsufficientMaxFeePerBlobGas
+                    }
+                    _other => TransactionExpectedException::Other, //TODO: Support exceptions that enter here.
                 }
-                "TransactionException.NONCE_IS_MAX" => TransactionExpectedException::NonceIsMax,
-                "TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED" => {
-                    TransactionExpectedException::Type3TxBlobCountExceeded
-                }
-                "TransactionException.TYPE_3_TX_ZERO_BLOBS" => {
-                    TransactionExpectedException::Type3TxZeroBlobs
-                }
-                "TransactionException.TYPE_3_TX_CONTRACT_CREATION" => {
-                    TransactionExpectedException::Type3TxContractCreation
-                }
-                "TransactionException.TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH" => {
-                    TransactionExpectedException::Type3TxInvalidBlobVersionedHash
-                }
-                "TransactionException.INTRINSIC_GAS_TOO_LOW" => {
-                    TransactionExpectedException::IntrinsicGasTooLow
-                }
-                "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
-                    TransactionExpectedException::InsufficientAccountFunds
-                }
-                "TransactionException.SENDER_NOT_EOA" => TransactionExpectedException::SenderNotEoa,
-                "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS" => {
-                    TransactionExpectedException::PriorityGreaterThanMaxFeePerGas
-                }
-                "TransactionException.GAS_ALLOWANCE_EXCEEDED" => {
-                    TransactionExpectedException::GasAllowanceExceeded
-                }
-                "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS" => {
-                    TransactionExpectedException::InsufficientMaxFeePerGas
-                }
-                "TransactionException.RLP_INVALID_VALUE" => {
-                    TransactionExpectedException::RlpInvalidValue
-                }
-                "TransactionException.GASLIMIT_PRICE_PRODUCT_OVERFLOW" => {
-                    TransactionExpectedException::GasLimitPriceProductOverflow
-                }
-                "TransactionException.TYPE_3_TX_PRE_FORK" => {
-                    TransactionExpectedException::Type3TxPreFork
-                }
-                "TransactionException.TYPE_4_TX_CONTRACT_CREATION" => {
-                    TransactionExpectedException::Type4TxContractCreation
-                }
-                "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
-                    TransactionExpectedException::InsufficientMaxFeePerBlobGas
-                }
-                _other => TransactionExpectedException::Other, //TODO: Support exceptions that enter here.
             })
             .collect();
 
