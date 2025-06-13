@@ -578,7 +578,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let hashes =
                     new_pooled_transaction_hashes.get_transactions_to_request(&self.blockchain)?;
 
-                // avoid requesting multiple times the same hash
+                // avoid requesting the same hash multiple times
                 let mut hashes_to_request = vec![];
                 for hash in hashes {
                     if self.get_p2p_transaction(&hash)?.is_none() {
@@ -616,7 +616,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         if let Err(error) = msg.validate_requested(requested).await {
                             log_peer_warn(
                                 &self.node,
-                                &format!("disconnected from peer. Reason: {}", error.to_string()),
+                                &format!("disconnected from peer. Reason: {}", error),
                             );
                             self.send_disconnect_message(Some(DisconnectReason::SubprotocolError))
                                 .await;
