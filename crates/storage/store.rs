@@ -167,6 +167,15 @@ impl Store {
         Ok(accounts_info_log)
     }
 
+    // SNAPSHOT RECONSTRUCTION STRATEGY
+    // 1. From the number of the first new_canonical_block and the canonical
+    //    chain table, extract the list of (block_number, block_hash) we need
+    //    to invalidate
+    // 2. From the last block in that list, iterate backwards the log restoring
+    //    the previous values
+    // 3. From the first block in the new canonical chain to the last, apply
+    //    the log for those blocks
+    // 4. Commit the transaction
     pub async fn reconstruct_snapshots_for_new_canonical_chain(
         &self,
         new_canonical_blocks: &[(u64, H256)],
