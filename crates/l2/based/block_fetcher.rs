@@ -155,10 +155,6 @@ impl GenServer for BlockFetcher {
                 error!("Block Fetcher Error: {err}");
             });
             state.blockchain.set_synced();
-            state
-                .sequencer_state
-                .new_status(SequencerStatus::Following)
-                .await;
         }
         send_after(
             Duration::from_millis(state.fetch_interval_ms),

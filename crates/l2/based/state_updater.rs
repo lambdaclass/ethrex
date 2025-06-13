@@ -162,6 +162,13 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
 
     let new_status = if lead_sequencer == state.sequencer_address {
         if node_is_up_to_date {
+            // if the block fetcher sync to the current batch we have to change to Following
+            if let SequencerStatus::Syncing = state.sequencer_state.status().await {
+                state
+                    .sequencer_state
+                    .new_status(SequencerStatus::Following)
+                    .await;
+            }
             SequencerStatus::Sequencing
         } else {
             warn!(
