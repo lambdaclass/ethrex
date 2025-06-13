@@ -276,6 +276,9 @@ impl From<TxType> for u8 {
 }
 
 pub trait Signable {
+    /// Both sign and sign_in_place return error when the payload hash calculated that has to
+    /// be signed is not exactly 32 bytes long. Currently it's an unreachable error
+    /// since the payload is hashed with the keccak algorithm which produces a 32 byte hash.
     fn sign(&self, private_key: &SecretKey) -> Result<Self, secp256k1::Error>
     where
         Self: Sized,
