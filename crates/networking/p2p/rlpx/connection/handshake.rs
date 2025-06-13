@@ -1,10 +1,8 @@
-use std::{collections::HashSet, sync::Arc, time::Instant};
+use std::{collections::HashSet, sync::Arc};
 
 use crate::{
     rlpx::{
-        connection::server::{
-            Established, InnerState, PERIODIC_PING_INTERVAL, PERIODIC_TX_BROADCAST_INTERVAL,
-        },
+        connection::server::{Established, InnerState},
         error::RLPxError,
         utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
@@ -83,8 +81,6 @@ pub(crate) async fn perform(
                 capabilities: vec![],
                 negotiated_eth_capability: None,
                 negotiated_snap_capability: None,
-                next_periodic_ping: Instant::now() + PERIODIC_PING_INTERVAL,
-                next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
                 broadcasted_txs: HashSet::new(),
                 client_version: context.client_version.clone(),
                 connection_broadcast_send: context.broadcast.clone(),
@@ -119,8 +115,6 @@ pub(crate) async fn perform(
                 capabilities: vec![],
                 negotiated_eth_capability: None,
                 negotiated_snap_capability: None,
-                next_periodic_ping: Instant::now() + PERIODIC_PING_INTERVAL,
-                next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
                 broadcasted_txs: HashSet::new(),
                 client_version: context.client_version.clone(),
                 connection_broadcast_send: context.broadcast.clone(),

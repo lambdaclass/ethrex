@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Instant};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
@@ -48,7 +48,6 @@ use crate::{
 
 use super::{codec::RLPxCodec, handshake};
 
-const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 pub(crate) const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 pub(crate) const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(500);
@@ -83,8 +82,6 @@ pub struct Established {
     pub(crate) capabilities: Vec<Capability>,
     pub(crate) negotiated_eth_capability: Option<Capability>,
     pub(crate) negotiated_snap_capability: Option<Capability>,
-    pub(crate) next_periodic_ping: Instant,
-    pub(crate) next_tx_broadcast: Instant,
     pub(crate) broadcasted_txs: HashSet<H256>,
     pub(crate) client_version: String,
     //// Send end of the channel used to broadcast messages
@@ -129,7 +126,8 @@ pub enum CastMessage {
     PeerMessage(Message),
     BroadcastMessage,
     BackendMessage(Message),
-    PeriodicCheck,
+    SendPing,
+    SendNewPooledTxHashes,
 }
 
 #[derive(Clone)]
@@ -236,8 +234,24 @@ impl GenServer for RLPxConnection {
                 Self::CastMsg::BackendMessage(message) => {
                     let _ = handle_backend_message(&mut established_state, message).await;
                 }
-                Self::CastMsg::PeriodicCheck => {
-                    let _ = check_periodic_tasks(&mut established_state, handle).await;
+                Self::CastMsg::SendPing => {
+                    let _ = send(&mut established_state, Message::Ping(PingMessage {})).await;
+                    log_peer_debug(&established_state.node, "Ping sent");
+                    // TODO this should be removed when spawned_concurrency::tasks::send_interval is implemented.
+                    send_after(
+                        PERIODIC_PING_INTERVAL,
+                        handle.clone(),
+                        CastMessage::SendPing,
+                    );
+                }
+                Self::CastMsg::SendNewPooledTxHashes => {
+                    let _ = send_new_pooled_tx_hashes(&mut established_state).await;
+                    // TODO this should be removed when spawned_concurrency::tasks::send_interval is implemented.
+                    send_after(
+                        PERIODIC_TX_BROADCAST_INTERVAL,
+                        handle.clone(),
+                        CastMessage::SendNewPooledTxHashes,
+                    );
                 }
             }
             // Update the state state
@@ -315,10 +329,18 @@ async fn init(
             .await
             .unwrap();
 
+        // TODO this should be replaced with spawned_concurrency::tasks::send_interval once it is properly implemented.
         send_after(
-            PERIODIC_TASKS_CHECK_INTERVAL,
+            PERIODIC_TX_BROADCAST_INTERVAL,
             handle.clone(),
-            CastMessage::PeriodicCheck,
+            CastMessage::SendNewPooledTxHashes,
+        );
+
+        // TODO this should be replaced with spawned_concurrency::tasks::send_interval once it is properly implemented.
+        send_after(
+            PERIODIC_PING_INTERVAL,
+            handle.clone(),
+            CastMessage::SendPing,
         );
 
         let node = established_state.clone().node;
@@ -327,27 +349,6 @@ async fn init(
         state.0 = InnerState::Established(established_state);
         Ok((node, framed))
     }
-}
-
-async fn check_periodic_tasks(
-    state: &mut Established,
-    handle: &RLPxConnectionHandle,
-) -> Result<(), RLPxError> {
-    send_after(
-        PERIODIC_TASKS_CHECK_INTERVAL,
-        handle.clone(),
-        CastMessage::PeriodicCheck,
-    );
-    if Instant::now() >= state.next_periodic_ping {
-        send(state, Message::Ping(PingMessage {})).await?;
-        log_peer_debug(&state.node, "Ping sent");
-        state.next_periodic_ping = Instant::now() + PERIODIC_PING_INTERVAL;
-    }
-    if Instant::now() >= state.next_tx_broadcast {
-        send_new_pooled_tx_hashes(state).await?;
-        state.next_tx_broadcast = Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL;
-    }
-    Ok(())
 }
 
 async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxError> {
@@ -613,9 +614,7 @@ async fn exchange_hello_messages(state: &mut Established) -> Result<(), RLPxErro
 }
 
 async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError> {
-    let r = state.framed.lock().await.send(message).await;
-    log_peer_debug(&state.node, &format!("Sent!"));
-    r
+    state.framed.lock().await.send(message).await
 }
 
 /// Reads from the frame until a frame is available.
