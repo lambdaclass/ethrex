@@ -1,4 +1,4 @@
-use ethrex_common::{types::Transaction, Address, H256};
+use ethrex_common::{Address, H256, types::Transaction};
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 use serde::{Deserialize, Serialize};
@@ -351,12 +351,12 @@ pub mod test_utils {
 
     use crate::{
         eth::gas_tip_estimator::GasTipEstimator,
-        rpc::{start_api, NodeData, RpcApiContext},
+        rpc::{NodeData, RpcApiContext, start_api},
     };
     #[cfg(feature = "l2")]
     use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
     #[cfg(feature = "l2")]
-    use secp256k1::{rand, SecretKey};
+    use secp256k1::{SecretKey, rand};
 
     pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
     pub fn example_p2p_node() -> Node {

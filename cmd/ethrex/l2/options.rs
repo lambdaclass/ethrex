@@ -5,13 +5,13 @@ use ethrex_common::{
     Address,
 };
 use ethrex_l2::{
-    sequencer::{configs::AlignedConfig, utils::resolve_aligned_network},
     BlockProducerConfig, CommitterConfig, EthConfig, L1WatcherConfig, ProofCoordinatorConfig,
     SequencerConfig,
+    sequencer::{configs::AlignedConfig, utils::resolve_aligned_network},
 };
 use ethrex_rpc::clients::eth::{
-    get_address_from_secret_key, BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY,
-    MIN_RETRY_DELAY,
+    BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
+    get_address_from_secret_key,
 };
 use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};

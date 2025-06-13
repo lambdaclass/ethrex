@@ -1,21 +1,21 @@
 use aligned_sdk::{
-    aggregation_layer::{check_proof_verification, AggregationModeVerificationData, ProofStatus},
+    aggregation_layer::{AggregationModeVerificationData, ProofStatus, check_proof_verification},
     common::types::Network,
 };
 use ethrex_common::types::signer::Signer;
 use ethrex_common::{Address, H256, U256};
-use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_l2_sdk::calldata::{Value, encode_calldata};
 use ethrex_rpc::EthClient;
 use secp256k1::SecretKey;
 use tracing::{error, info};
 
 use crate::{
+    CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
     sequencer::errors::ProofVerifierError,
     utils::prover::{
         proving_systems::ProverType,
-        save_state::{batch_number_has_all_needed_proofs, read_proof, StateFileType},
+        save_state::{StateFileType, batch_number_has_all_needed_proofs, read_proof},
     },
-    CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 
 use super::{
@@ -94,7 +94,9 @@ impl L1ProofVerifier {
 
         match self.verify_proof_aggregation(batch_to_verify).await? {
             Some(verify_tx_hash) => {
-                info!("Batch {batch_to_verify} verified in AlignedProofAggregatorService, with transaction hash {verify_tx_hash:#x}");
+                info!(
+                    "Batch {batch_to_verify} verified in AlignedProofAggregatorService, with transaction hash {verify_tx_hash:#x}"
+                );
             }
             None => {
                 info!(

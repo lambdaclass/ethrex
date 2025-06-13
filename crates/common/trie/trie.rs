@@ -292,7 +292,7 @@ impl Trie {
                         }
                     }
 
-                    node.into()
+                    (*node).into()
                 }
                 Node::Extension(mut node) => {
                     let NodeRef::Hash(hash) = node.child else {

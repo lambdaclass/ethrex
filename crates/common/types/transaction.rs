@@ -4,14 +4,14 @@ use bytes::Bytes;
 use ethereum_types::{Address, Signature, H256, U256};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
-use secp256k1::{ecdsa::RecoveryId, Message};
-use serde::{ser::SerializeStruct, Serialize};
+use secp256k1::{Message, SecretKey, ecdsa::RecoveryId};
+use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{AccessListEntry, GenericTransaction};
 use sha3::{Digest, Keccak256};
 
 use ethrex_rlp::{
     constants::RLP_NULL,
-    decode::{get_rlp_bytes_item_payload, is_encoded_as_bytes, RLPDecode},
+    decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
     encode::{PayloadRLPEncode, RLPEncode},
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
@@ -1489,7 +1489,7 @@ mod canonic_encoding {
 
 mod serde_impl {
     use serde::Deserialize;
-    use serde::{de::Error, Deserializer};
+    use serde::{Deserializer, de::Error};
     use serde_json::Value;
     use std::{collections::HashMap, str::FromStr};
 
@@ -2412,7 +2412,7 @@ mod tests {
 
     use super::*;
     use crate::types::{
-        compute_receipts_root, compute_transactions_root, AuthorizationTuple, BlockBody, Receipt,
+        AuthorizationTuple, BlockBody, Receipt, compute_receipts_root, compute_transactions_root,
     };
     use ethereum_types::H160;
     use hex_literal::hex;

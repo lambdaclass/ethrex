@@ -1,11 +1,11 @@
 use crate::sequencer::errors::ProverServerError;
 use ethrex_common::types::signer::{LocalSigner, Signer};
 use ethrex_common::{Address, Bytes};
-use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_l2_sdk::calldata::{Value, encode_calldata};
 use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::{
-    eth::{EthClient, WrappedTransaction},
     Overrides,
+    eth::{EthClient, WrappedTransaction},
 };
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
@@ -15,8 +15,7 @@ use tracing::{debug, info};
 
 use std::process::Command;
 
-const QPL_TOOL_PATH: &str =
-    "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
+const QPL_TOOL_PATH: &str = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
 
 pub async fn prepare_quote_prerequisites(
     eth_client: &EthClient,

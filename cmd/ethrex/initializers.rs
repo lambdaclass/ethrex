@@ -7,7 +7,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
-    network::{public_key_from_signing_key, P2PContext},
+    network::{P2PContext, public_key_from_signing_key},
     peer_handler::PeerHandler,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -27,7 +27,7 @@ use std::{
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
-use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
+use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
 
 #[cfg(feature = "l2")]
 use crate::l2::L2Options;
@@ -284,7 +284,7 @@ pub fn get_bootnodes(opts: &Options, network: &Network, data_dir: &str) -> Vec<N
 pub fn get_signer(data_dir: &str) -> SigningKey {
     // Get the signer from the default directory, create one if the key file is not present.
     let key_path = Path::new(data_dir).join("node.key");
-    let signer = match fs::read(key_path.clone()) {
+    match fs::read(key_path.clone()) {
         Ok(content) => SigningKey::from_slice(&content).expect("Signing key could not be created."),
         Err(_) => {
             info!(
@@ -299,8 +299,7 @@ pub fn get_signer(data_dir: &str) -> SigningKey {
                 .expect("Newly created signer could not be saved to disk.");
             signer
         }
-    };
-    signer
+    }
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SigningKey) -> Node {

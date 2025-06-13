@@ -16,18 +16,18 @@ use errors::{
 };
 use eth_sender::Overrides;
 use ethrex_common::{
+    Address, Signature, H160, H256, U256,
     types::{
         signer::Signer, BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
         PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction,
     },
-    Address, Signature, H160, H256, U256,
 };
 use ethrex_rlp::encode::{PayloadRLPEncode, RLPEncode};
 use keccak_hash::keccak;
 use reqwest::{Client, Url};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{ops::Div, str::FromStr};
 use tracing::warn;
 
@@ -343,7 +343,9 @@ impl EthClient {
                         *tx_max_priority_fee = *tx_max_fee;
                     }
 
-                    warn!("max_fee_per_gas exceeds the allowed limit, adjusting it to {max_fee_per_gas}");
+                    warn!(
+                        "max_fee_per_gas exceeds the allowed limit, adjusting it to {max_fee_per_gas}"
+                    );
                 }
             }
 
@@ -361,7 +363,10 @@ impl EthClient {
             let tx_hash = self.send_wrapped_transaction(wrapped_tx, signer).await?;
 
             if number_of_retries > 0 {
-                warn!("Resending Transaction after bumping gas, attempts [{number_of_retries}/{}]\nTxHash: {tx_hash:#x}", self.max_number_of_retries);
+                warn!(
+                    "Resending Transaction after bumping gas, attempts [{number_of_retries}/{}]\nTxHash: {tx_hash:#x}",
+                    self.max_number_of_retries
+                );
             }
 
             let mut receipt = self.get_transaction_receipt(tx_hash).await?;
@@ -1266,8 +1271,7 @@ impl EthClient {
             return Ok(gas_fee);
         }
         self.get_gas_price()
-            .await
-            .map_err(EthClientError::from)?
+            .await?
             .try_into()
             .map_err(|_| EthClientError::Custom("Failed to get gas for fee".to_owned()))
     }

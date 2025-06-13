@@ -3,19 +3,18 @@ use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_latest_sent_batch;
 use crate::utils::prover::proving_systems::{BatchProof, ProverType};
 use crate::utils::prover::save_state::{
-    batch_number_has_state_file, write_state, StateFileType, StateType,
+    StateFileType, StateType, batch_number_has_state_file, write_state,
 };
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
-use ethrex_common::types::signer::Signer;
 use ethrex_common::types::BlobsBundle;
+use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::{
-    types::{blobs_bundle, Block},
     Address,
+    types::{Block, blobs_bundle},
 };
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
