@@ -28,16 +28,16 @@ use crate::{
     },
     types::Node,
 };
-use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
+use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
 use ethrex_common::{
-    types::{Block, MempoolTransaction, Transaction},
     Address, H256, H512,
+    types::{Block, MempoolTransaction, Transaction},
 };
 use ethrex_storage::Store;
 #[cfg(feature = "l2")]
 use ethrex_storage_rollup::StoreRollup;
 use futures::SinkExt;
-use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
+use k256::{PublicKey, SecretKey, ecdsa::SigningKey};
 use lazy_static::lazy_static;
 use rand::random;
 use secp256k1::Message as SignedMessage;
@@ -47,11 +47,12 @@ use std::{collections::HashSet, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{
+        Mutex,
         broadcast::{self, error::RecvError},
-        mpsc, Mutex,
+        mpsc,
     },
     task,
-    time::{sleep, Instant},
+    time::{Instant, sleep},
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
@@ -815,7 +816,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     });
                     self.send(new_msg).await?;
                 }
-                Message::NewBlock(ref block_msg) => {
+                Message::NewBlock(block_msg) => {
                     let new_msg = Message::NewBlock(block_msg.clone());
                     self.send(new_msg).await?;
                 }
