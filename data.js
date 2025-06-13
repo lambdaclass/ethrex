@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749827464213,
+  "lastUpdate": 1749828976647,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12685,6 +12685,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182561983988,
             "range": "± 3466238695",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "68ff2edc7680b0016da86e1cde1b0c444864d026",
+          "message": "ci(l2): follow logs before running tests (#3157)\n\n**Motivation**\n\nThe integration test is running forever and timing out because we are\nrunning `docker logs --follow ethrex_l2` this command never exits so the\nstep never ends\n\n**Description**\n\nModify the order of execution, first follow the logs then run the test",
+          "timestamp": "2025-06-13T14:43:37Z",
+          "tree_id": "28df4086659bdd616972671ea394efd537d83e51",
+          "url": "https://github.com/lambdaclass/ethrex/commit/68ff2edc7680b0016da86e1cde1b0c444864d026"
+        },
+        "date": 1749828969387,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181680983971,
+            "range": "± 3234223346",
             "unit": "ns/iter"
           }
         ]
