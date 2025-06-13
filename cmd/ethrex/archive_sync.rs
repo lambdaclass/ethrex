@@ -44,7 +44,7 @@ struct DumpAccount {
     #[serde(default, with = "serde_utils::bytes")]
     code: Bytes,
     #[serde(default)]
-    // Didnt parse a dump with storage yet, may fail
+    // Didn't parse a dump with storage yet, may fail
     storage: HashMap<H256, U256>,
     address: Option<Address>,
     #[serde(rename = "key")]
@@ -60,6 +60,7 @@ pub async fn archive_sync(
     let mut start = H256::zero();
     let mut state_trie_root = *EMPTY_TRIE_HASH;
     let mut should_continue = true;
+    let mut state_root = None;
     while should_continue {
         let request = &json!({
         "id": 1,
@@ -69,6 +70,12 @@ pub async fn archive_sync(
         });
         let response = send_ipc_json_request(&mut stream, request).await?;
         let dump: Dump = serde_json::from_value(response)?;
+        // Sanity check
+        if *state_root.get_or_insert(dump.state_root) != dump.state_root {
+            return Err(eyre::ErrReport::msg(
+                "Archive node yieled different state roots for the same block dump",
+            ));
+        }
         should_continue = dump.next.is_some();
         if should_continue {
             start = hash_next(*dump.accounts.last_key_value().unwrap().0);
@@ -189,13 +196,19 @@ where
 {
     let map = HashMap::<Address, DumpAccount>::deserialize(d)?;
     // Order dump accounts by hashed address
-    Ok(map
-        .into_iter()
+    map.into_iter()
         .map(|(addr, acc)| {
-            let hashed_addr = acc.hashed_address.unwrap_or_else(|| keccak(addr));
-            (hashed_addr, acc)
+            // Sanity check
+            if acc.address.is_some_and(|acc_addr| acc_addr != addr) {
+                Err(serde::de::Error::custom(
+                    "DumpAccount address field doesn't match it's key in the Dump".to_string(),
+                ))
+            } else {
+                let hashed_addr = acc.hashed_address.unwrap_or_else(|| keccak(addr));
+                Ok((hashed_addr, acc))
+            }
         })
-        .collect())
+        .collect()
 }
 
 impl DumpAccount {
