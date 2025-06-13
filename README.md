@@ -35,6 +35,11 @@ Read more about our engineering philosophy [here](https://blog.lambdaclass.com/l
 - Prioritize code readability and maintainability over premature optimizations.
 - Avoid concurrency split all over the codebase. Concurrency adds complexity. Only use where strictly necessary.
 
+## Documentation
+
+We have markdown documentation under [`docs/`](./docs/), rendered using mdbook.
+You can render and serve it locally by running `mdbook serve --open`, after installing it [as explained in their documentation](https://rust-lang.github.io/mdBook/guide/installation.html).
+
 # ethrex L1
 
 ## Quick Start (L1 localnet)
