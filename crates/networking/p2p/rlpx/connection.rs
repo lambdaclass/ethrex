@@ -62,7 +62,7 @@ use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 use tracing::debug;
 #[cfg(feature = "l2")]
-use tracing::{info, warn};
+use tracing::info;
 
 use super::{
     eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
@@ -78,12 +78,6 @@ const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::
 const PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(60);
 pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
-
-lazy_static! {
-    pub static ref ADDRESS_LEAD_SEQUENCER: Address = Address::from_slice(
-        &hex::decode("3d1e15a1a55578f7c920884a9943b3b35d0d885b").expect("Invalid address")
-    );
-}
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
@@ -866,11 +860,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             RLPxError::CryptographyError(e.to_string())
         })?;
 
-        if recovered_lead_sequencer != *ADDRESS_LEAD_SEQUENCER {
-            debug!(
-                "Received block from wrong lead sequencer: {}. Expected: {}",
-                recovered_lead_sequencer, *ADDRESS_LEAD_SEQUENCER
-            );
+        if !Self::validate_signature(recovered_lead_sequencer) {
             return Ok(false);
         }
         #[cfg(feature = "l2")]
@@ -883,6 +873,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 .await?;
         }
         Ok(true)
+    }
+
+    fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
+        // Until the RPC module can be included in the P2P crate, we skip the validation
+        true
     }
 
     async fn process_new_block(&mut self, msg: &NewBlockMessage) -> Result<(), RLPxError> {
@@ -949,13 +944,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 RLPxError::CryptographyError(e.to_string())
             })?;
 
-        if recovered_lead_sequencer != *ADDRESS_LEAD_SEQUENCER {
-            warn!(
-                "Received batch from wrong lead sequencer: {}. Expected: {}",
-                recovered_lead_sequencer, *ADDRESS_LEAD_SEQUENCER
-            );
+        if !Self::validate_signature(recovered_lead_sequencer) {
             return Ok(false);
         }
+
         let mut signature = [0u8; 68];
         signature[..64].copy_from_slice(&msg.signature[..]);
         signature[64..].copy_from_slice(&msg.recovery_id[..]);
