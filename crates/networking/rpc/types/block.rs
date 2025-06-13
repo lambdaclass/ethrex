@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcBlock {
-    hash: H256,
+    pub hash: H256,
     #[serde(with = "serde_utils::u64::hex_str")]
     size: u64,
     #[serde(flatten)]
@@ -31,6 +31,7 @@ pub enum BlockBodyWrapper {
 pub struct FullBlockBody {
     pub transactions: Vec<RpcTransaction>,
     pub uncles: Vec<BlockHeader>,
+    #[serde(default)]
     pub withdrawals: Vec<Withdrawal>,
 }
 
@@ -69,6 +70,18 @@ impl RpcBlock {
             body: body_wrapper,
         }
     }
+
+    /// Converts self into Block only if self's body is a Full version
+    pub fn into_full_block(self) -> Option<Block> {
+        let body = match self.body {
+            BlockBodyWrapper::Full(full) => full.into(),
+            BlockBodyWrapper::OnlyHashes(_) => return None,
+        };
+        Some(Block {
+            header: self.header,
+            body,
+        })
+    }
 }
 
 impl FullBlockBody {
@@ -93,6 +106,22 @@ impl FullBlockBody {
         }
     }
 }
+
+impl From<FullBlockBody> for BlockBody {
+    fn from(value: FullBlockBody) -> Self {
+        let transactions = value
+            .transactions
+            .into_iter()
+            .map(|rpctx| rpctx.tx)
+            .collect();
+        BlockBody {
+            transactions,
+            ommers: value.uncles,
+            withdrawals: Some(value.withdrawals),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
 

@@ -370,7 +370,11 @@ impl Subcommand {
             Self::ArchiveSync2 {
                 archive_node_ipc,
                 block_number,
-            } => archive_sync_2(&archive_node_ipc, block_number).await?,
+            } => {
+                let data_dir = set_datadir(&opts.datadir);
+                let store = open_store(&data_dir);
+                archive_sync_2(&archive_node_ipc, block_number, store).await?;
+            }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
         }
