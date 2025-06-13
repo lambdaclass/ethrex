@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.82.0
+        uses: dtolnay/rust-toolchain@1.87.0
         with:
           components: rustfmt, clippy
 
@@ -62,7 +62,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.82.0
+        uses: dtolnay/rust-toolchain@1.87.0
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
@@ -87,6 +87,7 @@ jobs:
           ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Start Sequencer
@@ -101,7 +102,8 @@ jobs:
         run: |
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1 &
+          docker logs --follow ethrex_l2
           killall ethrex_prover -s SIGINT
 
   state-diff-test:
@@ -112,7 +114,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.82.0
+        uses: dtolnay/rust-toolchain@1.87.0
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2

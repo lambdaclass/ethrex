@@ -1,5 +1,5 @@
 use std::{
-    fs::{metadata, read_dir, File},
+    fs::{File, metadata, read_dir},
     io::{self, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -12,13 +12,13 @@ use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmEngine;
-use tracing::{info, warn, Level};
+use tracing::{Level, info, warn};
 
 use crate::{
+    DEFAULT_DATADIR,
     initializers::{init_blockchain, init_store, open_store},
     networks::{Network, PublicNetwork},
     utils::{self, get_client_version, set_datadir},
-    DEFAULT_DATADIR,
 };
 
 #[cfg(feature = "l2")]
@@ -438,7 +438,9 @@ pub async fn export_blocks(
     };
     // Check that the requested range doesn't exceed our current chain length
     if last_number.is_some_and(|number| number > latest_number) {
-        warn!("The requested block range exceeds the current amount of blocks in the chain {latest_number}");
+        warn!(
+            "The requested block range exceeds the current amount of blocks in the chain {latest_number}"
+        );
         return;
     }
     let end = last_number.unwrap_or(latest_number);

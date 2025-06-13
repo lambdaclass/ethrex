@@ -11,9 +11,9 @@ use std::{
 };
 
 use super::{
-    compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
-    Block, BlockBody, BlockHeader, BlockNumber, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
-    INITIAL_BASE_FEE,
+    AccountState, Block, BlockBody, BlockHeader, BlockNumber, DEFAULT_OMMERS_HASH,
+    DEFAULT_REQUESTS_HASH, INITIAL_BASE_FEE, compute_receipts_root, compute_transactions_root,
+    compute_withdrawals_root,
 };
 
 #[allow(unused)]
