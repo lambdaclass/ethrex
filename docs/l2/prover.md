@@ -168,9 +168,10 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
 
 ## Configuration
 
-Configuration is done through environment variables. The easiest way to configure the `Prover` is by creating a `prover_client_config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
+Configuration is done through environment variables or CLI flags.
+You can see a list of available flags by passing `--help` to the CLI.
 
-The following environment variables are available to configure the `Prover`, consider looking at the provided [prover_client_config_example.toml](../configs/prover_client_config_example.toml):
+The following environment variables are available to configure the `Prover`:
 
 - `CONFIGS_PATH`: The path where the `PROVER_CLIENT_CONFIG_FILE` is located at.
 - `PROVER_CLIENT_CONFIG_FILE`: The `.toml` that contains the config for the `Prover`.
