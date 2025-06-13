@@ -17,7 +17,7 @@ services:
       - ./.env:${CI_ETHREX_WORKDIR}/.env
       - ../../test_data/fixtures/genesis/l1-dev.json:${CI_ETHREX_WORKDIR}/test_data/fixtures/genesis/l1-dev.json
       - ../../test_data/fixtures/genesis/l2.json:${CI_ETHREX_WORKDIR}/test_data/fixtures/genesis/l2.json
-      - ../../test_data/private_keys_l1.txt:${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
+      - ../../test_data/fixtures/keys/private_keys_l1.txt:${CI_ETHREX_WORKDIR}/test_data/fixtures/keys/private_keys_l1.txt
       - ./prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk:${CI_ETHREX_WORKDIR}/riscv32im-succinct-zkvm-vk
     environment:
       - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
@@ -28,7 +28,7 @@ services:
       - ETHREX_DEPLOYER_ENV_FILE_PATH=${CI_ETHREX_WORKDIR}/.env
       - ETHREX_DEPLOYER_GENESIS_L1_PATH=${CI_ETHREX_WORKDIR}/test_data/fixtures/genesis/l1-dev.json
       - ETHREX_DEPLOYER_GENESIS_L2_PATH=${CI_ETHREX_WORKDIR}/test_data/fixtures/genesis/l2.json
-      - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
+      - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${CI_ETHREX_WORKDIR}/test_data/fixtures/keys/private_keys_l1.txt
       - ETHREX_DEPLOYER_DEPLOY_RICH=${ETHREX_DEPLOYER_DEPLOY_RICH:-false}
       - ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER=${ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER:-0x00000000000000000000000000000000000000aa}
       - ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER:-false}

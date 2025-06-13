@@ -16,7 +16,7 @@ cargo build --release --manifest-path ./tooling/load_test/Cargo.toml
 
 echo "Starting load test"
 start_time=$(date +%s)
-RUST_BACKTRACE=1 ./target/release/load_test -k ./test_data/private_keys.txt -t eth-transfers -N 1000 -n http://localhost:1729 -w 1
+RUST_BACKTRACE=1 ./target/release/load_test -k ./test_data/fixtures/keys/private_keys.txt -t eth-transfers -N 1000 -n http://localhost:1729 -w 1
 end_time=$(date +%s)
 
 elapsed=$((end_time - start_time))

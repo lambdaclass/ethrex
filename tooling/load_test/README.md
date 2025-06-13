@@ -57,7 +57,7 @@ You should see the ethrex client producing blocks and logs with the gas throughp
 To execute it with non-default parameters, you can do so with `cargo`:
 
 ```bash
-cargo run --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t erc20 -N 1000 -n http://localhost:8545
+cargo run --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/fixtures/keys/private_keys.txt -t erc20 -N 1000 -n http://localhost:8545
 ```
 
 You may want to delete the dev database in between runs with

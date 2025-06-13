@@ -145,22 +145,22 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--datadir test_ethrex
 
 load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t eth-transfers
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/fixtures/keys/private_keys.txt -t eth-transfers
 
 load-test-erc20:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t erc20
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/fixtures/keys/private_keys.txt -t erc20
 
 load-test-fibonacci:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t fibonacci
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/fixtures/keys/private_keys.txt -t fibonacci
 
 load-test-io:
-	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t io-heavy
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/fixtures/keys/private_keys.txt -t io-heavy
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
 
 test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
-	solc ./test_data/ERC20.sol -o $@
+	solc ./test_data/fixtures/contracts/ERC20/ERC20.sol -o $@
 
 sort-genesis-files:
 	cd ./tooling/genesis && cargo run

@@ -19,7 +19,7 @@ fn block_import() {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(
-        "../../test_data/l2-1k-erc20.rlp",
+        "../../test_data/fixtures/blockchain/l2-1k-erc20.rlp",
         data_dir,
         network.get_genesis(),
         evm_engine,

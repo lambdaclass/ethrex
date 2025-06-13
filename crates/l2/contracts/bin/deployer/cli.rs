@@ -96,7 +96,7 @@ pub struct DeployerOptions {
         env = "ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH",
         required_if_eq("deposit_rich", "true"),
         help_heading = "Deployer options",
-        help = "Path to the file containing the private keys of the rich accounts. The default is ../../test_data/private_keys_l1.txt"
+        help = "Path to the file containing the private keys of the rich accounts. The default is ../../test_data/fixtures/keys/private_keys_l1.txt"
     )]
     pub private_keys_file_path: Option<PathBuf>,
     #[arg(
