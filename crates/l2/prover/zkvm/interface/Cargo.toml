@@ -24,8 +24,8 @@ ethrex-l2-common = { path = "../../../common", default-features = false }
 
 [build-dependencies]
 risc0-build = { version = "1.2.2", optional = true }
-sp1-build = { version = "4.1.7", optional = true }
-sp1-sdk = { version = "4.1.7", optional = true }
+sp1-build = { version = "5.0.0", optional = true }
+sp1-sdk = { version = "5.0.0", optional = true }
 
 [package.metadata.risc0]
 methods = ["risc0"]

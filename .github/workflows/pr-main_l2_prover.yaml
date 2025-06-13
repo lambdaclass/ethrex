@@ -25,14 +25,14 @@ jobs:
       - name: RISC-V SP1 toolchain install
         run: |
           curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 4.1.7
+          ~/.sp1/bin/sp1up --version 5.0.0
       - name: Check sp1
         run: |
-          cargo check -p ethrex-prover -F sp1
-          cargo check -p ethrex-replay -F sp1
+          cargo check -r -p ethrex-prover -F sp1
+          cargo check -r -p ethrex-replay -F sp1
       - name: Clippy sp1
         run: |
-          cargo clippy -p ethrex-prover --all-targets -F sp1
+          cargo clippy -r -p ethrex-prover --all-targets -F sp1
       - name: Check exec
         run: |
           cargo check -p ethrex-prover
