@@ -117,6 +117,9 @@ jobs:
           - name: Blob & Stability Check
             enclave_name: "ethrex-assertoor-blob"
             ethereum_package_args: "./.github/config/assertoor/network_params_blob.yaml"
+          - name: Ethrex Only Check
+            enclave_name: "ethrex-only-assertoor"
+            ethereum_package_args: "./.github/config/assertoor/network_params_ethrex_only.yaml"
 
     steps:
       - uses: actions/checkout@v4
