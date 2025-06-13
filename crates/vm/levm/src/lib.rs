@@ -1,6 +1,7 @@
 pub mod call_frame;
 pub mod constants;
 pub mod db;
+pub mod debug;
 pub mod environment;
 pub mod errors;
 pub mod execution_handlers;
