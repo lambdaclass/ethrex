@@ -373,8 +373,8 @@ impl StoreEngine for Store {
             let mut cursor = tx.cursor::<AccountStorageWriteLog>()?;
             for (blk, addr, slot, old_value, new_value) in account_storage_logs {
                 cursor.upsert(
-                    (blk, addr, slot.0),
-                    (old_value.to_big_endian(), new_value.to_big_endian()),
+                    (blk, addr),
+                    AccountStorageLogEntry(slot, old_value, new_value),
                 )?;
             }
             tx.commit()
@@ -1566,53 +1566,36 @@ pub struct StorageWriteLogEntry {
 }
 pub struct StorageWriteLog(pub Vec<StorageWriteLogEntry>);
 */
-pub struct StorageStateWriteLogVal(pub Vec<(AccountAddress, H256, U256, U256)>);
+pub struct AccountStorageLogEntry(pub H256, pub U256, pub U256);
 
 // implemente Encode and Decode for StorageStateWriteLogVal
-impl Encodable for StorageStateWriteLogVal {
-    type Encoded = Vec<u8>;
+impl Encodable for AccountStorageLogEntry {
+    type Encoded = [u8; 96];
 
     fn encode(self) -> Self::Encoded {
-        let mut encoded = Vec::with_capacity(8 + 32 * self.0.len());
-        encoded.extend(self.0.len().to_be_bytes());
-        for (address, slot, previous_value, new_value) in self.0.into_iter() {
-            let slot_encoded: [u8; 32] = slot.as_bytes().try_into().unwrap_or_default();
-
-            encoded.extend(address.encode());
-            encoded.extend(slot_encoded);
-            encoded.extend(previous_value.to_big_endian());
-            encoded.extend(new_value.to_big_endian());
-        }
+        let mut encoded = [0u8; 96];
+        encoded[0..32].copy_from_slice(&self.0 .0);
+        encoded[32..64].copy_from_slice(&self.1.to_big_endian());
+        encoded[64..96].copy_from_slice(&self.2.to_big_endian());
         encoded
     }
 }
 
-impl Decodable for StorageStateWriteLogVal {
+impl Decodable for AccountStorageLogEntry {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        if b.len() < 8 {
+        if b.len() < std::mem::size_of::<Self>() {
             anyhow::bail!("Invalid length for StorageStateWriteLogVal");
         }
-        let len = u64::from_be_bytes(b[0..8].try_into()?);
-        let mut entries = Vec::with_capacity(len as usize);
-        let mut offset = 8;
-        for _ in 0..len {
-            if b.len() < offset + 72 {
-                anyhow::bail!("Invalid length for StorageStateWriteLogVal entry");
-            }
-            let address = AccountAddress::decode(&b[offset..offset + 20])?;
-            let slot = H256::decode(&b[offset + 20..offset + 52])?;
-            let previous_value = U256::from_big_endian(&b[offset + 52..offset + 84]);
-            let new_value = U256::from_big_endian(&b[offset + 84..offset + 116]);
-            entries.push((address, slot, previous_value, new_value));
-            offset += 116;
-        }
-        Ok(StorageStateWriteLogVal(entries))
+        let slot = H256::from_slice(&b[0..32]);
+        let old_value = U256::from_big_endian(&b[32..64]);
+        let new_value = U256::from_big_endian(&b[64..96]);
+        Ok(Self(slot, old_value, new_value))
     }
 }
 
-table!(
+dupsort!(
     /// Storage write log table.
-    ( AccountStorageWriteLog ) (BlockNumHash, AccountAddress, [u8; 32]) => ([u8; 32], [u8; 32])
+    ( AccountStorageWriteLog ) (BlockNumHash, AccountAddress) => AccountStorageLogEntry
 );
 
 impl Encodable for BlockNumHash {
