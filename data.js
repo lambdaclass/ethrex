@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749841146014,
+  "lastUpdate": 1749841675322,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15326,6 +15326,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00854030298102981,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "128638963+santiago-MV@users.noreply.github.com",
+            "name": "santiago-MV",
+            "username": "santiago-MV"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7f4cedadce99b6277d6bf72cb5c437447d24d39b",
+          "message": "ci(l1): add ethrex_only localnet (#3048)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nNow that we are able to run a localnet with only ethrex instances add\none and test it with assertoor playbooks\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nThe command `make localnet-assertoor-ethrex-only` was added for running\na localnet with only ethrex instances\nAlso a `network_params_ethrex_only.yaml` file was created to configure\nthe assertoor tests and was included into the l1 github workflow. The\nmakefile command uses this file as its configuration.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3008\n\n---------\n\nCo-authored-by: SDartayet <44068466+SDartayet@users.noreply.github.com>",
+          "timestamp": "2025-06-13T15:30:40Z",
+          "tree_id": "deae416d360858ee7f796d8e8d392a491ec25ed6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7f4cedadce99b6277d6bf72cb5c437447d24d39b"
+        },
+        "date": 1749841668375,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008526438852813853,
             "unit": "Mgas/s"
           }
         ]
