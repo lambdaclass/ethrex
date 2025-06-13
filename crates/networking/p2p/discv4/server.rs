@@ -693,10 +693,10 @@ impl Discv4Server {
         }
     }
 
-    async fn send_enr_request<'a>(
+    async fn send_enr_request(
         &self,
         node: &Node,
-        mut table_lock: MutexGuard<'a, KademliaTable>,
+        mut table_lock: MutexGuard<'_, KademliaTable>,
     ) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
         let expiration: u64 = get_msg_expiration_from_seconds(20);
@@ -855,7 +855,6 @@ pub(super) mod tests {
         Ok(store)
     }
 
-    #[tokio::test]
     /** This is a end to end test on the discovery server, the idea is as follows:
      * - We'll start two discovery servers (`a` & `b`) to ping between each other
      * - We'll make `b` ping `a`, and validate that the connection is right
@@ -865,6 +864,7 @@ pub(super) mod tests {
      * - We expect server `b` to remove node `a` from its table after 3 re-validations
      * To make this run faster, we'll change the revalidation time to be every 2secs
      */
+    #[tokio::test]
     async fn discovery_server_revalidation() -> Result<(), DiscoveryError> {
         let mut server_a = start_discovery_server(7998, 1, true).await?;
         let mut server_b = start_discovery_server(7999, 1, true).await?;

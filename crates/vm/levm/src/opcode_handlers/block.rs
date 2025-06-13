@@ -10,7 +10,7 @@ use ethrex_common::{U256, types::Fork};
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     // BLOCKHASH operation
     pub fn op_blockhash(&mut self) -> Result<OpcodeResult, VMError> {
         let current_block = self.env.block_number;

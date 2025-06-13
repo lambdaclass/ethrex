@@ -10,7 +10,7 @@ use ethrex_common::{U256, types::Fork};
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     // PUSH operation
     pub fn op_push(&mut self, n_bytes: usize) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;

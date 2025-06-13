@@ -9,7 +9,7 @@ use ethrex_common::U256;
 // Comparison and Bitwise Logic Operations (14)
 // Opcodes: LT, GT, SLT, SGT, EQ, ISZERO, AND, OR, XOR, NOT, BYTE, SHL, SHR, SAR
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     // LT operation
     pub fn op_lt(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;

@@ -7,7 +7,7 @@ use crate::{
 // Duplication Operation (16)
 // Opcodes: DUP1 ... DUP16
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     // DUP operation
     pub fn op_dup(&mut self, depth: usize) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;

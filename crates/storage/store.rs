@@ -2,7 +2,7 @@ use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
-use crate::store_db::libmdbx::Store as LibmdbxStore;
+use crate::store_db::mdbx_fork::MDBXFork;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
@@ -73,7 +73,7 @@ impl Store {
         let store = match engine_type {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStore::new(_path)?),
+                engine: Arc::new(MDBXFork::new(_path)?),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
