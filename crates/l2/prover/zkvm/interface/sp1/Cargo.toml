@@ -15,9 +15,6 @@ bls12_381 = { version = "=0.8.0-sp1-4.0.0-v2", package = "sp1_bls12_381", defaul
     "alloc",
 ] }
 
-# need to pin this transitive dependency because 1.8.0 uses edition 2024
-base64ct = { version = "=1.7.3"}
-
 ethrex-common = { path = "../../../../../common", default-features = false }
 ethrex-storage = { path = "../../../../../storage", default-features = false }
 ethrex-rlp = { path = "../../../../../common/rlp" }
