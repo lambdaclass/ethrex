@@ -3,16 +3,16 @@ mod blockchain_integration_test {
     use std::{fs::File, io::BufReader};
 
     use crate::{
+        Blockchain,
         error::{ChainError, InvalidForkChoice},
         fork_choice::apply_fork_choice,
         is_canonical, latest_canonical_block_hash,
-        payload::{create_payload, BuildPayloadArgs},
-        Blockchain,
+        payload::{BuildPayloadArgs, create_payload},
     };
 
     use ethrex_common::{
-        types::{Block, BlockHeader, ELASTICITY_MULTIPLIER},
         H160, H256,
+        types::{Block, BlockHeader, ELASTICITY_MULTIPLIER},
     };
     use ethrex_storage::{EngineType, Store};
 

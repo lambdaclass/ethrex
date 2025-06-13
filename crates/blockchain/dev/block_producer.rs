@@ -104,7 +104,9 @@ pub async fn start_block_producer(
         {
             latest_valid_hash
         } else {
-            tracing::error!("Failed to produce block: latest_valid_hash is None in PayloadStatus: {payload_status:?}");
+            tracing::error!(
+                "Failed to produce block: latest_valid_hash is None in PayloadStatus: {payload_status:?}"
+            );
             tries += 1;
             continue;
         };
