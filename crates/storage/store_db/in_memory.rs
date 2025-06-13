@@ -88,6 +88,18 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    async fn store_account_info_logs(
+        &self,
+        account_info_logs: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
+    async fn store_account_storage_logs(
+        &self,
+        account_storage_logs: Vec<(BlockNumHash, AccountAddress, H256, U256, U256)>,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
     async fn apply_updates(
         &self,
         update_batch: UpdateBatch,

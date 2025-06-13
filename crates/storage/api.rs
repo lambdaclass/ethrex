@@ -8,6 +8,7 @@ use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::Address;
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
+use crate::store_db::libmdbx::{AccountAddress, BlockNumHash};
 use crate::UpdateBatch;
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
@@ -23,6 +24,15 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         update_batch: UpdateBatch,
         account_updates: Vec<Vec<AccountUpdate>>,
+    ) -> Result<(), StoreError>;
+
+    async fn store_account_info_logs(
+        &self,
+        account_info_logs: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
+    ) -> Result<(), StoreError>;
+    async fn store_account_storage_logs(
+        &self,
+        account_storage_logs: Vec<(BlockNumHash, AccountAddress, H256, U256, U256)>,
     ) -> Result<(), StoreError>;
 
     /// Add a batch of blocks in a single transaction.

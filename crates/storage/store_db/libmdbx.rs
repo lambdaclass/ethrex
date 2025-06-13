@@ -344,6 +344,43 @@ impl StoreEngine for Store {
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
+    async fn store_account_info_logs(
+        &self,
+        account_info_logs: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
+    ) -> Result<(), StoreError> {
+        let inner = || -> Result<(), _> {
+            let tx = self.db.begin_readwrite()?;
+            let mut cursor = tx.cursor::<AccountsStateWriteLog>()?;
+            for (blk, addr, old_info, new_info) in account_info_logs {
+                cursor.upsert(
+                    (blk, addr),
+                    AccountInfoLogEntry {
+                        info: new_info,
+                        previous_info: old_info,
+                    },
+                )?;
+            }
+            Ok(())
+        };
+        inner().map_err(StoreError::LibmdbxError)
+    }
+    async fn store_account_storage_logs(
+        &self,
+        account_storage_logs: Vec<(BlockNumHash, AccountAddress, H256, U256, U256)>,
+    ) -> Result<(), StoreError> {
+        let inner = || -> Result<(), _> {
+            let tx = self.db.begin_readwrite()?;
+            let mut cursor = tx.cursor::<AccountStorageWriteLog>()?;
+            for (blk, addr, slot, old_value, new_value) in account_storage_logs {
+                cursor.upsert(
+                    (blk, addr, slot.0),
+                    (old_value.to_big_endian(), new_value.to_big_endian()),
+                )?;
+            }
+            Ok(())
+        };
+        inner().map_err(StoreError::LibmdbxError)
+    }
 
     async fn add_block_header(
         &self,
@@ -1460,6 +1497,7 @@ table!(
     ( AccountCodes ) AccountCodeHashRLP => AccountCodeRLP
 );
 
+#[derive(Clone, Copy, Default)]
 pub struct BlockNumHash(pub BlockNumber, pub BlockHash);
 impl From<(BlockNumber, BlockHash)> for BlockNumHash {
     fn from(value: (BlockNumber, BlockHash)) -> Self {
@@ -1468,83 +1506,55 @@ impl From<(BlockNumber, BlockHash)> for BlockNumHash {
 }
 
 pub struct AccountInfoLogEntry {
-    pub address: AccountAddress,
     pub info: AccountInfo,
     pub previous_info: AccountInfo,
 }
-pub struct AccountInfoWriteLogSegment(pub Vec<AccountInfoLogEntry>);
 
 const SIZE_OF_ACCOUNT_INFO_LOG_ENTRY: usize = mem::size_of::<AccountInfoLogEntry>();
 
-impl Encodable for AccountInfoWriteLogSegment {
-    type Encoded = Vec<u8>;
+impl Encodable for AccountInfoLogEntry {
+    type Encoded = [u8; std::mem::size_of::<Self>()];
     fn encode(self) -> Self::Encoded {
-        let mut encoded = Vec::with_capacity(8 + SIZE_OF_ACCOUNT_INFO_LOG_ENTRY * self.0.len());
-        encoded.extend(self.0.len().to_be_bytes());
-        for entry in self.0.into_iter() {
-            encoded.extend(entry.address.encode());
-
-            let entry_info_balance: [u8; 32] = entry
-                .info
-                .balance
-                .to_big_endian()
-                .try_into()
-                .unwrap_or_default();
-
-            let code_hash: [u8; 32] = entry
-                .info
-                .code_hash
-                .as_bytes()
-                .try_into()
-                .unwrap_or_default();
-
-            let previous_info_balance: [u8; 32] = entry
-                .previous_info
-                .balance
-                .to_big_endian()
-                .try_into()
-                .unwrap_or_default();
-
-            // TODO (for thursday): write `Encodable` for `AccountInfo`
-            encoded.extend(Encodable::encode(entry_info_balance));
-            encoded.extend(Encodable::encode(entry.info.nonce));
-            encoded.extend(Encodable::encode(code_hash));
-            encoded.extend(Encodable::encode(previous_info_balance));
-            encoded.extend(entry.previous_info.nonce.to_be_bytes());
-            encoded.extend(entry.previous_info.code_hash.as_fixed_bytes());
-        }
+        let mut encoded: Self::Encoded = std::array::from_fn(|_| 0);
+        encoded[0..32].copy_from_slice(&self.info.code_hash.0);
+        encoded[32..40].copy_from_slice(&self.info.nonce.to_be_bytes());
+        encoded[40..72].copy_from_slice(&self.info.balance.to_big_endian());
+        encoded[72..104].copy_from_slice(&self.previous_info.code_hash.0);
+        encoded[104..112].copy_from_slice(&self.previous_info.nonce.to_be_bytes());
+        encoded[112..144].copy_from_slice(&self.previous_info.balance.to_big_endian());
         encoded
     }
 }
 
-impl Decodable for AccountInfoWriteLogSegment {
+impl Decodable for AccountInfoLogEntry {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        if b.len() < 8 {
+        if b.len() != SIZE_OF_ACCOUNT_INFO_LOG_ENTRY {
             anyhow::bail!("Invalid length for AccountInfoLog");
         }
-        let len = u64::from_be_bytes(b[0..8].try_into()?);
-        if b.len() != 8 + (len as usize * SIZE_OF_ACCOUNT_INFO_LOG_ENTRY) {
-            anyhow::bail!("Invalid length for AccountInfoLog entries");
-        }
-        let mut entries = Vec::with_capacity(len as usize);
-        for offset in (8..b.len()).step_by(SIZE_OF_ACCOUNT_INFO_LOG_ENTRY) {
-            let address = AccountAddress::decode(&b[offset..offset + 20])?;
-            let info = AccountInfo::decode(&b[offset + 20..offset + 52])?;
-            let previous_info =
-                AccountInfo::decode(&b[offset + 52..offset + SIZE_OF_ACCOUNT_INFO_LOG_ENTRY])?;
-            entries.push(AccountInfoLogEntry {
-                address,
-                info,
-                previous_info,
-            });
-        }
-        Ok(AccountInfoWriteLogSegment(entries))
+        let info_code_hash = H256::from_slice(&b[0..32]);
+        let info_nonce = Decodable::decode(&b[32..40])?;
+        let info_balance = U256::from_big_endian(&b[40..72]);
+        let previous_info_code_hash = H256::from_slice(&b[72..104]);
+        let previous_info_nonce = Decodable::decode(&b[104..112])?;
+        let previous_info_balance = U256::from_big_endian(&b[112..144]);
+        Ok(Self {
+            info: AccountInfo {
+                code_hash: info_code_hash,
+                nonce: info_nonce,
+                balance: info_balance,
+            },
+            previous_info: AccountInfo {
+                code_hash: previous_info_code_hash,
+                nonce: previous_info_nonce,
+                balance: previous_info_balance,
+            },
+        })
     }
 }
 
-table!(
+dupsort!(
     /// Account codes table.
-    ( AccountsStateWriteLog ) BlockNumHash => AccountInfoWriteLogSegment
+    ( AccountsStateWriteLog ) (BlockNumHash, AccountAddress) => AccountInfoLogEntry
 );
 
 /* TODO: use this instead of the tuple version below
@@ -1602,7 +1612,7 @@ impl Decodable for StorageStateWriteLogVal {
 
 table!(
     /// Storage write log table.
-    ( StorageStateWriteLog ) BlockNumHash => StorageStateWriteLogVal
+    ( AccountStorageWriteLog ) (BlockNumHash, AccountAddress, [u8; 32]) => ([u8; 32], [u8; 32])
 );
 
 impl Encodable for BlockNumHash {

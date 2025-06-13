@@ -3,6 +3,7 @@ use crate::error::StoreError;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
+use crate::store_db::libmdbx::{AccountAddress, BlockNumHash};
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
@@ -18,7 +19,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieNode};
 use sha3::{Digest as _, Keccak256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::sync::Arc;
 use tracing::info;
@@ -71,6 +72,21 @@ impl Store {
         update_batch: UpdateBatch,
         account_updates: &[&[AccountUpdate]],
     ) -> Result<(), StoreError> {
+        let account_info_logs = self.build_account_info_logs(
+            update_batch
+                .blocks
+                .iter()
+                .zip(account_updates.iter().map(|updates| *updates)),
+        )?;
+        self.engine.store_account_info_logs(account_info_logs)?;
+        let account_storage_logs = self.build_account_storage_logs(
+            update_batch
+                .blocks
+                .iter()
+                .zip(account_updates.iter().map(|updates| *updates)),
+        )?;
+        self.engine
+            .store_account_storage_logs(account_storage_logs)?;
         self.engine
             .apply_updates(update_batch, account_updates)
             .await
@@ -108,6 +124,71 @@ impl Store {
         let store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
+    }
+
+    fn build_account_info_logs<'a>(
+        &self,
+        account_updates_per_block: impl Iterator<Item = (&'a Block, &'a [AccountUpdate])>,
+    ) -> Result<Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>, StoreError> {
+        let mut accounts_info_log = Vec::new();
+        let mut previous_account_info = HashMap::<H160, AccountInfo>::new();
+
+        for (block, account_updates) in account_updates_per_block {
+            for account_update in account_updates {
+                let Some(new_info) = &account_update.info else {
+                    continue;
+                };
+                let address = account_update.address.clone();
+                let old_info = match previous_account_info.get(&address).clone() {
+                    Some(info) => info.clone(),
+                    None => self
+                        .engine
+                        .get_current_account_info(address.clone())?
+                        .unwrap_or_default(),
+                };
+                previous_account_info.insert(address.clone(), new_info.clone());
+                accounts_info_log.push((
+                    (block.header.number, block.hash()).into(),
+                    address.into(),
+                    old_info,
+                    new_info.clone(),
+                ));
+            }
+        }
+        Ok(accounts_info_log)
+    }
+
+    fn build_account_storage_logs<'a>(
+        &self,
+        account_updates_per_block: impl Iterator<Item = (&'a Block, &'a [AccountUpdate])>,
+    ) -> Result<Vec<(BlockNumHash, AccountAddress, H256, U256, U256)>, StoreError> {
+        let mut accounts_storage_log = Vec::new();
+        let mut previous_account_storage = HashMap::<(H160, H256), U256>::new();
+
+        for (block, account_updates) in account_updates_per_block {
+            let block_numhash: BlockNumHash = (block.header.number, block.hash()).into();
+            for account_update in account_updates {
+                let address = account_update.address.clone();
+                for (slot, new_value) in account_update.added_storage.iter() {
+                    let old_value = match previous_account_storage.get(&(address, *slot)).clone() {
+                        Some(value) => *value,
+                        None => self
+                            .engine
+                            .get_current_storage(address, *slot)?
+                            .unwrap_or_default(),
+                    };
+                    previous_account_storage.insert((address, *slot), *new_value);
+                    accounts_storage_log.push((
+                        block_numhash.clone(),
+                        address.into(),
+                        *slot,
+                        old_value,
+                        *new_value,
+                    ));
+                }
+            }
+        }
+        Ok(accounts_storage_log)
     }
 
     pub async fn get_account_info(
