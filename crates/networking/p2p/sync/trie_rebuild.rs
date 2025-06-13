@@ -7,11 +7,11 @@
 
 use ethrex_common::{BigEndianHash, H256, U256, U512};
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
-use ethrex_trie::{Nibbles, EMPTY_TRIE_HASH};
+use ethrex_storage::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles};
 use std::array;
 use tokio::{
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::mpsc::{Receiver, Sender, channel},
     task::JoinSet,
     time::Instant,
 };
@@ -21,8 +21,8 @@ use tracing::{info, warn};
 use crate::sync::seconds_to_readable;
 
 use super::{
-    SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, SHOW_PROGRESS_INTERVAL_DURATION,
-    STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
+    MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, SHOW_PROGRESS_INTERVAL_DURATION,
+    STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START, SyncError,
 };
 /// The storage root used to indicate that the storage to be rebuilt is not complete
 /// This will tell the rebuilder to skip storage root validations for this trie

@@ -1,10 +1,10 @@
 use bls12_381::{
-    hash_to_curve::MapToCurve, multi_miller_loop, Fp, Fp2, G1Affine, G1Projective, G2Affine,
-    G2Prepared, G2Projective, Gt, Scalar,
+    Fp, Fp2, G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Gt, Scalar,
+    hash_to_curve::MapToCurve, multi_miller_loop,
 };
 
 use bytes::Bytes;
-use ethrex_common::{serde_utils::bool, types::Fork, Address, H160, H256, U256};
+use ethrex_common::{Address, H160, H256, U256, serde_utils::bool, types::Fork};
 use keccak_hash::keccak256;
 use kzg_rs::{Bytes32, Bytes48, KzgSettings};
 use lambdaworks_math::{
@@ -14,7 +14,7 @@ use lambdaworks_math::{
             curves::bn_254::{
                 curve::{BN254Curve, BN254FieldElement, BN254TwistCurveFieldElement},
                 field_extension::{
-                    BN254FieldModulus, Degree12ExtensionField, Degree2ExtensionField,
+                    BN254FieldModulus, Degree2ExtensionField, Degree12ExtensionField,
                 },
                 pairing::BN254AtePairing,
                 twist::BN254TwistCurve,
@@ -33,13 +33,13 @@ use lambdaworks_math::{
 use num_bigint::BigUint;
 #[cfg(feature = "l2")]
 use p256::{
-    ecdsa::{signature::hazmat::PrehashVerifier, Signature as P256Signature, VerifyingKey},
-    elliptic_curve::{bigint::U256 as P256Uint, ff::PrimeField, Curve},
     EncodedPoint, FieldElement as P256FieldElement, NistP256,
+    ecdsa::{Signature as P256Signature, VerifyingKey, signature::hazmat::PrehashVerifier},
+    elliptic_curve::{Curve, bigint::U256 as P256Uint, ff::PrimeField},
 };
 use secp256k1::{
-    ecdsa::{RecoverableSignature, RecoveryId},
     Message,
+    ecdsa::{RecoverableSignature, RecoveryId},
 };
 
 // Secp256r1 curve parameters
@@ -67,9 +67,9 @@ use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
     errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
     gas_cost::{
-        self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G1_K_DISCOUNT,
-        BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, BLS12_381_MAP_FP2_TO_G2_COST,
-        BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST,
+        self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
+        BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST,
+        BLS12_381_MAP_FP2_TO_G2_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST,
         G2_MUL_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST,
     },
 };

@@ -2,9 +2,9 @@ use crate::{
     constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE_IN_BYTES_USIZE},
     errors::{ExceptionalHalt, InternalError, VMError},
 };
-use ethrex_common::U256;
 use ExceptionalHalt::OutOfBounds;
 use ExceptionalHalt::OutOfGas;
+use ethrex_common::U256;
 
 /// Memory of the EVM, a volatile byte array.
 pub type Memory = Vec<u8>;

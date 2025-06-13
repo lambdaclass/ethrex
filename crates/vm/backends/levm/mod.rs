@@ -9,23 +9,23 @@ use crate::constants::{
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::{
-    types::{
-        requests::Requests, AccessList, AccountUpdate, AuthorizationTuple, Block, BlockHeader,
-        EIP1559Transaction, EIP7702Transaction, Fork, GenericTransaction, Receipt, Transaction,
-        TxKind, Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
-    },
     Address, H256, U256,
+    types::{
+        AccessList, AccountUpdate, AuthorizationTuple, Block, BlockHeader, EIP1559Transaction,
+        EIP7702Transaction, Fork, GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt,
+        Transaction, TxKind, Withdrawal, requests::Requests,
+    },
 };
+use ethrex_levm::EVMConfig;
 use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::tracing::LevmCallTracer;
-use ethrex_levm::EVMConfig;
 use ethrex_levm::{
+    Environment,
     errors::{ExecutionReport, TxResult, VMError},
     vm::{Substate, VM},
-    Environment,
 };
 use std::cmp::min;
 use std::collections::HashMap;
@@ -51,8 +51,7 @@ impl LEVM {
         let mut cumulative_gas_used = 0;
 
         for (tx, tx_sender) in block.body.get_transactions_with_sender() {
-            let report =
-                Self::execute_tx(tx, tx_sender, &block.header, db).map_err(EvmError::from)?;
+            let report = Self::execute_tx(tx, tx_sender, &block.header, db)?;
 
             cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
@@ -111,7 +110,7 @@ impl LEVM {
             tx_blob_hashes: tx.blob_versioned_hashes(),
             tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
             tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
-            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
+            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas(),
             tx_nonce: tx.nonce(),
             block_gas_limit: block_header.gas_limit,
             difficulty: block_header.difficulty,
@@ -290,7 +289,7 @@ impl LEVM {
             None => {
                 return Err(EvmError::Header(
                     "parent_beacon_block_root field is missing".to_string(),
-                ))
+                ));
             }
             Some(beacon_root) => beacon_root,
         };
@@ -595,7 +594,7 @@ fn vm_from_generic<'a>(
             to: match tx.to {
                 TxKind::Call(to) => to,
                 TxKind::Create => {
-                    return Err(InternalError::msg("Generic Tx cannot be create type").into())
+                    return Err(InternalError::msg("Generic Tx cannot be create type").into());
                 }
             },
             value: tx.value,

@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, Store};
+use ethrex_storage::{Store, error::StoreError};
 
 use crate::rlpx::{
     error::RLPxError,
@@ -165,7 +165,7 @@ pub(crate) fn encodable_to_proof(proof: &[Bytes]) -> Vec<Vec<u8>> {
 mod tests {
     use std::str::FromStr;
 
-    use ethrex_common::{types::AccountState, BigEndianHash, H256};
+    use ethrex_common::{BigEndianHash, H256, types::AccountState};
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
     use ethrex_storage::EngineType;
 

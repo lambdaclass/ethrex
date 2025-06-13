@@ -6,8 +6,8 @@ use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::eth::BlockByNumber;
 use ethrex_rpc::clients::{EthClient, EthClientError, Overrides};
 use ethrex_rpc::types::receipt::RpcReceipt;
-use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use futures::stream::FuturesUnordered;
 use hex::ToHex;
 use secp256k1::{PublicKey, SecretKey};
 use std::fs;
@@ -152,12 +152,12 @@ async fn claim_erc20_balances(
             Ok(RpcReceipt { receipt, .. }) if !receipt.status => {
                 return Err(eyre::eyre!(
                     "Failed to assign balance to an account, tx failed with receipt: {receipt:?}"
-                ))
+                ));
             }
             Err(err) => {
                 return Err(eyre::eyre!(
                     "Failed to assign balance to an account, tx failed: {err}"
-                ))
+                ));
             }
             Ok(_) => {
                 continue;
@@ -290,7 +290,10 @@ async fn wait_until_all_included(
             } else {
                 println!(
                     "Waiting for transactions to be included from {}. Nonce: {}. Needs: {}. Percentage: {:2}%.",
-                    encoded_src, nonce, tx_amount, (nonce as f64 / tx_amount as f64) * 100.0
+                    encoded_src,
+                    nonce,
+                    tx_amount,
+                    (nonce as f64 / tx_amount as f64) * 100.0
                 );
             }
 

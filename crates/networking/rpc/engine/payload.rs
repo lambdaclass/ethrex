@@ -1,7 +1,7 @@
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
 use ethrex_common::types::payload::PayloadBundle;
-use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests};
+use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
@@ -14,7 +14,7 @@ use crate::types::payload::{
     ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadResponse, PayloadStatus,
 };
 use crate::utils::RpcErr;
-use crate::utils::{parse_json_hex, RpcRequest};
+use crate::utils::{RpcRequest, parse_json_hex};
 
 // Must support rquest sizes of at least 32 blocks
 // Chosen an arbitrary x4 value
@@ -40,7 +40,7 @@ impl RpcHandler for NewPayloadV1Request {
             Err(err) => {
                 return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
                     &err.to_string(),
-                ))?)
+                ))?);
             }
         };
         let payload_status = handle_new_payload_v1_v2(&self.payload, block, context).await?;
@@ -72,7 +72,7 @@ impl RpcHandler for NewPayloadV2Request {
             Err(err) => {
                 return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
                     &err.to_string(),
-                ))?)
+                ))?);
             }
         };
         let payload_status = handle_new_payload_v1_v2(&self.payload, block, context).await?;
@@ -128,7 +128,7 @@ impl RpcHandler for NewPayloadV3Request {
             Err(err) => {
                 return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
                     &err.to_string(),
-                ))?)
+                ))?);
             }
         };
         validate_fork(&block, Fork::Cancun, &context)?;
@@ -199,7 +199,7 @@ impl RpcHandler for NewPayloadV4Request {
             Err(err) => {
                 return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
                     &err.to_string(),
-                ))?)
+                ))?);
             }
         };
 

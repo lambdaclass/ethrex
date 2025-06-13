@@ -440,8 +440,7 @@ fn correct_tuple_parsing() {
     // - ((address, address), uint256)
     // - (uint256, (address, address))
     // - address
-    let raw_function_signature =
-        "my_function(uint256,(uin256,address),((address,address),(uint256,bytes)),((address,address),uint256),(uint256,(address,address)),address)";
+    let raw_function_signature = "my_function(uint256,(uin256,address),((address,address),(uint256,bytes)),((address,address),uint256),(uint256,(address,address)),address)";
 
     let exepected_arguments: Vec<String> = vec![
         "uint256".to_string(),

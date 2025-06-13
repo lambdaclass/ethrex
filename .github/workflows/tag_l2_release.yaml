@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.82.0
+        uses: dtolnay/rust-toolchain@1.87.0
 
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -79,7 +79,7 @@ jobs:
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.82.0
+          toolchain: 1.87.0
 
       - name: Install SP1
         env:
@@ -127,7 +127,7 @@ jobs:
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.82.0
+          toolchain: 1.87.0
 
       - name: Install RISC0
         env:

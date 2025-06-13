@@ -4,11 +4,11 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
     memory,
 };
+use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
-use ethrex_common::{types::Fork, U256};
+use ethrex_common::{U256, types::Fork};
 use num_bigint::BigUint;
-use ExceptionalHalt::OutOfGas;
 
 // Opcodes cost
 pub const STOP: u64 = 0;

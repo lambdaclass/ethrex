@@ -7,7 +7,7 @@ use bytes::BufMut;
 use ethrex_common::H512;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{
-    decode::{decode_rlp_item, RLPDecode},
+    decode::{RLPDecode, decode_rlp_item},
     encode::RLPEncode,
     error::{RLPDecodeError, RLPEncodeError},
 };

@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use ethrex_common::types::Account;
 use ethrex_common::Address;
 use ethrex_common::U256;
+use ethrex_common::types::Account;
 use keccak_hash::H256;
 
 use crate::call_frame::CallFrameBackup;
@@ -14,9 +14,9 @@ use crate::utils::restore_cache_state;
 use crate::vm::Substate;
 use crate::vm::VM;
 
-use super::cache;
 use super::CacheDB;
 use super::Database;
+use super::cache;
 
 #[derive(Clone)]
 pub struct GeneralizedDatabase {

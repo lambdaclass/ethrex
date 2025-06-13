@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{types::AccountInfo, Address, H256, U256};
+use crate::{Address, H256, U256, types::AccountInfo};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 

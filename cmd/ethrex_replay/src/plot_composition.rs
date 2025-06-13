@@ -2,10 +2,10 @@ use ethrex_common::types::{Transaction, TxKind};
 use revm_primitives::HashMap;
 
 use charming::{
+    Chart, ImageRenderer,
     component::Legend,
     element::{Tooltip, Trigger},
     series::Pie,
-    Chart, ImageRenderer,
 };
 
 use crate::cache::Cache;

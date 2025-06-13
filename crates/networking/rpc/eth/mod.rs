@@ -14,11 +14,11 @@ pub(crate) mod max_priority_fee;
 pub mod test_utils {
     use bytes::Bytes;
     use ethrex_common::{
-        types::{
-            Block, BlockBody, BlockHeader, EIP1559Transaction, Genesis, LegacyTransaction,
-            Transaction, TxKind, DEFAULT_REQUESTS_HASH,
-        },
         Address, Bloom, H256, U256,
+        types::{
+            Block, BlockBody, BlockHeader, DEFAULT_REQUESTS_HASH, EIP1559Transaction, Genesis,
+            LegacyTransaction, Transaction, TxKind,
+        },
     };
     use ethrex_storage::{EngineType, Store};
     use hex_literal::hex;

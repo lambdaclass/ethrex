@@ -11,7 +11,7 @@ use bytes::Bytes;
 use ethrex_common::tracing::CallType::{
     self, CALL, CALLCODE, DELEGATECALL, SELFDESTRUCT, STATICCALL,
 };
-use ethrex_common::{types::Fork, Address, U256};
+use ethrex_common::{Address, U256, types::Fork};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT

@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use ethrex_common::types::{
-    code_hash, Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody,
-    EIP1559Transaction, EIP2930Transaction, EIP4844Transaction, EIP7702Transaction,
-    LegacyTransaction, Transaction as ethrexTransaction, TxKind,
+    Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody, EIP1559Transaction,
+    EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, LegacyTransaction,
+    Transaction as ethrexTransaction, TxKind, code_hash,
 };
 use ethrex_common::types::{Genesis, GenesisAccount, Withdrawal};
-use ethrex_common::{types::BlockHeader, Address, Bloom, H256, H64, U256};
+use ethrex_common::{Address, Bloom, H64, H256, U256, types::BlockHeader};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

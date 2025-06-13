@@ -4,7 +4,7 @@ pub mod libmdbx {
 
     use ethrex_trie::NodeHash;
     use libmdbx::{
-        orm::{table_info, Database, Table},
+        orm::{Database, Table, table_info},
         table,
     };
 

@@ -1,6 +1,6 @@
 use clap::Parser;
-use report::{shell_summary, LinesOfCodeReport, LinesOfCodeReporterOptions};
-use spinoff::{spinners::Dots, Color, Spinner};
+use report::{LinesOfCodeReport, LinesOfCodeReporterOptions, shell_summary};
+use spinoff::{Color, Spinner, spinners::Dots};
 use std::{collections::HashMap, fs::DirEntry, path::PathBuf};
 use tokei::{Config, Language, LanguageType, Languages};
 

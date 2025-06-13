@@ -6,19 +6,19 @@ use std::{
 };
 
 use crate::{
-    types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
     H160,
+    types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
 };
 use bytes::Bytes;
 use ethereum_types::Address;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{Node, Trie, EMPTY_TRIE_HASH};
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie};
 use hex::FromHexError;
 use keccak_hash::H256;
 use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
     de::{self, SeqAccess, Visitor},
     ser::{self, SerializeSeq},
-    Deserialize, Deserializer, Serialize, Serializer,
 };
 use sha3::{Digest, Keccak256};
 

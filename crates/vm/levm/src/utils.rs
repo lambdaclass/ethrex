@@ -1,37 +1,37 @@
 use crate::{
+    EVMConfig,
     call_frame::CallFrameBackup,
     constants::*,
     db::{cache, gen_db::GeneralizedDatabase},
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
-        self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
-        BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
-        TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
+        self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
+        COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
+        TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST, fake_exponential,
     },
     opcodes::Opcode,
     precompiles::{
-        is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
-        SIZE_PRECOMPILES_PRE_CANCUN,
+        SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
+        is_precompile,
     },
     vm::{Substate, VM},
-    EVMConfig,
 };
+use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 use ethrex_common::types::{Account, TxKind};
 use ethrex_common::{
-    types::{tx_fields::*, Fork},
     Address, H256, U256,
+    types::{Fork, tx_fields::*},
 };
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
 use secp256k1::{
-    ecdsa::{RecoverableSignature, RecoveryId},
     Message,
+    ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
 use std::collections::{BTreeSet, HashMap, HashSet};
-use ExceptionalHalt::OutOfGas;
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================

@@ -1,6 +1,6 @@
 use clap::Parser;
 use colored::Colorize;
-use prettytable::{row, Table};
+use prettytable::{Table, row};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

@@ -4,8 +4,8 @@ use crate::rlpx::{
 };
 use bytes::BufMut;
 use ethrex_common::{
-    types::{BlockHash, ForkId},
     U256,
+    types::{BlockHash, ForkId},
 };
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},

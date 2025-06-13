@@ -2,7 +2,7 @@ use ethrex_common::tracing::CallTrace;
 use ethrex_common::types::Block;
 
 use crate::backends::levm::LEVM;
-use crate::{backends::revm::REVM, Evm, EvmError};
+use crate::{Evm, EvmError, backends::revm::REVM};
 
 impl Evm {
     /// Runs a single tx with the call tracer and outputs its trace

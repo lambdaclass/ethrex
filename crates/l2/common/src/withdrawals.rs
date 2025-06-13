@@ -2,8 +2,8 @@ use std::sync::LazyLock;
 
 use ethereum_types::{Address, H256};
 use ethrex_common::{
-    types::{Receipt, Transaction, TxKind},
     H160, U256,
+    types::{Receipt, Transaction, TxKind},
 };
 use keccak_hash::keccak;
 
@@ -73,11 +73,10 @@ fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> bool {
         LazyLock::new(|| keccak("WithdrawalInitiated(address,address,uint256)".as_bytes()));
 
     match tx.to() {
-        TxKind::Call(to) if to == COMMON_BRIDGE_L2_ADDRESS => receipt.logs.iter().any(|log| {
-            log.topics
-                .iter()
-                .any(|topic| *topic == *WITHDRAWAL_EVENT_SELECTOR)
-        }),
+        TxKind::Call(to) if to == COMMON_BRIDGE_L2_ADDRESS => receipt
+            .logs
+            .iter()
+            .any(|log| log.topics.contains(&WITHDRAWAL_EVENT_SELECTOR)),
         _ => false,
     }
 }

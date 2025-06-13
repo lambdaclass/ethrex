@@ -9,9 +9,9 @@ use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{
-    code_hash, payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody,
-    BlockHash, BlockHeader, BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index,
-    Receipt, Transaction, EMPTY_TRIE_HASH,
+    AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+    BlockNumber, ChainConfig, EMPTY_TRIE_HASH, ForkId, Genesis, GenesisAccount, Index, Receipt,
+    Transaction, code_hash, payload::PayloadBundle,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -1275,8 +1275,8 @@ mod tests {
     use bytes::Bytes;
     use ethereum_types::{H256, U256};
     use ethrex_common::{
-        types::{Transaction, TxType, EMPTY_KECCACK_HASH},
         Bloom, H160,
+        types::{EMPTY_KECCACK_HASH, Transaction, TxType},
     };
     use ethrex_rlp::decode::RLPDecode;
     use std::{fs, str::FromStr};

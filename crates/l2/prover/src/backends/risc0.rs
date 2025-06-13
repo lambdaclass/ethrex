@@ -2,7 +2,7 @@ use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use risc0_ethereum_contracts::encode_seal;
 use risc0_zkvm::{
-    default_executor, default_prover, sha::Digestible, ExecutorEnv, ProverOpts, Receipt,
+    ExecutorEnv, ProverOpts, Receipt, default_executor, default_prover, sha::Digestible,
 };
 use tracing::info;
 use zkvm_interface::{

@@ -7,7 +7,7 @@ use crate::{
     utils::RpcErr,
     utils::RpcRequest,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub type ExchangeCapabilitiesRequest = Vec<String>;
 

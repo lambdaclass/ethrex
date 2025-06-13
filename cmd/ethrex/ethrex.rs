@@ -5,7 +5,7 @@ use ethrex::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
         init_metrics, init_rpc_api, init_store, init_tracing,
     },
-    utils::{set_datadir, store_node_config_file, NodeConfigFile},
+    utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
 use ethrex_p2p::network::peer_table;
 #[cfg(feature = "sync-test")]

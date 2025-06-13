@@ -1,9 +1,9 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use ethrex::{
+    DEFAULT_DATADIR,
     cli::{import_blocks, remove_db},
     networks::Network,
     utils::set_datadir,
-    DEFAULT_DATADIR,
 };
 use ethrex_vm::EvmEngine;
 

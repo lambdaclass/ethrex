@@ -1,11 +1,11 @@
 use bytes::BufMut;
 use bytes::Bytes;
-use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::error::MempoolError;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::P2PTransaction;
 use ethrex_common::types::WrappedEIP4844Transaction;
-use ethrex_common::{types::Transaction, H256};
+use ethrex_common::{H256, types::Transaction};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -274,7 +274,6 @@ impl PooledTransactions {
     }
 
     /// Saves every incoming pooled transaction to the mempool.
-
     pub async fn handle(self, node: &Node, blockchain: &Blockchain) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
@@ -325,7 +324,7 @@ impl RLPxMessage for PooledTransactions {
 
 #[cfg(test)]
 mod tests {
-    use ethrex_common::{types::P2PTransaction, H256};
+    use ethrex_common::{H256, types::P2PTransaction};
 
     use crate::rlpx::{
         eth::transactions::{GetPooledTransactions, PooledTransactions},

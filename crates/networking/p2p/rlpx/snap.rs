@@ -4,8 +4,8 @@ use super::{
 };
 use bytes::{BufMut, Bytes};
 use ethrex_common::{
-    types::{AccountState, EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     H256, U256,
+    types::{AccountState, EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
 };
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -177,9 +177,11 @@ impl RLPxMessage for GetStorageRanges {
             .then(|| H256::from_slice(&starting_hash))
             .unwrap_or_default();
         let (limit_hash, decoder): (Bytes, _) = decoder.decode_field("limitHash")?;
-        let limit_hash = (!limit_hash.is_empty())
-            .then(|| H256::from_slice(&limit_hash))
-            .unwrap_or(H256([0xFF; 32]));
+        let limit_hash = if !limit_hash.is_empty() {
+            H256::from_slice(&limit_hash)
+        } else {
+            H256([0xFF; 32])
+        };
         let (response_bytes, decoder) = decoder.decode_field("responseBytes")?;
         decoder.finish()?;
 

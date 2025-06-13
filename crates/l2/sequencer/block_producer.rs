@@ -5,20 +5,21 @@ use std::{
 };
 
 use ethrex_blockchain::{
+    Blockchain,
     fork_choice::apply_fork_choice,
-    payload::{create_payload, BuildPayloadArgs},
-    validate_block, Blockchain,
+    payload::{BuildPayloadArgs, create_payload},
+    validate_block,
 };
 use ethrex_common::Address;
 use ethrex_storage::Store;
 use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
 use payload_builder::build_payload;
-use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
+use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
 use spawned_rt::mpsc::Sender;
 use tracing::{debug, error, info};
 
-use crate::{sequencer::execution_cache::ExecutionCache, BlockProducerConfig, SequencerConfig};
+use crate::{BlockProducerConfig, SequencerConfig, sequencer::execution_cache::ExecutionCache};
 
 use super::errors::BlockProducerError;
 

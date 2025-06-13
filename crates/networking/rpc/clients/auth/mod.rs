@@ -1,8 +1,8 @@
 use crate::{
     engine::{
+        ExchangeCapabilitiesRequest,
         fork_choice::ForkChoiceUpdatedV3,
         payload::{GetPayloadV4Request, NewPayloadV4Request},
-        ExchangeCapabilitiesRequest,
     },
     types::{
         fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},

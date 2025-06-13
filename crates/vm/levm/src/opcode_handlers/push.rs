@@ -4,8 +4,8 @@ use crate::{
     gas_cost,
     vm::VM,
 };
-use ethrex_common::{types::Fork, U256};
 use ExceptionalHalt::OutOfBounds;
+use ethrex_common::{U256, types::Fork};
 
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32

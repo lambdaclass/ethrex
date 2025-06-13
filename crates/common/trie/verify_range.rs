@@ -7,10 +7,10 @@ use ethereum_types::H256;
 use sha3::{Digest, Keccak256};
 
 use crate::{
+    ProofTrie, Trie, TrieError, ValueRLP,
     nibbles::Nibbles,
     node::{Node, NodeRef},
     node_hash::NodeHash,
-    ProofTrie, Trie, TrieError, ValueRLP,
 };
 
 /// Verifies that the key value range belongs to the trie with the given root given the edge proofs for the range
@@ -147,7 +147,7 @@ fn process_proof_nodes(
 ) -> Result<ProcessProofNodesResult, TrieError> {
     // Convert `H256` bounds into `Nibble` bounds for convenience.
     let bounds = (
-        Nibbles::from_bytes(&bounds.0 .0),
+        Nibbles::from_bytes(&bounds.0.0),
         bounds.1.map(|x| Nibbles::from_bytes(&x.0)),
     );
 

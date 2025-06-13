@@ -1,10 +1,10 @@
 use bytes::Bytes;
 use ethrex_common::{
-    types::{
-        block_execution_witness::ExecutionWitnessResult, AccountInfo, AccountState,
-        EMPTY_KECCACK_HASH,
-    },
     Address, H256, U256,
+    types::{
+        AccountInfo, AccountState, EMPTY_KECCACK_HASH,
+        block_execution_witness::ExecutionWitnessResult,
+    },
 };
 use ethrex_rlp::decode::RLPDecode;
 use sha3::{Digest, Keccak256};

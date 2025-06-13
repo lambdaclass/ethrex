@@ -1,7 +1,7 @@
 use ethrex_common::{H256, U256};
 use k256::{
-    elliptic_curve::{bigint::Encoding, Curve},
     Secp256k1,
+    elliptic_curve::{Curve, bigint::Encoding},
 };
 use std::sync::LazyLock;
 

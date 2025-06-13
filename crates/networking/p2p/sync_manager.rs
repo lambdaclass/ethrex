@@ -1,6 +1,6 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use ethrex_blockchain::Blockchain;
@@ -8,7 +8,7 @@ use ethrex_common::H256;
 use ethrex_storage::Store;
 use tokio::{
     sync::Mutex,
-    time::{sleep, Duration},
+    time::{Duration, sleep},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};

@@ -14,11 +14,11 @@ use tracing::error;
 use crate::rpc::RpcHandler;
 use crate::{
     types::block_identifier::{BlockIdentifier, BlockTag},
-    utils::{parse_json_hex, RpcErr, RpcRequest},
+    utils::{RpcErr, RpcRequest, parse_json_hex},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::logs::{fetch_logs_with_filter, LogsFilter};
+use super::logs::{LogsFilter, fetch_logs_with_filter};
 
 #[derive(Debug, Clone)]
 pub struct NewFilterRequest {
@@ -262,14 +262,14 @@ mod tests {
             filter::PollableFilter,
             logs::{AddressFilter, LogsFilter, TopicFilter},
         },
-        rpc::{map_http_requests, FILTER_DURATION},
+        rpc::{FILTER_DURATION, map_http_requests},
         utils::test_utils::{self, default_context_with_storage, start_test_api},
     };
     use crate::{types::block_identifier::BlockIdentifier, utils::RpcRequest};
     use ethrex_common::types::Genesis;
     use ethrex_storage::{EngineType, Store};
 
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use test_utils::TEST_GENESIS;
 
     #[tokio::test]
@@ -497,7 +497,7 @@ mod tests {
             .unwrap();
 
         assert!(
-            active_filters.clone().lock().unwrap().len() == 0,
+            active_filters.clone().lock().unwrap().is_empty(),
             "Expected filter map to be empty after request"
         );
     }

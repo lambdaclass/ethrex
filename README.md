@@ -133,7 +133,7 @@ asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
 
 And uncommenting the golang line in the asdf `.tool-versions` file:
 ```
-rust 1.82.0
+rust 1.87.0
 golang 1.23.2
 ```
 

@@ -1,4 +1,4 @@
-use ethrex_common::{serde_utils, H256};
+use ethrex_common::{H256, serde_utils};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{info, warn};

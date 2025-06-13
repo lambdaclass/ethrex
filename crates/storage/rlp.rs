@@ -3,10 +3,10 @@ use std::marker::PhantomData;
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{
-        payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt,
-    },
     H256,
+    types::{
+        AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt, payload::PayloadBundle,
+    },
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::Nibbles;

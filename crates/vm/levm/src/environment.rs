@@ -1,6 +1,6 @@
 use ethrex_common::{
-    types::{BlockHeader, ChainConfig, Fork, ForkBlobSchedule},
     Address, H256, U256,
+    types::{BlockHeader, ChainConfig, Fork, ForkBlobSchedule},
 };
 
 use crate::constants::{

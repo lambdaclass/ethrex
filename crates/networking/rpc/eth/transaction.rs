@@ -9,12 +9,12 @@ use crate::{
     },
     utils::RpcErr,
 };
-use ethrex_blockchain::{vm::StoreVmDatabase, Blockchain};
+use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
+    H256, U256,
     types::{
         AccessListEntry, BlockHash, BlockHeader, BlockNumber, Fork, GenericTransaction, TxKind,
     },
-    H256, U256,
 };
 
 use ethrex_rlp::encode::RLPEncode;
