@@ -9,6 +9,7 @@ use crate::store_db::redb::RedBStoreRollup;
 use ethrex_common::{
     types::{batch::Batch, AccountUpdate, Blob, BlobsBundle, BlockNumber},
     H256,
+    types::{Blob, BlobsBundle, BlockNumber, batch::Batch},
 };
 use ethrex_storage::error::StoreError;
 use tracing::info;

@@ -7,12 +7,14 @@ use std::{
 use ethrex_common::{
     types::{AccountUpdate, Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use libmdbx::{
+    DatabaseOptions, Mode, PageSize, ReadWriteOptions,
     orm::{Database, Table},
-    table, table_info, DatabaseOptions, Mode, PageSize, ReadWriteOptions,
+    table, table_info,
 };
 
 use crate::{

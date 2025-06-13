@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use crate::utils::prover::proving_systems::ProverType;
 use crate::SequencerConfig;
+use crate::utils::prover::proving_systems::ProverType;
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -48,7 +48,9 @@ pub async fn start_l2(
     };
 
     if needed_proof_types.contains(&ProverType::Aligned) && !cfg.aligned.aligned_mode {
-        error!("Aligned mode is required. Please set the `--aligned` flag or use the `ALIGNED_MODE` environment variable to true.");
+        error!(
+            "Aligned mode is required. Please set the `--aligned` flag or use the `ALIGNED_MODE` environment variable to true."
+        );
         return;
     }
 
