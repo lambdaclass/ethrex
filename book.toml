@@ -11,3 +11,9 @@ edition = "2024"
 git-repository-url = "https://github.com/lambdaclass/ethrex"
 # make sections collapsible, and start with the first section uncollapsed
 fold = { enable = true, level = 0 }
+
+# Broken-link checker
+# https://github.com/Michael-F-Bryan/mdbook-linkcheck
+# Needs to be installed with `cargo install mdbook-linkcheck`
+[output.linkcheck]
+optional = true
