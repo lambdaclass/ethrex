@@ -2,29 +2,29 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use ethrex_blockchain::{
-    constants::TX_GAS_COST,
-    payload::{apply_plain_transaction, HeadTransaction, PayloadBuildContext, PayloadBuildResult},
     Blockchain,
+    constants::TX_GAS_COST,
+    payload::{HeadTransaction, PayloadBuildContext, PayloadBuildResult, apply_plain_transaction},
 };
 use ethrex_common::{
-    types::{Block, Receipt, Transaction, SAFE_BYTES_PER_BLOB},
     Address,
+    types::{Block, Receipt, SAFE_BYTES_PER_BLOB, Transaction},
 };
 use ethrex_l2_common::state_diff::{
-    AccountStateDiff, StateDiffError, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN,
-    SIMPLE_TX_STATE_DIFF_SIZE, WITHDRAWAL_LOG_LEN,
+    AccountStateDiff, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN, SIMPLE_TX_STATE_DIFF_SIZE,
+    StateDiffError, WITHDRAWAL_LOG_LEN,
 };
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{
     metrics_blocks::METRICS_BLOCKS,
-    metrics_transactions::{MetricsTxType, METRICS_TX},
+    metrics_transactions::{METRICS_TX, MetricsTxType},
 };
 use ethrex_storage::Store;
 use ethrex_vm::{Evm, EvmError};
 use std::ops::Div;
 use tokio::time::Instant;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 use crate::{
     sequencer::errors::BlockProducerError,
@@ -246,12 +246,14 @@ pub async fn fill_transactions(
         context.receipts.push(receipt);
     }
 
-    metrics!(context
-        .payload
-        .body
-        .transactions
-        .iter()
-        .for_each(|tx| METRICS_TX.inc_tx_with_type(MetricsTxType(tx.tx_type()))));
+    metrics!(
+        context
+            .payload
+            .body
+            .transactions
+            .iter()
+            .for_each(|tx| METRICS_TX.inc_tx_with_type(MetricsTxType(tx.tx_type())))
+    );
 
     Ok(())
 }
