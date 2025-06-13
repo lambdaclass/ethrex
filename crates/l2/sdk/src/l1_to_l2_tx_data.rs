@@ -3,8 +3,8 @@ use bytes::Bytes;
 use ethrex_common::{Address, U256};
 use ethrex_l2_common::calldata::Value;
 use ethrex_rpc::{
-    clients::{eth::errors::CalldataEncodeError, EthClientError, Overrides},
     EthClient,
+    clients::{EthClientError, Overrides, eth::errors::CalldataEncodeError},
 };
 use keccak_hash::H256;
 use secp256k1::SecretKey;

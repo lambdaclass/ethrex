@@ -5,8 +5,8 @@ use std::{
 };
 
 use ethrex_common::{
-    types::{AccountUpdate, Blob, BlockNumber},
     H256,
+    types::{AccountUpdate, Blob, BlockNumber},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_storage::error::StoreError;
@@ -35,7 +35,7 @@ struct StoreInner {
     /// Metrics for transaction, deposits and withdrawals count
     operations_counts: [u64; 3],
     /// Map of block number to account updates
-    account_updates_by_block: HashMap<BlockNumber, Vec<AccountUpdate>>,
+    account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
     /// Map of (ProverType, batch_number) to batch proof data
     batch_proofs: HashMap<(ProverType, u64), BatchProof>,
 }
@@ -211,7 +211,7 @@ impl StoreEngineRollup for Store {
     ) -> Result<Option<Vec<AccountUpdate>>, StoreError> {
         Ok(self
             .inner()?
-            .account_updates_by_block
+            .account_updates_by_block_number
             .get(&block_number)
             .cloned())
     }
@@ -222,7 +222,7 @@ impl StoreEngineRollup for Store {
         account_updates: Vec<AccountUpdate>,
     ) -> Result<(), StoreError> {
         self.inner()?
-            .account_updates_by_block
+            .account_updates_by_block_number
             .insert(block_number, account_updates);
         Ok(())
     }

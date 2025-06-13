@@ -1,5 +1,5 @@
 use std::{
-    fs::{read_to_string, File, OpenOptions},
+    fs::{File, OpenOptions, read_to_string},
     io::{BufWriter, Write},
     path::PathBuf,
     process::{Command, ExitStatus, Stdio},
@@ -8,21 +8,22 @@ use std::{
 
 use bytes::Bytes;
 use clap::Parser;
-use cli::{parse_private_key, DeployerOptions};
+use cli::{DeployerOptions, parse_private_key};
 use error::DeployerError;
 use ethrex_common::{Address, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::{
-    calldata::encode_calldata, compile_contract, deploy_contract, deploy_with_proxy,
-    get_address_from_secret_key, initialize_contract,
+    calldata::{Value, encode_calldata},
+    compile_contract, deploy_contract, deploy_with_proxy, get_address_from_secret_key,
+    initialize_contract,
 };
 use ethrex_rpc::{
-    clients::{eth::BlockByNumber, Overrides},
     EthClient,
+    clients::{Overrides, eth::BlockByNumber},
 };
 use keccak_hash::H256;
-use tracing::{debug, error, info, trace, warn, Level};
+use tracing::{Level, debug, error, info, trace, warn};
 
 mod cli;
 mod error;
@@ -156,7 +157,11 @@ pub fn git_clone(
 
 fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
     trace!("Compiling contracts");
-    compile_contract(&opts.contracts_path, "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol", false)?;
+    compile_contract(
+        &opts.contracts_path,
+        "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol",
+        false,
+    )?;
     compile_contract(&opts.contracts_path, "src/l1/OnChainProposer.sol", false)?;
     compile_contract(&opts.contracts_path, "src/l1/CommonBridge.sol", false)?;
     compile_contract(
@@ -640,7 +645,7 @@ fn write_contract_addresses_to_env(
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod test {
-    use crate::{compile_contracts, download_contract_deps, DeployerError, DeployerOptions};
+    use crate::{DeployerError, DeployerOptions, compile_contracts, download_contract_deps};
     use std::{env, path::Path};
 
     #[test]

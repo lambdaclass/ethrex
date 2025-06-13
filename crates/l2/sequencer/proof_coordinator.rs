@@ -6,11 +6,11 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::BlobsBundle;
+use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::{
-    types::{blobs_bundle, Block},
     Address,
+    types::{Block, blobs_bundle},
 };
 use ethrex_l2_common::prover::{BatchProof, ProverType};
 use ethrex_rpc::clients::eth::EthClient;

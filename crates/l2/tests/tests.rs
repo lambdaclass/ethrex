@@ -2,18 +2,17 @@
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, U256};
-use ethrex_common::types::BlockNumber;
 use ethrex_common::H160;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_sdk::calldata::{self};
 use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
 use ethrex_l2_sdk::{get_address_from_secret_key, wait_for_transaction_receipt};
-use ethrex_rpc::clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient};
+use ethrex_rpc::clients::eth::{BlockByNumber, EthClient, eth_sender::Overrides};
 use ethrex_rpc::types::receipt::RpcReceipt;
 use hex::FromHexError;
-use keccak_hash::{keccak, H256};
+use keccak_hash::{H256, keccak};
 use secp256k1::SecretKey;
-use std::fs::{read_to_string, File};
+use std::fs::{File, read_to_string};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::{ops::Mul, str::FromStr, time::Duration};
@@ -111,7 +110,9 @@ async fn test_deposit_with_contract_call(
     //         emit NumberSet(_number);
     //     }
     // }
-    let init_code = hex::decode("6080604052348015600e575f5ffd5b506101008061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063f15d140b14602a575b5f5ffd5b60406004803603810190603c919060a4565b6042565b005b807f9ec8254969d1974eac8c74afb0c03595b4ffe0a1d7ad8a7f82ed31b9c854259160405160405180910390a250565b5f5ffd5b5f819050919050565b6086816076565b8114608f575f5ffd5b50565b5f81359050609e81607f565b92915050565b5f6020828403121560b65760b56072565b5b5f60c1848285016092565b9150509291505056fea26469706673582212206f6d360696127c56e2d2a456f3db4a61e30eae0ea9b3af3c900c81ea062e8fe464736f6c634300081c0033")?;
+    let init_code = hex::decode(
+        "6080604052348015600e575f5ffd5b506101008061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063f15d140b14602a575b5f5ffd5b60406004803603810190603c919060a4565b6042565b005b807f9ec8254969d1974eac8c74afb0c03595b4ffe0a1d7ad8a7f82ed31b9c854259160405160405180910390a250565b5f5ffd5b5f819050919050565b6086816076565b8114608f575f5ffd5b50565b5f81359050609e81607f565b92915050565b5f6020828403121560b65760b56072565b5b5f60c1848285016092565b9150509291505056fea26469706673582212206f6d360696127c56e2d2a456f3db4a61e30eae0ea9b3af3c900c81ea062e8fe464736f6c634300081c0033",
+    )?;
 
     let deployed_contract_address =
         test_deploy(&init_code, &rich_wallet_private_key, proposer_client).await?;
@@ -186,7 +187,9 @@ async fn test_deposit_with_contract_call_revert(
     //     }
     // }
     let rich_wallet_private_key = l1_rich_wallet_private_key();
-    let init_code = hex::decode("6080604052348015600e575f5ffd5b506101138061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c806311ebce9114602a575b5f5ffd5b60306032565b005b6040517f08c379a000000000000000000000000000000000000000000000000000000000815260040160629060c1565b60405180910390fd5b5f82825260208201905092915050565b7f52657665727465640000000000000000000000000000000000000000000000005f82015250565b5f60ad600883606b565b915060b682607b565b602082019050919050565b5f6020820190508181035f83015260d68160a3565b905091905056fea2646970667358221220903f571921ce472f979989f9135b8637314b68e080fd70d0da6ede87ad8b5bd564736f6c634300081c0033")?;
+    let init_code = hex::decode(
+        "6080604052348015600e575f5ffd5b506101138061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c806311ebce9114602a575b5f5ffd5b60306032565b005b6040517f08c379a000000000000000000000000000000000000000000000000000000000815260040160629060c1565b60405180910390fd5b5f82825260208201905092915050565b7f52657665727465640000000000000000000000000000000000000000000000005f82015250565b5f60ad600883606b565b915060b682607b565b602082019050919050565b5f6020820190508181035f83015260d68160a3565b905091905056fea2646970667358221220903f571921ce472f979989f9135b8637314b68e080fd70d0da6ede87ad8b5bd564736f6c634300081c0033",
+    )?;
 
     let deployed_contract_address =
         test_deploy(&init_code, &rich_wallet_private_key, proposer_client).await?;
@@ -367,10 +370,12 @@ async fn test_transfer(
         .await?;
 
     assert!(
-        (transferer_initial_l2_balance - transfer_value).abs_diff(transferer_l2_balance_after_transfer)
+        (transferer_initial_l2_balance - transfer_value)
+            .abs_diff(transferer_l2_balance_after_transfer)
             < L2_GAS_COST_MAX_DELTA,
         "L2 transferer balance didn't decrease as expected after transfer. Gas costs were {}/{L2_GAS_COST_MAX_DELTA}",
-        (transferer_initial_l2_balance - transfer_value).abs_diff(transferer_l2_balance_after_transfer)
+        (transferer_initial_l2_balance - transfer_value)
+            .abs_diff(transferer_l2_balance_after_transfer)
     );
 
     let transfer_recipient_l2_balance_after_transfer = proposer_client
@@ -629,7 +634,9 @@ async fn test_total_eth_l2(
         + transfer_recipient_balance
         + coinbase_balance;
 
-    println!("Total ETH on L2: {rich_accounts_balance} + {deposit_recipient_balance} + {transfer_recipient_balance} + {coinbase_balance} = {total_eth_on_l2}");
+    println!(
+        "Total ETH on L2: {rich_accounts_balance} + {deposit_recipient_balance} + {transfer_recipient_balance} + {coinbase_balance} = {total_eth_on_l2}"
+    );
 
     println!("Checking locked ETH on CommonBridge");
 
@@ -927,7 +934,7 @@ pub fn read_env_file_by_config() {
                 if std::env::vars().any(|(k, _)| k == key) {
                     continue;
                 }
-                std::env::set_var(key, value)
+                unsafe { std::env::set_var(key, value) }
             }
             None => continue,
         };

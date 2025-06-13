@@ -1,5 +1,5 @@
 use aligned_sdk::{
-    aggregation_layer::{check_proof_verification, AggregationModeVerificationData, ProofStatus},
+    aggregation_layer::{AggregationModeVerificationData, ProofStatus, check_proof_verification},
     common::types::Network,
 };
 use ethrex_common::{Address, H256, U256};
@@ -111,7 +111,9 @@ impl L1ProofVerifier {
             .await?
         {
             Some(verify_tx_hash) => {
-                info!("Batch {batch_to_verify} verified in AlignedProofAggregatorService, with transaction hash {verify_tx_hash:#x}");
+                info!(
+                    "Batch {batch_to_verify} verified in AlignedProofAggregatorService, with transaction hash {verify_tx_hash:#x}"
+                );
             }
             None => {
                 info!(
