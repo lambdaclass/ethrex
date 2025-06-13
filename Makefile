@@ -32,7 +32,7 @@ run-image: build-image ## 🏃 Run the Docker image
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 	cargo run --bin ethrex --features dev -- \
-			--network ./test_data/genesis-l1.json \
+			--network ./test_data/fixtures/genesis/l1.json \
 			--http.port 8545 \
 			--http.addr 0.0.0.0 \
 			--authrpc.port 8551 \

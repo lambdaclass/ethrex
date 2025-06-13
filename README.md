@@ -83,7 +83,7 @@ make dev
 ```
 
 - RPC endpoint: localhost:8545
-- Genesis file: ./test_data/genesis-l1.json
+- Genesis file: ./test_data/fixtures/genesis/l1.json
 
 ### Test
 
