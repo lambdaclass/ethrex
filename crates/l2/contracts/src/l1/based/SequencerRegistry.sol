@@ -3,7 +3,7 @@ pragma solidity =0.8.29;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "../interfaces/ISequencerRegistry.sol";
 import "./interfaces/IOnChainProposer.sol";
 
@@ -11,7 +11,7 @@ contract SequencerRegistry is
     ISequencerRegistry,
     Initializable,
     UUPSUpgradeable,
-    OwnableUpgradeable
+    Ownable2StepUpgradeable
 {
     uint256 public constant MIN_COLLATERAL = 1 ether;
 
