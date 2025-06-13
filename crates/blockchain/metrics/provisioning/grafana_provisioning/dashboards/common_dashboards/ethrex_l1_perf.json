@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 4,
+  "id": 6,
   "links": [],
   "panels": [
     {
@@ -320,13 +320,13 @@
             "uid": "prom-001"
           },
           "disableTextWrap": false,
-          "editorMode": "code",
+          "editorMode": "builder",
           "expr": "gas_used",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{__name__}}",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -343,7 +343,7 @@
           "hide": false,
           "includeNullMetadata": true,
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{__name__}}",
           "range": true,
           "refId": "B",
           "useBackend": false
@@ -359,14 +359,14 @@
               "left": {
                 "matcher": {
                   "id": "byName",
-                  "options": "{__name__=\"gas_used\", instance=\"host.docker.internal:3701\", job=\"ethrex L1\"}"
+                  "options": "gas_used"
                 }
               },
               "operator": "/",
               "right": {
                 "matcher": {
                   "id": "byName",
-                  "options": "{__name__=\"gas_limit\", instance=\"host.docker.internal:3701\", job=\"ethrex L1\"}"
+                  "options": "gas_limit"
                 }
               }
             },
@@ -912,5 +912,5 @@
   "timezone": "browser",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 6
+  "version": 7
 }
