@@ -56,6 +56,7 @@ pub async fn archive_sync(
     block_number: BlockNumber,
     store: Store,
 ) -> eyre::Result<()> {
+    let sync_start = Instant::now();
     let mut stream = UnixStream::connect(archive_ipc_path).await?;
     let mut start = H256::zero();
     let mut state_trie_root = *EMPTY_TRIE_HASH;
@@ -109,7 +110,10 @@ pub async fn archive_sync(
     store.add_block(block).await?;
     store.set_canonical_block(block_number, block_hash).await?;
     store.update_latest_block_number(block_number).await?;
-
+    let sync_time = sync_start.elapsed().as_secs();
+    info!(
+        "Archive Sync complete in {sync_time} seconds.\nHead of local chain is now block {block_number} with hash {block_hash}"
+    );
     Ok(())
 }
 
