@@ -196,13 +196,10 @@ impl MDBXFork {
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        let r = self
-            .read_sync::<CanonicalBlockHashes>(number)?
+        self.read_sync::<CanonicalBlockHashes>(number)?
             .map(|block_hash| Rlp::<BlockHash>::from_bytes(block_hash).to())
             .transpose()
-            .map_err(StoreError::from);
-
-        r
+            .map_err(StoreError::from)
     }
 }
 
