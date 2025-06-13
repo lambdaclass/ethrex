@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::report::EFTestsReport;
 use crate::{
     parser::SPECIFIC_IGNORED_TESTS,
     report::{self, format_duration_as_mm_ss, EFTestReport, TestReRunReport},
@@ -34,6 +35,8 @@ pub enum EFTestRunnerError {
     EIP7702ShouldNotBeCreateType,
     #[error("This is a bug: {0}")]
     Internal(#[from] InternalError),
+    #[error("Tests failed")]
+    CITestsFailed,
 }
 
 #[derive(Debug, thiserror::Error, Clone, Serialize, Deserialize)]
@@ -91,6 +94,10 @@ pub async fn run_ef_tests(
         }
     }
     if opts.summary {
+        if reports.iter().any(|r| !r.passed()) {
+            print_failed_tests(&reports);
+            return Err(EFTestRunnerError::CITestsFailed);
+        }
         return Ok(());
     }
     re_run_with_revm(&mut reports, &ef_tests, opts).await?;
@@ -266,4 +273,15 @@ fn cache_re_run(reports: &[EFTestReport]) -> Result<(), EFTestRunnerError> {
     let cache_file_path = report::cache(reports)?;
     cache_spinner.success(&format!("Re-run cached to file {cache_file_path:?}").bold());
     Ok(())
+}
+
+fn print_failed_tests(reports: &[EFTestReport]) {
+    let failed_test_reports = EFTestsReport(
+        reports
+            .iter()
+            .filter(|&report| !report.passed())
+            .cloned()
+            .collect(),
+    );
+    print!("{}", failed_test_reports)
 }
