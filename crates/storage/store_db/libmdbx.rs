@@ -331,7 +331,7 @@ impl StoreEngine for Store {
                     anyhow::bail!("invalid arguments");
                 }
             }
-            Ok(())
+            tx.commit()
         };
         inner().map_err(StoreError::LibmdbxError)
     }
