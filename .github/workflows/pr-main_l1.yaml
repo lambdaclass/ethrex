@@ -153,13 +153,10 @@ jobs:
             test_pattern: ""
           - name: "Devp2p tests"
             simulation: devp2p
-            test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/BasicFindnode|Findnode/PastExpiration|Amplification|Status|GetStorageRanges|ByteCodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest|InvalidTxs 
-            #|BlobViolations #1781
+            test_pattern: discv4|eth|snap/Ping|Findnode/WithoutEndpointProof|Findnode/BasicFindnode|Findnode/PastExpiration|Amplification|GetStorageRanges|ByteCodes|MaliciousStatus|GetBlockReceipts 
             #|AccountRange #1997
             #|GetTrieNodes #1997
             #|Findnode/UnsolicitedNeighbors #2818
-            #|TestBlobTxWithMismatchedSidecar #3122
-            #|TestBlobTxWithoutSidecar #3123
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
             test_pattern: engine-(auth|exchange-capabilities)/
