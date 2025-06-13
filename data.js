@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749844892393,
+  "lastUpdate": 1749845611203,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12805,6 +12805,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 185657183403,
             "range": "± 294406487",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "33314b8a263e82c8af71468ac75e00f0391af3de",
+          "message": "feat(levm): add solidity printer (#3087)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- The idea is to be able to use a `print()` function in solidity code\nthat prints something that the dev wants during EVM execution. This is\nonly for making dev life easier and it's under a `debug` feature flag.\nDevs should import the `Print.sol` file and be able to use `print()`\nwherever they want in their code.\n\n**Description**\n\n- Modify `MSTORE` in LEVM so that if debug mode is enabled and a\nspecific offset is given it enters \"print mode\" and prints the following\nvalues in MSTORE until it is deactivated when the same offset is given.\n- Create a solidity file with various `print()` functions. For\n`bytes32`, `uint256`, `address` and `string`. It also contains a\ncontract for testing it's behavior\n\n\n\n**Example:**\nSolidity Contract\n<img width=\"1423\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/b15593c3-95e9-480c-aec2-567ed146ee76\"\n/>\n\n\nEthrex Output (LEVM)\n<img width=\"1420\" alt=\"image\"\nsrc=\"https://github.com/user-attachments/assets/eeb7e9cf-4912-4b05-a04e-c67f77ff905a\"\n/>\n\n\nCloses #2422",
+          "timestamp": "2025-06-13T19:18:17Z",
+          "tree_id": "8a828566107fdf9906b916865a24c9e891010f45",
+          "url": "https://github.com/lambdaclass/ethrex/commit/33314b8a263e82c8af71468ac75e00f0391af3de"
+        },
+        "date": 1749845604197,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 186002213949,
+            "range": "± 566561215",
             "unit": "ns/iter"
           }
         ]
