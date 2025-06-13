@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749830232997,
+  "lastUpdate": 1749831545798,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12715,6 +12715,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181680983971,
             "range": "± 3234223346",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f59246db05742dfb024685e1cc4829aeeba1e5ec",
+          "message": "feat(l2): grafana alerts (#3110)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWe need alerts to monitor the status of the L2s we are deploying\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAdded an overrides file for the Grafana docker compose among with a set\nof alerts that send messages to Slack in case of a failure. The\navailable alerts are:\n- No batch was committed to L1 for more than an hour.\n- No batch was verified on L1 for more than an hour.\n- L2 blocks are not being produced.\n- The mempool transactions count is increasing fast.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-06-13T15:25:29Z",
+          "tree_id": "4176b0600b14e7e81cea8ba9ef7da6681c1b8a7a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f59246db05742dfb024685e1cc4829aeeba1e5ec"
+        },
+        "date": 1749831539282,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182457374292,
+            "range": "± 813115174",
             "unit": "ns/iter"
           }
         ]
