@@ -9,7 +9,6 @@ use ethrex_common::types::{AccountState, EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH};
 use ethrex_common::{serde_utils, Address};
 use ethrex_common::{types::BlockNumber, BigEndianHash, Bytes, H256, U256};
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rpc::authentication::generate_jwt_token;
 use ethrex_rpc::clients::auth::RpcResponse;
 use ethrex_rpc::types::block::RpcBlock;
 use ethrex_storage::Store;
@@ -18,6 +17,7 @@ use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
+use tokio::task::JoinSet;
 use tracing::info;
 
 const MAX_ACCOUNTS: usize = 256;
@@ -51,7 +51,7 @@ struct DumpAccount {
     hashed_address: Option<H256>,
 }
 
-pub async fn archive_sync_2(
+pub async fn archive_sync(
     archive_ipc_path: &str,
     block_number: BlockNumber,
     store: Store,
@@ -72,7 +72,7 @@ pub async fn archive_sync_2(
         let instant = Instant::now();
         state_trie_root = process_dump(&dump, store.clone(), state_trie_root).await?;
         info!(
-            "Processed Dump of {MAX_ACCOUNTS} in {} ms",
+            "Processed Dump of {MAX_ACCOUNTS} accounts in {} ms",
             instant.elapsed().as_millis()
         );
         if dump.next.is_some() {
@@ -110,7 +110,7 @@ pub async fn archive_sync_2(
 /// Adds all dump accounts to the trie on top of the current root, returns the next root
 /// This could be improved in the future to use an in_memory trie with async db writes
 async fn process_dump(dump: &Dump, store: Store, current_root: H256) -> eyre::Result<H256> {
-    //let mut storage_tasks =
+    // let mut storage_tasks = JoinSet::new();
     let mut state_trie = store.open_state_trie(current_root)?;
     for (hashed_address, dump_account) in dump.accounts.iter() {
         // Add account to state trie
@@ -130,6 +130,7 @@ async fn process_dump(dump: &Dump, store: Store, current_root: H256) -> eyre::Re
     Ok(state_trie.hash()?)
 }
 
+
 async fn send_ipc_json_request(stream: &mut UnixStream, request: &Value) -> eyre::Result<Value> {
     stream.write_all(request.to_string().as_bytes()).await?;
     stream.write_all(b"\n").await?;
@@ -145,31 +146,6 @@ async fn send_ipc_json_request(stream: &mut UnixStream, request: &Value) -> eyre
         RpcResponse::Success(success_res) => Ok(success_res.result),
         RpcResponse::Error(error_res) => Err(eyre::ErrReport::msg(error_res.error.message)),
     }
-}
-
-pub async fn archive_sync(
-    archive_node_url: &str,
-    archive_node_jwt: &Bytes,
-    block_number: BlockNumber,
-) -> eyre::Result<()> {
-    let token = generate_jwt_token(archive_node_jwt)?;
-    let request = &json!({
-    "id": 1,
-    "jsonrpc": "2.0",
-    "method": "debug_dumpBlock",
-    "params": [block_number]
-    });
-
-    let response = CLIENT
-        .post(archive_node_url)
-        .bearer_auth(token)
-        .json(request)
-        .send()
-        .await?;
-
-    let res = response.json::<serde_json::Value>().await?;
-    dbg!(&res);
-    Ok(())
 }
 
 fn hash_next(hash: H256) -> H256 {

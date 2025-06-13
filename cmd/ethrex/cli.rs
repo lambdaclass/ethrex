@@ -287,31 +287,6 @@ pub enum Subcommand {
     ArchiveSync {
         #[arg(
             required = true,
-            value_name = "RPC_URL",
-            help = "Url of an archive node's rpc"
-        )]
-        archive_node_url: String,
-        #[arg(
-            required = true,
-            default_value = "jwt.hex",
-            value_name = "JWTSECRET_PATH",
-            help = "Path to the jwt secret path of the archive node."
-        )]
-        archive_node_jwt: String,
-        #[arg(
-            required = true,
-            value_name = "NUMBER",
-            help = "Block number to sync to"
-        )]
-        block_number: BlockNumber,
-    },
-    #[command(
-        name = "archive-sync-2",
-        about = "Sync to a specific block by downloading its state from an archive node"
-    )]
-    ArchiveSync2 {
-        #[arg(
-            required = true,
             value_name = "IPC_PATH",
             help = "Path to the ipc of the archive node."
         )]
@@ -360,14 +335,6 @@ impl Subcommand {
                 println!("{:#x}", state_root);
             }
             Self::ArchiveSync {
-                archive_node_url,
-                block_number,
-                archive_node_jwt,
-            } => {
-                let jwt_secret = read_jwtsecret_file(&archive_node_jwt);
-                archive_sync(&archive_node_url, &jwt_secret, block_number).await?
-            }
-            Self::ArchiveSync2 {
                 archive_node_ipc,
                 block_number,
             } => {
