@@ -10,5 +10,3 @@ services:
       - "9093:9093"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    depends_on:
-      - prometheus
