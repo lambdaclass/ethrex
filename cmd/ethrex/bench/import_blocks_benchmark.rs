@@ -15,7 +15,7 @@ fn block_import() {
 
     let evm_engine = EvmEngine::default();
 
-    let network = Network::from("../../test_data/genesis-perf-ci.json");
+    let network = Network::from("../../test_data/fixtures/genesis/perf-ci.json");
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(
