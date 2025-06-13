@@ -4,30 +4,37 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 mod smoke_test;
+pub mod tracing;
 pub mod vm;
 
-use constants::MAX_INITCODE_SIZE;
+use ::tracing::info;
+use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
 use ethrex_common::types::MempoolTransaction;
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_common::types::{
     compute_receipts_root, validate_block_header, validate_cancun_header_fields,
     validate_prague_header_fields, validate_pre_cancun_header_fields, AccountUpdate, Block,
     BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
-use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
-use ethrex_common::{Address, H256};
-use ethrex_storage::error::StoreError;
-use ethrex_storage::Store;
-use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
+use ethrex_common::{Address, TrieLogger, H256};
+use ethrex_storage::{error::StoreError, hash_address, hash_key, Store, UpdateBatch};
+use ethrex_vm::backends::levm::db::DatabaseLogger;
+use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
 use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::{ops::Div, time::Instant};
-use tracing::info;
+
 use vm::StoreVmDatabase;
+
+#[cfg(feature = "c-kzg")]
+use ethrex_common::types::BlobsBundle;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -48,7 +55,6 @@ pub struct BatchBlockProcessingFailure {
     pub last_valid_hash: H256,
     pub failed_block_hash: H256,
 }
-
 impl Blockchain {
     pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
         Self {
@@ -74,19 +80,10 @@ impl Blockchain {
         block: &Block,
     ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
-        // Feda (#2831): We search for the entire block because during full/batch sync
-        // we can have the header without the body indicating it's still syncing.
-        let parent = self
-            .storage
-            .get_block_by_hash(block.header.parent_hash)
-            .await?;
-        let parent_header = match parent {
-            Some(parent_block) => parent_block.header,
-            None => {
-                // If the parent is not present, we store it as pending.
-                self.storage.add_pending_block(block.clone()).await?;
-                return Err(ChainError::ParentNotFound);
-            }
+        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            // If the parent is not present, we store it as pending.
+            self.storage.add_pending_block(block.clone()).await?;
+            return Err(ChainError::ParentNotFound);
         };
 
         let chain_config = self.storage.get_chain_config()?;
@@ -128,6 +125,204 @@ impl Blockchain {
         Ok(execution_result)
     }
 
+    pub async fn generate_witness_for_blocks(
+        &self,
+        blocks: &[Block],
+    ) -> Result<ExecutionWitnessResult, ChainError> {
+        let first_block_header = blocks
+            .first()
+            .ok_or(ChainError::WitnessGeneration(
+                "Empty block batch".to_string(),
+            ))?
+            .header
+            .clone();
+
+        let parent_block_header = self
+            .storage
+            .get_block_header_by_hash(first_block_header.parent_hash)?
+            .ok_or(ChainError::ParentNotFound)?;
+
+        // Get state at previous block
+        let trie = self
+            .storage
+            .state_trie(first_block_header.parent_hash)
+            .map_err(|_| ChainError::ParentStateNotFound)?
+            .ok_or(ChainError::ParentStateNotFound)?;
+        let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
+
+        // Store the root node in case the block is empty and the witness does not record any nodes
+        let root_node = trie.root_node().map_err(|_| {
+            ChainError::WitnessGeneration("Failed to get root state node".to_string())
+        })?;
+
+        let mut encoded_storage_tries: HashMap<ethrex_common::H160, Vec<Vec<u8>>> = HashMap::new();
+        let mut block_hashes = HashMap::new();
+        let mut codes = HashMap::new();
+
+        for block in blocks {
+            let parent_hash = block.header.parent_hash;
+            let vm_db: DynVmDatabase =
+                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_hash));
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(vm_db)))));
+            let mut vm = Evm::new_from_db(logger.clone());
+
+            // Re-execute block with logger
+            vm.execute_block(block)?;
+            // Gather account updates
+            let account_updates = vm.get_state_transitions()?;
+
+            let mut used_storage_tries = HashMap::new();
+            // Get the used block hashes from the logger
+            let logger_block_hashes = logger
+                .block_hashes_accessed
+                .lock()
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to get block hashes".to_string())
+                })?
+                .clone();
+            block_hashes.extend(logger_block_hashes);
+            // Access all the accounts needed for withdrawals
+            if let Some(withdrawals) = block.body.withdrawals.as_ref() {
+                for withdrawal in withdrawals {
+                    trie.get(&hash_address(&withdrawal.address)).map_err(|_e| {
+                        ChainError::Custom("Failed to access account from trie".to_string())
+                    })?;
+                }
+            }
+
+            // Access all the accounts from the initial trie
+            // Record all the storage nodes for the initial state
+            for (account, keys) in logger
+                .state_accessed
+                .lock()
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
+                })?
+                .iter()
+            {
+                // Access the account from the state trie to record the nodes used to access it
+                trie.get(&hash_address(account)).map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to access account from trie".to_string())
+                })?;
+                // Get storage trie at before updates
+                if !keys.is_empty() {
+                    if let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
+                    {
+                        let (storage_trie_witness, storage_trie) =
+                            TrieLogger::open_trie(storage_trie);
+                        // Access all the keys
+                        for storage_key in keys {
+                            let hashed_key = hash_key(storage_key);
+                            storage_trie.get(&hashed_key).map_err(|_e| {
+                                ChainError::WitnessGeneration(
+                                    "Failed to access storage key".to_string(),
+                                )
+                            })?;
+                        }
+                        // Store the tries to reuse when applying account updates
+                        used_storage_tries.insert(*account, (storage_trie_witness, storage_trie));
+                    }
+                }
+            }
+            // Store all the accessed evm bytecodes
+            for code_hash in logger
+                .code_accessed
+                .lock()
+                .map_err(|_e| {
+                    ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
+                })?
+                .iter()
+            {
+                let code = self
+                    .storage
+                    .get_account_code(*code_hash)
+                    .map_err(|_e| {
+                        ChainError::WitnessGeneration("Failed to get account code".to_string())
+                    })?
+                    .ok_or(ChainError::WitnessGeneration(
+                        "Failed to get account code".to_string(),
+                    ))?;
+                codes.insert(*code_hash, code);
+            }
+
+            // Apply account updates to the trie recording all the necessary nodes to do so
+            let (updated_trie, storage_tries_after_update) = self
+                .storage
+                .apply_account_updates_from_trie_with_witness(
+                    trie,
+                    &account_updates,
+                    used_storage_tries,
+                )
+                .await?;
+            for (address, (witness, _storage_trie)) in storage_tries_after_update {
+                let mut witness = witness.lock().map_err(|_| {
+                    ChainError::WitnessGeneration("Failed to lock storage trie witness".to_string())
+                })?;
+                let witness = std::mem::take(&mut *witness);
+                let witness = witness.into_iter().collect::<Vec<_>>();
+                match encoded_storage_tries.entry(address) {
+                    std::collections::hash_map::Entry::Occupied(mut entry) => {
+                        entry.get_mut().extend(witness);
+                    }
+                    std::collections::hash_map::Entry::Vacant(vacant) => {
+                        vacant.insert(witness);
+                    }
+                }
+            }
+            trie = updated_trie;
+        }
+
+        // Get the witness for the state trie
+        let mut state_trie_witness = state_trie_witness.lock().map_err(|_| {
+            ChainError::WitnessGeneration("Failed to lock state trie witness".to_string())
+        })?;
+        let state_trie_witness = std::mem::take(&mut *state_trie_witness);
+        let mut used_trie_nodes = Vec::from_iter(state_trie_witness.into_iter());
+        // If the witness is empty at least try to store the root
+        if used_trie_nodes.is_empty() {
+            if let Some(root) = root_node {
+                used_trie_nodes.push(root.encode_raw());
+            }
+        }
+
+        let mut needed_block_numbers = block_hashes.keys().collect::<Vec<_>>();
+        needed_block_numbers.sort();
+        // The last block number we need is the parent of the last block we execute
+        let last_needed_block_number = blocks
+            .last()
+            .ok_or(ChainError::WitnessGeneration("Empty batch".to_string()))?
+            .header
+            .number
+            .saturating_sub(1);
+        // The first block number we need is either the parent of the first block number or the earliest block number used by BLOCKHASH
+        let mut first_needed_block_number = first_block_header.number.saturating_sub(1);
+        if let Some(block_number_from_logger) = needed_block_numbers.first() {
+            if **block_number_from_logger < first_needed_block_number {
+                first_needed_block_number = **block_number_from_logger;
+            }
+        }
+        let mut block_headers = HashMap::new();
+        for block_number in first_needed_block_number..=last_needed_block_number {
+            let header = self.storage.get_block_header(block_number)?.ok_or(
+                ChainError::WitnessGeneration("Failed to get block header".to_string()),
+            )?;
+            block_headers.insert(block_number, header);
+        }
+
+        let chain_config = self.storage.get_chain_config().map_err(ChainError::from)?;
+
+        Ok(ExecutionWitnessResult {
+            state_trie_nodes: Some(used_trie_nodes),
+            storage_trie_nodes: Some(encoded_storage_tries),
+            codes,
+            state_trie: None,
+            storage_tries: None,
+            block_headers,
+            parent_block_header,
+            chain_config,
+        })
+    }
+
     pub async fn store_block(
         &self,
         block: &Block,
@@ -135,23 +330,31 @@ impl Blockchain {
         account_updates: &[AccountUpdate],
     ) -> Result<(), ChainError> {
         // Apply the account updates over the last block's state and compute the new state root
-        let new_state_root = self
+        let apply_updates_list = self
             .storage
-            .apply_account_updates(block.header.parent_hash, account_updates)
+            .apply_account_updates_batch(block.header.parent_hash, account_updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
+
+        let new_state_root = apply_updates_list.state_trie_hash;
+        let state_updates = apply_updates_list.state_updates;
+        let accounts_updates = apply_updates_list.storage_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
 
+        let update_batch = UpdateBatch {
+            account_updates: state_updates,
+            storage_updates: accounts_updates,
+            blocks: vec![block.clone()],
+            receipts: vec![(block.hash(), execution_result.receipts)],
+        };
+
         self.storage
-            .add_block(block.clone())
+            .clone()
+            .store_block_updates(update_batch)
             .await
-            .map_err(ChainError::StoreError)?;
-        self.storage
-            .add_receipts(block.hash(), execution_result.receipts)
-            .await
-            .map_err(ChainError::StoreError)
+            .map_err(|e| e.into())
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
@@ -217,11 +420,18 @@ impl Blockchain {
             .get_chain_config()
             .map_err(|e| (e.into(), None))?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), first_block_header.parent_hash);
+        // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
+        let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
+
+        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
+            self.storage.clone(),
+            first_block_header.parent_hash,
+            block_hash_cache,
+        );
         let mut vm = Evm::new(self.evm_engine, vm_db);
 
         let blocks_len = blocks.len();
-        let mut all_receipts: HashMap<BlockHash, Vec<Receipt>> = HashMap::new();
+        let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
 
@@ -229,72 +439,71 @@ impl Blockchain {
         for (i, block) in blocks.iter().enumerate() {
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
-                match find_parent_header(&block.header, &self.storage) {
-                    Ok(parent_header) => parent_header,
-                    Err(error) => {
-                        return Err((
-                            error,
-                            Some(BatchBlockProcessingFailure {
-                                failed_block_hash: block.hash(),
-                                last_valid_hash,
-                            }),
-                        ))
-                    }
-                }
-            } else {
-                // for the subsequent ones, the parent is the previous block
-                blocks[i - 1].header.clone()
-            };
-
-            let BlockExecutionResult { receipts, .. } = match self.execute_block_from_state(
-                &parent_header,
-                block,
-                &chain_config,
-                &mut vm,
-            ) {
-                Ok(result) => result,
-                Err(err) => {
-                    return Err((
+                find_parent_header(&block.header, &self.storage).map_err(|err| {
+                    (
                         err,
                         Some(BatchBlockProcessingFailure {
                             failed_block_hash: block.hash(),
                             last_valid_hash,
                         }),
-                    ))
-                }
+                    )
+                })?
+            } else {
+                // for the subsequent ones, the parent is the previous block
+                blocks[i - 1].header.clone()
             };
 
+            let BlockExecutionResult { receipts, .. } = self
+                .execute_block_from_state(&parent_header, block, &chain_config, &mut vm)
+                .map_err(|err| {
+                    (
+                        err,
+                        Some(BatchBlockProcessingFailure {
+                            failed_block_hash: block.hash(),
+                            last_valid_hash,
+                        }),
+                    )
+                })?;
+
+            info!("Processed block {} out of {}", i, blocks.len());
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
-            all_receipts.insert(block.hash(), receipts);
+            all_receipts.push((block.hash(), receipts));
         }
 
         let account_updates = vm
             .get_state_transitions()
             .map_err(|err| (ChainError::EvmError(err), None))?;
 
-        let Some(last_block) = blocks.last() else {
-            return Err((ChainError::Custom("Last block not found".into()), None));
-        };
+        let last_block = blocks
+            .last()
+            .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
 
         // Apply the account updates over all blocks and compute the new state root
-        let new_state_root = self
+        let account_updates_list = self
             .storage
-            .apply_account_updates(first_block_header.parent_hash, &account_updates)
+            .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
 
+        let new_state_root = account_updates_list.state_trie_hash;
+        let state_updates = account_updates_list.state_updates;
+        let accounts_updates = account_updates_list.storage_updates;
+
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
+        let update_batch = UpdateBatch {
+            account_updates: state_updates,
+            storage_updates: accounts_updates,
+            blocks,
+            receipts: all_receipts,
+        };
+
         self.storage
-            .add_blocks(blocks)
-            .await
-            .map_err(|e| (e.into(), None))?;
-        self.storage
-            .add_receipts_for_blocks(all_receipts)
+            .store_block_updates(update_batch)
             .await
             .map_err(|e| (e.into(), None))?;
 
@@ -306,8 +515,8 @@ impl Blockchain {
         }
 
         info!(
-            "[METRICS] Executed and stored: Range: {}, Total transactions: {}, Throughput: {} Gigagas/s",
-            blocks_len, transactions_count, throughput
+            "[METRICS] Executed and stored: Range: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
+            blocks_len, transactions_count, total_gas_used, throughput
         );
 
         Ok(())
@@ -402,7 +611,7 @@ impl Blockchain {
         tx: &Transaction,
         sender: Address,
     ) -> Result<(), MempoolError> {
-        // TODO: Add validations here
+        let nonce = tx.nonce();
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
             return Ok(());
@@ -423,6 +632,10 @@ impl Blockchain {
             && tx.data().len() > MAX_INITCODE_SIZE
         {
             return Err(MempoolError::TxMaxInitCodeSizeError);
+        }
+
+        if !tx.is_contract_creation() && tx.data().len() >= MAX_TRANSACTION_DATA_SIZE {
+            return Err(MempoolError::TxMaxDataSizeError);
         }
 
         // Check gas limit is less than header's gas limit
@@ -451,8 +664,8 @@ impl Blockchain {
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if tx.nonce() < sender_acc_info.nonce {
-                return Err(MempoolError::InvalidNonce);
+            if nonce < sender_acc_info.nonce || nonce == u64::MAX {
+                return Err(MempoolError::NonceTooLow);
             }
 
             let tx_cost = tx
@@ -465,6 +678,14 @@ impl Blockchain {
         } else {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
+        }
+
+        // Check the nonce of pendings TXs in the mempool from the same sender
+        if self
+            .mempool
+            .contains_sender_nonce(sender, nonce, tx.compute_hash())?
+        {
+            return Err(MempoolError::InvalidNonce);
         }
 
         if let Some(chain_id) = tx.chain_id() {

@@ -1,7 +1,8 @@
+use std::fmt::Display;
+
 use ethereum_types::{H160, H256};
 use ethrex_common::{types::BlockHash, Address};
-use ethrex_levm::{db::error::DatabaseError, errors::VMError};
-use ethrex_storage::error::StoreError;
+use ethrex_levm::errors::{DatabaseError as LevmDatabaseError, InternalError, VMError};
 use ethrex_trie::TrieError;
 use revm::primitives::{
     result::EVMError as RevmError, Address as RevmAddress, B256 as RevmB256, U256 as RevmU256,
@@ -16,16 +17,12 @@ pub enum EvmError {
     Header(String),
     #[error("DB error: {0}")]
     DB(String),
-    #[error("Execution DB error: {0}")]
-    ProverDB(#[from] ProverDBError),
     #[error("{0}")]
     Precompile(String),
     #[error("Invalid EVM or EVM not supported: {0}")]
     InvalidEVM(String),
     #[error("{0}")]
     Custom(String),
-    #[error("Levm Database error: {0}")]
-    LevmDatabaseError(#[from] DatabaseError),
     #[error("Invalid deposit request layout")]
     InvalidDepositRequest,
     #[error("System contract: {0} has no code after deployment")]
@@ -37,7 +34,7 @@ pub enum EvmError {
 #[derive(Debug, Error)]
 pub enum ProverDBError {
     #[error("Database error: {0}")]
-    Database(#[from] DatabaseError),
+    Database(String),
     #[error("Store error: {0}")]
     Store(String),
     #[error("Evm error: {0}")]
@@ -78,6 +75,12 @@ pub enum ProverDBError {
     InvalidStorageTrieValue(H160, H256),
     #[error("{0}")]
     Custom(String),
+    #[error("No block headers stored, should at least store parent header")]
+    NoBlockHeaders,
+    #[error("Non-contiguous block headers (there's a gap in the block headers list)")]
+    NoncontiguousBlockHeaders,
+    #[error("Unreachable code reached: {0}")]
+    Unreachable(String),
 }
 
 #[derive(Debug, Error)]
@@ -96,36 +99,12 @@ pub enum StateProofsError {
     StorageProofNotFound(RevmAddress, RevmU256),
 }
 
-impl From<RevmError<StoreError>> for EvmError {
-    fn from(value: RevmError<StoreError>) -> Self {
+impl<E: Display> From<RevmError<E>> for EvmError {
+    fn from(value: RevmError<E>) -> Self {
         match value {
             RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
             RevmError::Header(err) => EvmError::Header(err.to_string()),
             RevmError::Database(err) => EvmError::DB(err.to_string()),
-            RevmError::Custom(err) => EvmError::Custom(err),
-            RevmError::Precompile(err) => EvmError::Precompile(err),
-        }
-    }
-}
-
-impl From<RevmError<EvmError>> for EvmError {
-    fn from(value: RevmError<EvmError>) -> Self {
-        match value {
-            RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
-            RevmError::Header(err) => EvmError::Header(err.to_string()),
-            RevmError::Database(err) => EvmError::DB(err.to_string()),
-            RevmError::Custom(err) => EvmError::Custom(err),
-            RevmError::Precompile(err) => EvmError::Precompile(err),
-        }
-    }
-}
-
-impl From<RevmError<ProverDBError>> for EvmError {
-    fn from(value: RevmError<ProverDBError>) -> Self {
-        match value {
-            RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
-            RevmError::Header(err) => EvmError::Header(err.to_string()),
-            RevmError::Database(err) => EvmError::ProverDB(err),
             RevmError::Custom(err) => EvmError::Custom(err),
             RevmError::Precompile(err) => EvmError::Precompile(err),
         }
@@ -143,8 +122,17 @@ impl From<VMError> for EvmError {
     }
 }
 
-impl From<StoreError> for ProverDBError {
-    fn from(err: StoreError) -> Self {
-        ProverDBError::Store(err.to_string())
+impl From<LevmDatabaseError> for EvmError {
+    fn from(value: LevmDatabaseError) -> Self {
+        EvmError::DB(value.to_string())
+    }
+}
+
+impl From<InternalError> for EvmError {
+    fn from(value: InternalError) -> Self {
+        match value {
+            InternalError::Database(err) => err.into(),
+            other => EvmError::Custom(other.to_string()),
+        }
     }
 }

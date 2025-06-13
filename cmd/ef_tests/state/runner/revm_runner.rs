@@ -231,12 +231,7 @@ pub fn prepare_revm_for_tx<'state>(
         .with_external_context(
             RevmTracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
         );
-    match initial_state {
-        EvmState::Store(db) => Ok(evm_builder.with_db(db).build()),
-        _ => Err(EFTestRunnerError::VMInitializationFailed(
-            "Expected LEVM state to be a Store".to_owned(),
-        )),
-    }
+    Ok(evm_builder.with_db(&mut initial_state.inner).build())
 }
 
 pub fn compare_levm_revm_execution_results(
@@ -567,8 +562,10 @@ pub async fn _ensure_post_state_revm(
                         &test.name, vector, err
                     );
                     return Err(EFTestRunnerError::ExecutionFailedUnexpectedly(
-                        ethrex_levm::errors::VMError::AddressAlreadyOccupied,
-                        //TODO: Use another kind of error for this.
+                        ethrex_levm::errors::InternalError::Custom(format!(
+                            "Unexpected exception: {err:?}",
+                        ))
+                        .into(), //TODO: Use another kind of error for this.
                     ));
                 }
             }

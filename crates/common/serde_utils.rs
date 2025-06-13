@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use serde::{de::Error, ser::SerializeSeq, Deserialize, Deserializer, Serializer};
 
 pub mod u256 {
@@ -192,7 +194,7 @@ pub mod u128 {
             D: Deserializer<'de>,
         {
             let value = String::deserialize(d)?;
-            let res = u128::from_str_radix(value.trim_start_matches("0x"), 32)
+            let res = u128::from_str_radix(value.trim_start_matches("0x"), 16)
                 .map_err(|_| D::Error::custom("Failed to deserialize u128 value"));
             res
         }
@@ -203,6 +205,29 @@ pub mod u128 {
         {
             serializer.serialize_str(&format!("{:#x}", value))
         }
+    }
+}
+
+pub mod vec_u8 {
+    use ::bytes::Bytes;
+
+    use super::*;
+
+    pub fn deserialize<'de, D>(d: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(d)?;
+        let bytes = hex::decode(value.trim_start_matches("0x"))
+            .map_err(|e| D::Error::custom(e.to_string()))?;
+        Ok(bytes)
+    }
+
+    pub fn serialize<S>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("0x{:x}", Bytes::copy_from_slice(value)))
     }
 }
 
@@ -368,4 +393,199 @@ fn serialize_vec_of_hex_encodables<S: Serializer, T: std::convert::AsRef<[u8]>>(
         seq_serializer.serialize_element(&format!("0x{}", hex::encode(encoded)))?;
     }
     seq_serializer.end()
+}
+
+pub mod duration {
+    use std::time::Duration;
+
+    use super::*;
+    pub fn deserialize<'de, D>(d: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(d)?;
+        parse_duration(value.clone())
+            .ok_or_else(|| D::Error::custom(format!("Failed to parse Duration: {}", value)))
+    }
+
+    pub mod opt {
+        use super::*;
+
+        pub fn deserialize<'de, D>(d: D) -> Result<Option<Duration>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            if let Some(value) = Option::<String>::deserialize(d)? {
+                Ok(Some(parse_duration(value.clone()).ok_or_else(|| {
+                    D::Error::custom(format!("Failed to parse Duration: {}", value))
+                })?))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// Parses a Duration in string format
+/// The acceptable format is a concatentation of positive numeric values (with decimals allowed) followed by a time unit of measurement.
+/// The units accepted are: Hours(h), Minutes(m), Senconds(s), Milliseconds(ms), Microseconds (us|µs) and Nanoseconds(ns)
+/// For example, a duration such as "1h30m" or "1.6m" will be accepted but "-1s" or "30mh" will not
+/// Some imprecision can be expected when using milliseconds/microseconds/nanoseconds with significant decimal components
+/// If the format is incorrect this function will return None
+fn parse_duration(input: String) -> Option<Duration> {
+    let mut res = Duration::ZERO;
+    let mut integer_buffer = String::new();
+    let mut chars = input.chars().peekable();
+    while let Some(char) = chars.next() {
+        match char {
+            // Numeric Value
+            char @ '0'..='9' | char @ '.' => integer_buffer.push(char),
+            // Unit of Measurement
+            char => {
+                // Parse the numeric value we collected
+                let integer: f64 = integer_buffer.parse().ok()?;
+                // Obtain the duration component based off of the unit of measurement
+                let duration_component = match char {
+                    // Hour
+                    'h' => Duration::from_secs_f64(60_f64 * 60_f64 * integer),
+                    'm' => {
+                        if chars.peek().is_some_and(|c| *c == 's') {
+                            chars.next();
+                            // Millisecond
+                            Duration::from_micros((integer * 1000_f64).round() as u64)
+                        } else {
+                            // Minute
+                            Duration::from_secs_f64(60_f64 * integer)
+                        }
+                    }
+                    // Second
+                    's' => Duration::from_secs_f64(integer),
+                    // Microsecond
+                    'u' | 'µ' => {
+                        if chars.next().is_some_and(|c| c == 's') {
+                            Duration::from_nanos((integer * 1000_f64).round() as u64)
+                        } else {
+                            return None;
+                        }
+                    }
+                    // Nanosecond
+                    'n' => {
+                        if chars.next().is_some_and(|c| c == 's') {
+                            Duration::from_nanos(integer.round() as u64)
+                        } else {
+                            return None;
+                        }
+                    }
+                    _ => return None,
+                };
+                // Add duration component to result
+                res += duration_component;
+                // Clear state so we can parse the next value
+                integer_buffer.clear();
+            }
+        }
+    }
+    Some(res)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_duration_simple_integers() {
+        assert_eq!(
+            parse_duration("24h".to_string()),
+            Some(Duration::from_secs(60 * 60 * 24))
+        );
+        assert_eq!(
+            parse_duration("20m".to_string()),
+            Some(Duration::from_secs(60 * 20))
+        );
+        assert_eq!(
+            parse_duration("13s".to_string()),
+            Some(Duration::from_secs(13))
+        );
+        assert_eq!(
+            parse_duration("500ms".to_string()),
+            Some(Duration::from_millis(500))
+        );
+        assert_eq!(
+            parse_duration("900µs".to_string()),
+            Some(Duration::from_micros(900))
+        );
+        assert_eq!(
+            parse_duration("900us".to_string()),
+            Some(Duration::from_micros(900))
+        );
+        assert_eq!(
+            parse_duration("40ns".to_string()),
+            Some(Duration::from_nanos(40))
+        );
+    }
+
+    #[test]
+    fn parse_duration_mixed_integers() {
+        assert_eq!(
+            parse_duration("24h30m".to_string()),
+            Some(Duration::from_secs(60 * 60 * 24 + 30 * 60))
+        );
+        assert_eq!(
+            parse_duration("20m15s".to_string()),
+            Some(Duration::from_secs(60 * 20 + 15))
+        );
+        assert_eq!(
+            parse_duration("13s4ms".to_string()),
+            Some(Duration::from_secs(13) + Duration::from_millis(4))
+        );
+        assert_eq!(
+            parse_duration("500ms60µs".to_string()),
+            Some(Duration::from_millis(500) + Duration::from_micros(60))
+        );
+        assert_eq!(
+            parse_duration("900us21ns".to_string()),
+            Some(Duration::from_micros(900) + Duration::from_nanos(21))
+        );
+    }
+
+    #[test]
+    fn parse_duration_simple_with_decimals() {
+        assert_eq!(
+            parse_duration("1.5h".to_string()),
+            Some(Duration::from_secs(60 * 90))
+        );
+        assert_eq!(
+            parse_duration("0.5m".to_string()),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            parse_duration("4.5s".to_string()),
+            Some(Duration::from_secs_f32(4.5))
+        );
+        assert_eq!(
+            parse_duration("0.8ms".to_string()),
+            Some(Duration::from_micros(800))
+        );
+        assert_eq!(
+            parse_duration("0.95us".to_string()),
+            Some(Duration::from_nanos(950))
+        );
+        // Rounded Up
+        assert_eq!(
+            parse_duration("0.75ns".to_string()),
+            Some(Duration::from_nanos(1))
+        );
+    }
+
+    #[test]
+    fn parse_duration_mixed_decimals() {
+        assert_eq!(
+            parse_duration("1.5h0.5m10s".to_string()),
+            Some(Duration::from_secs(60 * 90 + 30 + 10))
+        );
+        assert_eq!(
+            parse_duration("0.5m15s".to_string()),
+            Some(Duration::from_secs(30 + 15))
+        );
+    }
 }

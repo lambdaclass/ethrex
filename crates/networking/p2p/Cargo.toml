@@ -12,10 +12,10 @@ ethrex-rlp.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
-
+ethereum-types.workspace = true
 tracing.workspace = true
-tokio.workspace = true
-tokio-util.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true, features = ["codec"] }
 bytes.workspace = true
 hex.workspace = true
 thiserror.workspace = true
@@ -49,3 +49,6 @@ default = ["c-kzg"]
 l2 = ["ethrex-storage-rollup"]
 c-kzg = ["ethrex-blockchain/c-kzg", "ethrex-common/c-kzg"]
 sync-test = []
+
+[lints.clippy]
+unwrap_used = "deny"

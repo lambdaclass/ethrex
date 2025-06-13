@@ -84,11 +84,11 @@ impl From<u64> for BlockByNumber {
         BlockByNumber::Number(value)
     }
 }
-const MAX_NUMBER_OF_RETRIES: u64 = 10;
-const BACKOFF_FACTOR: u64 = 2;
+pub const MAX_NUMBER_OF_RETRIES: u64 = 10;
+pub const BACKOFF_FACTOR: u64 = 2;
 // Give at least 8 blocks before trying to bump gas.
-const MIN_RETRY_DELAY: u64 = 96;
-const MAX_RETRY_DELAY: u64 = 1800;
+pub const MIN_RETRY_DELAY: u64 = 96;
+pub const MAX_RETRY_DELAY: u64 = 1800;
 
 const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 
@@ -169,6 +169,21 @@ impl EthClient {
         response
     }
 
+    async fn send_request_to_all(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, EthClientError> {
+        let mut response = Err(EthClientError::Custom("All rpc calls failed".to_string()));
+
+        for url in self.urls.iter() {
+            let maybe_response = self.send_request_to_url(url, &request).await;
+            if maybe_response.is_ok() {
+                response = maybe_response;
+            }
+        }
+        response
+    }
+
     async fn send_request_to_url(
         &self,
         rpc_url: &Url,
@@ -195,7 +210,7 @@ impl EthClient {
             params: Some(vec![json!("0x".to_string() + &hex::encode(data))]),
         };
 
-        match self.send_request(request).await {
+        match self.send_request_to_all(request).await {
             Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
                 .map_err(SendRawTransactionError::SerdeJSONError)
                 .map_err(EthClientError::from),
@@ -380,11 +395,17 @@ impl EthClient {
             TxKind::Call(addr) => Some(format!("{addr:#x}")),
             TxKind::Create => None,
         };
+        let blob_versioned_hashes_str: Vec<_> = transaction
+            .blob_versioned_hashes
+            .into_iter()
+            .map(|hash| format!("{hash:#x}"))
+            .collect();
         let mut data = json!({
             "to": to,
             "input": format!("0x{:#x}", transaction.input),
             "from": format!("{:#x}", transaction.from),
             "value": format!("{:#x}", transaction.value),
+            "blobVersionedHashes": blob_versioned_hashes_str
         });
 
         // Add the nonce just if present, otherwise the RPC will use the latest nonce
@@ -1275,8 +1296,8 @@ pub struct GetTransactionByHashTransaction {
     pub to: Address,
     #[serde(default)]
     pub value: U256,
-    #[serde(default, with = "ethrex_common::serde_utils::bytes", alias = "input")]
-    pub data: Bytes,
+    #[serde(default, with = "ethrex_common::serde_utils::vec_u8", alias = "input")]
+    pub data: Vec<u8>,
     #[serde(default)]
     pub access_list: Vec<(Address, Vec<H256>)>,
     #[serde(default)]

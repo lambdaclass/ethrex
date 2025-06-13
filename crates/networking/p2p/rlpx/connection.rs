@@ -10,6 +10,7 @@ use crate::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts},
+            status::StatusMessage,
             transactions::{GetPooledTransactions, Transactions},
         },
         frame::RLPxCodec,
@@ -57,7 +58,9 @@ use tokio_util::codec::Framed;
 use tracing::{debug, info, warn};
 
 use super::{
-    eth::transactions::NewPooledTransactionHashes, p2p::DisconnectReason, utils::log_peer_warn,
+    eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
+    p2p::DisconnectReason,
+    utils::log_peer_warn,
 };
 
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
@@ -65,6 +68,8 @@ const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration:
 const PERIODIC_BLOCK_BROADCAST_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(500);
 const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(60);
 pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
 
 lazy_static! {
@@ -101,8 +106,10 @@ pub(crate) struct RLPxConnection<S> {
     negotiated_snap_capability: Option<Capability>,
     next_periodic_ping: Instant,
     next_tx_broadcast: Instant,
-    next_block_broadcast: Instant,
+    next_block_range_update: Instant,
+    last_block_range_update_block: u64,
     broadcasted_txs: HashSet<H256>,
+    next_block_broadcast: Instant,
     latest_block_sent: u64,
     latest_block_added: u64,
     blocks_on_queue: BTreeMap<u64, Block>,
@@ -150,6 +157,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
             next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
             next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
+            next_block_range_update: Instant::now() + PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL,
+            last_block_range_update_block: 0,
             broadcasted_txs: HashSet::new(),
             latest_block_sent: 0,
             latest_block_added: 0,
@@ -451,7 +460,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
         if Instant::now() >= self.next_periodic_ping - PERIODIC_PING_INTERVAL {
             self.send_sealed_batch().await?;
-        }
+        };
+        if Instant::now() >= self.next_block_range_update {
+            self.next_block_range_update = Instant::now() + PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL;
+            if self.should_send_block_range_update().await? {
+                self.send_block_range_update().await?;
+            }
+        };
         Ok(())
     }
 
@@ -618,6 +633,29 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Ok(())
         }
     }
+    async fn send_block_range_update(&mut self) -> Result<(), RLPxError> {
+        // BlockRangeUpdate was introduced in eth/69
+        if let Some(eth) = &self.negotiated_eth_capability {
+            if eth.version >= 69 {
+                log_peer_debug(&self.node, "Sending BlockRangeUpdate");
+                let update = BlockRangeUpdate::new(&self.storage).await?;
+                let lastet_block = update.lastest_block;
+                self.send(Message::BlockRangeUpdate(update)).await?;
+                self.last_block_range_update_block = lastet_block - (lastet_block % 32);
+            }
+        }
+        Ok(())
+    }
+
+    async fn should_send_block_range_update(&mut self) -> Result<bool, RLPxError> {
+        let latest_block = self.storage.get_latest_block_number().await?;
+        if latest_block < self.last_block_range_update_block
+            || latest_block - self.last_block_range_update_block >= 32
+        {
+            return Ok(true);
+        }
+        Ok(false)
+    }
 
     async fn handle_message(
         &mut self,
@@ -644,14 +682,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::Status(msg_data) => {
                 if let Some(eth) = &self.negotiated_eth_capability {
-                    backend::validate_status(msg_data, &self.storage, eth.version).await?
+                    backend::validate_status(msg_data, &self.storage, eth).await?
                 };
             }
             Message::GetAccountRange(req) => {
                 let response = process_account_range_request(req, self.storage.clone())?;
                 self.send(Message::AccountRange(response)).await?
             }
-            // TODO(#1129) Add the transaction to the mempool once received.
             Message::Transactions(txs) if peer_supports_eth => {
                 if self.blockchain.is_synced() {
                     let mut valid_txs = vec![];
@@ -662,7 +699,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         }
                         valid_txs.push(tx.clone());
                     }
-                    self.broadcast_message(Message::Transactions(Transactions::new(valid_txs)))?;
+                    if !valid_txs.is_empty() {
+                        self.broadcast_message(Message::Transactions(Transactions::new(
+                            valid_txs,
+                        )))?;
+                    }
                 }
             }
             Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
@@ -680,12 +721,28 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::BlockBodies(response)).await?;
             }
             Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
-                let mut receipts = Vec::new();
-                for hash in block_hashes.iter() {
-                    receipts.push(self.storage.get_receipts_for_block(hash)?);
+                if let Some(eth) = &self.negotiated_eth_capability {
+                    let mut receipts = Vec::new();
+                    for hash in block_hashes.iter() {
+                        receipts.push(self.storage.get_receipts_for_block(hash)?);
+                    }
+                    let response = Receipts::new(id, receipts, eth)?;
+                    self.send(Message::Receipts(response)).await?;
                 }
-                let response = Receipts { id, receipts };
-                self.send(Message::Receipts(response)).await?;
+            }
+            Message::BlockRangeUpdate(update) => {
+                if update.earliest_block > update.lastest_block {
+                    return Err(RLPxError::InvalidBlockRange);
+                }
+
+                //TODO implement the logic
+                log_peer_debug(
+                    &self.node,
+                    &format!(
+                        "Range block update: {} to {}",
+                        update.earliest_block, update.lastest_block
+                    ),
+                );
             }
             Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)
                 if peer_supports_eth =>
@@ -929,7 +986,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
         if let Some(eth) = self.negotiated_eth_capability.clone() {
-            let status = backend::get_status(&self.storage, eth.version).await?;
+            let status = StatusMessage::new(&self.storage, &eth).await?;
             log_peer_debug(&self.node, "Sending status");
             self.send(Message::Status(status)).await?;
             // The next immediate message in the ETH protocol is the
@@ -942,7 +999,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             match msg {
                 Message::Status(msg_data) => {
                     log_peer_debug(&self.node, "Received Status");
-                    backend::validate_status(msg_data, &self.storage, eth.version).await?
+                    backend::validate_status(msg_data, &self.storage, &eth).await?
                 }
                 Message::Disconnect(disconnect) => {
                     return Err(RLPxError::HandshakeError(format!(

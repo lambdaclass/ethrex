@@ -19,32 +19,6 @@ env:
   CI_ETHREX_WORKDIR: /usr/local/bin
 
 jobs:
-  docker-bake:
-    name: "Docker bake"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Bake docker images
-        uses: docker/bake-action@v6
-        with:
-          workdir: "crates/l2"
-          files: "crates/l2/docker-compose-l2.yaml"
-          set: |
-            ethrex.cache-to=type=local,dest=/tmp/buildx-cache/ethrex,mode=max
-            ethrex_l2.cache-to=type=local,dest=/tmp/buildx-cache/ethrex_l2,mode=max
-            contract_deployer.cache-to=type=local,dest=/tmp/buildx-cache/contract_deployer,mode=max
-
-      - name: Upload docker artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: buildx-cache
-          path: /tmp/buildx-cache
-
   lint:
     # "Lint" is a required check, don't change the name
     name: Lint
@@ -75,7 +49,7 @@ jobs:
 
   integration-test:
     name: Integration Test - ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: larger_runners
     strategy:
       matrix:
         include:
@@ -83,7 +57,6 @@ jobs:
             validium: true
           - name: "Vanilla"
             validium: false
-    needs: [docker-bake]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -93,26 +66,6 @@ jobs:
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Download buildx cache
-        uses: actions/download-artifact@v4
-        with:
-          name: buildx-cache
-          path: /tmp/buildx-cache
-
-      - name: Bake docker images
-        uses: docker/bake-action@v6
-        with:
-          workdir: "crates/l2"
-          files: "crates/l2/docker-compose-l2.yaml"
-          load: true
-          set: |
-            ethrex.cache-from=type=local,src=/tmp/buildx-cache/ethrex
-            ethrex_l2.cache-from=type=local,src=/tmp/buildx-cache/ethrex_l2
-            contract_deployer.cache-from=type=local,src=/tmp/buildx-cache/contract_deployer
 
       # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
@@ -134,13 +87,14 @@ jobs:
           ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
           ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Start Sequencer
         run: |
           cd crates/l2
           CI_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_COMMITTER_VALIDIUM=${{ matrix.validium }} \
+          ETHREX_L2_VALIDIUM=${{ matrix.validium }} \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
 
@@ -148,13 +102,13 @@ jobs:
         run: |
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1 &
+          docker logs --follow ethrex_l2
           killall ethrex_prover -s SIGINT
 
   integration-test-based:
     name: Integration Test - Based
     runs-on: ubuntu-latest
-    needs: [docker-bake]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -164,26 +118,6 @@ jobs:
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Download buildx cache
-        uses: actions/download-artifact@v4
-        with:
-          name: buildx-cache
-          path: /tmp/buildx-cache
-
-      - name: Bake docker images
-        uses: docker/bake-action@v6
-        with:
-          workdir: "crates/l2"
-          files: "crates/l2/docker-compose-l2.yaml"
-          load: true
-          set: |
-            ethrex.cache-from=type=local,src=/tmp/buildx-cache/ethrex
-            ethrex_l2.cache-from=type=local,src=/tmp/buildx-cache/ethrex_l2
-            contract_deployer.cache-from=type=local,src=/tmp/buildx-cache/contract_deployer
 
       # also creates empty verification keys (as workflow runs with exec backend)
       - name: Build prover
@@ -216,16 +150,28 @@ jobs:
       
       - name: Register sequencer
         run: |
-          rex send 0x754f32775e311bbb58bf934fb129bf383556dfb0 1000000000000000000 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 -- "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
-          rex call 0x754f32775e311bbb58bf934fb129bf383556dfb0 -- "leaderSequencer()"
+          cd crates/l2
+          SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
+          export SEQUENCER_REGISTRY
+          
+          if [ -z "$SEQUENCER_REGISTRY" ]; then
+            echo "Failed to get SEQUENCER_REGISTRY from .env file"
+            exit 1
+          fi
+          rex send "$SEQUENCER_REGISTRY" 1000000000000000000 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 -- "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
+          rex call "$SEQUENCER_REGISTRY" -- "leaderSequencer()"
 
       - name: Start Sequencer
         run: |
           cd crates/l2
+          SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
+          export SEQUENCER_REGISTRY
+
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_VALIDIUM=false \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_BASED=true \
+          ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS="$SEQUENCER_REGISTRY" \
           docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
 
       - name: Run test
@@ -238,33 +184,12 @@ jobs:
   state-diff-test:
     name: State Reconstruction Tests
     runs-on: ubuntu-latest
-    needs: [docker-bake]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@1.82.0
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Download buildx cache
-        uses: actions/download-artifact@v4
-        with:
-          name: buildx-cache
-          path: /tmp/buildx-cache
-
-      - name: Bake docker images
-        uses: docker/bake-action@v6
-        with:
-          workdir: "crates/l2"
-          files: "crates/l2/docker-compose-l2.yaml"
-          load: true
-          set: |
-            ethrex.cache-from=type=local,src=/tmp/buildx-cache/ethrex
-            ethrex_l2.cache-from=type=local,src=/tmp/buildx-cache/ethrex_l2
-            contract_deployer.cache-from=type=local,src=/tmp/buildx-cache/contract_deployer
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
@@ -278,7 +203,12 @@ jobs:
         run: |
           cd crates/l2
           touch .env
-          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up contract_deployer
+          CI_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Run tests
         run: |

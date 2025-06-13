@@ -1,5 +1,5 @@
 use super::utils::random_duration;
-use super::SequencerState;
+use crate::based::sequencer_state::{SequencerState, SequencerStatus};
 use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use bytes::Bytes;
@@ -14,7 +14,6 @@ use ethrex_rpc::{
 use ethrex_storage::Store;
 use keccak_hash::keccak;
 use std::{cmp::min, sync::Arc};
-use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
@@ -31,7 +30,7 @@ pub struct L1WatcherState {
     pub last_block_fetched: U256,
     pub check_interval: u64,
     pub l1_block_delay: u64,
-    pub sequencer_state: Arc<Mutex<SequencerState>>,
+    pub sequencer_state: SequencerState,
 }
 
 impl L1WatcherState {
@@ -40,7 +39,7 @@ impl L1WatcherState {
         blockchain: Arc<Blockchain>,
         eth_config: &EthConfig,
         watcher_config: &L1WatcherConfig,
-        sequencer_state: Arc<Mutex<SequencerState>>,
+        sequencer_state: SequencerState,
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_config.rpc_url.clone())?;
         let l2_client = EthClient::new("http://localhost:1729")?;
@@ -79,22 +78,21 @@ impl L1Watcher {
         store: Store,
         blockchain: Arc<Blockchain>,
         cfg: SequencerConfig,
-        sequencer_state: Arc<Mutex<SequencerState>>,
-    ) {
-        match L1WatcherState::new(
-            store.clone(),
-            blockchain.clone(),
+        sequencer_state: SequencerState,
+    ) -> Result<(), L1WatcherError> {
+        let state = L1WatcherState::new(
+            store,
+            blockchain,
             &cfg.eth,
             &cfg.l1_watcher,
             sequencer_state,
-        ) {
-            Ok(state) => {
-                let mut l1_watcher = L1Watcher::start(state);
-                // Perform the check and suscribe a periodic Watch.
-                let _ = l1_watcher.cast(InMessage::Watch).await;
-            }
-            Err(error) => error!("L1 Watcher Error: {}", error),
-        };
+        )?;
+        let mut l1_watcher = L1Watcher::start(state);
+        // Perform the check and suscribe a periodic Watch.
+        l1_watcher
+            .cast(InMessage::Watch)
+            .await
+            .map_err(L1WatcherError::GenServerError)
     }
 }
 
@@ -125,16 +123,11 @@ impl GenServer for L1Watcher {
     ) -> CastResponse {
         match message {
             Self::InMsg::Watch => {
+                if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
+                    watch(state).await;
+                }
                 let check_interval = random_duration(state.check_interval);
                 send_after(check_interval, tx.clone(), Self::InMsg::Watch);
-                let sequencer_state = state.sequencer_state.lock().await.clone();
-                match sequencer_state {
-                    SequencerState::Sequencing => {
-                        watch(state).await;
-                    }
-                    SequencerState::Following => {}
-                }
-
                 CastResponse::NoReply
             }
         }
@@ -142,17 +135,19 @@ impl GenServer for L1Watcher {
 }
 
 async fn watch(state: &mut L1WatcherState) {
-    if let Ok(logs) = get_logs(state)
+    let Ok(logs) = get_logs(state)
         .await
         .inspect_err(|err| error!("L1 Watcher Error: {err}"))
-    {
-        // We may not have a deposit nor a withdrawal, that means no events -> no logs.
-        if !logs.is_empty() {
-            let _ = process_logs(state, logs)
-                .await
-                .inspect_err(|err| error!("L1 Watcher Error: {}", err));
-        };
-    }
+    else {
+        return;
+    };
+
+    // We may not have a deposit nor a withdrawal, that means no events -> no logs.
+    if !logs.is_empty() {
+        let _ = process_logs(state, logs)
+            .await
+            .inspect_err(|err| error!("L1 Watcher Error: {}", err));
+    };
 }
 
 pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1WatcherError> {

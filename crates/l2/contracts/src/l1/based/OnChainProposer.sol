@@ -9,7 +9,6 @@ import {CommonBridge} from "../CommonBridge.sol";
 import {ICommonBridge} from "../interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "../interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "../interfaces/ISP1Verifier.sol";
-import {IPicoVerifier} from "../interfaces/IPicoVerifier.sol";
 import {ITDXVerifier} from "../interfaces/ITDXVerifier.sol";
 import {ISequencerRegistry} from "../interfaces/ISequencerRegistry.sol";
 
@@ -31,9 +30,10 @@ contract OnChainProposer is
     /// all the withdrawals that were processed in the batch being committed
     struct BatchCommitmentInfo {
         bytes32 newStateRoot;
-        bytes32 stateDiffKZGVersionedHash;
+        bytes32 blobVersionedHash;
         bytes32 processedDepositLogsRollingHash;
         bytes32 withdrawalsLogsMerkleRoot;
+        bytes32 lastBlockHash;
     }
 
     /// @notice The commitments of the committed batches.
@@ -76,6 +76,10 @@ contract OnChainProposer is
     /// @dev This value is immutable and can only be set during contract deployment.
     bool public VALIDIUM;
 
+    /// @notice The address of the AlignedProofAggregatorService contract.
+    /// @dev This address is set during contract initialization and is used to verify aligned proofs.
+    address public ALIGNEDPROOFAGGREGATOR;
+
     modifier onlyLeaderSequencer() {
         require(
             msg.sender ==
@@ -90,6 +94,7 @@ contract OnChainProposer is
     /// @dev It sets the bridge address.
     /// @param _validium initialize the contract in validium mode.
     /// @param owner the address of the owner who can perform upgrades.
+    /// @param alignedProofAggregator the address of the alignedProofAggregatorService contract.
     /// @param r0verifier the address of the risc0 groth16 verifier.
     /// @param sp1verifier the address of the sp1 groth16 verifier.
     function initialize(
@@ -97,28 +102,29 @@ contract OnChainProposer is
         address owner,
         address r0verifier,
         address sp1verifier,
-        address picoverifier,
         address tdxverifier,
+        address alignedProofAggregator,
         bytes32 sp1Vk,
         bytes32 genesisStateRoot,
         address sequencer_registry
     ) public initializer {
         VALIDIUM = _validium;
 
-        // Set the PicoGroth16Verifier address
+        // Set the AlignedProofAggregator address
         require(
-            PICOVERIFIER == address(0),
+            ALIGNEDPROOFAGGREGATOR == address(0),
             "OnChainProposer: contract already initialized"
         );
         require(
-            picoverifier != address(0),
-            "OnChainProposer: picoverifier is the zero address"
+            alignedProofAggregator != address(0),
+            "OnChainProposer: alignedProofAggregator is the zero address"
         );
         require(
-            picoverifier != address(this),
-            "OnChainProposer: picoverifier is the contract address"
+            alignedProofAggregator != address(this),
+            "OnChainProposer: alignedProofAggregator is the contract address"
         );
-        PICOVERIFIER = picoverifier;
+
+        ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
 
         // Set the Risc0Groth16Verifier address
         require(
@@ -176,6 +182,7 @@ contract OnChainProposer is
             genesisStateRoot,
             bytes32(0),
             bytes32(0),
+            bytes32(0),
             bytes32(0)
         );
 
@@ -218,10 +225,10 @@ contract OnChainProposer is
     function commitBatch(
         uint256 batchNumber,
         bytes32 newStateRoot,
-        bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash,
-        bytes[] calldata //hexEncodedBlocks
+        bytes32 lastBlockHash,
+        bytes[] calldata //rlpEncodedBlocks
     ) external override onlyLeaderSequencer {
         // TODO: Refactor validation
         require(
@@ -231,6 +238,10 @@ contract OnChainProposer is
         require(
             batchCommitments[batchNumber].newStateRoot == bytes32(0),
             "OnChainProposer: tried to commit an already committed batch"
+        );
+        require(
+            lastBlockHash != bytes32(0),
+            "OnChainProposer: lastBlockHash cannot be zero"
         );
 
         // Check if commitment is equivalent to blob's KZG commitment.
@@ -251,11 +262,27 @@ contract OnChainProposer is
                 withdrawalsLogsMerkleRoot
             );
         }
+
+        // Blob is published in the (EIP-4844) transaction that calls this function.
+        bytes32 blobVersionedHash = blobhash(0);
+        if (VALIDIUM) {
+            require(
+                blobVersionedHash == 0,
+                "L2 running as validium but blob was published"
+            );
+        } else {
+            require(
+                blobVersionedHash != 0,
+                "L2 running as rollup but blob was not published"
+            );
+        }
+
         batchCommitments[batchNumber] = BatchCommitmentInfo(
             newStateRoot,
-            stateDiffKZGVersionedHash,
+            blobVersionedHash,
             processedDepositLogsRollingHash,
-            withdrawalsLogsMerkleRoot
+            withdrawalsLogsMerkleRoot,
+            lastBlockHash
         );
         emit BatchCommitted(batchNumber, newStateRoot);
 
@@ -281,31 +308,21 @@ contract OnChainProposer is
         //sp1
         bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
-        //pico
-        bytes32 picoRiscvVkey,
-        bytes calldata picoPublicValues,
-        uint256[8] calldata picoProof,
         //tdx
         bytes calldata tdxPublicValues,
         bytes memory tdxSignature
-    ) external override {
+    ) external {
         // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
         require(
+            ALIGNEDPROOFAGGREGATOR == DEV_MODE,
+            "OnChainProposer: ALIGNEDPROOFAGGREGATOR is set. Use verifyBatchAligned instead"
+        );
+        require(
             batchCommitments[batchNumber].newStateRoot != bytes32(0),
             "OnChainProposer: cannot verify an uncommitted batch"
         );
-
-        if (PICOVERIFIER != DEV_MODE) {
-            // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, picoPublicValues);
-            IPicoVerifier(PICOVERIFIER).verifyPicoProof(
-                picoRiscvVkey,
-                picoPublicValues,
-                picoProof
-            );
-        }
 
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
@@ -350,13 +367,68 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
+    /// @inheritdoc IOnChainProposer
+    function verifyBatchAligned(
+        uint256 batchNumber,
+        bytes calldata alignedPublicInputs,
+        bytes32 alignedProgramVKey,
+        bytes32[] calldata alignedMerkleProof
+    ) external {
+        require(
+            ALIGNEDPROOFAGGREGATOR != DEV_MODE,
+            "OnChainProposer: ALIGNEDPROOFAGGREGATOR is not set"
+        );
+        require(
+            batchCommitments[batchNumber].newStateRoot != bytes32(0),
+            "OnChainProposer: cannot verify an uncommitted batch"
+        );
+
+        // If the verification fails, it will revert.
+        _verifyPublicData(batchNumber, alignedPublicInputs[8:]);
+
+        bytes memory callData = abi.encodeWithSignature(
+            "verifyProofInclusion(bytes32[],bytes32,bytes)",
+            alignedMerkleProof,
+            alignedProgramVKey,
+            alignedPublicInputs
+        );
+        (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
+            .staticcall(callData);
+        require(
+            callResult,
+            "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
+        );
+        bool proofVerified = abi.decode(response, (bool));
+        require(
+            proofVerified,
+            "OnChainProposer: Aligned proof verification failed"
+        );
+
+        lastVerifiedBatch = batchNumber;
+
+        // The first 2 bytes are the number of deposits.
+        uint16 deposits_amount = uint16(
+            bytes2(
+                batchCommitments[batchNumber].processedDepositLogsRollingHash
+            )
+        );
+        if (deposits_amount > 0) {
+            ICommonBridge(BRIDGE).removePendingDepositLogs(deposits_amount);
+        }
+
+        // Remove previous batch commitment as it is no longer needed.
+        delete batchCommitments[batchNumber - 1];
+
+        emit BatchVerified(lastVerifiedBatch);
+    }
+
     function _verifyPublicData(
         uint256 batchNumber,
         bytes calldata publicData
     ) internal view {
         require(
-            publicData.length == 128,
-            "OnChainProposer: invaid public data length"
+            publicData.length == 160,
+            "OnChainProposer: invalid public data length"
         );
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         require(
@@ -380,6 +452,11 @@ contract OnChainProposer is
             batchCommitments[batchNumber].processedDepositLogsRollingHash ==
                 depositsLogHash,
             "OnChainProposer: deposits hash public input does not match with committed deposits"
+        );
+        bytes32 lastBlockHash = bytes32(publicData[128:160]);
+        require(
+            batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
+            "OnChainProposer: last block hash public inputs don't match with last block hash"
         );
     }
 

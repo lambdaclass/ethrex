@@ -76,7 +76,7 @@ pub(crate) async fn storage_healer(
             // Fill batch
             let mut batch_size = 0;
             while batch_size < NODE_BATCH_SIZE && !pending_paths.is_empty() {
-                let (key, val) = pending_paths.pop_first().unwrap();
+                let (key, val) = pending_paths.pop_first().ok_or(SyncError::CorruptPath)?;
                 batch_size += val.len();
                 next_batch.insert(key, val);
             }
@@ -119,7 +119,7 @@ async fn heal_storage_batch(
         debug!("Received {} storage nodes", nodes.len());
         // Process the nodes for each account path
         for (acc_path, paths) in batch.iter_mut() {
-            let trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH);
+            let trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH)?;
             // Get the corresponding nodes
             let trie_nodes: Vec<ethrex_trie::Node> =
                 nodes.drain(..paths.len().min(nodes.len())).collect();

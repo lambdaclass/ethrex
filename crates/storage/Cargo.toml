@@ -35,7 +35,10 @@ redb = ["dep:redb", "dep:tokio"]
 hex.workspace = true
 hex-literal.workspace = true
 tempdir = "0.3.7"
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 
 [lib]
 path = "./lib.rs"
+
+[lints.clippy] 
+unwrap_used = "deny" 
