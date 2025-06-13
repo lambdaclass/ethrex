@@ -139,7 +139,7 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--features "dev" \
 	--  \
 	--evm $$LEVM \
-	--network test_data/genesis-l2.json \
+	--network test_data/fixtures/genesis/l2.json \
 	--http.port 1729 \
 	--dev \
 	--datadir test_ethrex

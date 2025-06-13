@@ -146,7 +146,7 @@ Reth has a default mempool size of 10k transactions. If the load test goes too f
 
 ### Changing block gas limit
 
-By default the block gas limit is the one Ethereum mainnet uses, i.e. 30 million gas. If you wish to change it, just edit the `gasLimit` field in the genesis file (in the case of `ethrex` it's `genesis-l2.json`, in the case of `reth` it's `genesis-load-test.json`). Note that the number has to be passed as a hextstring.
+By default the block gas limit is the one Ethereum mainnet uses, i.e. 30 million gas. If you wish to change it, just edit the `gasLimit` field in the genesis file (in the case of `ethrex` it's `l2.json`, in the case of `reth` it's `genesis-load-test.json`). Note that the number has to be passed as a hextstring.
 
 ## Flamegraphs
 
@@ -155,7 +155,7 @@ To analyze performance during load tests (both `ethrex` and `reth`) you can use 
 For `ethrex`, you can run the server with:
 
 ```
-sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev  --  --network test_data/genesis-l2.json --http.port 1729 --dev
+sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev  --  --network test_data/fixtures/genesis/l2.json --http.port 1729 --dev
 ```
 
 For `reth`:

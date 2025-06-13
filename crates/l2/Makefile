@@ -5,7 +5,7 @@
 
 .DEFAULT_GOAL := help
 
-L2_GENESIS_FILE_PATH=../../test_data/genesis-l2.json
+L2_GENESIS_FILE_PATH=../../test_data/fixtures/genesis/l2.json
 L1_GENESIS_FILE_PATH=../../test_data/fixtures/genesis/l1-dev.json
 
 # Basic
@@ -111,7 +111,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--deposit-rich \
 	--private-keys-file-path ../../test_data/private_keys_l1.txt \
 	--genesis-l1-path ../../test_data/fixtures/genesis/l1-dev.json \
-	--genesis-l2-path ../../test_data/genesis-l2.json
+	--genesis-l2-path ../../test_data/fixtures/genesis/l2.json
 
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 deploy-l1-testnet: ## 📜 Deploys the L1 contracts
@@ -121,7 +121,7 @@ deploy-l1-testnet: ## 📜 Deploys the L1 contracts
 update-system-contracts:
 	cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path contracts/Cargo.toml -- \
 	--contracts-path contracts \
-	--l2-genesis-path ../../test_data/genesis-l2.json
+	--l2-genesis-path ../../test_data/fixtures/genesis/l2.json
 
 # L2
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
@@ -230,7 +230,7 @@ state-diff-test:
 	touch .env
 	cargo run --release --manifest-path ../../cmd/ethrex/Cargo.toml --features l2 --bin ethrex -- \
 	l2 reconstruct \
-	-g ../../test_data/genesis-l2.json \
+	-g ../../test_data/fixtures/genesis/l2.json \
 	-b ../../test_data/fixtures/blobs/ \
 	-s $$PWD/store \
 	-c 0x0007a881CD95B1484fca47615B64803dad620C8d
