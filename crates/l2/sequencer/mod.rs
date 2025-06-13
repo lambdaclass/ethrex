@@ -95,7 +95,7 @@ pub async fn start_l2(
     if needed_proof_types.contains(&ProverType::Aligned) {
         task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(
             cfg.clone(),
-            rollup_store,
+            rollup_store.clone(),
         ));
     }
     #[cfg(feature = "metrics")]
