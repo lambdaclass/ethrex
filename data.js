@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749841675322,
+  "lastUpdate": 1749844892393,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15355,6 +15355,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.008526438852813853,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a9df0d97f4ab1776e9c0741647c4d90700417244",
+          "message": "docs(core): add mdbook (#3153)\n\n**Motivation**\n\nDocumentation right now is hard to find.\n\n**Description**\n\nThis PR adds a new directory `docs/` with documentation on the project\n(for now empty).\nThe documentation is rendered using\n[`mdbook`](https://rust-lang.github.io/mdBook/index.html), with\ninstructions added to the repo's readme.\n\nAlso, this sets a tentative structure to the docs, shown below:\n\n<img width=\"291\" alt=\"Screenshot 2025-06-13 at 12 34 11\"\nsrc=\"https://github.com/user-attachments/assets/3f04d701-27ed-4684-b739-cf61c4835158\"\n/>\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-13T18:04:39Z",
+          "tree_id": "ca3d63f990497355a764793f2c1de6b98e31be4d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a9df0d97f4ab1776e9c0741647c4d90700417244"
+        },
+        "date": 1749844883974,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008558858772406301,
             "unit": "Mgas/s"
           }
         ]
