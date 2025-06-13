@@ -2,7 +2,9 @@ use std::{collections::HashSet, sync::Arc, time::Instant};
 
 use crate::{
     rlpx::{
-        connection::server::{Established, InnerState},
+        connection::server::{
+            Established, InnerState, PERIODIC_PING_INTERVAL, PERIODIC_TX_BROADCAST_INTERVAL,
+        },
         error::RLPxError,
         utils::{
             compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, log_peer_debug, sha256,
@@ -26,7 +28,11 @@ use k256::{
 };
 use rand::Rng;
 use sha3::{Digest, Keccak256};
-use tokio::{io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt}, net::TcpStream, sync::Mutex};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    net::TcpStream,
+    sync::Mutex,
+};
 use tokio_util::codec::Framed;
 use tracing::info;
 
@@ -36,9 +42,6 @@ type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
 // https://github.com/ethereum/go-ethereum/blob/master/p2p/peer.go#L44
 pub const P2P_MAX_MESSAGE_SIZE: usize = 2048;
-
-const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
-const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
 pub(crate) struct RemoteState {
     pub(crate) public_key: H512,
@@ -61,18 +64,10 @@ pub(crate) async fn perform(
         InnerState::Initiator(initiator) => {
             info!("Starting handshake as initiator!");
             let context = &initiator.context;
-            let local_state = send_auth(
-                &context.signer,
-                initiator.node.public_key,
-                &mut stream,
-            )
-            .await?;
-            let remote_state = receive_ack(
-                &context.signer,
-                initiator.node.public_key,
-                &mut stream,
-            )
-            .await?;
+            let local_state =
+                send_auth(&context.signer, initiator.node.public_key, &mut stream).await?;
+            let remote_state =
+                receive_ack(&context.signer, initiator.node.public_key, &mut stream).await?;
             // Local node is initator
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
@@ -88,24 +83,24 @@ pub(crate) async fn perform(
                 capabilities: vec![],
                 negotiated_eth_capability: None,
                 negotiated_snap_capability: None,
-                next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
+                next_periodic_ping: Instant::now() + PERIODIC_PING_INTERVAL,
                 next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
                 broadcasted_txs: HashSet::new(),
                 client_version: context.client_version.clone(),
                 connection_broadcast_send: context.broadcast.clone(),
                 table: context.table.clone(),
+                backend_channel: None,
                 inbound: false,
             })
         }
         InnerState::Receiver(receiver) => {
             info!("Starting handshake as receiver!");
             let context = &receiver.context;
-            let remote_state =
-                receive_auth(&context.signer, &mut stream).await?;
+            let remote_state = receive_auth(&context.signer, &mut stream).await?;
             let local_state = send_ack(remote_state.public_key, &mut stream).await?;
             // Remote node is initiator
             // keccak256(nonce || initiator-nonce)
-           let hashed_nonces: [u8; 32] =
+            let hashed_nonces: [u8; 32] =
                 Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
             let peer_addr = receiver.peer_addr;
@@ -124,19 +119,18 @@ pub(crate) async fn perform(
                 capabilities: vec![],
                 negotiated_eth_capability: None,
                 negotiated_snap_capability: None,
-                next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
+                next_periodic_ping: Instant::now() + PERIODIC_PING_INTERVAL,
                 next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
                 broadcasted_txs: HashSet::new(),
                 client_version: context.client_version.clone(),
                 connection_broadcast_send: context.broadcast.clone(),
                 table: context.table.clone(),
+                backend_channel: None,
                 inbound: true,
             })
         }
         InnerState::Established(_) => {
-            return Err(RLPxError::StateError(
-                "Already established".to_string(),
-            ))
+            return Err(RLPxError::StateError("Already established".to_string()))
         }
     }
 }

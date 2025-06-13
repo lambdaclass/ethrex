@@ -517,7 +517,7 @@ impl Discv4Server {
                 if active_connections >= MAX_PEERS_TCP_CONNECTIONS {
                     return Ok(());
                 }
-                
+
                 RLPxConnection::spawn_as_initiator(self.ctx.clone(), &peer.node).await;
 
                 Ok(())

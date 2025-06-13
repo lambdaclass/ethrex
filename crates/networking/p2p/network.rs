@@ -1,9 +1,9 @@
+use crate::discv4::server::{DiscoveryError, Discv4Server};
 use crate::kademlia::{self, KademliaTable};
 use crate::rlpx::connection::server::{RLPxConnBroadcastSender, RLPxConnection};
-use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
 use crate::rlpx::message::Message as RLPxMessage;
+use crate::rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES;
 use crate::types::{Node, NodeRecord};
-use crate::discv4::server::{DiscoveryError, Discv4Server};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{H256, H512};
 use ethrex_storage::Store;

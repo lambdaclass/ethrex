@@ -1,4 +1,4 @@
-use crate::rlpx::{message as rlpx, error::RLPxError, utils::ecdh_xchng};
+use crate::rlpx::{error::RLPxError, message as rlpx, utils::ecdh_xchng};
 
 use super::handshake::{LocalState, RemoteState};
 use aes::{

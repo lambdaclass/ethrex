@@ -16,7 +16,9 @@ use tracing::{debug, error, info, warn};
 
 use super::utils::random_duration;
 
-use spawned_concurrency::tasks::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
+use spawned_concurrency::tasks::{
+    send_after, CallResponse, CastResponse, GenServer, GenServerInMsg,
+};
 use spawned_rt::tasks::mpsc::Sender;
 
 #[derive(Clone)]
@@ -84,7 +86,8 @@ impl L1Watcher {
 }
 
 impl GenServer for L1Watcher {
-    type InMsg = InMessage;
+    type CastMsg = InMessage;
+    type CallMsg = ();
     type OutMsg = OutMessage;
     type State = L1WatcherState;
     type Error = L1WatcherError;
@@ -95,8 +98,8 @@ impl GenServer for L1Watcher {
 
     async fn handle_call(
         &mut self,
-        _message: Self::InMsg,
-        _tx: &Sender<GenServerInMsg<Self>>,
+        _message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
         _state: &mut Self::State,
     ) -> CallResponse<Self::OutMsg> {
         CallResponse::Reply(OutMessage::Done)
@@ -104,14 +107,14 @@ impl GenServer for L1Watcher {
 
     async fn handle_cast(
         &mut self,
-        message: Self::InMsg,
-        tx: &Sender<GenServerInMsg<Self>>,
+        message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
         state: &mut Self::State,
     ) -> CastResponse {
         match message {
             Self::InMsg::Watch => {
                 let check_interval = random_duration(state.check_interval);
-                send_after(check_interval, tx.clone(), Self::InMsg::Watch);
+                send_after(check_interval, handle.clone(), Self::InMsg::Watch);
                 match get_logs(state).await {
                     Ok(logs) => {
                         // We may not have a deposit nor a withdrawal, that means no events -> no logs.
