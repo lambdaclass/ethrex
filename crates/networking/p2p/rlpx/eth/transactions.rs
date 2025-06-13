@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use bytes::BufMut;
 use bytes::Bytes;
 use ethrex_blockchain::error::MempoolError;
@@ -168,8 +166,8 @@ impl RLPxMessage for NewPooledTransactionHashes {
 pub(crate) struct GetPooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
-    id: u64,
-    transaction_hashes: Vec<H256>,
+    pub(crate) id: u64,
+    pub(crate) transaction_hashes: Vec<H256>,
 }
 
 impl GetPooledTransactions {
@@ -264,7 +262,7 @@ impl RLPxMessage for GetPooledTransactions {
 pub(crate) struct PooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
-    id: u64,
+    pub(crate) id: u64,
     pooled_transactions: Vec<P2PTransaction>,
 }
 
@@ -276,41 +274,44 @@ impl PooledTransactions {
         }
     }
 
-    /// Saves every incoming pooled transaction to the mempool.
-    pub async fn handle(
-        self,
-        node: &Node,
-        blockchain: &Blockchain,
-        requested_pooled_transactions: &HashMap<u64, NewPooledTransactionHashes>,
+    pub async fn validate_request(
+        &self,
+        requested: &NewPooledTransactionHashes,
     ) -> Result<(), MempoolError> {
-        if let Some(requested) = requested_pooled_transactions.get(&self.id) {
-            for tx in &self.pooled_transactions {
-                let tx_hash = tx.compute_hash();
-                let Some(pos) = requested
-                    .transaction_hashes
-                    .iter()
-                    .position(|&hash| hash == tx_hash)
-                else {
-                    warn!(
-                        "HASH NOT FOUND {} in {:?}",
-                        tx_hash, requested.transaction_hashes
-                    );
-                    continue;
-                };
+        for tx in &self.pooled_transactions {
+            let tx_hash = match tx {
+                P2PTransaction::EIP4844TransactionWithBlobs(itx) => {
+                    itx.blobs_bundle.validate(&itx.tx)?;
+                    Transaction::EIP4844Transaction(itx.tx.clone()).compute_hash()
+                }
+                tx => tx.compute_hash(),
+            };
+            let Some(pos) = requested
+                .transaction_hashes
+                .iter()
+                .position(|&hash| hash == tx_hash)
+            else {
+                warn!(
+                    "HASH NOT FOUND {} in {:?}",
+                    tx_hash, requested.transaction_hashes
+                );
+                continue;
+            };
 
-                let tx_type = requested.transaction_types[pos];
-                let size = requested.transaction_sizes[pos];
-                if tx.tx_type() as u8 != tx_type {
-                    warn!("Invalid tx type");
-                    return Err(MempoolError::InvalidNonce);
-                }
-                if tx.encode_to_vec().len() != size {
-                    warn!("Invalid tx size");
-                    return Err(MempoolError::InvalidNonce);
-                }
+            let tx_type = requested.transaction_types[pos];
+            let size = requested.transaction_sizes[pos];
+            if tx.tx_type() as u8 != tx_type {
+                return Err(MempoolError::InvalidTxType(tx_type));
+            }
+            if tx.encode_to_vec().len() - 4 != size {
+                return Err(MempoolError::InvalidPooledTxSize);
             }
         }
+        Ok(())
+    }
 
+    /// Saves every incoming pooled transaction to the mempool.
+    pub async fn handle(self, node: &Node, blockchain: &Blockchain) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
                 if let Err(e) = blockchain

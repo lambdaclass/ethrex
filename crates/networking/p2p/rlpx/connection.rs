@@ -1,3 +1,8 @@
+use super::{
+    eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
+    p2p::DisconnectReason,
+    utils::log_peer_warn,
+};
 use crate::{
     kademlia::PeerChannels,
     rlpx::{
@@ -48,12 +53,6 @@ use tokio::{
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 use tracing::debug;
-
-use super::{
-    eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
-    p2p::DisconnectReason,
-    utils::log_peer_warn,
-};
 
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
@@ -572,13 +571,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)
                 if peer_supports_eth =>
             {
-                if self
-                    .requested_pooled_txs
-                    .values()
-                    .any(|v| *v == new_pooled_transaction_hashes)
-                {
-                    return Ok(());
-                }
+                // if self
+                //     .requested_pooled_txs
+                //     .values()
+                //     .any(|v| *v == new_pooled_transaction_hashes)
+                // {
+                //     log_peer_warn(&self.node, "salgo por aca");
+                //     return Ok(());
+                // }
 
                 let hashes =
                     new_pooled_transaction_hashes.get_transactions_to_request(&self.blockchain)?;
@@ -596,8 +596,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
                 if self.blockchain.is_synced() {
-                    msg.handle(&self.node, &self.blockchain, &self.requested_pooled_txs)
-                        .await?;
+                    if let Some(requested) = self.requested_pooled_txs.get(&msg.id) {
+                        //use error
+                        if let Err(_) = msg.validate_request(requested).await {
+                            //add reason
+                            log_peer_warn(&self.node, "disconnected".into());
+                            self.send_disconnect_message(None).await;
+                            return Err(RLPxError::Disconnected());
+                        }
+                    }
+                    msg.handle(&self.node, &self.blockchain).await?;
                 }
             }
             Message::GetStorageRanges(req) => {

@@ -1,5 +1,5 @@
 use ethrex_common::types::{
-    BlobsBundleError, BlockHash, InvalidBlockBodyError, InvalidBlockHeaderError,
+    BlobsBundleError, BlockHash, InvalidBlockBodyError, InvalidBlockHeaderError, TxType,
 };
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
@@ -84,6 +84,10 @@ pub enum MempoolError {
     NotEnoughBalance,
     #[error("Transaction gas fields are invalid")]
     InvalidTxGasvalues,
+    #[error("Invalid Pooled TxType, expected: {0}")]
+    InvalidPooledTxType(TxType),
+    #[error("Invalid Pooled transation size, differs from expected")]
+    InvalidPooledTxSize,
 }
 
 #[derive(Debug)]
