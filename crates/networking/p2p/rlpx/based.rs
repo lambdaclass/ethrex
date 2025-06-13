@@ -48,7 +48,7 @@ impl RLPxMessage for NewBlockMessage {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BatchSealedMessage {
     pub batch: Batch,
     pub signature: [u8; 64],

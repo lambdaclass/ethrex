@@ -114,6 +114,7 @@ pub(crate) struct RLPxConnection<S> {
     broadcasted_txs: HashSet<H256>,
     next_block_broadcast: Instant,
     next_batch_broadcast: Instant,
+    #[cfg(feature = "l2")]
     latest_block_sent: u64,
     latest_block_added: u64,
     blocks_on_queue: BTreeMap<u64, Block>,
@@ -167,6 +168,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             next_block_range_update: Instant::now() + PERIODIC_BLOCK_RANGE_UPDATE_INTERVAL,
             last_block_range_update_block: 0,
             broadcasted_txs: HashSet::new(),
+            #[cfg(feature = "l2")]
             latest_block_sent: 0,
             latest_block_added: 0,
             blocks_on_queue: BTreeMap::new(),
@@ -485,6 +487,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             .iter()
             .any(|cap| self.capabilities.contains(cap))
         {
+            // Exclude privileged transactions as they are created via the OnChainProposer contract
             let filter = |tx: &Transaction| -> bool {
                 !self.broadcasted_txs.contains(&tx.compute_hash())
                     && !matches!(&tx, Transaction::PrivilegedL2Transaction(_))
@@ -516,17 +519,19 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn send_new_block(&mut self) -> Result<(), RLPxError> {
-        if !self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
-            return Ok(());
-        }
-        let latest_block_number = self.storage.get_latest_block_number().await?;
-        for i in self.latest_block_sent + 1..=latest_block_number {
-            debug!(
-                "Broadcasting new block, current: {}, last broadcasted: {}",
-                i, self.latest_block_sent
-            );
-            #[cfg(feature = "l2")]
-            {
+        // This section is conditionally compiled based on the "l2" feature flag due to dependencies on the rollup store.
+        #[cfg(feature = "l2")]
+        {
+            if !self.capabilities.contains(&SUPPORTED_BASED_CAPABILITIES) {
+                return Ok(());
+            }
+            let latest_block_number = self.storage.get_latest_block_number().await?;
+            for i in self.latest_block_sent + 1..=latest_block_number {
+                debug!(
+                    "Broadcasting new block, current: {}, last broadcasted: {}",
+                    i, self.latest_block_sent
+                );
+
                 let new_block_body =
                     self.storage
                         .get_block_body(i)
@@ -576,10 +581,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 }))
                 .await?;
             }
-        }
-        self.latest_block_sent = latest_block_number;
+            self.latest_block_sent = latest_block_number;
 
-        Ok(())
+            Ok(())
+        }
+        #[cfg(not(feature = "l2"))]
+        {
+            Ok(())
+        }
     }
 
     async fn send_sealed_batch(&mut self) -> Result<(), RLPxError> {
@@ -781,17 +790,19 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::TrieNodes(response)).await?
             }
             Message::NewBlock(req) if peer_supports_based => {
-                if self.validate_new_block(&req).await? {
+                if self.should_process_new_block(&req).await? {
                     self.process_new_block(&req).await?;
-                    // for now we broadcast valid messages, but this should be reviewed
-                    // self.broadcast_message(Message::NewBlock(req))?;
+                    // for now we broadcast valid messages
+                    self.broadcast_message(Message::NewBlock(req))?;
                 }
             }
             Message::BatchSealed(_req) => {
                 #[cfg(feature = "l2")]
                 {
-                    if self.validate_batch_sealed(&_req).await? {
-                        self.process_batch_sealed(_req).await?;
+                    if self.should_process_batch_sealed(&_req).await? {
+                        self.process_batch_sealed(&_req).await?;
+                        // for now we broadcast valid messages
+                        self.broadcast_message(Message::BatchSealed(_req))?;
                     }
                 }
             }
@@ -828,6 +839,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     let new_msg = Message::NewBlock(block_msg.clone());
                     self.send(new_msg).await?;
                 }
+                Message::BatchSealed(batch_msg) => {
+                    let new_msg = Message::BatchSealed(batch_msg.clone());
+                    self.send(new_msg).await?;
+                }
                 msg => {
                     let error_message = format!("Non-supported message broadcasted: {msg}");
                     log_peer_error(&self.node, &error_message);
@@ -838,7 +853,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         Ok(())
     }
 
-    async fn validate_new_block(&mut self, msg: &NewBlockMessage) -> Result<bool, RLPxError> {
+    async fn should_process_new_block(&mut self, msg: &NewBlockMessage) -> Result<bool, RLPxError> {
         if self.latest_block_added >= msg.block.header.number
             || self.blocks_on_queue.contains_key(&msg.block.header.number)
         {
@@ -927,7 +942,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     #[cfg(feature = "l2")]
-    async fn validate_batch_sealed(&mut self, msg: &BatchSealedMessage) -> Result<bool, RLPxError> {
+    async fn should_process_batch_sealed(
+        &mut self,
+        msg: &BatchSealedMessage,
+    ) -> Result<bool, RLPxError> {
         if self.store_rollup.contains_batch(&msg.batch.number).await? {
             debug!("Batch {} already sealed, ignoring it", msg.batch.number);
             return Ok(false);
@@ -962,19 +980,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     #[cfg(feature = "l2")]
-    async fn process_batch_sealed(&mut self, msg: BatchSealedMessage) -> Result<(), RLPxError> {
-        // get numbers to not copy the whole struct
-        let (batch_number, first_block, last_block) = {
-            (
-                msg.batch.number,
-                msg.batch.first_block,
-                msg.batch.last_block,
-            )
-        };
-        self.store_rollup.seal_batch(msg.batch).await?;
+    async fn process_batch_sealed(&mut self, msg: &BatchSealedMessage) -> Result<(), RLPxError> {
+        self.store_rollup.seal_batch(msg.batch.clone()).await?;
         info!(
             "Sealed batch {} with blocks from {} to {}",
-            batch_number, first_block, last_block
+            msg.batch.number, msg.batch.first_block, msg.batch.last_block
         );
         Ok(())
     }
@@ -1049,6 +1059,16 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let task_id = tokio::task::id();
                 let Ok(_) = self.connection_broadcast_send.send((task_id, block)) else {
                     let error_message = "Could not broadcast received block";
+                    log_peer_error(&self.node, error_message);
+                    return Err(RLPxError::BroadcastError(error_message.to_owned()));
+                };
+                Ok(())
+            }
+            batch_msg @ Message::BatchSealed(_) => {
+                let batch = Arc::new(batch_msg);
+                let task_id = tokio::task::id();
+                let Ok(_) = self.connection_broadcast_send.send((task_id, batch)) else {
+                    let error_message = "Could not broadcast received batch";
                     log_peer_error(&self.node, error_message);
                     return Err(RLPxError::BroadcastError(error_message.to_owned()));
                 };
