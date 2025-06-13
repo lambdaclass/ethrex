@@ -59,7 +59,8 @@ pub async fn archive_sync(
     let mut stream = UnixStream::connect(archive_ipc_path).await?;
     let mut start = H256::zero();
     let mut state_trie_root = *EMPTY_TRIE_HASH;
-    loop {
+    let mut should_continue = true;
+    while should_continue {
         let request = &json!({
         "id": 1,
         "jsonrpc": "2.0",
@@ -68,18 +69,17 @@ pub async fn archive_sync(
         });
         let response = send_ipc_json_request(&mut stream, request).await?;
         let dump: Dump = serde_json::from_value(response)?;
+        should_continue = dump.next.is_some();
+        if should_continue {
+            start = hash_next(*dump.accounts.last_key_value().unwrap().0);
+        }
         // Process dump
         let instant = Instant::now();
-        state_trie_root = process_dump(&dump, store.clone(), state_trie_root).await?;
+        state_trie_root = process_dump(dump, store.clone(), state_trie_root).await?;
         info!(
             "Processed Dump of {MAX_ACCOUNTS} accounts in {} ms",
             instant.elapsed().as_millis()
         );
-        if dump.next.is_some() {
-            start = hash_next(*dump.accounts.last_key_value().unwrap().0);
-        } else {
-            break;
-        }
     }
     // Request block so we can store it and mark it as canonical
     let request = &json!({
@@ -109,10 +109,10 @@ pub async fn archive_sync(
 
 /// Adds all dump accounts to the trie on top of the current root, returns the next root
 /// This could be improved in the future to use an in_memory trie with async db writes
-async fn process_dump(dump: &Dump, store: Store, current_root: H256) -> eyre::Result<H256> {
-    // let mut storage_tasks = JoinSet::new();
+async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Result<H256> {
+    let mut storage_tasks = JoinSet::new();
     let mut state_trie = store.open_state_trie(current_root)?;
-    for (hashed_address, dump_account) in dump.accounts.iter() {
+    for (hashed_address, dump_account) in dump.accounts.into_iter() {
         // Add account to state trie
         // Maybe we can validate the dump account here? or while deserializing
         state_trie.insert(
@@ -125,11 +125,40 @@ async fn process_dump(dump: &Dump, store: Store, current_root: H256) -> eyre::Re
                 .add_account_code(dump_account.code_hash, dump_account.code.clone())
                 .await?;
         }
-        // TODO: Process storage
+        // Process storage trie if it is not empty
+        if dump_account.storage_root != *EMPTY_TRIE_HASH {
+            storage_tasks.spawn(process_dump_storage(
+                dump_account.storage,
+                store.clone(),
+                hashed_address,
+                dump_account.storage_root,
+            ));
+        }
+    }
+    for res in storage_tasks.join_all().await {
+        res?;
     }
     Ok(state_trie.hash()?)
 }
 
+async fn process_dump_storage(
+    dump_storage: HashMap<H256, U256>,
+    store: Store,
+    hashed_address: H256,
+    storage_root: H256,
+) -> eyre::Result<()> {
+    let mut trie = store.open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
+    for (key, val) in dump_storage {
+        trie.insert(key.0.to_vec(), val.encode_to_vec())?;
+    }
+    if trie.hash()? != storage_root {
+        Err(eyre::ErrReport::msg(
+            "Storage root doesn't match the one in the account during archive sync",
+        ))
+    } else {
+        Ok(())
+    }
+}
 
 async fn send_ipc_json_request(stream: &mut UnixStream, request: &Value) -> eyre::Result<Value> {
     stream.write_all(request.to_string().as_bytes()).await?;

@@ -15,7 +15,11 @@ use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
-    archive_sync::archive_sync, initializers::{init_blockchain, init_store, open_store}, networks::{Network, PublicNetwork}, utils::{self, get_client_version, set_datadir}, DEFAULT_DATADIR
+    archive_sync::archive_sync,
+    initializers::{init_blockchain, init_store, open_store},
+    networks::{Network, PublicNetwork},
+    utils::{self, get_client_version, set_datadir},
+    DEFAULT_DATADIR,
 };
 
 #[cfg(feature = "l2")]
