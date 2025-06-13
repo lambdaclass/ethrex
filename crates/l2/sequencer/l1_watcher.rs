@@ -1,12 +1,12 @@
-use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
+use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
-use ethrex_common::{types::Transaction, H160};
+use ethrex_common::{H160, types::Transaction};
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
-    clients::eth::{eth_sender::Overrides, EthClient},
+    clients::eth::{EthClient, eth_sender::Overrides},
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
@@ -16,7 +16,7 @@ use tracing::{debug, error, info, warn};
 
 use super::utils::random_duration;
 
-use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
+use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
 use spawned_rt::mpsc::Sender;
 
 #[derive(Clone)]
@@ -71,15 +71,18 @@ pub enum OutMessage {
 pub struct L1Watcher;
 
 impl L1Watcher {
-    pub async fn spawn(store: Store, blockchain: Arc<Blockchain>, cfg: SequencerConfig) {
-        match L1WatcherState::new(store.clone(), blockchain.clone(), &cfg.eth, &cfg.l1_watcher) {
-            Ok(state) => {
-                let mut l1_watcher = L1Watcher::start(state);
-                // Perform the check and suscribe a periodic Watch.
-                let _ = l1_watcher.cast(InMessage::Watch).await;
-            }
-            Err(error) => error!("L1 Watcher Error: {}", error),
-        };
+    pub async fn spawn(
+        store: Store,
+        blockchain: Arc<Blockchain>,
+        cfg: SequencerConfig,
+    ) -> Result<(), L1WatcherError> {
+        let state = L1WatcherState::new(store, blockchain, &cfg.eth, &cfg.l1_watcher)?;
+        let mut l1_watcher = L1Watcher::start(state);
+        // Perform the check and suscribe a periodic Watch.
+        l1_watcher
+            .cast(InMessage::Watch)
+            .await
+            .map_err(L1WatcherError::GenServerError)
     }
 }
 
@@ -150,9 +153,9 @@ pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1Watch
     };
 
     debug!(
-            "Latest possible block number with {} blocks of delay: {latest_block_to_check} ({latest_block_to_check:#x})",
-            state.l1_block_delay,
-        );
+        "Latest possible block number with {} blocks of delay: {latest_block_to_check} ({latest_block_to_check:#x})",
+        state.l1_block_delay,
+    );
 
     // last_block_fetched could be greater than latest_block_to_check:
     // - Right after deploying the contract as latest_block_fetched is set to the block where the contract is deployed

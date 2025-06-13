@@ -5,17 +5,18 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_common::{
-    types::{
-        tx_fields::*, AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction,
-        TxKind,
-    },
     H256, U256,
+    types::{
+        AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction, TxKind,
+        tx_fields::*,
+    },
 };
 use ethrex_levm::{
+    EVMConfig, Environment,
     db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
+    tracing::LevmCallTracer,
     vm::VM,
-    EVMConfig, Environment,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_vm::backends;
@@ -55,7 +56,7 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                     levm_cache,
                 )) => {
                     ef_test_report_fork.register_post_state_validation_failure(
-                        transaction_report,
+                        *transaction_report,
                         reason,
                         *vector,
                         levm_cache,
@@ -191,6 +192,7 @@ pub fn prepare_vm_for_tx<'a>(
         },
         db,
         &tx,
+        LevmCallTracer::disabled(),
     ))
 }
 
@@ -331,7 +333,7 @@ pub async fn ensure_post_state(
                 Some(expected_exceptions) => {
                     let error_reason = format!("Expected exception: {:?}", expected_exceptions);
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
-                        execution_report.clone(),
+                        Box::new(execution_report.clone()),
                         error_reason,
                         cache,
                     ));
@@ -351,7 +353,7 @@ pub async fn ensure_post_state(
                     if vector_post_value.hash != post_state_root(&levm_account_updates, test).await
                     {
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
-                            execution_report.clone(),
+                            Box::new(execution_report.clone()),
                             "Post-state root mismatch".to_string(),
                             cache,
                         ));
@@ -369,7 +371,7 @@ pub async fn ensure_post_state(
 
                     if keccak_logs != vector_post_value.logs {
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
-                            execution_report.clone(),
+                            Box::new(execution_report.clone()),
                             "Logs mismatch".to_string(),
                             cache,
                         ));
@@ -403,9 +405,10 @@ pub async fn ensure_post_state(
 
 pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
     let (_initial_state, block_hash, store) = utils::load_initial_state(test).await;
-    store
-        .apply_account_updates(block_hash, account_updates)
+    let ret_account_updates_batch = store
+        .apply_account_updates_batch(block_hash, account_updates)
         .await
         .unwrap()
-        .unwrap()
+        .unwrap();
+    ret_account_updates_batch.state_trie_hash
 }

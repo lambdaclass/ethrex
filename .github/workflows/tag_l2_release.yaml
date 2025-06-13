@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.82.0
+        uses: dtolnay/rust-toolchain@1.87.0
 
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -79,7 +79,7 @@ jobs:
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.82.0
+          toolchain: 1.87.0
 
       - name: Install SP1
         env:
@@ -127,7 +127,7 @@ jobs:
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.82.0
+          toolchain: 1.87.0
 
       - name: Install RISC0
         env:
@@ -153,55 +153,6 @@ jobs:
         with:
           name: ethrex_prover_risc0-${{ matrix.os }}_${{ matrix.arch }}
           path: ethrex_prover_risc0-${{ matrix.os }}_${{ matrix.arch }}
-
-  build-prover-pico:
-    if: false # Remove when fixed Pico
-    strategy:
-      matrix:
-        platform:
-          - ubuntu-latest
-          - ubuntu-24.04-arm
-          - macos-latest
-        include:
-          - platform: ubuntu-latest
-            os: linux
-            arch: x86-64
-          - platform: ubuntu-24.04-arm
-            os: linux
-            arch: arm64
-          - platform: macos-latest
-            os: macos
-            arch: arm64
-    runs-on: ${{ matrix.platform }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: nightly-2024-11-27
-
-      - name: Install Pico
-        run: |
-          rustup component add rust-src --toolchain nightly-2024-11-27
-          cargo +nightly-2024-11-27 install --git https://github.com/brevis-network/pico pico-cli
-
-      - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build ethrex L2
-        run: |
-          cd crates/l2
-          make build-prover TOOLCHAIN=+nightly-2024-11-27 PROVER=pico
-          cd ../../
-          mv target/release/ethrex_prover ethrex_prover_pico-${{ matrix.os }}_${{ matrix.arch }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ethrex_prover_pico-${{ matrix.os }}_${{ matrix.arch }}
-          path: ethrex_prover_pico-${{ matrix.os }}_${{ matrix.arch }}
 
   # Creates a draft release on GitHub with the binaries
   finalize-release:

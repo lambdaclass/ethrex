@@ -133,7 +133,7 @@ asdf plugin add golang https://github.com/asdf-community/asdf-golang.git
 
 And uncommenting the golang line in the asdf `.tool-versions` file:
 ```
-rust 1.82.0
+rust 1.87.0
 golang 1.23.2
 ```
 
@@ -192,8 +192,9 @@ ethrex Execution client
 Usage: ethrex [OPTIONS] [COMMAND]
 
 Commands:
-  removedb            Remove the database
-  import              Import blocks to the database
+  removedb  Remove the database
+  import    Import blocks to the database
+  export    Export blocks in the current chain into a file in rlp encoding
   compute-state-root  Compute the state root from a genesis file
   help                Print this message or the help of the given subcommand(s)
 
@@ -418,7 +419,6 @@ Most of them are [here](https://github.com/ethpandaops/ethereum-package/blob/mai
 ## ethrex L2 Docs
 
 - [ethrex L2 Docs](./crates/l2/docs/README.md)
-- [ethrex L2 CLI Docs](./cmd/ethrex_l2/README.md)
 
 
 ## 📚 References and acknowledgements

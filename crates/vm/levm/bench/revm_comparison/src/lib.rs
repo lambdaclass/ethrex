@@ -2,21 +2,22 @@ use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::H256;
 use ethrex_common::{
-    types::{code_hash, Account, AccountInfo, EIP1559Transaction, Transaction, TxKind},
     Address as EthrexAddress, U256,
+    types::{Account, AccountInfo, EIP1559Transaction, Transaction, TxKind, code_hash},
 };
 use ethrex_levm::{
-    db::{cache, gen_db::GeneralizedDatabase, CacheDB},
-    errors::TxResult,
-    vm::VM,
     Environment,
+    db::{CacheDB, cache, gen_db::GeneralizedDatabase},
+    errors::TxResult,
+    tracing::LevmCallTracer,
+    vm::VM,
 };
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
 use revm::{
-    db::BenchmarkDB,
-    primitives::{address, Address, Bytecode, TransactTo},
     Evm,
+    db::BenchmarkDB,
+    primitives::{Address, Bytecode, TransactTo, address},
 };
 use sha3::{Digest, Keccak256};
 use std::hint::black_box;
@@ -193,5 +194,5 @@ fn new_vm_with_ops_addr_bal_db(
         data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx)
+    VM::new(env, db, &tx, LevmCallTracer::disabled())
 }

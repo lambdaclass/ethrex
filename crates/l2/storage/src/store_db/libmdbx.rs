@@ -4,17 +4,21 @@ use std::{
     sync::Arc,
 };
 
-use ethrex_common::{types::BlockNumber, H256};
+use ethrex_common::{
+    H256,
+    types::{Blob, BlockNumber},
+};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use libmdbx::{
+    DatabaseOptions, Mode, PageSize, ReadWriteOptions,
     orm::{Database, Table},
-    table, table_info, DatabaseOptions, Mode, PageSize, ReadWriteOptions,
+    table, table_info,
 };
 
 use crate::{
     api::StoreEngineRollup,
-    rlp::{BlockNumbersRLP, OperationsCountRLP, WithdrawalHashesRLP},
+    rlp::{BlockNumbersRLP, OperationsCountRLP, Rlp, WithdrawalHashesRLP},
 };
 
 pub struct Store {
@@ -66,6 +70,10 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
         table_info!(WithdrawalHashesByBatch),
         table_info!(BlockNumbersByBatch),
         table_info!(OperationsCount),
+        table_info!(BlobsBundles),
+        table_info!(StateRoots),
+        table_info!(DepositLogsHash),
+        table_info!(LastSentBatchProof),
     ]
     .into_iter()
     .collect();
@@ -147,6 +155,66 @@ impl StoreEngineRollup for Store {
         .await
     }
 
+    async fn store_deposit_logs_hash_by_batch_number(
+        &self,
+        batch_number: u64,
+        deposit_logs_hash: H256,
+    ) -> Result<(), StoreError> {
+        self.write::<DepositLogsHash>(
+            batch_number,
+            Rlp::from_bytes(deposit_logs_hash.encode_to_vec()),
+        )
+        .await
+    }
+
+    async fn get_deposit_logs_hash_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, StoreError> {
+        Ok(self
+            .read::<DepositLogsHash>(batch_number)
+            .await?
+            .map(|hash| hash.to()))
+    }
+
+    async fn store_state_root_by_batch_number(
+        &self,
+        batch_number: u64,
+        state_root: H256,
+    ) -> Result<(), StoreError> {
+        self.write::<StateRoots>(batch_number, Rlp::from_bytes(state_root.encode_to_vec()))
+            .await
+    }
+
+    async fn get_state_root_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, StoreError> {
+        Ok(self
+            .read::<StateRoots>(batch_number)
+            .await?
+            .map(|hash| hash.to()))
+    }
+
+    async fn store_blob_bundle_by_batch_number(
+        &self,
+        batch_number: u64,
+        blob_bundles: Vec<Blob>,
+    ) -> Result<(), StoreError> {
+        self.write::<BlobsBundles>(batch_number, blob_bundles.into())
+            .await
+    }
+
+    async fn get_blob_bundle_by_batch_number(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<Blob>>, StoreError> {
+        Ok(self
+            .read::<BlobsBundles>(batch_number)
+            .await?
+            .map(|blobs| blobs.to()))
+    }
+
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
         let exists = self
             .read::<BlockNumbersByBatch>(*batch_number)
@@ -193,6 +261,16 @@ impl StoreEngineRollup for Store {
             _ => Ok([0, 0, 0]),
         }
     }
+
+    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
+        self.read::<LastSentBatchProof>(0)
+            .await
+            .map(|v| v.unwrap_or(0))
+    }
+
+    async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.write::<LastSentBatchProof>(0, batch_number).await
+    }
 }
 
 table!(
@@ -213,4 +291,24 @@ table!(
 table!(
     /// Transaction, deposits, withdrawals count
     ( OperationsCount ) u64 => OperationsCountRLP
+);
+
+table!(
+    /// Blobs bundles by batch number
+    ( BlobsBundles ) u64 => Rlp<Vec<Blob>>
+);
+
+table!(
+    /// State roots by batch number
+    ( StateRoots ) u64 => Rlp<H256>
+);
+
+table!(
+    /// Deposit logs hash by batch number
+    ( DepositLogsHash ) u64 => Rlp<H256>
+);
+
+table!(
+    /// Last sent batch proof
+    ( LastSentBatchProof ) u64 => u64
 );

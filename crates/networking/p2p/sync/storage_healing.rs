@@ -8,14 +8,14 @@
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
 use ethrex_common::H256;
 use ethrex_storage::Store;
-use ethrex_trie::{Nibbles, NodeHash, EMPTY_TRIE_HASH};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, NodeHash};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
@@ -26,7 +26,7 @@ use crate::{peer_handler::PeerHandler, sync::node_missing_children};
 /// More paths will be read from the Store if the amount goes below this value
 const MINUMUM_STORAGES_IN_QUEUE: usize = 400;
 
-use super::{SyncError, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION};
+use super::{MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION, SyncError};
 use ethrex_rlp::encode::RLPEncode;
 
 /// Waits for incoming hashed addresses from the receiver channel endpoint and queues the associated root nodes for state retrieval
@@ -76,7 +76,7 @@ pub(crate) async fn storage_healer(
             // Fill batch
             let mut batch_size = 0;
             while batch_size < NODE_BATCH_SIZE && !pending_paths.is_empty() {
-                let (key, val) = pending_paths.pop_first().unwrap();
+                let (key, val) = pending_paths.pop_first().ok_or(SyncError::CorruptPath)?;
                 batch_size += val.len();
                 next_batch.insert(key, val);
             }
@@ -119,7 +119,7 @@ async fn heal_storage_batch(
         debug!("Received {} storage nodes", nodes.len());
         // Process the nodes for each account path
         for (acc_path, paths) in batch.iter_mut() {
-            let trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH);
+            let trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH)?;
             // Get the corresponding nodes
             let trie_nodes: Vec<ethrex_trie::Node> =
                 nodes.drain(..paths.len().min(nodes.len())).collect();

@@ -1,12 +1,12 @@
 use ethrex_common::types::ChainConfig;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use revm::primitives::{
-    AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
-    Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
+    AccountInfo as RevmAccountInfo, Address as RevmAddress, B256 as RevmB256,
+    Bytecode as RevmBytecode, Bytes as RevmBytes, U256 as RevmU256,
 };
 
 use crate::db::DynVmDatabase;
-use crate::{errors::EvmError, VmDatabase};
+use crate::{VmDatabase, errors::EvmError};
 
 /// State used when running the EVM. The state can be represented with a [VmDbWrapper] database
 ///

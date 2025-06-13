@@ -8,7 +8,7 @@ use ethrex_rlp::{
     structs::{self, Decoder, Encoder},
 };
 use k256::ecdsa::{SigningKey, VerifyingKey};
-use serde::{ser::Serializer, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::Serializer};
 use sha3::{Digest, Keccak256};
 use std::{
     fmt::Display,
@@ -156,7 +156,7 @@ impl Node {
     }
 
     pub fn from_enr_url(enr: &str) -> Result<Self, String> {
-        let base64_decoded = ethrex_common::base64::decode(enr[4..].as_bytes());
+        let base64_decoded = ethrex_common::base64::decode(&enr.as_bytes()[4..]);
         let record = NodeRecord::decode(&base64_decoded)
             .map_err(|_| "Could not build node record from enr")?;
         let pairs = record.decode_pairs();

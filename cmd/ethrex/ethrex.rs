@@ -5,7 +5,7 @@ use ethrex::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
         init_metrics, init_rpc_api, init_store, init_tracing,
     },
-    utils::{set_datadir, store_node_config_file, NodeConfigFile},
+    utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
 use ethrex_p2p::network::peer_table;
 #[cfg(feature = "sync-test")]
@@ -23,7 +23,7 @@ use ethrex::l2::L2Options;
 use ethrex_storage_rollup::StoreRollup;
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
-    if let Ok(block_number) = env::var("SYNC-BLOCK-NUM") {
+    if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
         let block_number = block_number
             .parse()
             .expect("Block number provided by environment is not numeric");

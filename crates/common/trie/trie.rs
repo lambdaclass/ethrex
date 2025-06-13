@@ -1,5 +1,6 @@
 pub mod db;
 pub mod error;
+pub mod logger;
 mod nibbles;
 mod node;
 mod node_hash;
@@ -12,8 +13,10 @@ use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
+pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
 pub use self::verify_range::verify_range;
 pub use self::{
@@ -43,11 +46,19 @@ pub type PathRLP = Vec<u8>;
 pub type ValueRLP = Vec<u8>;
 /// RLP-encoded trie node
 pub type NodeRLP = Vec<u8>;
+/// Represents a node in the Merkle Patricia Trie.
+pub type TrieNode = (NodeHash, NodeRLP);
 
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
     db: Box<dyn TrieDB>,
     root: NodeRef,
+}
+
+impl Default for Trie {
+    fn default() -> Self {
+        Self::new_temp()
+    }
 }
 
 impl Trie {
@@ -112,19 +123,17 @@ impl Trie {
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: PathRLP) -> Result<Option<ValueRLP>, TrieError> {
-        let value;
-        (self.root, value) = if self.root.is_valid() {
-            // If the trie is not empty, call the root node's removal logic.
-            let (node, value) = self
-                .root
-                .get_node(self.db.as_ref())?
-                .ok_or(TrieError::InconsistentTree)?
-                .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
+        if !self.root.is_valid() {
+            return Ok(None);
+        }
 
-            (node.map(Into::into).unwrap_or_default(), value)
-        } else {
-            (NodeRef::default(), None)
-        };
+        // If the trie is not empty, call the root node's removal logic.
+        let (node, value) = self
+            .root
+            .get_node(self.db.as_ref())?
+            .ok_or(TrieError::InconsistentTree)?
+            .remove(self.db.as_ref(), Nibbles::from_bytes(&path))?;
+        self.root = node.map(Into::into).unwrap_or_default();
 
         Ok(value)
     }
@@ -147,6 +156,17 @@ impl Trie {
         }
     }
 
+    /// Returns a list of changes in a TrieNode format since last root hash processed.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing the hash and the list of changes.
+    pub fn collect_changes_since_last_hash(&mut self) -> (H256, Vec<TrieNode>) {
+        let updates = self.commit_without_storing();
+        let ret_hash = self.hash_no_commit();
+        (ret_hash, updates)
+    }
+
     /// Compute the hash of the root node and flush any changes into the database.
     ///
     /// This method will also compute the hash of all internal nodes indirectly. It will not clear
@@ -155,10 +175,21 @@ impl Trie {
         if self.root.is_valid() {
             let mut acc = Vec::new();
             self.root.commit(&mut acc);
-            self.db.put_batch(acc)?;
+            self.db.put_batch(acc)?; // we'll try to avoid calling this for every commit
         }
 
         Ok(())
+    }
+
+    /// Computes the nodes that would be added if updating the trie.
+    /// Nodes are given with their hash pre-calculated.
+    pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
+        let mut acc = Vec::new();
+        if self.root.is_valid() {
+            self.root.commit(&mut acc);
+        }
+
+        acc
     }
 
     /// Obtain a merkle proof for the given path.
@@ -216,7 +247,7 @@ impl Trie {
         }
     }
 
-    /// Builds a trie from a set of nodes.
+    /// Builds a trie from a set of nodes with an InMemoryTrieDB as a backend.
     ///
     /// Note: This method will not ensure that all node references are valid. Invalid references
     ///   will cause other methods (including, but not limited to `Trie::get`, `Trie::insert` and
@@ -224,10 +255,6 @@ impl Trie {
     /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
     ///   root node are considered dangling.
     pub fn from_nodes(root: Option<&NodeRLP>, nodes: &[NodeRLP]) -> Result<Self, TrieError> {
-        let Some(root) = root else {
-            return Ok(Trie::stateless());
-        };
-
         let mut storage = nodes
             .iter()
             .map(|node| {
@@ -237,6 +264,14 @@ impl Trie {
                 )
             })
             .collect::<HashMap<_, _>>();
+        let nodes = storage
+            .iter()
+            .map(|(node_hash, nodes)| (*node_hash, (*nodes).clone()))
+            .collect::<HashMap<_, _>>();
+        let Some(root) = root else {
+            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
+            return Ok(Trie::new(in_memory_trie));
+        };
 
         fn inner(
             storage: &mut HashMap<NodeHash, &Vec<u8>>,
@@ -257,7 +292,7 @@ impl Trie {
                         }
                     }
 
-                    node.into()
+                    (*node).into()
                 }
                 Node::Extension(mut node) => {
                     let NodeRef::Hash(hash) = node.child else {
@@ -275,8 +310,15 @@ impl Trie {
             })
         }
 
-        let mut trie = Trie::stateless();
-        trie.root = inner(&mut storage, root)?.into();
+        let root = inner(&mut storage, root)?.into();
+        let nodes = storage
+            .into_iter()
+            .map(|(node_hash, nodes)| (node_hash, nodes.clone()))
+            .collect::<HashMap<_, _>>();
+        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
+
+        let mut trie = Trie::new(in_memory_trie);
+        trie.root = root;
 
         Ok(trie)
     }
@@ -305,11 +347,7 @@ impl Trie {
                 Ok(None)
             }
 
-            fn put(&self, _key: NodeHash, _value: Vec<u8>) -> Result<(), TrieError> {
-                Ok(())
-            }
-
-            fn put_batch(&self, _key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+            fn put_batch(&self, _key_values: Vec<TrieNode>) -> Result<(), TrieError> {
                 Ok(())
             }
         }
@@ -384,7 +422,13 @@ impl Trie {
         }
     }
 
-    #[cfg(test)]
+    pub fn root_node(&self) -> Result<Option<Node>, TrieError> {
+        if self.hash_no_commit() == *EMPTY_TRIE_HASH {
+            return Ok(None);
+        }
+        self.root.get_node(self.db.as_ref())
+    }
+
     /// Creates a new Trie based on a temporary InMemory DB
     fn new_temp() -> Self {
         use std::collections::HashMap;

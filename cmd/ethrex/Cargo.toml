@@ -1,7 +1,7 @@
 [package]
 name = "ethrex"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -16,6 +16,7 @@ ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
 ethrex-l2 = { workspace = true, optional = true }
+ethrex-l2-common = { workspace = true, optional = true }
 
 bytes.workspace = true
 hex.workspace = true
@@ -38,6 +39,7 @@ lazy_static.workspace = true
 secp256k1 = { workspace = true }
 keccak-hash.workspace = true
 reqwest.workspace = true
+itertools = "0.14.0"
 
 cfg-if = "1.0.0"
 
@@ -62,11 +64,12 @@ c-kzg = [
   "ethrex-p2p/c-kzg",
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics"]
-libmdbx = ["ethrex-storage/libmdbx"]
+libmdbx = ["ethrex-storage/libmdbx", "ethrex-storage-rollup?/libmdbx"]
 redb = ["dep:redb", "ethrex-storage/redb"]
 blst = ["ethrex-vm/blst"]
 l2 = [
   "dep:ethrex-l2",
+  "dep:ethrex-l2-common",
   "ethrex-vm/l2",
   "ethrex-blockchain/l2",
   "ethrex-rpc/l2",
