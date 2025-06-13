@@ -1,6 +1,6 @@
 use ethrex_rlp::structs::Encoder;
 
-use crate::{error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash, ValueRLP};
+use crate::{ValueRLP, error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash};
 
 use super::{ExtensionNode, Node, ValueOrHash};
 /// Leaf Node of an an Ethereum Compatible Patricia Merkle Trie
@@ -140,7 +140,7 @@ impl LeafNode {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{pmt_node, Trie};
+    use crate::{Trie, pmt_node};
 
     #[test]
     fn new() {
@@ -289,7 +289,9 @@ mod test {
         let node_hash_ref = node.compute_hash();
         assert_eq!(
             node_hash_ref.as_ref(),
-            &[0xCB, 0x84, 0x20, 0x6B, 0x65, 0x79, 0x85, 0x76, 0x61, 0x6C, 0x75, 0x65],
+            &[
+                0xCB, 0x84, 0x20, 0x6B, 0x65, 0x79, 0x85, 0x76, 0x61, 0x6C, 0x75, 0x65
+            ],
         );
     }
 

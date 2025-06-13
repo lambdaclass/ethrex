@@ -1,4 +1,4 @@
-use ethrex_common::{types::ChainConfig, H160};
+use ethrex_common::{H160, types::ChainConfig};
 use lazy_static::lazy_static;
 use serde::Deserialize;
 use std::str::FromStr;
