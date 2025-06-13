@@ -621,6 +621,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                             self.send_disconnect_message(Some(DisconnectReason::SubprotocolError))
                                 .await;
                             return Err(RLPxError::Disconnected());
+                        } else {
+                            self.requested_pooled_txs.remove(&msg.id);
                         }
                     }
                     msg.handle(&self.node, &self.blockchain).await?;
