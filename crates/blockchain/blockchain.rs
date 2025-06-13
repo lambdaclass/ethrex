@@ -27,6 +27,7 @@ use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use mempool::Mempool;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::{ops::Div, time::Instant};
 use vm::StoreVmDatabase;
 
@@ -35,7 +36,7 @@ use vm::StoreVmDatabase;
 
 #[derive(Debug)]
 pub struct Blockchain {
-    pub vm: Evm,
+    pub vm: Arc<Evm>,
     pub evm_engine: EvmEngine,
     storage: Store,
     pub mempool: Mempool,
@@ -54,10 +55,10 @@ pub struct BatchBlockProcessingFailure {
 impl Blockchain {
     pub fn new(evm_engine: EvmEngine, store: Store, starting_block_header_hash: H256) -> Self {
         Self {
-            vm: Evm::new(
+            vm: Arc::new(Evm::new(
                 evm_engine,
                 StoreVmDatabase::new(store.clone(), starting_block_header_hash),
-            ),
+            )),
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
@@ -67,10 +68,10 @@ impl Blockchain {
 
     pub fn default_with_store(store: Store, starting_block_header_hash: H256) -> Self {
         Self {
-            vm: Evm::new(
+            vm: Arc::new(Evm::new(
                 EvmEngine::default(),
                 StoreVmDatabase::new(store.clone(), starting_block_header_hash),
-            ),
+            )),
             evm_engine: EvmEngine::default(),
             storage: store,
             mempool: Mempool::new(),
@@ -89,7 +90,7 @@ impl Blockchain {
                 .get()
                 .ok_or(ChainError::StoreError(StoreError::MissingLatestBlockNumber))?),
         );
-        self.vm = Evm::new(self.evm_engine, vm_db);
+        self.vm = Arc::new(Evm::new(self.evm_engine, vm_db));
         Ok(())
     }
 
@@ -168,7 +169,7 @@ impl Blockchain {
             .map_err(ChainError::StoreError)
     }
 
-    pub async fn add_block(self, block: &Block) -> Result<(), ChainError> {
+    pub async fn add_block(&mut self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
         let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();

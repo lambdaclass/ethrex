@@ -228,6 +228,8 @@ async fn handle_forkchoice(
         Ok(head) => {
             // Fork Choice was succesful, the node is up to date with the current chain
             context.blockchain.set_synced();
+
+            context.blockchain.start_new_vm_instance(head.hash());
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
             match context.storage.get_block_by_hash(head.hash()).await {
