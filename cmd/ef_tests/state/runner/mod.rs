@@ -3,16 +3,16 @@ use std::collections::HashMap;
 use crate::report::EFTestsReport;
 use crate::{
     parser::SPECIFIC_IGNORED_TESTS,
-    report::{self, format_duration_as_mm_ss, EFTestReport, TestReRunReport},
+    report::{self, EFTestReport, TestReRunReport, format_duration_as_mm_ss},
     types::EFTest,
 };
 use clap::Parser;
 use colored::Colorize;
-use ethrex_common::{types::Account, Address};
+use ethrex_common::{Address, types::Account};
 use ethrex_levm::errors::{ExecutionReport, VMError};
 use ethrex_vm::SpecId;
 use serde::{Deserialize, Serialize};
-use spinoff::{spinners::Dots, Color, Spinner};
+use spinoff::{Color, Spinner, spinners::Dots};
 
 pub mod levm_runner;
 pub mod revm_runner;
@@ -26,7 +26,7 @@ pub enum EFTestRunnerError {
     #[error("Failed to ensure pre-state: {0}")]
     FailedToEnsurePreState(String),
     #[error("Failed to ensure post-state: {1}")]
-    FailedToEnsurePostState(ExecutionReport, String, HashMap<Address, Account>),
+    FailedToEnsurePostState(Box<ExecutionReport>, String, HashMap<Address, Account>),
     #[error("VM run mismatch: {0}")]
     VMExecutionMismatch(String),
     #[error("Exception does not match the expected: {0}")]
@@ -134,9 +134,11 @@ async fn run_with_levm(
             Ok(ef_test_report) => ef_test_report,
             Err(EFTestRunnerError::Internal(err)) => return Err(EFTestRunnerError::Internal(err)),
             non_internal_errors => {
-                return Err(EFTestRunnerError::Internal(InternalError::FirstRunInternal(format!(
-                    "Non-internal error raised when executing levm. This should not happen: {non_internal_errors:?}",
-                ))))
+                return Err(EFTestRunnerError::Internal(
+                    InternalError::FirstRunInternal(format!(
+                        "Non-internal error raised when executing levm. This should not happen: {non_internal_errors:?}",
+                    )),
+                ));
             }
         };
         reports.push(ef_test_report);
@@ -179,9 +181,11 @@ async fn run_with_revm(
             Ok(ef_test_report) => ef_test_report,
             Err(EFTestRunnerError::Internal(err)) => return Err(EFTestRunnerError::Internal(err)),
             non_internal_errors => {
-                return Err(EFTestRunnerError::Internal(InternalError::FirstRunInternal(format!(
-                    "Non-internal error raised when executing revm. This should not happen: {non_internal_errors:?}",
-                ))))
+                return Err(EFTestRunnerError::Internal(
+                    InternalError::FirstRunInternal(format!(
+                        "Non-internal error raised when executing revm. This should not happen: {non_internal_errors:?}",
+                    )),
+                ));
             }
         };
         reports.push(ef_test_report);
@@ -222,7 +226,7 @@ async fn re_run_with_revm(
         match revm_runner::re_run_failed_ef_test(
             ef_tests
                 .iter()
-                .find(|test|  {
+                .find(|test| {
                     let hash = test
                         ._info
                         .generated_test_hash
@@ -235,22 +239,29 @@ async fn re_run_with_revm(
                 })
                 .unwrap(),
             failed_test_report,
-        ).await {
+        )
+        .await
+        {
             Ok(re_run_report) => {
                 failed_test_report.register_re_run_report(re_run_report.clone());
             }
-            Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(reason, re_run_report))) => {
+            Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
+                reason,
+                re_run_report,
+            ))) => {
                 write_report(reports)?;
                 cache_re_run(reports)?;
                 return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
                     reason,
                     re_run_report,
-                )))
-            },
+                )));
+            }
             non_re_run_internal_errors => {
-                return Err(EFTestRunnerError::Internal(InternalError::MainRunnerInternal(format!(
-                    "Non-internal error raised when executing revm. This should not happen: {non_re_run_internal_errors:?}"
-                ))))
+                return Err(EFTestRunnerError::Internal(
+                    InternalError::MainRunnerInternal(format!(
+                        "Non-internal error raised when executing revm. This should not happen: {non_re_run_internal_errors:?}"
+                    )),
+                ));
             }
         }
     }
