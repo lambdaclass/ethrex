@@ -1,5 +1,5 @@
-- name: Ethrex Setup
-  hosts: all
+- name: Ethrex L2 Setup
+  hosts: ethrex_l2
   vars:
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
     eth_testnet_rpc: "http://eth-testnet-rpc:8545"

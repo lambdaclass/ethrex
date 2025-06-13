@@ -1,5 +1,5 @@
 - name: Metrics Setup
-  hosts: all
+  hosts: metrics
 
   tasks:
     - name: Clone monitoring stack repository

@@ -1,5 +1,5 @@
-- name: Deploy Grafana
-  hosts: all
+- name: Deploy Explorer
+  hosts: explorer
   become: yes
 
   vars:
@@ -39,30 +39,6 @@
           - libncurses-dev
           - openjdk-17-jdk
         state: present
-
-    - name: Add PostgreSQL GPG key
-      apt_key:
-        url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
-        keyring: /etc/apt/trusted.gpg.d/postgresql.gpg
-        state: present
-
-    - name: Add PostgreSQL repository
-      apt_repository:
-        repo: "deb http://apt.postgresql.org/pub/repos/apt {{ ansible_lsb.codename }}-pgdg main"
-        state: present
-        filename: pgdg
-
-    - name: Install PostgreSQL 17
-      apt:
-        name: postgresql-17
-        state: present
-        update_cache: yes
-
-    - name: Ensure PostgreSQL is running
-      systemd:
-        name: postgresql
-        state: started
-        enabled: yes
 
     - name: Add Erlang Solutions GPG key
       apt_key:
@@ -117,3 +93,9 @@
         repo: "https://github.com/lambdaclass/sovra-explorer.git"
         dest: "{{ explorer_dir }}"
         version: stable
+
+    - name: Install Explorer service
+      vars:
+        # add envvars to install 
+
+    - name: Start Explorer
