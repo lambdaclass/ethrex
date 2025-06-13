@@ -7,7 +7,9 @@ datasources:
     access: proxy
     url: http://prometheus:9090
     isDefault: true
+    version: 2 
     jsonData:
+      timeInterval: 10s
       httpMethod: POST
     readOnly: false
     editable: true
