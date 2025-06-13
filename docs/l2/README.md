@@ -1,4 +1,4 @@
-# ethrex L2 Docs
+# Ethrex L2 documentation
 
 For a high level overview of the L2:
 
