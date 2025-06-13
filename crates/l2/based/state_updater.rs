@@ -167,23 +167,40 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
             warn!(
                 "Node should transition to sequencing but it is not up to date, continue syncing."
             );
-            SequencerStatus::Following
+            SequencerStatus::Syncing
         }
-    } else {
+    } else if node_is_up_to_date {
         SequencerStatus::Following
+    } else {
+        SequencerStatus::Syncing
     };
 
     let current_state = state.sequencer_state.status().await;
 
     match (current_state, new_status.clone()) {
-        (SequencerStatus::Sequencing, SequencerStatus::Sequencing)
-        | (SequencerStatus::Following, SequencerStatus::Following) => {}
-        (SequencerStatus::Sequencing, SequencerStatus::Following) => {
-            info!("Now the follower sequencer. Stopping sequencing.");
+        (SequencerStatus::Following, SequencerStatus::Following) => {
+            info!("Node is up to date, following the lead sequencer.");
+        }
+        (curr, new) if curr == new => {}
+        (SequencerStatus::Sequencing, _) => {
+            info!("Stopping sequencing.");
             revert_uncommitted_state(state).await?;
         }
         (SequencerStatus::Following, SequencerStatus::Sequencing) => {
             info!("Now the lead sequencer. Starting sequencing.");
+            revert_uncommitted_state(state).await?;
+        }
+        (_, SequencerStatus::Syncing) => {
+            info!("Node is not up to date, syncing...");
+        }
+        (SequencerStatus::Syncing, SequencerStatus::Sequencing) => {
+            return Err(StateUpdaterError::InternalError(
+                "This cannot happen, sequencer cannot be syncing and new state is sequencing"
+                    .to_string(),
+            ));
+        }
+        (SequencerStatus::Syncing, SequencerStatus::Following) => {
+            info!("Node reached up to date batch, following now.");
         }
     };
 

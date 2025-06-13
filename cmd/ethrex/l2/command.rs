@@ -100,8 +100,6 @@ impl Command {
 
                 let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
 
-                blockchain.set_synced();
-
                 let signer = get_signer(&data_dir);
 
                 let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);

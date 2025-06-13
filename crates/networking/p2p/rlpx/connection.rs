@@ -854,6 +854,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn should_process_new_block(&mut self, msg: &NewBlockMessage) -> Result<bool, RLPxError> {
+        if !self.blockchain.is_synced() {
+            debug!("Not processing new block, blockchain is not synced");
+            return Ok(false);
+        }
         if self.latest_block_added >= msg.block.header.number
             || self.blocks_on_queue.contains_key(&msg.block.header.number)
         {
@@ -946,6 +950,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         &mut self,
         msg: &BatchSealedMessage,
     ) -> Result<bool, RLPxError> {
+        if !self.blockchain.is_synced() {
+            debug!("Not processing new block, blockchain is not synced");
+            return Ok(false);
+        }
         if self.store_rollup.contains_batch(&msg.batch.number).await? {
             debug!("Batch {} already sealed, ignoring it", msg.batch.number);
             return Ok(false);
