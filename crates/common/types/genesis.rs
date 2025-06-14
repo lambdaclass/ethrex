@@ -4,7 +4,11 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    io::BufReader,
+    path::Path,
+};
 
 use super::{
     AccountState, Block, BlockBody, BlockHeader, BlockNumber, DEFAULT_OMMERS_HASH,
@@ -42,6 +46,24 @@ pub struct Genesis {
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub excess_blob_gas: Option<u64>,
     pub requests_hash: Option<H256>,
+}
+
+impl TryFrom<&Path> for Genesis {
+    type Error = String;
+
+    fn try_from(genesis_file_path: &Path) -> Result<Self, Self::Error> {
+        let genesis_file =
+            std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
+        let genesis_reader = BufReader::new(genesis_file);
+        let genesis: Genesis =
+            serde_json::from_reader(genesis_reader).map_err(|m| m.to_string())?;
+        if genesis.config.merge_netsplit_block != Some(0) {
+            return Err(String::from(
+                "Fork not supported. Only post-merge networks are supported.",
+            ));
+        }
+        Ok(genesis)
+    }
 }
 
 #[allow(unused)]
