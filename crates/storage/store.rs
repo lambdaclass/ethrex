@@ -1,7 +1,7 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
-use crate::store_db::fjall::init;
 use crate::store_db::fjall::Fjall;
+use crate::store_db::fjall::init;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
@@ -47,6 +47,7 @@ pub enum EngineType {
     Fjall,
 }
 
+#[derive(Default)]
 pub struct UpdateBatch {
     /// Nodes to be added to the state trie
     pub account_updates: Vec<TrieNode>,

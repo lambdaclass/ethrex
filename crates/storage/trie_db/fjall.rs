@@ -1,6 +1,8 @@
-use ethrex_trie::{TrieDB, TrieError};
+use ethrex_trie::{NodeHash, TrieDB, TrieError};
 use fjall::{Config, Keyspace, PartitionCreateOptions, PartitionHandle};
 use std::sync::Arc;
+
+use crate::trie_db::utils::node_hash_to_fixed_size;
 
 pub struct FjallTrie {
     partition: PartitionHandle,
@@ -13,25 +15,29 @@ impl FjallTrie {
 }
 
 impl TrieDB for FjallTrie {
-    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
-        match self.partition.get(&key) {
+    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+        let key = node_hash_to_fixed_size(key);
+        match self.partition.get(key) {
             Ok(Some(value)) => Ok(Some(value.to_vec())),
             Ok(None) => Ok(None),
-            Err(e) => Err(TrieError::DbError(e.into())),
+            Err(e) => Err(TrieError::DbError(e.into())).unwrap(),
         }
     }
 
-    fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError> {
+    fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
+        let key = node_hash_to_fixed_size(key);
         self.partition
-            .insert(&key, &value)
+            .insert(key, &value)
             .map_err(|e| TrieError::DbError(e.into()))
     }
 
-    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         // Create a transaction for batch operations
 
         for (key, value) in key_values {
-            self.partition.insert(&key, &value)
+            let key = node_hash_to_fixed_size(key);
+            self.partition
+                .insert(key, &value)
                 .map_err(|e| TrieError::DbError(e.into()))?;
         }
 

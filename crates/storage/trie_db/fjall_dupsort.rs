@@ -1,6 +1,6 @@
 use super::utils::node_hash_to_fixed_size;
-use ethrex_trie::error::TrieError;
 use ethrex_trie::TrieDB;
+use ethrex_trie::{NodeHash, error::TrieError};
 use fjall::{Keyspace, PartitionHandle};
 use std::{marker::PhantomData, sync::Arc};
 
@@ -27,7 +27,7 @@ where
     }
 
     // Helper to create composite key from fixed key and node hash
-    fn make_composite_key(&self, node_hash: Vec<u8>) -> Vec<u8> {
+    fn make_composite_key(&self, node_hash: NodeHash) -> Vec<u8> {
         let mut key = Vec::with_capacity(self.fixed_key.as_ref().len() + 33);
         key.extend_from_slice(self.fixed_key.as_ref());
         key.extend_from_slice(&node_hash_to_fixed_size(node_hash));
@@ -37,38 +37,36 @@ where
 
 impl<SK> TrieDB for FjallDupsortTrieDB<SK>
 where
-    SK: Clone + AsRef<[u8]>,
+    SK: Clone + AsRef<[u8]> + Send + Sync + std::fmt::Debug,
 {
-    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let composite_key = self.make_composite_key(key);
-
         match self.partition.get(&composite_key) {
             Ok(Some(value)) => Ok(Some(value.to_vec())),
             Ok(None) => Ok(None),
-            Err(e) => Err(TrieError::DbError(e.into())),
+            Err(e) => Err(TrieError::DbError(e.into())).unwrap(),
         }
     }
 
-    fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError> {
+    fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
         let composite_key = self.make_composite_key(key);
 
         self.partition
             .insert(&composite_key, &value)
             .map_err(|e| TrieError::DbError(e.into()))
     }
-fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
-    // Fjall doesn't have a transaction() method on PartitionHandle
-    // We'll just loop through each item and insert them individually
-    for (key, value) in key_values {
-        let composite_key = self.make_composite_key(key);
-        self.partition
-            .insert(&composite_key, &value)
-            .map_err(|e| TrieError::DbError(e.into()))?;
+    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+        // Fjall doesn't have a transaction() method on PartitionHandle
+        // We'll just loop through each item and insert them individually
+        for (key, value) in key_values {
+            let composite_key = self.make_composite_key(key);
+            self.partition
+                .insert(&composite_key, &value)
+                .map_err(|e| TrieError::DbError(e.into()))?;
+        }
+
+        Ok(())
     }
-
-    Ok(())
-}
-
 }
 
 #[cfg(test)]

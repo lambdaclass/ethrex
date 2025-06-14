@@ -1,4 +1,5 @@
 use crate::{
+    UpdateBatch,
     api::StoreEngine,
     error::StoreError,
     rlp::{
@@ -7,19 +8,21 @@ use crate::{
         TransactionHashRLP, TupleRLP,
     },
     trie_db::{
-        fjall::{create_fjall_trie, FjallTrie},
+        fjall::{FjallTrie, create_fjall_trie},
         fjall_dupsort::FjallDupsortTrieDB,
+        utils::node_hash_to_fixed_size,
     },
     utils::{ChainDataIndex, SnapStateIndex},
 };
 use ethrex_common::{
+    H256, U256,
     types::{
-        payload::PayloadBundle, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+        Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+        payload::PayloadBundle,
     },
-    H256,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{Trie, TrieDB};
+use ethrex_trie::{Nibbles, Trie, TrieDB};
 use fjall::{Config, Keyspace, PartitionCreateOptions, PartitionHandle, PersistMode};
 use std::{
     collections::HashMap,
@@ -98,8 +101,110 @@ fn init_partition<T: FjallStorable>(
     Ok(())
 }
 
+#[async_trait::async_trait]
 impl StoreEngine for Fjall {
-    fn add_block_header(
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        let partitions = self.partitions.read().unwrap();
+        let keyspace = self.keyspace.lock().unwrap();
+        let batch_size = update_batch.account_updates.len()
+            + update_batch.blocks.len() * 3
+            + update_batch
+                .blocks
+                .iter()
+                .map(|b| b.body.transactions.len())
+                .sum::<usize>()
+            + update_batch.receipts.len()
+            + update_batch.storage_updates.len();
+        let mut fjall_batch = fjall::Batch::with_capacity(keyspace.clone(), batch_size)
+            .durability(Some(PersistMode::SyncData));
+
+        let state_trie_cursor = partitions.get(StateTrieNodes::table_name()).unwrap();
+        // store account updates
+        for (node_hash, node_data) in update_batch.account_updates {
+            fjall_batch.insert(
+                state_trie_cursor,
+                node_hash_to_fixed_size(node_hash),
+                node_data,
+            );
+        }
+
+        let storage_trie_cursor = partitions.get(StorageTriesNodes::table_name()).unwrap();
+        let mut key = [0u8; 65];
+        for (hashed_address, nodes) in update_batch.storage_updates {
+            key[0..32].copy_from_slice(&hashed_address.0);
+            for (node_hash, node_data) in nodes {
+                key[32..].copy_from_slice(&node_hash_to_fixed_size(node_hash));
+                fjall_batch.insert(storage_trie_cursor, key, node_data);
+            }
+        }
+
+        let headers_cursor = partitions.get(Headers::table_name()).unwrap();
+        let bodies_cursor = partitions.get(Bodies::table_name()).unwrap();
+        let locations_cursor = partitions.get(TransactionLocations::table_name()).unwrap();
+        let block_numbers_cursor = partitions.get(BlockNumbers::table_name()).unwrap();
+
+        let mut value = [0u8; 48];
+        for block in update_batch.blocks {
+            // store block
+            let number = block.header.number;
+            let hash = block.hash();
+            value[0..8].copy_from_slice(&number.to_be_bytes());
+            value[8..40].copy_from_slice(&hash.to_fixed_bytes());
+
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                value[40..].copy_from_slice(&index.to_be_bytes());
+                fjall_batch.insert(
+                    locations_cursor,
+                    transaction.compute_hash().to_fixed_bytes(),
+                    value,
+                );
+            }
+
+            fjall_batch.insert(
+                bodies_cursor,
+                hash.to_fixed_bytes(),
+                block.body.encode_to_vec(),
+            );
+            fjall_batch.insert(
+                headers_cursor,
+                hash.to_fixed_bytes(),
+                block.header.encode_to_vec(),
+            );
+            fjall_batch.insert(
+                block_numbers_cursor,
+                hash.to_fixed_bytes(),
+                number.to_be_bytes(),
+            );
+        }
+        let receipts_cursor = partitions.get(Receipts::table_name()).unwrap();
+        let mut key = [0u8; 40];
+        for (block_hash, receipts) in update_batch.receipts {
+            key[0..32].copy_from_slice(&block_hash.0);
+            // store receipts
+            for (index, receipt) in receipts.iter().enumerate() {
+                key[32..].copy_from_slice(&index.to_be_bytes());
+                fjall_batch.insert(receipts_cursor, key, receipt.encode_to_vec());
+            }
+        }
+        fjall_batch.commit().unwrap();
+        Ok(())
+    }
+
+    /// Add a batch of blocks in a single transaction.
+    /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
+    async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
+        let batch = UpdateBatch {
+            blocks: blocks,
+            ..Default::default()
+        };
+        self.apply_updates(batch).await
+    }
+
+    /// Sets the blocks as part of the canonical chain
+    async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        todo!()
+    }
+    async fn add_block_header(
         &self,
         block_hash: BlockHash,
         block_header: ethrex_common::types::BlockHeader,
@@ -114,7 +219,7 @@ impl StoreEngine for Fjall {
         Ok(())
     }
 
-    fn add_block_headers(
+    async fn add_block_headers(
         &self,
         block_hashes: Vec<BlockHash>,
         block_headers: Vec<ethrex_common::types::BlockHeader>,
@@ -131,6 +236,96 @@ impl StoreEngine for Fjall {
                 .unwrap();
         }
         Ok(())
+    }
+
+    async fn get_block_bodies(
+        &self,
+        from: BlockNumber,
+        to: BlockNumber,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        todo!()
+    }
+
+    async fn get_block_bodies_by_hash(
+        &self,
+        hashes: Vec<BlockHash>,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        todo!()
+    }
+
+    async fn take_storage_heal_paths(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
+        todo!()
+    }
+
+    async fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    async fn set_latest_valid_ancestor(
+        &self,
+        bad_block: BlockHash,
+        latest_valid: BlockHash,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    /// Returns the latest valid ancestor hash for a given invalid block hash.
+    /// Used to provide `latest_valid_hash` in the Engine API when processing invalid payloads.
+    async fn get_latest_valid_ancestor(
+        &self,
+        block: BlockHash,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        todo!()
+    }
+
+    /// Obtain block number for a given hash
+    fn get_block_number_sync(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        let Some(number_bytes) = self
+            .partitions
+            .read()
+            .unwrap()
+            .get(BlockNumbers::table_name())
+            .unwrap()
+            .get(block_hash.to_fixed_bytes())
+            .unwrap()
+        else {
+            return Ok(None);
+        };
+
+        let block_number = BlockNumber::from_be_bytes((&number_bytes[..]).try_into().unwrap());
+        Ok(Some(block_number))
+    }
+
+    /// Get the canonical block hash for a given block number.
+    fn get_canonical_block_hash_sync(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        let Some(hash_bytes) = self
+            .partitions
+            .read()
+            .unwrap()
+            .get(CanonicalBlockHashes::table_name())
+            .unwrap()
+            .get(block_number.to_be_bytes())
+            .unwrap()
+        else {
+            return Ok(None);
+        };
+
+        let block_hash = BlockHash::from_slice(&hash_bytes);
+        Ok(Some(block_hash))
     }
 
     fn get_block_header(
@@ -166,7 +361,7 @@ impl StoreEngine for Fjall {
         Ok(Some(header))
     }
 
-    fn add_block_body(
+    async fn add_block_body(
         &self,
         block_hash: BlockHash,
         block_body: ethrex_common::types::BlockBody,
@@ -183,7 +378,7 @@ impl StoreEngine for Fjall {
         Ok(())
     }
 
-    fn get_block_body(
+    async fn get_block_body(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<ethrex_common::types::BlockBody>, StoreError> {
@@ -203,7 +398,7 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for get_block_body_by_hash
-    fn get_block_body_by_hash(
+    async fn get_block_body_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<ethrex_common::types::BlockBody>, StoreError> {
@@ -243,22 +438,22 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for add_pending_block
-    fn add_pending_block(&self, block: ethrex_common::types::Block) -> Result<(), StoreError> {
+    async fn add_pending_block(
+        &self,
+        block: ethrex_common::types::Block,
+    ) -> Result<(), StoreError> {
         self.partitions
             .read()
             .unwrap()
             .get(PendingBlocks::table_name())
             .unwrap()
-            .insert(
-                block.header.compute_block_hash().to_fixed_bytes(),
-                block.encode_to_vec(),
-            )
+            .insert(block.hash().to_fixed_bytes(), block.encode_to_vec())
             .unwrap();
         Ok(())
     }
 
     // Implementation for get_pending_block
-    fn get_pending_block(
+    async fn get_pending_block(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<ethrex_common::types::Block>, StoreError> {
@@ -278,7 +473,7 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for add_block_number
-    fn add_block_number(
+    async fn add_block_number(
         &self,
         block_hash: BlockHash,
         block_number: BlockNumber,
@@ -294,7 +489,10 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for get_block_number
-    fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
+    async fn get_block_number(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError> {
         let Some(number_bytes) = self
             .partitions
             .read()
@@ -312,7 +510,7 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for add_transaction_location
-    fn add_transaction_location(
+    async fn add_transaction_location(
         &self,
         transaction_hash: H256,
         block_number: BlockNumber,
@@ -333,7 +531,7 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for add_transaction_locations
-    fn add_transaction_locations(
+    async fn add_transaction_locations(
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
@@ -349,7 +547,7 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for get_transaction_location
-    fn get_transaction_location(
+    async fn get_transaction_location(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
@@ -371,7 +569,7 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for add_receipt
-    fn add_receipt(
+    async fn add_receipt(
         &self,
         block_hash: BlockHash,
         index: Index,
@@ -391,7 +589,7 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for add_receipts
-    fn add_receipts(
+    async fn add_receipts(
         &self,
         block_hash: BlockHash,
         receipts: Vec<ethrex_common::types::Receipt>,
@@ -408,7 +606,7 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for get_receipt
-    fn get_receipt(
+    async fn get_receipt(
         &self,
         block_number: BlockNumber,
         index: Index,
@@ -446,7 +644,11 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for add_account_code
-    fn add_account_code(&self, code_hash: H256, code: bytes::Bytes) -> Result<(), StoreError> {
+    async fn add_account_code(
+        &self,
+        code_hash: H256,
+        code: bytes::Bytes,
+    ) -> Result<(), StoreError> {
         let key = code_hash.to_fixed_bytes();
         let value = AccountCodeRLP::from(code);
 
@@ -479,7 +681,7 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for get_canonical_block_hash
-    fn get_canonical_block_hash(
+    async fn get_canonical_block_hash(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
@@ -500,7 +702,7 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for set_chain_config
-    fn set_chain_config(
+    async fn set_chain_config(
         &self,
         chain_config: &ethrex_common::types::ChainConfig,
     ) -> Result<(), StoreError> {
@@ -535,7 +737,10 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for update_earliest_block_number
-    fn update_earliest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_earliest_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         self.partitions
             .read()
             .unwrap()
@@ -547,7 +752,7 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for get_earliest_block_number
-    fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+    async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let Some(number_bytes) = self
             .partitions
             .read()
@@ -566,7 +771,10 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for update_finalized_block_number
-    fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_finalized_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         self.partitions
             .read()
             .unwrap()
@@ -581,7 +789,7 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for get_finalized_block_number
-    fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+    async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let Some(number_bytes) = self
             .partitions
             .read()
@@ -600,7 +808,7 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for update_safe_block_number
-    fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         self.partitions
             .read()
             .unwrap()
@@ -612,10 +820,13 @@ impl StoreEngine for Fjall {
     }
 
     // Implementation for get_safe_block_number
-    fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+    async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         todo!()
     }
-    fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_latest_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         self.partitions
             .read()
             .unwrap()
@@ -626,7 +837,7 @@ impl StoreEngine for Fjall {
         Ok(())
     }
 
-    fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let num = self
             .partitions
             .read()
@@ -640,18 +851,28 @@ impl StoreEngine for Fjall {
         Ok(Some(u64::from_be_bytes(num.try_into().unwrap())))
     }
 
-    fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_pending_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         todo!()
     }
 
-    fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+    async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         todo!()
     }
 
-    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
+    fn open_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
         // Get the StorageTriesNodes partition from the RwLock-protected HashMap
         let partitions = self.partitions.read().unwrap();
-        let storage_partition = partitions.get("state_trie_nodes").unwrap().clone();
+        let storage_partition = partitions
+            .get(StorageTriesNodes::table_name())
+            .unwrap()
+            .clone();
 
         // Create a box of the FjallDupsortTrieDB with the address as fixed key
         let db = Box::new(FjallDupsortTrieDB::<[u8; 32]>::new(
@@ -660,22 +881,29 @@ impl StoreEngine for Fjall {
         ));
 
         // Open the trie with the provided storage root
-        Trie::open(db, storage_root)
+        Ok(Trie::open(db, storage_root))
     }
 
-    fn open_state_trie(&self, state_root: H256) -> Trie {
+    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         // Get the StateTrieNodes partition from the RwLock-protected HashMap
         let partitions = self.partitions.read().unwrap();
-        let state_partition = partitions.get("state_trie_nodes").unwrap().clone();
+        let state_partition = partitions
+            .get(StateTrieNodes::table_name())
+            .unwrap()
+            .clone();
 
         // Create a box of the FjallTrie for the state trie
         let db = Box::new(FjallTrie::new(state_partition));
 
         // Open the trie with the provided state root
-        Trie::open(db, state_root)
+        Ok(Trie::open(db, state_root))
     }
 
-    fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError> {
+    async fn set_canonical_block(
+        &self,
+        number: BlockNumber,
+        hash: BlockHash,
+    ) -> Result<(), StoreError> {
         let partitions = self.partitions.read().unwrap();
         let partition = partitions.get(CanonicalBlockHashes::table_name()).unwrap();
         let number_bytes = number.to_be_bytes();
@@ -684,7 +912,7 @@ impl StoreEngine for Fjall {
         Ok(())
     }
 
-    fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
+    async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
         // Get the partition for canonical block hashes
         let partitions = self.partitions.read().unwrap();
         let partition = partitions.get(CanonicalBlockHashes::table_name()).unwrap();
@@ -695,7 +923,7 @@ impl StoreEngine for Fjall {
         Ok(())
     }
 
-    fn add_payload(
+    async fn add_payload(
         &self,
         payload_id: u64,
         block: ethrex_common::types::Block,
@@ -703,11 +931,15 @@ impl StoreEngine for Fjall {
         todo!()
     }
 
-    fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
+    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
         todo!()
     }
 
-    fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
+    async fn update_payload(
+        &self,
+        payload_id: u64,
+        payload: PayloadBundle,
+    ) -> Result<(), StoreError> {
         todo!()
     }
 
@@ -718,69 +950,75 @@ impl StoreEngine for Fjall {
         todo!()
     }
 
-    fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+    async fn set_header_download_checkpoint(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
         todo!()
     }
 
-    fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+    async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
         todo!()
     }
 
-    fn set_state_trie_key_checkpoint(
+    async fn set_state_trie_key_checkpoint(
         &self,
         last_keys: [H256; crate::STATE_TRIE_SEGMENTS],
     ) -> Result<(), StoreError> {
         todo!()
     }
 
-    fn get_state_trie_key_checkpoint(
+    async fn get_state_trie_key_checkpoint(
         &self,
     ) -> Result<Option<[H256; crate::STATE_TRIE_SEGMENTS]>, StoreError> {
         todo!()
     }
 
-    fn set_storage_heal_paths(
+    async fn set_storage_heal_paths(
         &self,
         accounts: Vec<(H256, Vec<ethrex_trie::Nibbles>)>,
     ) -> Result<(), StoreError> {
         todo!()
     }
 
-    fn get_storage_heal_paths(
+    // fn get_storage_heal_paths(
+    //     &self,
+    // ) -> Result<Option<Vec<(H256, Vec<ethrex_trie::Nibbles>)>>, StoreError> {
+    //     todo!()
+    // }
+
+    async fn set_state_heal_paths(
         &self,
-    ) -> Result<Option<Vec<(H256, Vec<ethrex_trie::Nibbles>)>>, StoreError> {
+        paths: Vec<ethrex_trie::Nibbles>,
+    ) -> Result<(), StoreError> {
         todo!()
     }
 
-    fn set_state_heal_paths(&self, paths: Vec<ethrex_trie::Nibbles>) -> Result<(), StoreError> {
+    async fn get_state_heal_paths(&self) -> Result<Option<Vec<ethrex_trie::Nibbles>>, StoreError> {
         todo!()
     }
 
-    fn get_state_heal_paths(&self) -> Result<Option<Vec<ethrex_trie::Nibbles>>, StoreError> {
+    async fn clear_snap_state(&self) -> Result<(), StoreError> {
         todo!()
     }
 
-    fn clear_snap_state(&self) -> Result<(), StoreError> {
-        todo!()
-    }
+    // fn is_synced(&self) -> Result<bool, StoreError> {
+    //     todo!()
+    // }
 
-    fn is_synced(&self) -> Result<bool, StoreError> {
-        todo!()
-    }
+    // fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+    //     self.partitions
+    //         .read()
+    //         .unwrap()
+    //         .get(ChainData::table_name())
+    //         .unwrap()
+    //         .insert("is_synced", &status.to_string())
+    //         .unwrap();
 
-    fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
-        self.partitions
-            .read()
-            .unwrap()
-            .get(ChainData::table_name())
-            .unwrap()
-            .insert("is_synced", &status.to_string())
-            .unwrap();
+    //     Ok(())
+    // }
 
-        Ok(())
-    }
-
-    fn write_snapshot_account_batch(
+    async fn write_snapshot_account_batch(
         &self,
         account_hashes: Vec<H256>,
         account_states: Vec<ethrex_common::types::AccountState>,
@@ -788,7 +1026,7 @@ impl StoreEngine for Fjall {
         todo!()
     }
 
-    fn write_snapshot_storage_batch(
+    async fn write_snapshot_storage_batch(
         &self,
         account_hash: H256,
         storage_keys: Vec<H256>,
@@ -797,31 +1035,33 @@ impl StoreEngine for Fjall {
         todo!()
     }
 
-    fn set_state_trie_rebuild_checkpoint(
+    async fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; crate::STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
         todo!()
     }
 
-    fn get_state_trie_rebuild_checkpoint(
+    async fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; crate::STATE_TRIE_SEGMENTS])>, StoreError> {
         todo!()
     }
 
-    fn set_storage_trie_rebuild_pending(
+    async fn set_storage_trie_rebuild_pending(
         &self,
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
         todo!()
     }
 
-    fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
+    async fn get_storage_trie_rebuild_pending(
+        &self,
+    ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
         todo!()
     }
 
-    fn clear_snapshot(&self) -> Result<(), StoreError> {
+    async fn clear_snapshot(&self) -> Result<(), StoreError> {
         todo!()
     }
 
@@ -832,7 +1072,7 @@ impl StoreEngine for Fjall {
         todo!()
     }
 
-    fn read_storage_snapshot(
+    async fn read_storage_snapshot(
         &self,
         start: H256,
         account_hash: H256,
@@ -860,7 +1100,7 @@ pub trait FjallStorable {
 pub struct CanonicalBlockHashes;
 impl FjallStorable for CanonicalBlockHashes {
     type Key = BlockNumber;
-    type Value = BlockHashRLP;
+    type Value = BlockHash;
 
     fn table_name() -> &'static str {
         "canonical_block_hashes"
@@ -869,7 +1109,7 @@ impl FjallStorable for CanonicalBlockHashes {
 
 pub struct BlockNumbers;
 impl FjallStorable for BlockNumbers {
-    type Key = BlockHashRLP;
+    type Key = BlockHash;
     type Value = BlockNumber;
 
     fn table_name() -> &'static str {
@@ -879,7 +1119,7 @@ impl FjallStorable for BlockNumbers {
 
 pub struct Headers;
 impl FjallStorable for Headers {
-    type Key = BlockHashRLP;
+    type Key = BlockHash;
     type Value = BlockHeaderRLP;
 
     fn table_name() -> &'static str {
@@ -889,7 +1129,7 @@ impl FjallStorable for Headers {
 
 pub struct Bodies;
 impl FjallStorable for Bodies {
-    type Key = BlockHashRLP;
+    type Key = BlockHash;
     type Value = BlockBodyRLP;
 
     fn table_name() -> &'static str {
@@ -899,7 +1139,7 @@ impl FjallStorable for Bodies {
 
 pub struct AccountCodes;
 impl FjallStorable for AccountCodes {
-    type Key = AccountCodeHashRLP;
+    type Key = H256;
     type Value = AccountCodeRLP;
 
     fn table_name() -> &'static str {
@@ -909,7 +1149,7 @@ impl FjallStorable for AccountCodes {
 
 pub struct Receipts;
 impl FjallStorable for Receipts {
-    type Key = TupleRLP<BlockHash, Index>;
+    type Key = ([u8; 32], u64);
     type Value = ReceiptRLP;
 
     fn table_name() -> &'static str {
@@ -929,8 +1169,8 @@ impl FjallStorable for StorageTriesNodes {
 
 pub struct TransactionLocations;
 impl FjallStorable for TransactionLocations {
-    type Key = TransactionHashRLP;
-    type Value = Rlp<(BlockNumber, BlockHash, Index)>;
+    type Key = H256;
+    type Value = (BlockNumber, BlockHash, Index);
 
     fn table_name() -> &'static str {
         "transaction_locations"
@@ -979,7 +1219,7 @@ impl FjallStorable for Payloads {
 
 pub struct PendingBlocks;
 impl FjallStorable for PendingBlocks {
-    type Key = Rlp<BlockHash>;
+    type Key = BlockHash;
     type Value = BlockRLP;
 
     fn table_name() -> &'static str {
@@ -989,7 +1229,7 @@ impl FjallStorable for PendingBlocks {
 
 pub struct StateSnapShot;
 impl FjallStorable for StateSnapShot {
-    type Key = AccountHashRLP;
+    type Key = H256;
     type Value = AccountStateRLP;
 
     fn table_name() -> &'static str {
@@ -1001,7 +1241,7 @@ pub struct StorageSnapshot;
 pub struct AccountStorageKeyBytes(pub [u8; 32]);
 pub struct AccountStorageValueBytes(pub [u8; 32]);
 impl FjallStorable for StorageSnapshot {
-    type Key = Rlp<H256>;
+    type Key = H256;
     type Value = (AccountStorageKeyBytes, AccountStorageValueBytes);
 
     fn table_name() -> &'static str {
