@@ -1590,7 +1590,7 @@ table!(
     ( AccountCodes ) AccountCodeHashRLP => AccountCodeRLP
 );
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct BlockNumHash(pub BlockNumber, pub BlockHash);
 impl From<(BlockNumber, BlockHash)> for BlockNumHash {
     fn from(value: (BlockNumber, BlockHash)) -> Self {
