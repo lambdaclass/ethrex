@@ -26,6 +26,22 @@ pub enum ChainError {
     Custom(String),
 }
 
+#[cfg(feature = "metrics")]
+impl ChainError {
+    pub fn to_metric(&self) -> &str {
+        match self {
+            ChainError::InvalidBlock(_) => "invalid_block",
+            ChainError::ParentNotFound => "parent_not_found",
+            ChainError::ParentStateNotFound => "parent_state_not_found",
+            ChainError::StoreError(_) => "store_error",
+            ChainError::EvmError(_) => "evm_error",
+            ChainError::InvalidTransaction(_) => "invalid_transaction",
+            ChainError::WitnessGeneration(_) => "witness_generation",
+            ChainError::Custom(_) => "custom_error",
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum InvalidBlockError {
     #[error("Requests hash does not match the one in the header after executing")]
