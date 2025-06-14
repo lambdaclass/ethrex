@@ -66,7 +66,7 @@ pub fn write_genesis_as_json(genesis: Genesis, path: &Path) -> Result<(), String
     let mut genesis_as_map: Map<String, Value> = serde_json::from_str(&genesis_json)
         .map_err(|e| format!("Failed to de-serialize genesis file: {}", e))?;
     // Keys sorting based off this ethpandaops example:
-    // https://github.com/ethpandaops/ethereum-genesis-generator/blob/master/apps/el-gen/mainnet/genesis.json
+    // https://github.com/ethpandaops/ethereum-genesis-generator/blob/master/apps/el-gen/tpl-genesis.json
     // We actually want 'config' as the first key, but we sort that
     // separately.
     let keys = [
