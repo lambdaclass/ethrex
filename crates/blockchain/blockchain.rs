@@ -417,7 +417,7 @@ impl Blockchain {
     /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
     ///
     /// Note: only the last block's state trie is stored in the db
-    pub async fn add_blocks_in_batch(
+ pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
@@ -446,6 +446,12 @@ impl Blockchain {
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
+
+        info!(
+            "[SYNCING] Processing {} blocks starting from block number {}",
+            blocks_len,
+            first_block_header.number
+        );
 
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
@@ -477,16 +483,50 @@ impl Blockchain {
                     )
                 })?;
 
-            info!("Processed block {} out of {}", i, blocks.len());
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
             all_receipts.push((block.hash(), receipts));
+
+            if i % 100 == 0 || i == blocks_len - 1 {
+                info!(
+                    "[SYNCING] Processed block {} out of {}: {}",
+                    i + 1,
+                    blocks_len,
+                    block.header.number
+                );
+
+                metrics!(
+                    let _ = METRICS_BLOCKS.set_block_number(block.header.number);
+                    METRICS_BLOCKS.set_latest_gas_used(total_gas_used as f64 / (i + 1) as f64);
+                    METRICS_BLOCKS.set_latest_block_gas_limit(block.header.gas_limit as f64);
+                    METRICS_BLOCKS.set_latest_gigagas(
+                        (total_gas_used as f64 / 10_f64.powf(9_f64))
+                            / (interval.elapsed().as_millis() as f64 / 1000_f64)
+                    );
+                );
+            }
         }
+
+        info!(
+            "[SYNCING] Processed all {} blocks, last valid hash: {}, took {} s",
+            blocks_len,
+            last_valid_hash,
+            interval.elapsed().as_millis() / 1000
+        );
+
+        let interval_2 = Instant::now();
 
         let account_updates = vm
             .get_state_transitions()
             .map_err(|err| (ChainError::EvmError(err), None))?;
+
+        info!(
+            "[SYNCING] Get state transitions, took {} s",
+            interval_2.elapsed().as_millis() / 1000 
+        );
+
+        let interval_3 = Instant::now();
 
         let last_block = blocks
             .last()
@@ -503,12 +543,26 @@ impl Blockchain {
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
 
+        info!(
+            "[SYNCING] Account updates applied, took {} s",
+            interval_3.elapsed().as_millis() / 1000
+        );
+
+        let interval_4 = Instant::now();
+
         let new_state_root = account_updates_list.state_trie_hash;
         let state_updates = account_updates_list.state_updates;
         let accounts_updates = account_updates_list.storage_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
+
+        info!(
+            "[SYNCING] State root validated, took {} s",
+            interval_4.elapsed().as_millis() / 1000
+        );
+
+        let interval_5 = Instant::now();
 
         let update_batch = UpdateBatch {
             account_updates: state_updates,
@@ -521,6 +575,11 @@ impl Blockchain {
             .store_block_updates(update_batch)
             .await
             .map_err(|e| (e.into(), None))?;
+
+        info!(
+            "[SYNCING] Blocks stored, took {} s",
+            interval_5.elapsed().as_millis() / 1000
+        );
 
         let elapsed_seconds = interval.elapsed().as_millis() / 1000;
         let mut throughput = 0.0;
