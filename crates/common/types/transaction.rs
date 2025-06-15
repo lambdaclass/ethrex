@@ -1269,11 +1269,13 @@ impl Transaction {
         }
     }
 
-    pub fn compute_hash(&self) -> H256 {
+    pub fn compute_hash(&self) -> Result<H256,String> {
         if let Transaction::PrivilegedL2Transaction(tx) = self {
-            return tx.get_deposit_hash().unwrap_or_default();
+            return Ok(tx
+                .get_deposit_hash()
+                .unwrap_or_else(|| keccak_hash::keccak(self.encode_canonical_to_vec())));
         }
-        keccak_hash::keccak(self.encode_canonical_to_vec())
+        Ok(keccak_hash::keccak(self.encode_canonical_to_vec()))
     }
 
     pub fn gas_tip_cap(&self) -> u64 {
@@ -2499,7 +2501,7 @@ mod tests {
 
         let expected_hash =
             hex!("a0762610d794acddd2dca15fb7c437ada3611c886f3bea675d53d8da8a6c41b2");
-        let hash = tx.compute_hash();
+        let hash = tx.compute_hash().unwrap();
         assert_eq!(hash, expected_hash.into());
     }
 

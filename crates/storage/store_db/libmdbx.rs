@@ -153,7 +153,10 @@ impl StoreEngine for Store {
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     tx.upsert::<TransactionLocations>(
-                        transaction.compute_hash().into(),
+                        transaction
+                            .compute_hash()
+                            .map_err(|err| StoreError::CursorError(err))?
+                            .into(),
                         (number, hash, index as u64).into(),
                     )
                     .map_err(StoreError::LibmdbxError)?;
@@ -259,7 +262,10 @@ impl StoreEngine for Store {
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     tx.upsert::<TransactionLocations>(
-                        transaction.compute_hash().into(),
+                        transaction
+                            .compute_hash()
+                            .map_err(|err| StoreError::CursorError(err))?
+                            .into(),
                         (number, hash, index as u64).into(),
                     )
                     .map_err(StoreError::LibmdbxError)?;

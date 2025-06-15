@@ -120,7 +120,11 @@ impl StoreEngine for Store {
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 store
                     .transaction_locations
-                    .entry(transaction.compute_hash())
+                    .entry(
+                        transaction
+                            .compute_hash()
+                            .map_err(|err| StoreError::CursorError(err))?,
+                    )
                     .or_default()
                     .push((number, hash, index as u64));
             }
@@ -239,9 +243,18 @@ impl StoreEngine for Store {
                 .transactions
                 .iter()
                 .enumerate()
-                .map(|(i, tx)| (tx.compute_hash(), number, hash, i as u64));
+                .map(|(i, tx)| -> Result<_, StoreError> {
+                    Ok((
+                        tx.compute_hash()
+                            .map_err(|err| StoreError::CursorError(err))?,
+                        number,
+                        hash,
+                        i as u64,
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
 
-            self.add_transaction_locations(locations.collect()).await?;
+            self.add_transaction_locations(locations).await?;
             self.add_block_body(hash, block.body.clone()).await?;
             self.add_block_header(hash, header).await?;
             self.add_block_number(hash, number).await?;

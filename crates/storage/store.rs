@@ -273,7 +273,9 @@ impl Store {
 
         for (index, transaction) in transactions.iter().enumerate() {
             locations.push((
-                transaction.compute_hash(),
+                transaction
+                    .compute_hash()
+                    .map_err(|err| StoreError::CursorError(err))?,
                 block_number,
                 block_hash,
                 index as Index,

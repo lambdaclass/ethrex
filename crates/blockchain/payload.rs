@@ -403,7 +403,7 @@ impl Blockchain {
             if context.remaining_gas < head_tx.tx.gas_limit() {
                 debug!(
                     "Skipping transaction: {}, no gas left",
-                    head_tx.tx.compute_hash()
+                    head_tx.tx.compute_hash().unwrap()
                 );
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
                 txs.pop();
@@ -411,7 +411,10 @@ impl Blockchain {
             }
 
             // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
-            let tx_hash = head_tx.tx.compute_hash();
+            let tx_hash = head_tx
+                .tx
+                .compute_hash()
+                .map_err(|err| ChainError::StoreError(StoreError::CursorError(err)))?;
 
             // Check whether the tx is replay-protected
             if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
@@ -419,34 +422,42 @@ impl Blockchain {
                 // Pull transaction from the mempool
                 debug!("Ignoring replay-protected transaction: {}", tx_hash);
                 txs.pop();
-                self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+                self.remove_transaction_from_pool(
+                    &head_tx
+                        .tx
+                        .compute_hash()
+                        .map_err(|err| ChainError::StoreError(StoreError::CursorError(err)))?,
+                )?;
                 continue;
             }
 
             // Execute tx
-            let receipt = match self.apply_transaction(&head_tx, context) {
-                Ok(receipt) => {
-                    txs.shift()?;
-                    // Pull transaction from the mempool
-                    self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+            let receipt =
+                match self.apply_transaction(&head_tx, context) {
+                    Ok(receipt) => {
+                        txs.shift()?;
+                        // Pull transaction from the mempool
+                        self.remove_transaction_from_pool(&head_tx.tx.compute_hash().map_err(
+                            |err| ChainError::StoreError(StoreError::CursorError(err)),
+                        )?)?;
 
-                    metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                        MetricsTxStatus::Succeeded,
-                        MetricsTxType(head_tx.tx_type())
-                    ));
-                    receipt
-                }
-                // Ignore following txs from sender
-                Err(e) => {
-                    error!("Failed to execute transaction: {tx_hash:x}, {e}");
-                    metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                        MetricsTxStatus::Failed,
-                        MetricsTxType(head_tx.tx_type())
-                    ));
-                    txs.pop();
-                    continue;
-                }
-            };
+                        metrics!(METRICS_TX.inc_tx_with_status_and_type(
+                            MetricsTxStatus::Succeeded,
+                            MetricsTxType(head_tx.tx_type())
+                        ));
+                        receipt
+                    }
+                    // Ignore following txs from sender
+                    Err(e) => {
+                        error!("Failed to execute transaction: {tx_hash:x}, {e}");
+                        metrics!(METRICS_TX.inc_tx_with_status_and_type(
+                            MetricsTxStatus::Failed,
+                            MetricsTxType(head_tx.tx_type())
+                        ));
+                        txs.pop();
+                        continue;
+                    }
+                };
             // Add transaction to block
             debug!("Adding transaction: {} to payload", tx_hash);
             context.payload.body.transactions.push(head_tx.into());
@@ -476,7 +487,10 @@ impl Blockchain {
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
         // Fetch blobs bundle
-        let tx_hash = head.tx.compute_hash();
+        let tx_hash = head
+            .tx
+            .compute_hash()
+            .map_err(|err| ChainError::StoreError(StoreError::CursorError(err)))?;
         let chain_config = context.chain_config()?;
         let max_blob_number_per_block = chain_config
             .get_fork_blob_schedule(context.payload.header.timestamp)
