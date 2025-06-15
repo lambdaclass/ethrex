@@ -107,10 +107,10 @@ pub fn to_batch_proof(
 }
 
 fn to_calldata(proof: ProveOutput) -> ProofCalldata {
-    // bytes calldata publicValues,
-    // bytes calldata proofBytes
+    // bytes32 sp1ProgramVKey,
+    // bytes calldata sp1ProofBytes
     let calldata = vec![
-        Value::Bytes(proof.proof.public_values.to_vec().into()),
+        Value::FixedBytes(proof.vk.hash_bytes().to_vec().into()),
         Value::Bytes(proof.proof.bytes().into()),
     ];
 

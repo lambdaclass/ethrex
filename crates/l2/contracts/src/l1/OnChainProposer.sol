@@ -282,12 +282,9 @@ contract OnChainProposer is
         //risc0
         bytes memory risc0BlockProof,
         bytes32 risc0ImageId,
-        bytes calldata risc0Journal,
         //sp1
-        bytes calldata sp1PublicValues,
         bytes memory sp1ProofBytes,
         //tdx
-        bytes calldata tdxPublicValues,
         bytes memory tdxSignature
     ) external override onlySequencer {
         // TODO: Refactor validation
@@ -308,28 +305,25 @@ contract OnChainProposer is
 
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, risc0Journal);
             IRiscZeroVerifier(R0VERIFIER).verify(
                 risc0BlockProof,
                 risc0ImageId,
-                sha256(risc0Journal)
+                sha256(publicInputs)
             );
         }
 
         if (SP1VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, sp1PublicValues[8:]);
             ISP1Verifier(SP1VERIFIER).verifyProof(
                 SP1_VERIFICATION_KEY,
-                sp1PublicValues,
+                publicInputs,
                 sp1ProofBytes
             );
         }
 
         if (TDXVERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
-            _verifyPublicData(batchNumber, tdxPublicValues);
-            ITDXVerifier(TDXVERIFIER).verify(tdxPublicValues, tdxSignature);
+            ITDXVerifier(TDXVERIFIER).verify(publicInputs, tdxSignature);
         }
 
         lastVerifiedBatch = batchNumber;
@@ -450,6 +444,66 @@ contract OnChainProposer is
             batchCommitments[batchNumber].lastBlockHash == lastBlockHash,
             "OnChainProposer: last block hash public inputs don't match with last block hash"
         );
+    }
+
+    /// @notice Constructs public inputs from committed batch data for proof verification.
+    /// @dev This function retrieves the necessary data from batch commitments and formats it
+    /// into a 160-byte array that serves as public inputs for all proving systems.
+    /// @dev Public inputs structure (160 bytes total):
+    /// - bytes 0-32: Initial state root (from the last verified batch)
+    /// - bytes 32-64: Final state root (from the current batch)
+    /// - bytes 64-96: Withdrawals merkle root (from the current batch)
+    /// - bytes 96-128: Deposits log hash (from the current batch)
+    /// - bytes 128-160: Last block hash (from the current batch)
+    /// @dev The initial state root uses the last verified batch's newStateRoot because
+    /// batch verification is sequential and each batch depends on the previous one.
+    /// @param batchNumber The batch number to retrieve public inputs for.
+    /// @return publicInputs The 160-byte public inputs array for proof verification.
+    function _getPublicInputsFromCommitment(
+        uint256 batchNumber
+    ) internal view returns (bytes memory) {
+        BatchCommitmentInfo memory currentBatch = batchCommitments[batchNumber];
+        BatchCommitmentInfo memory previousBatch = batchCommitments[lastVerifiedBatch];
+        
+        // Public inputs are 160 bytes:
+        // - bytes 0-32: initial state root
+        // - bytes 32-64: final state root
+        // - bytes 64-96: withdrawals merkle root
+        // - bytes 96-128: deposits log hash
+        // - bytes 128-160: last block hash
+        bytes memory publicInputs = new bytes(160);
+        
+        // Initial state root from the last verified batch
+        bytes32 initialStateRoot = previousBatch.newStateRoot;
+        for (uint i = 0; i < 32; i++) {
+            publicInputs[i] = bytes1(uint8(uint256(initialStateRoot) >> (8 * (31 - i))));
+        }
+        
+        // Final state root from the current batch
+        bytes32 finalStateRoot = currentBatch.newStateRoot;
+        for (uint i = 0; i < 32; i++) {
+            publicInputs[32 + i] = bytes1(uint8(uint256(finalStateRoot) >> (8 * (31 - i))));
+        }
+        
+        // Withdrawals merkle root
+        bytes32 withdrawalsRoot = currentBatch.withdrawalsLogsMerkleRoot;
+        for (uint i = 0; i < 32; i++) {
+            publicInputs[64 + i] = bytes1(uint8(uint256(withdrawalsRoot) >> (8 * (31 - i))));
+        }
+        
+        // Deposits log hash
+        bytes32 depositsHash = currentBatch.processedDepositLogsRollingHash;
+        for (uint i = 0; i < 32; i++) {
+            publicInputs[96 + i] = bytes1(uint8(uint256(depositsHash) >> (8 * (31 - i))));
+        }
+        
+        // Last block hash
+        bytes32 lastBlockHash = currentBatch.lastBlockHash;
+        for (uint i = 0; i < 32; i++) {
+            publicInputs[128 + i] = bytes1(uint8(uint256(lastBlockHash) >> (8 * (31 - i))));
+        }
+        
+        return publicInputs;
     }
 
     /// @notice Allow owner to upgrade the contract.
