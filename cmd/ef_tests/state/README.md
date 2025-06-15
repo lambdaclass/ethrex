@@ -1,7 +1,7 @@
 # State Tests
 
 The state tests are individual transactions not related one to each other that test particular behavior of the EVM. Tests are usually run for multiple forks and the result of execution may vary between forks.
-Some [docs](https://ethereum.github.io/execution-spec-tests/main/consuming_tests/state_test/).
+Some [docs](https://ethereum-tests.readthedocs.io/en/latest/state-transition-ref.html).
 
 ## Running the tests
 
