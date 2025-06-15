@@ -604,7 +604,7 @@ pub fn prepare_state_diff(
                     TxKind::Create => Address::zero(),
                 },
                 amount: tx.value(),
-                tx_hash: tx.compute_hash(),
+                tx_hash: tx.compute_hash().unwrap_or_default(),
             })
             .collect(),
         deposit_logs: deposits

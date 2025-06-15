@@ -542,7 +542,9 @@ impl Blockchain {
         self.validate_transaction(&transaction, sender).await?;
 
         // Add transaction and blobs bundle to storage
-        let hash = transaction.compute_hash();
+        let hash = transaction
+            .compute_hash()
+            .map_err(|err| MempoolError::StoreError(StoreError::CursorError(err)))?;
         self.mempool
             .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
@@ -562,7 +564,9 @@ impl Blockchain {
         // Validate transaction
         self.validate_transaction(&transaction, sender).await?;
 
-        let hash = transaction.compute_hash();
+        let hash = transaction
+            .compute_hash()
+            .map_err(|err| MempoolError::StoreError(StoreError::CursorError(err)))?;
 
         // Add transaction to storage
         self.mempool
@@ -683,10 +687,12 @@ impl Blockchain {
         }
 
         // Check the nonce of pendings TXs in the mempool from the same sender
-        if self
-            .mempool
-            .contains_sender_nonce(sender, nonce, tx.compute_hash())?
-        {
+        if self.mempool.contains_sender_nonce(
+            sender,
+            nonce,
+            tx.compute_hash()
+                .map_err(|err| MempoolError::StoreError(StoreError::CursorError(err)))?,
+        )? {
             return Err(MempoolError::InvalidNonce);
         }
 

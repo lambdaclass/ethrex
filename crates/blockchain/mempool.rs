@@ -76,7 +76,7 @@ impl Mempool {
                 self.blobs_bundle_pool
                     .lock()
                     .map_err(|error| StoreError::Custom(error.to_string()))?
-                    .remove(&tx.compute_hash());
+                    .remove(&tx.compute_hash().map_err(|err| StoreError::CursorError(err))?);
             }
 
             tx_pool.remove(hash);
@@ -696,8 +696,8 @@ mod tests {
         let blob_tx_decoded = Transaction::decode_canonical(&hex::decode("03f88f0780843b9aca008506fc23ac00830186a09400000000000000000000000000000000000001008080c001e1a0010657f37554c781402a22917dee2f75def7ab966d7b770905398eba3c44401401a0840650aa8f74d2b07f40067dc33b715078d73422f01da17abdbd11e02bbdfda9a04b2260f6022bf53eadb337b3e59514936f7317d872defb891a708ee279bdca90").unwrap()).unwrap();
         let blob_tx_sender = blob_tx_decoded.sender();
         let blob_tx = MempoolTransaction::new(blob_tx_decoded, blob_tx_sender);
-        let plain_tx_hash = plain_tx.compute_hash();
-        let blob_tx_hash = blob_tx.compute_hash();
+        let plain_tx_hash = plain_tx.compute_hash().unwrap();
+        let blob_tx_hash = blob_tx.compute_hash().unwrap();
         let mempool = Mempool::new();
         let filter =
             |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };

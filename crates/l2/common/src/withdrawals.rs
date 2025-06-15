@@ -91,7 +91,14 @@ pub fn get_withdrawal_hash(tx: &Transaction) -> Result<H256, WithdrawalError> {
     let value = tx.value().to_big_endian();
 
     Ok(keccak_hash::keccak(
-        [to.as_bytes(), &value, tx.compute_hash().as_bytes()].concat(),
+        [
+            to.as_bytes(),
+            &value,
+            tx.compute_hash()
+                .map_err(|_| WithdrawalError::WithdrawalHash)?
+                .as_bytes(),
+        ]
+        .concat(),
     ))
 }
 
