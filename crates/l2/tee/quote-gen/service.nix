@@ -1,6 +1,6 @@
 let
   pkgs = import <nixpkgs> { };
-  gitignoreSrc = pkgs.fetchFromGitHub { 
+  gitignoreSrc = pkgs.fetchFromGitHub {
     owner = "hercules-ci";
     repo = "gitignore.nix";
     rev = "637db329424fd7e46cf4185293b9cc8c88c95394";
@@ -8,6 +8,7 @@ let
   };
   inherit (import gitignoreSrc { inherit (pkgs) lib; }) gitignoreSource;
 in
+
 let
   quoteGen = pkgs.rustPlatform.buildRustPackage rec {
     pname = "quote-gen";
@@ -23,6 +24,9 @@ let
         "spawned-concurrency-0.1.0" = "sha256-/RO23J4c1fNVpF6ZgHdVPp3C2mgpg+dCwLjg0JcZ0YI=";
         "aligned-sdk-0.1.0" = "sha256-EF4/oNFub5Z5hzxSCbfsYyf+af+0yoH1ObF1Itmw8oc=";
         "lambdaworks-crypto-0.12.0" = "sha256-4vgW/O85zVLhhFrcZUwcPjavy/rRWB8LGTabAkPNrDw=";
+        "reth-db-1.1.0" = "sha256-VwBVfEJUU9ttxfKBHxCcIZjbdlLKe4fGOBUo0w9dsso=";
+        "reth-codecs-1.1.0" = "sha256-VwBVfEJUU9ttxfKBHxCcIZjbdlLKe4fGOBUo0w9dsso=";
+        "reth-libmdbx-1.1.0" = "sha256-VwBVfEJUU9ttxfKBHxCcIZjbdlLKe4fGOBUo0w9dsso=";
       };
     };
 
@@ -30,7 +34,9 @@ let
     nativeBuildInputs = [
       pkgs.pkg-config
       pkgs.rustPlatform.cargoSetupHook
+      pkgs.rustPlatform.bindgenHook
     ];
+
     env.OPENSSL_NO_VENDOR = 1;
   };
 in
