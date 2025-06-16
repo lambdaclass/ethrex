@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750092749187,
+  "lastUpdate": 1750092888746,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -15533,6 +15533,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00854957080846446,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d6b87d048286f1785553c71768eafb3158d335f6",
+          "message": "fix(l2): update SP1 Cargo.lock and fix RPC job (#3180)\n\n**Motivation**\n\nJob was failing\n[here](https://github.com/lambdaclass/ethrex/actions/runs/15643087521/job/44074872351)\nbecause when building SP1 it was updating its Cargo.lock, adding a\nunstaged change which made the git benchmark action fail.",
+          "timestamp": "2025-06-16T15:58:43Z",
+          "tree_id": "3a5afff060ed3e4367cbea7e898f12cf45f82170",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d6b87d048286f1785553c71768eafb3158d335f6"
+        },
+        "date": 1750092881529,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.00845778797638218,
             "unit": "Mgas/s"
           }
         ]
