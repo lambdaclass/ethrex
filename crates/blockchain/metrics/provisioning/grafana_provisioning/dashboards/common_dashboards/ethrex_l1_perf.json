@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 6,
+  "id": 9,
   "links": [],
   "panels": [
     {
@@ -487,7 +487,7 @@
           "useBackend": false
         }
       ],
-      "title": "Panel Title",
+      "title": "Ggas/s",
       "type": "timeseries"
     },
     {
@@ -831,7 +831,7 @@
           "useBackend": false
         }
       ],
-      "title": "Panel Title",
+      "title": "Gigas/s & Gas Used % by Block",
       "transformations": [
         {
           "id": "calculateField",
@@ -912,5 +912,5 @@
   "timezone": "browser",
   "title": "Ethrex L1 - Perf Dashboard",
   "uid": "beoru4vp59yiof",
-  "version": 7
+  "version": 8
 }
