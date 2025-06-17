@@ -84,8 +84,8 @@ pub async fn archive_sync(
         let instant = Instant::now();
         state_trie_root = process_dump(dump, store.clone(), state_trie_root).await?;
         info!(
-            "Processed Dump of {MAX_ACCOUNTS} accounts in {} ms",
-            instant.elapsed().as_millis()
+            "Processed Dump of {MAX_ACCOUNTS} accounts in {}",
+            mseconds_to_readable(instant.elapsed().as_millis())
         );
     }
     // Request block so we can store it and mark it as canonical
@@ -109,9 +109,9 @@ pub async fn archive_sync(
     store.add_block(block).await?;
     store.set_canonical_block(block_number, block_hash).await?;
     store.update_latest_block_number(block_number).await?;
-    let sync_time = sync_start.elapsed().as_millis();
+    let sync_time = mseconds_to_readable(sync_start.elapsed().as_millis());
     info!(
-        "Archive Sync complete in {sync_time} ms.\nHead of local chain is now block {block_number} with hash {block_hash}"
+        "Archive Sync complete in {sync_time}.\nHead of local chain is now block {block_number} with hash {block_hash}"
     );
     Ok(())
 }
@@ -223,4 +223,27 @@ impl DumpAccount {
             code_hash: self.code_hash,
         }
     }
+}
+
+fn mseconds_to_readable(mut mseconds: u128) -> String {
+    const DAY: u128 = 24 * HOUR;
+    const HOUR: u128 = 60 * MINUTE;
+    const MINUTE: u128 = 60 * SECOND;
+    const SECOND: u128 = 1000 * MSECOND;
+    const MSECOND: u128 = 1;
+    let mut res = String::new();
+    let mut apply_time_unit = |unit_in_ms: u128, unit_str: &str| {
+        if mseconds > unit_in_ms {
+            let amount_of_unit = mseconds / unit_in_ms;
+            res.push_str(&format!("{amount_of_unit}{unit_str}"));
+            mseconds -= unit_in_ms * amount_of_unit
+        }
+    };
+    apply_time_unit(DAY, "d");
+    apply_time_unit(HOUR, "h");
+    apply_time_unit(MINUTE, "m");
+    apply_time_unit(SECOND, "s");
+    apply_time_unit(MSECOND, "ms");
+
+    res
 }
