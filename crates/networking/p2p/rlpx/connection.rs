@@ -575,21 +575,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let hashes =
                     new_pooled_transaction_hashes.get_transactions_to_request(&self.blockchain)?;
 
-                // avoid requesting the same hash multiple times
-                let mut hashes_to_request = vec![];
-                for hash in hashes {
-                    let mut should_request = true;
-                    for tx in self.requested_pooled_txs.values() {
-                        if tx.transaction_hashes.contains(&hash) {
-                            should_request = false;
-                            break;
-                        }
-                    }
-                    if should_request {
-                        hashes_to_request.push(hash);
-                    }
-                }
-
                 let request_id = random();
                 self.requested_pooled_txs
                     .insert(request_id, new_pooled_transaction_hashes);
