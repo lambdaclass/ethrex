@@ -95,7 +95,13 @@ pub async fn run_ef_tests(
     }
     if opts.summary {
         if reports.iter().any(|r| !r.passed()) {
-            print_failed_tests(&reports);
+            println!("{}", EFTestsReport(
+                reports
+                    .iter()
+                    .filter(|&r| !r.passed())
+                    .cloned()
+                    .collect(),
+            ););
             return Err(EFTestRunnerError::TestsFailed);
         }
         return Ok(());
@@ -284,15 +290,4 @@ fn cache_re_run(reports: &[EFTestReport]) -> Result<(), EFTestRunnerError> {
     let cache_file_path = report::cache(reports)?;
     cache_spinner.success(&format!("Re-run cached to file {cache_file_path:?}").bold());
     Ok(())
-}
-
-fn print_failed_tests(reports: &[EFTestReport]) {
-    let failed_test_reports = EFTestsReport(
-        reports
-            .iter()
-            .filter(|&report| !report.passed())
-            .cloned()
-            .collect(),
-    );
-    println!("{}", failed_test_reports)
 }
