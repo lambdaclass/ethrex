@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 ethrex-common.workspace = true
-ethrex-levm.workspace = true
+ethrex-levm ={ path = "./levm", default-features = false}
 ethrex-trie.workspace = true
 ethrex-rlp.workspace = true
 
@@ -41,9 +41,10 @@ ethereum-types.workspace = true
 path = "./lib.rs"
 
 [features]
-default = []
+default = ["kzg-rs"]
 l2 = ["ethrex-levm/l2"]
 c-kzg = ["revm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
+kzg-rs = ["ethrex-levm/kzg-rs"]
 blst = ["revm/blst"]
 debug = ["ethrex-levm/debug"]
 

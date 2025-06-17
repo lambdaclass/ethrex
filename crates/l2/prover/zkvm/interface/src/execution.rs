@@ -29,8 +29,6 @@ use ethrex_l2_common::{
         get_withdrawal_hash,
     },
 };
-#[cfg(feature = "l2")]
-use kzg_rs::{Blob, Bytes48, KzgProof, get_kzg_settings};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StatelessExecutionError {
@@ -58,9 +56,12 @@ pub enum StatelessExecutionError {
     #[cfg(feature = "l2")]
     #[error("Blobs bundle error: {0}")]
     BlobsBundleError(#[from] BlobsBundleError),
-    #[cfg(feature = "l2")]
+    #[cfg(all(feature = "l2", feature = "kzg-rs"))]
     #[error("KZG error (proof couldn't be verified): {0}")]
-    KzgError(kzg_rs::KzgError),
+    KzgRsError(kzg_rs::KzgError),
+    #[cfg(all(feature = "l2", feature = "c-kzg"))]
+    #[error("KZG error (proof couldn't be verified): {0}")]
+    CKzgError(c_kzg::Error),
     #[cfg(feature = "l2")]
     #[error("Invalid KZG blob proof")]
     InvalidBlobProof,
@@ -93,10 +94,17 @@ pub enum StatelessExecutionError {
     Internal(String),
 }
 
-#[cfg(feature = "l2")]
+#[cfg(all(feature = "l2", feature = "kzg-rs"))]
 impl From<kzg_rs::KzgError> for StatelessExecutionError {
     fn from(value: kzg_rs::KzgError) -> Self {
-        StatelessExecutionError::KzgError(value)
+        StatelessExecutionError::KzgRsError(value)
+    }
+}
+
+#[cfg(all(feature = "l2", feature = "c-kzg"))]
+impl From<c_kzg::Error> for StatelessExecutionError {
+    fn from(value: c_kzg::Error) -> Self {
+        StatelessExecutionError::CKzgError(value)
     }
 }
 
@@ -364,6 +372,7 @@ fn compute_withdrawals_and_deposits_digests(
     Ok((withdrawals_merkle_root, deposit_logs_hash))
 }
 
+// TODO: refactor into ethrex-common::blobs_bundle
 #[cfg(feature = "l2")]
 fn verify_blob(
     state_diff: StateDiff,
@@ -372,13 +381,21 @@ fn verify_blob(
 ) -> Result<H256, StatelessExecutionError> {
     let encoded_state_diff = state_diff.encode()?;
     let blob_data = blob_from_bytes(encoded_state_diff)?;
-    let blob = Blob::from_slice(&blob_data)?;
 
-    let is_blob_proof_valid = KzgProof::verify_blob_kzg_proof(
-        blob,
-        &Bytes48::from_slice(&blob_commitment)?,
-        &Bytes48::from_slice(&blob_proof)?,
-        &get_kzg_settings(),
+    #[cfg(feature = "kzg-rs")]
+    let is_blob_proof_valid = kzg_rs::KzgProof::verify_blob_kzg_proof(
+        kzg_rs::Blob::from_slice(&blob_data)?,
+        &kzg_rs::Bytes48::from_slice(&blob_commitment)?,
+        &kzg_rs::Bytes48::from_slice(&blob_proof)?,
+        &kzg_rs::get_kzg_settings(),
+    )?;
+
+    #[cfg(feature = "c-kzg")]
+    let is_blob_proof_valid = c_kzg::KzgProof::verify_blob_kzg_proof(
+        &c_kzg::Blob::new(blob_data),
+        &blob_commitment.into(),
+        &blob_proof.into(),
+        &c_kzg::ethereum_kzg_settings(),
     )?;
 
     if !is_blob_proof_valid {

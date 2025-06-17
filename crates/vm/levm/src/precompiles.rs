@@ -6,7 +6,6 @@ use bls12_381::{
 use bytes::Bytes;
 use ethrex_common::{Address, H160, H256, U256, serde_utils::bool, types::Fork};
 use keccak_hash::keccak256;
-use kzg_rs::{Bytes32, Bytes48, KzgSettings};
 use lambdaworks_math::{
     cyclic_group::IsGroup,
     elliptic_curve::{
@@ -1064,24 +1063,41 @@ fn verify_kzg_proof(
     y: &[u8; 32],
     proof_bytes: &[u8; 48],
 ) -> Result<bool, VMError> {
-    let commitment_bytes =
-        Bytes48::from_slice(commitment_bytes).map_err(|_| PrecompileError::EvaluationError)?; // Could be ParsingInputError
-    let z_bytes = Bytes32::from_slice(z).map_err(|_| PrecompileError::EvaluationError)?;
-    let y_bytes = Bytes32::from_slice(y).map_err(|_| PrecompileError::EvaluationError)?;
-    let proof_bytes =
-        Bytes48::from_slice(proof_bytes).map_err(|_| PrecompileError::EvaluationError)?;
+    #[cfg(feature = "kzg-rs")]
+    {
+        let commitment_bytes =
+            kzg_rs::Bytes48::from_slice(commitment_bytes).map_err(|_| PrecompileError::EvaluationError)?; // Could be ParsingInputError
+        let z_bytes = kzg_rs::Bytes32::from_slice(z).map_err(|_| PrecompileError::EvaluationError)?;
+        let y_bytes = kzg_rs::Bytes32::from_slice(y).map_err(|_| PrecompileError::EvaluationError)?;
+        let proof_bytes =
+            kzg_rs::Bytes48::from_slice(proof_bytes).map_err(|_| PrecompileError::EvaluationError)?;
 
-    let settings =
-        KzgSettings::load_trusted_setup_file().map_err(|_| PrecompileError::EvaluationError)?;
+        let settings =
+            kzg_rs::KzgSettings::load_trusted_setup_file().map_err(|_| PrecompileError::EvaluationError)?;
 
-    kzg_rs::kzg_proof::KzgProof::verify_kzg_proof(
-        &commitment_bytes,
-        &z_bytes,
-        &y_bytes,
-        &proof_bytes,
-        &settings,
-    )
-    .map_err(|_| PrecompileError::EvaluationError.into())
+        return kzg_rs::kzg_proof::KzgProof::verify_kzg_proof(
+            &commitment_bytes,
+            &z_bytes,
+            &y_bytes,
+            &proof_bytes,
+            &settings,
+        )
+        .map_err(|_| PrecompileError::EvaluationError.into());
+    }
+    #[cfg(feature = "c-kzg")]
+    {
+        return c_kzg::KzgProof::verify_kzg_proof(
+            &c_kzg::Bytes48::new(commitment_bytes.clone()),
+            &c_kzg::Bytes32::new(z.clone()),
+            &c_kzg::Bytes32::new(y.clone()),
+            &c_kzg::Bytes48::new(proof_bytes.clone()),
+            &c_kzg::ethereum_kzg_settings(),
+        )
+        .map_err(|_| PrecompileError::EvaluationError.into());
+    }
+
+    // if no feature is enabled
+    unimplemented!();
 }
 
 const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
