@@ -1,4 +1,4 @@
-use crate::sequencer::errors::ProverServerError;
+use crate::sequencer::errors::ProofCoordinatorError;
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_latest_sent_batch;
 use crate::utils::prover::proving_systems::{BatchProof, ProverType};
@@ -162,7 +162,7 @@ impl ProofCoordinatorState {
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
         needed_proof_types: Vec<ProverType>,
-    ) -> Result<Self, ProverServerError> {
+    ) -> Result<Self, ProofCoordinatorError> {
         let eth_client = EthClient::new_with_config(
             eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
             eth_config.max_number_of_retries,
@@ -177,7 +177,7 @@ impl ProofCoordinatorState {
         let rpc_url = eth_config
             .rpc_url
             .first()
-            .ok_or(ProverServerError::Custom(
+            .ok_or(ProofCoordinatorError::Custom(
                 "no rpc urls present!".to_string(),
             ))?
             .to_string();
@@ -217,7 +217,7 @@ impl ProofCoordinator {
         cfg: SequencerConfig,
         blockchain: Arc<Blockchain>,
         needed_proof_types: Vec<ProverType>,
-    ) -> Result<(), ProverServerError> {
+    ) -> Result<(), ProofCoordinatorError> {
         let state = ProofCoordinatorState::new(
             &cfg.proof_coordinator,
             &cfg.l1_committer,
@@ -242,7 +242,7 @@ impl GenServer for ProofCoordinator {
     type InMsg = ProofCordInMessage;
     type OutMsg = ProofCordOutMessage;
     type State = ProofCoordinatorState;
-    type Error = ProverServerError;
+    type Error = ProofCoordinatorError;
 
     fn new() -> Self {
         Self {}
@@ -313,7 +313,7 @@ impl GenServer for ConnectionHandler {
     type InMsg = ConnInMessage;
     type OutMsg = ConnOutMessage;
     type State = ProofCoordinatorState;
-    type Error = ProverServerError;
+    type Error = ProofCoordinatorError;
 
     fn new() -> Self {
         Self {}
@@ -351,7 +351,7 @@ impl GenServer for ConnectionHandler {
 async fn handle_connection(
     state: &ProofCoordinatorState,
     mut stream: TcpStream,
-) -> Result<(), ProverServerError> {
+) -> Result<(), ProofCoordinatorError> {
     let mut buffer = Vec::new();
     stream.read_to_end(&mut buffer).await?;
 
@@ -393,7 +393,7 @@ async fn handle_connection(
 async fn handle_request(
     state: &ProofCoordinatorState,
     stream: &mut TcpStream,
-) -> Result<(), ProverServerError> {
+) -> Result<(), ProofCoordinatorError> {
     info!("BatchRequest received");
 
     let batch_to_verify = 1 + get_latest_sent_batch(
@@ -403,7 +403,7 @@ async fn handle_request(
         state.on_chain_proposer_address,
     )
     .await
-    .map_err(|err| ProverServerError::InternalError(err.to_string()))?;
+    .map_err(|err| ProofCoordinatorError::InternalError(err.to_string()))?;
 
     let response = if !state.rollup_store.contains_batch(&batch_to_verify).await? {
         let response = ProofData::empty_batch_response();
@@ -420,7 +420,7 @@ async fn handle_request(
     stream
         .write_all(&buffer)
         .await
-        .map_err(ProverServerError::ConnectionError)
+        .map_err(ProofCoordinatorError::ConnectionError)
         .map(|_| info!("BatchResponse sent for batch number: {batch_to_verify}"))
 }
 
@@ -428,7 +428,7 @@ async fn handle_submit(
     stream: &mut TcpStream,
     batch_number: u64,
     batch_proof: BatchProof,
-) -> Result<(), ProverServerError> {
+) -> Result<(), ProofCoordinatorError> {
     info!("ProofSubmit received for batch number: {batch_number}");
 
     // Check if we have the proof for that ProverType
@@ -447,7 +447,7 @@ async fn handle_submit(
     stream
         .write_all(&buffer)
         .await
-        .map_err(ProverServerError::ConnectionError)
+        .map_err(ProofCoordinatorError::ConnectionError)
         .map(|_| info!("ProofSubmit ACK sent"))
 }
 
@@ -456,7 +456,7 @@ async fn handle_setup(
     stream: &mut TcpStream,
     prover_type: ProverType,
     payload: Bytes,
-) -> Result<(), ProverServerError> {
+) -> Result<(), ProofCoordinatorError> {
     info!("ProverSetup received for {prover_type}");
 
     match prover_type {
@@ -468,7 +468,7 @@ async fn handle_setup(
                 &hex::encode(&payload),
             )
             .await
-            .map_err(|e| ProverServerError::Custom(format!("Could not setup TDX key {e}")))?;
+            .map_err(|e| ProofCoordinatorError::Custom(format!("Could not setup TDX key {e}")))?;
             register_tdx_key(
                 &state.eth_client,
                 &state.l1_private_key,
@@ -488,21 +488,21 @@ async fn handle_setup(
     stream
         .write_all(&buffer)
         .await
-        .map_err(ProverServerError::ConnectionError)
+        .map_err(ProofCoordinatorError::ConnectionError)
         .map(|_| info!("ProverSetupACK sent"))
 }
 
 async fn create_prover_input(
     state: &ProofCoordinatorState,
     batch_number: u64,
-) -> Result<ProverInputData, ProverServerError> {
+) -> Result<ProverInputData, ProofCoordinatorError> {
     // Get blocks in batch
     let Some(block_numbers) = state
         .rollup_store
         .get_block_numbers_by_batch(batch_number)
         .await?
     else {
-        return Err(ProverServerError::ItemNotFoundInStore(format!(
+        return Err(ProofCoordinatorError::ItemNotFoundInStore(format!(
             "Batch number {batch_number} not found in store"
         )));
     };
@@ -513,7 +513,7 @@ async fn create_prover_input(
         .blockchain
         .generate_witness_for_blocks(&blocks)
         .await
-        .map_err(ProverServerError::from)?;
+        .map_err(ProofCoordinatorError::from)?;
 
     // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
     let (blob_commitment, blob_proof) = if state.validium {
@@ -523,7 +523,7 @@ async fn create_prover_input(
             .rollup_store
             .get_blobs_by_batch(batch_number)
             .await?
-            .ok_or(ProverServerError::MissingBlob(batch_number))?;
+            .ok_or(ProofCoordinatorError::MissingBlob(batch_number))?;
         let BlobsBundle {
             mut commitments,
             mut proofs,
@@ -531,7 +531,7 @@ async fn create_prover_input(
         } = BlobsBundle::create_from_blobs(&blob)?;
         match (commitments.pop(), proofs.pop()) {
             (Some(commitment), Some(proof)) => (commitment, proof),
-            _ => return Err(ProverServerError::MissingBlob(batch_number)),
+            _ => return Err(ProofCoordinatorError::MissingBlob(batch_number)),
         }
     };
 
@@ -551,18 +551,18 @@ async fn create_prover_input(
 async fn fetch_blocks(
     state: &ProofCoordinatorState,
     block_numbers: Vec<u64>,
-) -> Result<Vec<Block>, ProverServerError> {
+) -> Result<Vec<Block>, ProofCoordinatorError> {
     let mut blocks = vec![];
     for block_number in block_numbers {
         let header = state
             .store
             .get_block_header(block_number)?
-            .ok_or(ProverServerError::StorageDataIsNone)?;
+            .ok_or(ProofCoordinatorError::StorageDataIsNone)?;
         let body = state
             .store
             .get_block_body(block_number)
             .await?
-            .ok_or(ProverServerError::StorageDataIsNone)?;
+            .ok_or(ProofCoordinatorError::StorageDataIsNone)?;
         blocks.push(Block::new(header, body));
     }
     Ok(blocks)
