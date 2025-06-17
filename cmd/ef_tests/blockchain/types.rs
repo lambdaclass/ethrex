@@ -9,6 +9,7 @@ use ethrex_common::{Address, Bloom, H64, H256, U256, types::BlockHeader};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::deserialize::deserialize_block_expected_exception;
 use crate::network::Network;
 
 #[derive(Debug, Deserialize)]
@@ -176,7 +177,12 @@ pub struct BlockWithRLP {
     pub rlp: Bytes,
     #[serde(flatten)]
     inner: Option<BlockInner>,
-    pub expect_exception: Option<String>,
+    #[serde(
+        rename = "expectException",
+        default,
+        deserialize_with = "deserialize_block_expected_exception"
+    )]
+    pub expect_exception: Option<Vec<BlockChainExpectedException>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
@@ -477,4 +483,25 @@ impl From<Account> for GenesisAccount {
             nonce: val.nonce.as_u64(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+pub enum BlockChainExpectedException {
+    TxtException(String),
+    BlockException(BlockExpectedException),
+    RLPException,
+    Other,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+pub enum BlockExpectedException {
+    RLPStructuresEncoding,
+    IncorrectBlobGasUsed,
+    BlobGasUsedAboveLimit,
+    IncorrectExcessBlobGas,
+    IncorrectBlockFormat,
+    InvalidRequest,
+    SystemContractEmpty,
+    SystemContractCallFailed,
+    Other, //TODO: Implement exceptions
 }
