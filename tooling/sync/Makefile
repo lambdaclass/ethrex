@@ -107,6 +107,9 @@ holesky-lighthouse: ## Start lighthouse for holesky.
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
+		--metrics \
+  		--metrics-address 0.0.0.0 \
+  		--metrics-port 5054 \
 		--datadir $(DATA_PATH)/holesky_data/lighthouse_${NODE_NAME}_$(EVM) \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
 
@@ -119,10 +122,11 @@ hoodi-lighthouse: ## Start lighthouse for hoodi.
 		--http \
 		--http-address 0.0.0.0 \
 		--http-allow-origin "*" \
+		--metrics \
+  		--metrics-address 0.0.0.0 \
+  		--metrics-port 5054 \
 		--datadir $(DATA_PATH)/hoodi_data/lighthouse_${NODE_NAME}_$(EVM) \
 		--disable-deposit-contract-sync --port $(LIGHTHOUSE_PORT) --discovery-port $(LIGHTHOUSE_DISCOVERY_PORT) --http-port 5053
-
-
 
 backup-db: ## Back-up the store db. EVM and NETWORK environment variables need to be provided to select which DB to back up.
 ifndef NETWORK
@@ -139,10 +143,13 @@ endif
 
 
 start_ethrex_hoodi: ## Start ethrex for hoodi
-	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
+    		--http.addr 0.0.0.0 \
     		--http.port 8545 \
     		--authrpc.port 8551 \
     		--p2p.port 30303\
+    		--metrics \
+    		--metrics.port 3701 \
     		--discovery.port 30303 \
     		--network hoodi \
     		--datadir "hoodi_data/ethrex/$(EVM)" \
@@ -151,10 +158,13 @@ start_ethrex_hoodi: ## Start ethrex for hoodi
     		--evm $(EVM)
 
 start_ethrex_holesky: ## Start ethrex for holesky
-	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test" --bin ethrex -- \
+	cd $(ETHREX_DIR) && RUST_LOG=3 cargo run --release --features "libmdbx sync-test metrics" --bin ethrex -- \
+    		--http.addr 0.0.0.0 \
     		--http.port 8545 \
     		--authrpc.port 8551 \
     		--p2p.port 30303\
+    		--metrics \
+    		--metrics.port 3701 \
     		--discovery.port 30303 \
     		--network holesky \
     		--datadir "holesky_data/ethrex/$(EVM)" \
@@ -162,6 +172,21 @@ start_ethrex_holesky: ## Start ethrex for holesky
     		--bootnodes $(HOLESKY_BOOTNODES) \
     		--evm $(EVM)
 
+start_hoodi_metrics_docker: ## Start L1 docker compose, lighthouse in background, and ethrex for hoodi
+	@echo "Starting L1 docker compose with metrics..."
+	cd $(ETHREX_DIR)/crates/blockchain/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
+	@echo "Starting lighthouse in background..."
+	cd $(ETHREX_DIR)/tooling/sync && nohup make hoodi-lighthouse > /dev/null 2>&1 &
+	@echo "Starting ethrex..."
+	cd $(ETHREX_DIR)/tooling/sync && make start_ethrex_hoodi
+
+start_holesky_metrics_docker: ## Start L1 docker compose, lighthouse in background, and ethrex for holesky
+	@echo "Starting L1 docker compose with metrics..."
+	cd $(ETHREX_DIR)/crates/blockchain/metrics && docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d
+	@echo "Starting lighthouse in background..."
+	cd $(ETHREX_DIR)/tooling/sync && nohup make holesky-lighthouse > /dev/null 2>&1 &
+	@echo "Starting ethrex..."
+	cd $(ETHREX_DIR)/tooling/sync && make start_ethrex_holesky
 
 tail-syncing-logs: ## Tail the syncing logs for a given log file. Environment variable LOGNAME with the name of the file needs to be provided.
 ifndef LOGNAME
