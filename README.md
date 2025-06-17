@@ -8,7 +8,7 @@ Minimalist, stable, modular and fast implementation of the Ethereum protocol in 
 [tg-badge]: https://img.shields.io/endpoint?url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Fethrex_client%2F&logo=telegram&label=chat&color=neon
 [tg-url]: https://t.me/ethrex_client
 
-# L1 and L2 support
+# L1 and L2 suppor
 
 This client supports running in two different modes:
 
