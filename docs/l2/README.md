@@ -1,7 +1,9 @@
 # Ethrex L2 documentation
 
-- [General Overview](./overview.md) for a high-level view of the ethrex L2 stack.
+For general documentation, see:
+
 - [Getting started](./getting_started.md) contains a brief guide on setting up an ethrex L2 stack.
+- [General Overview](./overview.md) for a high-level view of the ethrex L2 stack.
 - [Based roadmap (draft)](./roadmap.md) contains ethrex's roadmap for becoming based.
 - [Smart contracts](./contracts.md) has information on L1 and L2 smart contracts.
 - [Components](./components.md) for more detailed documentation on each off-chain component.
