@@ -7,22 +7,20 @@
   - [Intro](#intro)
   - [Workflow](#workflow)
   - [How](#how)
-    - [Test](#test)
     - [L1 block proving](#l1-block-proving)
     - [Dev Mode](#dev-mode)
       - [Run the whole system with the prover - In one Machine](#run-the-whole-system-with-the-prover---in-one-machine)
     - [GPU mode](#gpu-mode)
-      - [Proving Process Test](#proving-process-test)
       - [Run the whole system with a GPU Prover](#run-the-whole-system-with-a-gpu-prover)
   - [Configuration](#configuration)
   - [How it works](#how-it-works)
     - [Program inputs](#program-inputs)
       - [Execution witness](#execution-witness)
-    - [Blocks execution program](#block-execution-program)
+    - [Blocks execution program](#blocks-execution-program)
       - [Prelude 1: state trie basics](#prelude-1-state-trie-basics)
       - [Prelude 2: deposits, withdrawals and state diffs](#prelude-2-deposits-withdrawals-and-state-diffs)
       - [Step 1: initial state validation](#step-1-initial-state-validation)
-      - [Step 2: blocks execution](#step-2-block-execution)
+      - [Step 2: blocks execution](#step-2-blocks-execution)
       - [Step 3: final state validation](#step-3-final-state-validation)
       - [Step 4: deposit hash calculation](#step-4-deposit-hash-calculation)
       - [Step 5: withdrawals Merkle root calculation](#step-5-withdrawals-merkle-root-calculation)
@@ -170,9 +168,10 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
 
 ## Configuration
 
-Configuration is done through environment variables. The easiest way to configure the `Prover` is by creating a `prover_client_config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
+Configuration is done through environment variables or CLI flags.
+You can see a list of available flags by passing `--help` to the CLI.
 
-The following environment variables are available to configure the `Prover`, consider looking at the provided [prover_client_config_example.toml](../configs/prover_client_config_example.toml):
+The following environment variables are available to configure the `Prover`:
 
 - `CONFIGS_PATH`: The path where the `PROVER_CLIENT_CONFIG_FILE` is located at.
 - `PROVER_CLIENT_CONFIG_FILE`: The `.toml` that contains the config for the `Prover`.
@@ -221,6 +220,7 @@ These inputs are required for proof generation, but not all of them are committe
 The purpose of the execution witness is to allow executing the blocks without having access to the whole Ethereum state, as it wouldn't fit in a zkVM program. It contains only the state values needed during the execution.
 
 An execution witness (represented by the `ProverDB` type) contains:
+
 1. all the initial state values (accounts, code, storage, block hashes) that will be read or written to during the blocks' execution.
 2. Merkle Patricia Trie (MPT) proofs that prove the inclusion or exclusion of each initial value in the initial world state trie.
 
@@ -236,7 +236,8 @@ Steps 1-3 are straightforward. Step 4 involves more complex logic due to potenti
 If a value is removed during block execution (meaning it existed initially but not finally), two pathological cases can occur where the witness lacks sufficient information to update the trie structure correctly:
 
 **Case 1**
-![](img/execw_case1.png)
+
+![Image showing restructuration for case 1](img/execw_case1.png)
 
 Here, only **leaf 1** is part of the execution witness, so we lack the proof (and thus the node data) for **leaf 2**. After removing **leaf 1**, **branch 1** becomes redundant. During trie restructuring, it's replaced by **leaf 3**, whose path is the path of **leaf 2** concatenated with a prefix nibble (`k`) representing the choice taken at the original **branch 1**, and keeping **leaf 2**'s value.
 
@@ -249,7 +250,9 @@ leaf3 = {value, concat(k, path)} # New leaf replacing branch1 and leaf2
 Without **leaf 2**'s data, we cannot construct **leaf 3**. The solution is to fetch the _final_ state proof for the key of **leaf 2**. This yields an exclusion proof containing **leaf 3**. By removing the prefix nibble `k`, we can reconstruct the original path and value of **leaf 2**. This process might need to be repeated if similar restructuring occurred at higher levels of the trie.
 
 **Case 2**
-![](img/execw_case2.png)
+
+![Image showing restructuration for case 2](img/execw_case2.png)
+
 In this case, restructuring requires information about **branch/ext 2** (which could be a branch or extension node), but this node might not be in the witness. Checking the final **extension** node might seem sufficient to deduce **branch/ext 2** in simple scenarios. However, this fails if similar restructuring occurred at higher trie levels involving more removals, as the final **extension** node might combine paths from multiple original branches, making it ambiguous to reconstruct the specific missing **branch/ext 2** node.
 
 The solution is to fetch the missing node directly using a `debug` JSON-RPC method, like `debug_dbGet` (or `debug_accountRange` and `debug_storageRangeAt` if using a Geth node).
@@ -287,9 +290,10 @@ These three components are specific additions for ethrex's L2 protocol, layered 
 For more details, refer to [Overview](overview.md), [Withdrawals](withdrawals.md), and [State diffs](state_diffs.md).
 
 #### Step 1: initial state validation
+
 The program validates the `ProverDB` by iterating over each provided state value (stored in hash maps) and verifying its MPT proof against the initial state hash (obtained from the first block's parent block header input). This is the role of the `verify_db()` function (to link the values with the proofs). We could instead directly decode the data from the MPT proofs on each EVM read/write, although this would incur performance costs.
 
-Having the initial state proofs (paths from the root to each relevant leaf) is equivalent to having a relevant subset of the world state trie and storage tries – a set of "pruned tries". This allows operating directly on these pruned tries (adding, removing, modifying values) during execution.
+Having the initial state proofs (paths from the root to each relevant leaf) is equivalent to having a relevant subset of the world state trie and storage tries - a set of "pruned tries". This allows operating directly on these pruned tries (adding, removing, modifying values) during execution.
 
 #### Step 2: blocks execution
 
