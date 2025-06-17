@@ -173,6 +173,7 @@ cargo run --release --bin ethrex --features l2 -- l2 init \
   --block-producer.coinbase-address 0xacb3bb54d7c5295c158184044bdeedd9aa426607 \
   --committer.l1-private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 \
   --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
   --network test_data/genesis-l2.json \
   --datadir ethrex_l2 \
   --proof-coordinator.addr 127.0.0.1 \

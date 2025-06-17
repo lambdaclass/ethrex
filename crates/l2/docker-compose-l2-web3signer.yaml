@@ -26,3 +26,4 @@ services:
       --committer.remote-signer-public-key 02eadbea0cdb17fda8d56fc9c51df8a6158c2ab157aabf2ca57c3a32cd69f98bbc 
       --proof-coordinator.remote-signer-url http://web3signer:9000 
       --proof-coordinator.remote-signer-public-key 029a87812d21330c485e2ab11fbbcc875fd3ecda9e74c3964d8de9a95560b64f21 
+      --proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
