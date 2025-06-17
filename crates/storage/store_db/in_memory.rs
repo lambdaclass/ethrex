@@ -6,9 +6,12 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
-use ethrex_common::types::{
-    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Index, Receipt,
+use ethrex_common::{
+    types::{
+        payload::PayloadBundle, AccountInfo, AccountState, Block, BlockBody, BlockHash,
+        BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
+    },
+    Address,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
@@ -113,6 +116,27 @@ impl StoreEngine for Store {
         } else {
             Ok(None)
         }
+    }
+
+    fn write_latest_accounts_batch(
+        &self,
+        account_addresses: Vec<Address>,
+        account_infos: Vec<AccountState>,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
+
+    fn get_latest_account(&self, address: Address) -> Result<Option<AccountState>, StoreError> {
+        todo!()
+    }
+
+    async fn write_latest_storages_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        todo!()
     }
 
     async fn get_block_bodies(

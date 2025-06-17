@@ -17,6 +17,8 @@ use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt, Transaction,
 };
+use ethrex_common::types::{Account, AccountInfo};
+use ethrex_common::Address;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
@@ -78,6 +80,23 @@ impl Store {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
+    // Helper method to write into a libmdbx table in batch
+    fn write_batch_sync<T: Table>(
+        &self,
+        key_values: Vec<(T::Key, T::Value)>,
+    ) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+
+        let mut cursor = txn.cursor::<T>().map_err(StoreError::LibmdbxError)?;
+        for (key, value) in key_values {
+            cursor
+                .upsert(key, value)
+                .map_err(StoreError::LibmdbxError)?;
+        }
+        txn.commit().map_err(StoreError::LibmdbxError)
+    }
+
     // Helper method to read from a libmdbx table
     async fn read<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
         let db = self.db.clone();
@@ -133,8 +152,13 @@ impl StoreEngine for Store {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
             // store account updates
-            for (node_hash, node_data) in query_plan.account_updates.0 {
-                tx.upsert::<StateTrieNodes>(node_hash.into(), node_data)
+            // for (node_hash, node_data) in query_plan.account_updates.0 {
+            //     tx.upsert::<StateTrieNodes>(node_hash.into(), node_data)
+            //         .map_err(StoreError::LibmdbxError)?;
+            // }
+
+            for (address, account_state) in query_plan.new_latest_accounts {
+                tx.upsert::<LatestAccounts>(address.into(), account_state.into())
                     .map_err(StoreError::LibmdbxError)?;
             }
 
@@ -1123,6 +1147,27 @@ impl StoreEngine for Store {
         .await
     }
 
+    fn write_latest_accounts_batch(
+        &self,
+        account_addresses: Vec<Address>,
+        account_states: Vec<AccountState>,
+    ) -> Result<(), StoreError> {
+        self.write_batch_sync::<LatestAccounts>(
+            account_addresses
+                .into_iter()
+                .map(|h| h.into())
+                .zip(account_states.into_iter().map(|a| a.into()))
+                .collect(),
+        )
+    }
+
+    fn get_latest_account(&self, address: Address) -> Result<Option<AccountState>, StoreError> {
+        self.read_sync::<LatestAccounts>(address.into())
+            .map(|o| o.map(|a| a.to()))?
+            .transpose()
+            .map_err(StoreError::from)
+    }
+
     async fn write_snapshot_storage_batch(
         &self,
         account_hash: H256,
@@ -1159,6 +1204,30 @@ impl StoreEngine for Store {
             {
                 for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
                     txn.upsert::<StorageSnapShot>(account_hash.into(), (key.into(), value.into()))
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+            }
+            txn.commit().map_err(StoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    async fn write_latest_storages_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+            for (account_hash, (storage_keys, storage_values)) in account_hashes
+                .into_iter()
+                .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
+            {
+                for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
+                    txn.upsert::<LatestStorage>(account_hash.into(), (key.into(), value.into()))
                         .map_err(StoreError::LibmdbxError)?;
                 }
             }
@@ -1469,6 +1538,16 @@ table!(
     ( StateTrieNodes ) NodeHash => Vec<u8>
 );
 
+table!(
+    /// State Snapshot used by an ongoing sync process
+    ( LatestAccounts ) Rlp<Address> => Rlp<AccountState>
+);
+
+dupsort!(
+    /// Storage Snapshot used by an ongoing sync process
+    ( LatestStorage ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
+);
+
 // Local Blocks
 
 table!(
@@ -1596,6 +1675,8 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(TransactionLocations),
         table_info!(ChainData),
         table_info!(StateTrieNodes),
+        table_info!(LatestAccounts),
+        table_info!(LatestStorage),
         table_info!(StorageTriesNodes),
         table_info!(CanonicalBlockHashes),
         table_info!(Payloads),

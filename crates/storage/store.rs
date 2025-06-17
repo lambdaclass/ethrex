@@ -97,24 +97,43 @@ impl Store {
         }
     }
 
+    // pub fn get_account_info_by_hash(
+    //     &self,
+    //     block_hash: BlockHash,
+    //     address: Address,
+    // ) -> Result<Option<AccountInfo>, StoreError> {
+    //     let Some(state_trie) = self.state_trie(block_hash)? else {
+    //         return Ok(None);
+    //     };
+    //     let hashed_address = hash_address(&address);
+    //     let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+    //         return Ok(None);
+    //     };
+    //     let account_state = AccountState::decode(&encoded_state)?;
+    //     Ok(Some(AccountInfo {
+    //         code_hash: account_state.code_hash,
+    //         balance: account_state.balance,
+    //         nonce: account_state.nonce,
+    //     }))
+    // }
+
     pub fn get_account_info_by_hash(
         &self,
-        block_hash: BlockHash,
+        _block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
-            return Ok(None);
-        };
-        let account_state = AccountState::decode(&encoded_state)?;
-        Ok(Some(AccountInfo {
-            code_hash: account_state.code_hash,
-            balance: account_state.balance,
-            nonce: account_state.nonce,
-        }))
+        let account_state = self.engine.get_latest_account(address)?;
+
+        if let Some(state) = account_state {
+            dbg!(&state.nonce);
+            Ok(Some(AccountInfo {
+                code_hash: state.code_hash,
+                balance: state.balance,
+                nonce: state.nonce,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     pub async fn add_block_header(
@@ -331,6 +350,7 @@ impl Store {
             H256,
             Vec<(NodeHash, Vec<u8>)>,
             Vec<(Vec<u8>, Vec<(NodeHash, Vec<u8>)>)>,
+            Vec<(Address, AccountState)>,
         )>,
         StoreError,
     > {
@@ -338,11 +358,16 @@ impl Store {
             return Ok(None);
         };
 
-        let (state_trie_hash, state_query_plan, query_plan) = self
+        let (state_trie_hash, state_query_plan, query_plan, ret_vec_new_latest_accounts) = self
             .apply_account_updates_from_trie_batch(state_trie, account_updates)
             .await?;
 
-        Ok(Some((state_trie_hash, state_query_plan, query_plan)))
+        Ok(Some((
+            state_trie_hash,
+            state_query_plan,
+            query_plan,
+            ret_vec_new_latest_accounts,
+        )))
     }
 
     pub async fn apply_account_updates_from_trie_batch(
@@ -354,23 +379,31 @@ impl Store {
             H256,
             Vec<(NodeHash, Vec<u8>)>,
             Vec<(Vec<u8>, Vec<(NodeHash, Vec<u8>)>)>,
+            Vec<(Address, AccountState)>,
         ),
         StoreError,
     > {
         let mut ret_vec_account = Vec::new();
+        let mut ret_vec_new_latest_accounts = vec![];
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
             if update.removed {
                 // Remove account from trie
-                state_trie.remove(hashed_address)?;
+                // state_trie.remove(hashed_address)?;
                 continue;
             }
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
-            let mut account_state = match state_trie.get(&hashed_address)? {
-                Some(encoded_state) => AccountState::decode(&encoded_state)?,
+            // let mut account_state = match state_trie.get(&hashed_address)? {
+            //     Some(encoded_state) => AccountState::decode(&encoded_state)?,
+            //     None => AccountState::default(),
+            // };
+
+            let mut account_state = match self.engine.get_latest_account(update.address)? {
+                Some(account_state) => account_state,
                 None => AccountState::default(),
             };
+
             if let Some(info) = &update.info {
                 account_state.nonce = info.nonce;
                 account_state.balance = info.balance;
@@ -398,11 +431,17 @@ impl Store {
                 account_state.storage_root = storage_hash;
                 ret_vec_account.push((hashed_address.clone(), storage_query_plan));
             }
-            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            // state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            ret_vec_new_latest_accounts.push((update.address, account_state));
         }
         let (state_hash, state_query_plan) = state_trie.hash_prepare_batch();
 
-        Ok((state_hash, state_query_plan, ret_vec_account))
+        Ok((
+            state_hash,
+            state_query_plan,
+            ret_vec_account,
+            ret_vec_new_latest_accounts,
+        ))
     }
 
     /// Applies account updates based on the block's latest storage state
@@ -501,6 +540,8 @@ impl Store {
                 code_hash,
             };
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            self.engine
+                .write_latest_accounts_batch(vec![address], vec![account_state])?;
         }
         genesis_state_trie.hash().map_err(StoreError::Trie)
     }
@@ -757,18 +798,21 @@ impl Store {
     /// Obtain the storage trie for the given account on the given block
     pub fn storage_trie(
         &self,
-        block_hash: BlockHash,
+        _block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<Trie>, StoreError> {
         // Fetch Account from state_trie
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        // let Some(state_trie) = self.state_trie(block_hash)? else {
+        //     return Ok(None);
+        // };
+        // let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+        //     return Ok(None);
+        // };
+        let Some(account) = self.engine.get_latest_account(address)? else {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
-        let Some(encoded_account) = state_trie.get(&hashed_address)? else {
-            return Ok(None);
-        };
-        let account = AccountState::decode(&encoded_account)?;
+        // let account = AccountState::decode(&encoded_account)?;
         // Open storage_trie
         let storage_root = account.storage_root;
         Ok(Some(self.engine.open_storage_trie(

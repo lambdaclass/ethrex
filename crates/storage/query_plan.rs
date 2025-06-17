@@ -1,7 +1,7 @@
 use crate::{error::StoreError, Store};
 use ethrex_common::{
-    types::{Block, Receipt},
-    H256,
+    types::{AccountState, Block, Receipt},
+    Address, H256,
 };
 use ethrex_trie::NodeHash;
 
@@ -10,6 +10,7 @@ pub struct QueryPlan {
         Vec<(NodeHash, Vec<u8>)>,                 // vec<(node_hash, node_data)>
         Vec<(Vec<u8>, Vec<(NodeHash, Vec<u8>)>)>, // hashed_address, vec<(node_hash, node_data)>
     ),
+    pub new_latest_accounts: Vec<(Address, AccountState)>,
     pub block: Block,
     pub receipts: (H256, Vec<Receipt>),
 }

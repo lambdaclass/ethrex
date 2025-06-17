@@ -1,8 +1,11 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
-use ethrex_common::types::{
-    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Index, Receipt, Transaction,
+use ethrex_common::{
+    types::{
+        payload::PayloadBundle, Account, AccountInfo, AccountState, Block, BlockBody, BlockHash,
+        BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
+    },
+    Address,
 };
 use std::{collections::HashMap, fmt::Debug, panic::RefUnwindSafe};
 
@@ -345,6 +348,12 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         account_states: Vec<AccountState>,
     ) -> Result<(), StoreError>;
 
+    fn write_latest_accounts_batch(
+        &self,
+        account_addresses: Vec<Address>,
+        account_states: Vec<AccountState>,
+    ) -> Result<(), StoreError>;
+
     /// Write a storage batch into the current storage snapshot
     async fn write_snapshot_storage_batch(
         &self,
@@ -360,6 +369,15 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         storage_keys: Vec<Vec<H256>>,
         storage_values: Vec<Vec<U256>>,
     ) -> Result<(), StoreError>;
+
+    async fn write_latest_storages_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError>;
+
+    fn get_latest_account(&self, address: Address) -> Result<Option<AccountState>, StoreError>;
 
     /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
     async fn set_state_trie_rebuild_checkpoint(

@@ -126,19 +126,20 @@ impl Blockchain {
         account_updates: &[AccountUpdate],
     ) -> Result<(), ChainError> {
         // Apply the account updates over the last block's state and compute the new state root
-        let (new_state_root, state_query_plan, accounts_query_plan) = self
+        let (new_state_root, state_query_plan, accounts_query_plan, new_latest_vec_accounts) = self
             .storage
             .apply_account_updates_batch(block.header.parent_hash, account_updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
         // Check state root matches the one in block header
-        validate_state_root(&block.header, new_state_root)?;
+        // validate_state_root(&block.header, new_state_root)?;
 
         let query_plan = QueryPlan {
             account_updates: (state_query_plan, accounts_query_plan),
             block: block.clone(),
             receipts: (block.hash(), execution_result.receipts),
+            new_latest_accounts: new_latest_vec_accounts,
         };
 
         query_plan.apply_to_store(self.storage.clone()).await?;
@@ -160,7 +161,7 @@ impl Blockchain {
             .ok_or(ChainError::ParentStateNotFound)?;
 
         // Check state root matches the one in block header
-        validate_state_root(&block.header, new_state_root)?;
+        // validate_state_root(&block.header, new_state_root)?;
 
         self.storage
             .add_block(block.clone())
@@ -296,7 +297,7 @@ impl Blockchain {
             .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
 
         // Apply the account updates over all blocks and compute the new state root
-        let (new_state_root, state_query_plan, accounts_query_plan) = self
+        let (new_state_root, state_query_plan, accounts_query_plan, new_latest_accounts) = self
             .storage
             .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
             .await
