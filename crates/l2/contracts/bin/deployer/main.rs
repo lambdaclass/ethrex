@@ -21,7 +21,7 @@ use ethrex_l2_sdk::{
 };
 use ethrex_rpc::{
     EthClient,
-    clients::{Overrides, eth::BlockByNumber},
+    clients::{Overrides, eth::{get_address_from_secret_key, BlockByNumber}},
 };
 use keccak_hash::H256;
 use tracing::{Level, debug, error, info, trace, warn};
@@ -205,8 +205,10 @@ async fn deploy_contracts(
     let on_chain_proposer_deployment = deploy_with_proxy(
         deployer,
         eth_client,
+        &opts.contracts_path.join("solc_out"),
         "OnChainProposer.bin",
         &salt,
+    )
     .await?;
     info!(
         "OnChainProposer deployed:\n  Proxy -> address={:#x}, tx_hash={:#x}\n  Impl  -> address={:#x}, tx_hash={:#x}",
@@ -239,7 +241,7 @@ async fn deploy_contracts(
         info!("Deploying SequencerRegistry");
 
         let sequencer_registry_deployment = deploy_with_proxy(
-            opts.private_key,
+            deployer,
             eth_client,
             &opts.contracts_path.join("solc_out"),
             "SequencerRegistry.bin",
@@ -382,7 +384,7 @@ async fn initialize_contracts(
 
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
-    info!("Initializing OnChainProposer");
+    info!("Initializing OnChainProposer"); 
 
     if opts.deploy_based_contracts {
         // Initialize OnChainProposer with Based config and SequencerRegistry
@@ -404,10 +406,12 @@ async fn initialize_contracts(
             &calldata_values,
         )?;
 
+        let deployer = Signer::Local(LocalSigner::new(opts.private_key));
+
         let initialize_tx_hash = initialize_contract(
             contract_addresses.on_chain_proposer_address,
             on_chain_proposer_initialization_calldata,
-            &opts.private_key,
+            &deployer,
             eth_client,
         )
         .await?;
@@ -428,7 +432,7 @@ async fn initialize_contracts(
             initialize_contract(
                 contract_addresses.sequencer_registry_address,
                 sequencer_registry_initialization_calldata,
-                &opts.private_key,
+                &deployer,
                 eth_client,
             )
             .await?

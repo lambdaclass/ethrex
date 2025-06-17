@@ -4,7 +4,6 @@ use ethrex_common::{Address, U256};
 use ethrex_l2_sdk::calldata::{Value, encode_calldata};
 use ethrex_rpc::EthClient;
 use ethrex_storage_rollup::StoreRollup;
-use secp256k1::SecretKey;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
 use spawned_rt::mpsc::Sender;
 use tracing::{debug, error, info};
@@ -29,9 +28,6 @@ use aligned_sdk::{
 };
 
 use ethers::signers::{Signer, Wallet};
-use ethrex_storage_rollup::StoreRollup;
-use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
-use spawned_rt::mpsc::Sender;
 
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes,bytes)";

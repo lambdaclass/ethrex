@@ -14,10 +14,10 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
 };
 use ethrex_common::{
-    Address, H160, U256,
+    Address, H160,
     types::{
-        Block, EIP1559Transaction, Genesis, GenesisAccount, LegacyTransaction, Signable,
-        Transaction, TxKind, payload::PayloadBundle,
+        Block, EIP1559Transaction, Genesis, GenesisAccount, Signable,
+        Transaction, TxKind, payload::PayloadBundle, signer::{Signer, LocalSigner}
     },
 };
 use ethrex_storage::{EngineType, Store};
@@ -112,19 +112,8 @@ fn read_private_keys() -> Vec<SecretKey> {
 }
 
 fn recover_address_for_sk(sk: &SecretKey) -> Address {
-    let mut tx = Transaction::LegacyTransaction(LegacyTransaction {
-        nonce: 0,
-        gas_price: 1,
-        to: TxKind::Call(H160::random()),
-        value: U256::zero(),
-        data: Bytes::new(),
-        v: U256::one(),
-        r: U256::one(),
-        s: U256::one(),
-        gas: 21000,
-    });
-    tx.sign_inplace(sk);
-    tx.sender()
+    let signer = Signer::Local(LocalSigner::new(*sk));
+    signer.address()
 }
 
 async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
@@ -171,6 +160,7 @@ async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u
 async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
     let mut txs = vec![];
     for sk in accounts {
+        let signer = Signer::Local(LocalSigner::new(sk));
         for n in 0..1000 {
             let mut tx = Transaction::EIP1559Transaction(EIP1559Transaction {
                 nonce: n,
@@ -182,7 +172,7 @@ async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
                 to: TxKind::Call(H160::random()),
                 ..Default::default()
             });
-            tx.sign_inplace(&sk);
+            let _ = tx.sign_inplace(&signer).await;
             txs.push(tx);
         }
     }
