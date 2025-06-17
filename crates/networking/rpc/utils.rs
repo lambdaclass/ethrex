@@ -271,38 +271,22 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
     }
 }
 
-pub fn merkle_proof(data: Vec<H256>, base_element: H256) -> Option<Vec<H256>> {
+pub fn merkle_proof(data: Vec<H256>, mut index: usize) -> Option<Vec<H256>> {
     use keccak_hash::keccak;
 
-    if !data.contains(&base_element) {
-        return None;
-    }
-
     let mut proof = vec![];
-    let mut data = data;
-
-    let mut target_hash = base_element;
-    let mut first = true;
-    while data.len() > 1 || first {
-        first = false;
-        let current_target = target_hash;
-        data = data
+    let mut current = data.clone();
+    while current.len() > 1 {
+        proof.push(*current.get(index ^ 1).or(current.get(index))?);
+        index /= 2;
+        current = current
             .chunks(2)
-            .flat_map(|chunk| -> Option<H256> {
-                let left = chunk.first().copied()?;
-
-                let right = chunk.get(1).copied().unwrap_or(left);
-                let result = keccak([left.as_bytes(), right.as_bytes()].concat())
+            .map(|chunk| -> H256 {
+                let left = *chunk.first().unwrap_or(&H256::zero());
+                let right = *chunk.get(1).unwrap_or(&left);
+                keccak([left.as_bytes(), right.as_bytes()].concat())
                     .as_fixed_bytes()
-                    .into();
-                if left == current_target {
-                    proof.push(right);
-                    target_hash = result;
-                } else if right == current_target {
-                    proof.push(left);
-                    target_hash = result;
-                }
-                Some(result)
+                    .into()
             })
             .collect();
     }

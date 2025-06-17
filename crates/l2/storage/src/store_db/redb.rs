@@ -253,13 +253,13 @@ impl StoreEngineRollup for RedBStoreRollup {
         &self,
         transaction_inc: u64,
         deposits_inc: u64,
-        withdrawals_inc: u64,
+        messages_inc: u64,
     ) -> Result<(), StoreError> {
-        let (transaction_count, withdrawals_count, deposits_count) = {
+        let (transaction_count, messages_count, deposits_count) = {
             let current_operations = self.get_operations_count().await?;
             (
                 current_operations[0] + transaction_inc,
-                current_operations[1] + withdrawals_inc,
+                current_operations[1] + messages_inc,
                 current_operations[2] + deposits_inc,
             )
         };
@@ -268,7 +268,7 @@ impl StoreEngineRollup for RedBStoreRollup {
             OPERATIONS_COUNTS,
             0,
             OperationsCountRLP::from_bytes(
-                vec![transaction_count, withdrawals_count, deposits_count].encode_to_vec(),
+                vec![transaction_count, messages_count, deposits_count].encode_to_vec(),
             ),
         )
         .await

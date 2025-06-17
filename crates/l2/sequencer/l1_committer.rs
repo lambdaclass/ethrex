@@ -259,7 +259,7 @@ async fn prepare_batch_from_block(
     let mut acc_messages = vec![];
     let mut acc_deposits = vec![];
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
-    let mut withdrawal_hashes = vec![];
+    let mut message_hashes = vec![];
     let mut deposit_logs_hashes = vec![];
     let mut new_state_root = H256::default();
 
@@ -310,8 +310,8 @@ async fn prepare_batch_from_block(
                 .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
                 .unwrap_or(0)
         );
-        // Get block withdrawals and deposits
-        let messages = get_block_messages(&receipts);
+        // Get block messages and deposits
+        let messages = get_block_messages(&txs, &receipts);
         let deposits = get_block_deposits(&txs);
 
         // Get block account updates.
@@ -379,9 +379,6 @@ async fn prepare_batch_from_block(
         // Save current blobs_bundle and continue to add more blocks.
         blobs_bundle = bundle;
         _blob_size = latest_blob_size;
-        for msg in &acc_messages {
-            withdrawal_hashes.push(get_l1message_hash(msg));
-        }
 
         deposit_logs_hashes.extend(
             deposits
@@ -401,13 +398,13 @@ async fn prepare_batch_from_block(
         last_added_block_number += 1;
     }
 
-    metrics!(if let (Ok(deposits_count), Ok(withdrawals_count)) = (
+    metrics!(if let (Ok(deposits_count), Ok(messages_count)) = (
             deposit_logs_hashes.len().try_into(),
-            withdrawal_hashes.len().try_into()
+            message_hashes.len().try_into()
         ) {
             let _ = state
                 .rollup_store
-                .update_operations_count(tx_count, deposits_count, withdrawals_count)
+                .update_operations_count(tx_count, deposits_count, messages_count)
                 .await
                 .inspect_err(|e| {
                     tracing::error!("Failed to update operations metric: {}", e.to_string())
@@ -419,10 +416,13 @@ async fn prepare_batch_from_block(
     );
 
     let deposit_logs_hash = compute_deposit_logs_hash(deposit_logs_hashes)?;
+    for msg in &acc_messages {
+        message_hashes.push(get_l1message_hash(msg));
+    }
     Ok((
         blobs_bundle,
         new_state_root,
-        withdrawal_hashes,
+        message_hashes,
         deposit_logs_hash,
         last_added_block_number,
     ))
@@ -446,12 +446,12 @@ async fn send_commitment(
     state: &mut CommitterState,
     batch: &Batch,
 ) -> Result<H256, CommitterError> {
-    let withdrawals_merkle_root = compute_merkle_root(&batch.message_hashes)?;
+    let messages_merkle_root = compute_merkle_root(&batch.message_hashes)?;
     let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
     let calldata_values = vec![
         Value::Uint(U256::from(batch.number)),
         Value::FixedBytes(batch.state_root.0.to_vec().into()),
-        Value::FixedBytes(withdrawals_merkle_root.0.to_vec().into()),
+        Value::FixedBytes(messages_merkle_root.0.to_vec().into()),
         Value::FixedBytes(batch.deposit_logs_hash.0.to_vec().into()),
         Value::FixedBytes(last_block_hash.0.to_vec().into()),
     ];

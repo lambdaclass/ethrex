@@ -170,11 +170,11 @@ impl StateDiff {
             encoded.extend(account_encoded);
         }
 
-        let withdrawal_len: u16 = self.l1messages.len().try_into()?;
-        encoded.extend(withdrawal_len.to_be_bytes());
-        for withdrawal in self.l1messages.iter() {
-            let withdrawal_encoded = withdrawal.encode();
-            encoded.extend(withdrawal_encoded);
+        let message_len: u16 = self.l1messages.len().try_into()?;
+        encoded.extend(message_len.to_be_bytes());
+        for message in self.l1messages.iter() {
+            let message_encoded = message.encode();
+            encoded.extend(message_encoded);
         }
 
         let deposits_len: u16 = self.deposit_logs.len().try_into()?;
@@ -225,10 +225,11 @@ impl StateDiff {
 
         let mut l1messages = Vec::with_capacity(l1messages_len.into());
         for _ in 0..l1messages_len {
+            let tx = decoder.get_h256()?;
             let from = decoder.get_address()?;
             let data = decoder.get_h256()?;
 
-            l1messages.push(L1Message { from, data });
+            l1messages.push(L1Message { from, data, tx });
         }
 
         let deposit_logs_len = decoder.get_u16()?;

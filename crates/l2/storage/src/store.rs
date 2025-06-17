@@ -215,8 +215,9 @@ impl Store {
         })?;
         let message_hashes = self
             .get_message_hashes_by_batch(batch_number)
-            .await?.ok_or(StoreError::Custom(
-            "Failed while trying to retrieve the withdrawal hashes of a known batch. This is a bug."
+            .await?
+            .ok_or(StoreError::Custom(
+            "Failed while trying to retrieve the message hashes of a known batch. This is a bug."
                 .to_owned(),
         ))?;
         let deposit_logs_hash = self
@@ -261,10 +262,10 @@ impl Store {
         &self,
         transaction_inc: u64,
         deposits_inc: u64,
-        withdrawals_inc: u64,
+        messages_inc: u64,
     ) -> Result<(), StoreError> {
         self.engine
-            .update_operations_count(transaction_inc, deposits_inc, withdrawals_inc)
+            .update_operations_count(transaction_inc, deposits_inc, messages_inc)
             .await
     }
 

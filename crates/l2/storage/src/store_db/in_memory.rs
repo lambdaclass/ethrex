@@ -31,7 +31,7 @@ struct StoreInner {
     blobs: HashMap<u64, Vec<Blob>>,
     /// Lastest sent batch proof
     lastest_sent_batch_proof: u64,
-    /// Metrics for transaction, deposits and withdrawals count
+    /// Metrics for transaction, deposits and messages count
     operations_counts: [u64; 3],
 }
 
@@ -80,11 +80,11 @@ impl StoreEngineRollup for Store {
     async fn store_message_hashes_by_batch(
         &self,
         batch_number: u64,
-        withdrawals: Vec<H256>,
+        messages: Vec<H256>,
     ) -> Result<(), StoreError> {
         self.inner()?
             .message_hashes_by_batch
-            .insert(batch_number, withdrawals);
+            .insert(batch_number, messages);
         Ok(())
     }
 
@@ -178,12 +178,12 @@ impl StoreEngineRollup for Store {
         &self,
         transaction_inc: u64,
         deposits_inc: u64,
-        withdrawals_inc: u64,
+        messages_inc: u64,
     ) -> Result<(), StoreError> {
         let mut values = self.inner()?.operations_counts;
         values[0] += transaction_inc;
         values[1] += deposits_inc;
-        values[2] += withdrawals_inc;
+        values[2] += messages_inc;
         Ok(())
     }
 

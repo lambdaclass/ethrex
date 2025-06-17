@@ -119,7 +119,7 @@ impl GenServer for L1Watcher {
                     .await
                     .inspect_err(|err| error!("L1 Watcher Error: {err}"))
                 {
-                    // We may not have a deposit nor a withdrawal, that means no events -> no logs.
+                    // We may not have a deposit nor a message, that means no events -> no logs.
                     if !logs.is_empty() {
                         let _ = process_logs(state, logs)
                             .await

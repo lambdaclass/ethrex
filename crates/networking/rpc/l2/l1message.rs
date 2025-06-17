@@ -48,10 +48,17 @@ impl RpcHandler for GetL1MessageProof {
             Some(receipt) => receipt,
             _ => return Ok(Value::Null),
         };
+        let tx = match storage
+            .get_transaction_by_hash(self.transaction_hash)
+            .await?
+        {
+            Some(tx) => tx,
+            _ => return Ok(Value::Null),
+        };
 
         // Gets the message hashes from the transaction
-        let tx_message_hashes =
-            get_block_message_hashes(&[tx_receipt]).map_err(|e| RpcErr::Internal(e.to_string()))?;
+        let tx_message_hashes = get_block_message_hashes(&[tx], &[tx_receipt])
+            .map_err(|e| RpcErr::Internal(e.to_string()))?;
 
         // Gets the batch number for the block
         let batch_number = match context
@@ -84,7 +91,7 @@ impl RpcHandler for GetL1MessageProof {
             };
 
             // Calculates the merkle proof of the batch
-            let Some(path) = merkle_proof(batch_message_hashes.clone(), message_hash) else {
+            let Some(path) = merkle_proof(batch_message_hashes.clone(), index) else {
                 return Ok(Value::Null);
             };
 

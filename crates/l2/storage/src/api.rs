@@ -25,13 +25,13 @@ pub trait StoreEngineRollup: Debug + Send + Sync + RefUnwindSafe {
         batch_number: u64,
     ) -> Result<(), StoreError>;
 
-    /// Gets the withdrawal hashes by a given batch number.
+    /// Gets the message hashes by a given batch number.
     async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, StoreError>;
 
-    /// Stores the withdrawal hashes by a given batch number.
+    /// Stores the message hashes by a given batch number.
     async fn store_message_hashes_by_batch(
         &self,
         batch_number: u64,
@@ -88,7 +88,7 @@ pub trait StoreEngineRollup: Debug + Send + Sync + RefUnwindSafe {
         &self,
         transaction_inc: u64,
         deposits_inc: u64,
-        withdrawals_inc: u64,
+        messages_inc: u64,
     ) -> Result<(), StoreError>;
 
     async fn get_operations_count(&self) -> Result<[u64; 3], StoreError>;

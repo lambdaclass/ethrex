@@ -52,7 +52,7 @@ pub struct ProgramOutput {
     /// final state trie root hash
     pub final_state_hash: H256,
     #[cfg(feature = "l2")]
-    /// merkle root of all withdrawals in a batch
+    /// merkle root of all messages in a batch
     pub l1messages_merkle_root: H256,
     #[cfg(feature = "l2")]
     /// hash of all the deposit logs made in a batch
