@@ -17,7 +17,7 @@ pub struct SystemContractsUpdaterOptions {
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_GENESIS_L1_PATH",
         help_heading = "Deployer options",
-        help = "Path to the genesis file. The default is ../../test_data/fixtures/genesis/l1-dev.json"
+        help = "Path to the genesis file. The default is ../../../../../test_data/fixtures/genesis/l1-dev.json"
     )]
     pub l2_genesis_path: PathBuf,
 }
