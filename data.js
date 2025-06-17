@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750169593097,
+  "lastUpdate": 1750170443412,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12955,6 +12955,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182245903333,
             "range": "± 384786843",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "823a3e522a3fb96a7ade39d2bde939baa4a33066",
+          "message": "feat(l2): read test variables from env (#3148)\n\n**Motivation**\n\nWe want to run the integration test in our staging server, for this we\nneed to be able to set some of the constants to different values than\nthe defaults\n\n**Description**\n\n- Use std::env::var() to try and read the var from the environment, else\nuse the default value",
+          "timestamp": "2025-06-17T13:33:40Z",
+          "tree_id": "e7aefb8d9e67e796983a2a8aa6ee4491de02c7c0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/823a3e522a3fb96a7ade39d2bde939baa4a33066"
+        },
+        "date": 1750170436891,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183445095640,
+            "range": "± 404948914",
             "unit": "ns/iter"
           }
         ]
