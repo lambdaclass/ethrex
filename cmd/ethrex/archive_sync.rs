@@ -152,14 +152,15 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
 }
 
 async fn process_dump_storage(
-    dump_storage: HashMap<H256, U256>,
+    dump_storage: HashMap<H256, DumpStorageValue>,
     store: Store,
     hashed_address: H256,
     storage_root: H256,
 ) -> eyre::Result<()> {
     let mut trie = store.open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
     for (key, val) in dump_storage {
-        trie.insert(key.0.to_vec(), val.encode_to_vec())?;
+        // The key we receive is the preimage of the one stored in the trie
+        trie.insert(keccak(key.0).0.to_vec(), val.0.encode_to_vec())?;
     }
     if trie.hash()? != storage_root {
         Err(eyre::ErrReport::msg(
