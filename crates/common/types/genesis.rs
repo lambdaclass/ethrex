@@ -52,8 +52,8 @@ impl TryFrom<&Path> for Genesis {
     type Error = String;
 
     fn try_from(genesis_file_path: &Path) -> Result<Self, Self::Error> {
-        let genesis_file =
-            std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
+        let genesis_file = std::fs::File::open(genesis_file_path)
+            .map_err(|e| format!("Failed to open genesis file: {}", e))?;
         let genesis_reader = BufReader::new(genesis_file);
         let genesis: Genesis =
             serde_json::from_reader(genesis_reader).map_err(|m| m.to_string())?;
