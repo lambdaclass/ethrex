@@ -134,14 +134,12 @@ impl GenServer for StateUpdater {
 }
 
 pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpdaterError> {
-    let calldata = encode_calldata("leaderSequencer()", &[])?;
-
     let lead_sequencer = hash_to_address(
         state
             .eth_client
             .call(
                 state.sequencer_registry_address,
-                calldata.into(),
+                encode_calldata("leaderSequencer()", &[])?.into(),
                 Overrides::default(),
             )
             .await?
@@ -160,60 +158,74 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
     )
     .await?;
 
-    let new_status = if lead_sequencer == state.sequencer_address {
-        if node_is_up_to_date {
-            // if the block fetcher sync to the current batch we have to change to Following
-            if let SequencerStatus::Syncing = state.sequencer_state.status().await {
-                state
-                    .sequencer_state
-                    .new_status(SequencerStatus::Following)
-                    .await;
-            }
-            SequencerStatus::Sequencing
-        } else {
-            warn!(
-                "Node should transition to sequencing but it is not up to date, continue syncing."
-            );
-            SequencerStatus::Syncing
-        }
-    } else if node_is_up_to_date {
-        SequencerStatus::Following
-    } else {
-        SequencerStatus::Syncing
-    };
-
     let current_state = state.sequencer_state.status().await;
 
-    match (current_state, new_status.clone()) {
-        (SequencerStatus::Following, SequencerStatus::Following) => {
-            info!("Node is up to date, following the lead sequencer.");
-        }
-        (curr, new) if curr == new => {}
-        (SequencerStatus::Sequencing, _) => {
+    let new_status = determine_new_status(
+        &current_state,
+        node_is_up_to_date,
+        lead_sequencer == state.sequencer_address,
+    );
+
+    if current_state != new_status {
+        info!("State transition: {:?} -> {:?}", current_state, new_status);
+
+        if current_state == SequencerStatus::Sequencing {
             info!("Stopping sequencing.");
             revert_uncommitted_state(state).await?;
         }
-        (SequencerStatus::Following, SequencerStatus::Sequencing) => {
-            info!("Now the lead sequencer. Starting sequencing.");
+
+        if new_status == SequencerStatus::Sequencing {
+            info!("Starting sequencing as lead sequencer.");
             revert_uncommitted_state(state).await?;
         }
-        (_, SequencerStatus::Syncing) => {
-            info!("Node is not up to date, syncing...");
-        }
-        (SequencerStatus::Syncing, SequencerStatus::Sequencing) => {
-            return Err(StateUpdaterError::InternalError(
-                "This cannot happen, sequencer cannot be syncing and new state is sequencing"
-                    .to_string(),
-            ));
-        }
-        (SequencerStatus::Syncing, SequencerStatus::Following) => {
-            info!("Node reached up to date batch, following now.");
-        }
-    };
 
+        match new_status {
+            // This case is handled above, it is redundant here.
+            SequencerStatus::Sequencing => {
+                info!("Node is now the lead sequencer.");
+            }
+            SequencerStatus::Following => {
+                info!("Node is up to date and following the lead sequencer.");
+            }
+            SequencerStatus::Syncing => {
+                info!("Node is synchronizing to catch up with the latest state.");
+            }
+        }
+    }
+
+    // Update the state
     state.sequencer_state.new_status(new_status).await;
 
     Ok(())
+}
+
+fn determine_new_status(
+    current_state: &SequencerStatus,
+    node_is_up_to_date: bool,
+    is_lead_sequencer: bool,
+) -> SequencerStatus {
+    match (node_is_up_to_date, is_lead_sequencer) {
+        // A node can be the lead sequencer only if it is up to date.
+        (true, true) => {
+            if *current_state == SequencerStatus::Syncing {
+                SequencerStatus::Following
+            } else {
+                SequencerStatus::Sequencing
+            }
+        }
+        // If the node is up to date but not the lead sequencer, it follows the lead sequencer.
+        (true, false) => {
+            info!("Node is up to date and following the lead sequencer.");
+            SequencerStatus::Following
+        }
+        // If the node is not up to date, it should sync.
+        (false, _) => {
+            if is_lead_sequencer && *current_state == SequencerStatus::Syncing {
+                warn!("Node is not up to date but is the lead sequencer, continue syncing.");
+            }
+            SequencerStatus::Syncing
+        }
+    }
 }
 
 /// Reverts state to the last committed batch if known.
