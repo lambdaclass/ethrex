@@ -9,6 +9,7 @@ use ethrex_rlp::{
 
 use super::node::{BranchNode, ExtensionNode, LeafNode, Node};
 use crate::{NodeHash, node::NodeRef};
+use ethereum_types::H256;
 use std::sync::{Arc, OnceLock};
 
 enum NodeType {
@@ -90,14 +91,20 @@ impl RLPDecode for ExtensionNode {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (prefix, decoder) = decoder.decode_field("prefix")?;
-        let (child, decoder) = decoder.decode_field("child")?;
-        Ok((
-            Self {
-                prefix,
-                child: NodeRef::Hash(child),
+        let (child, decoder) = decoder.decode_field::<NodeHash>("child")?;
+
+        let child = match child {
+            NodeHash::Hashed(hash) => NodeRef::Hash(hash),
+            NodeHash::Inline((data, len)) => match len {
+                0 => NodeRef::Hash(H256::default()),
+                _ => NodeRef::Node(
+                    Arc::new(Node::decode_raw(&data[..len as usize])?),
+                    OnceLock::from(NodeHash::Inline((data, len))),
+                ),
             },
-            decoder.finish()?,
-        ))
+        };
+
+        Ok((Self { prefix, child }, decoder.finish()?))
     }
 }
 
