@@ -55,8 +55,12 @@ impl TryFrom<String> for EvmEngine {
 #[derive(Clone)]
 pub enum Evm {
     #[cfg(feature = "revm")]
-    REVM { state: EvmState },
-    LEVM { db: GeneralizedDatabase },
+    REVM {
+        state: EvmState,
+    },
+    LEVM {
+        db: GeneralizedDatabase,
+    },
 }
 
 impl std::fmt::Debug for Evm {
