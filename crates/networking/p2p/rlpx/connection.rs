@@ -579,7 +579,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.requested_pooled_txs
                     .insert(request_id, new_pooled_transaction_hashes);
 
-                let request = GetPooledTransactions::new(request_id, hashes_to_request);
+                let request = GetPooledTransactions::new(request_id, hashes);
                 self.send(Message::GetPooledTransactions(request)).await?;
             }
             Message::GetPooledTransactions(msg) => {
