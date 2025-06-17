@@ -34,10 +34,7 @@ contract SequencerRegistry is
 
         ON_CHAIN_PROPOSER = onChainProposer;
 
-        require(
-            owner != address(0),
-            "SequencerRegistry: Invalid owner"
-        );
+        require(owner != address(0), "SequencerRegistry: Invalid owner");
 
         OwnableUpgradeable.__Ownable_init(owner);
     }
