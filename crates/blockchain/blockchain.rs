@@ -614,6 +614,7 @@ pub fn validate_gas_used(
 ) -> Result<(), ChainError> {
     if let Some(last) = receipts.last() {
         // Note: This is commented because it is still being used in development.
+        // dbg!(last.cumulative_gas_used);
         if last.cumulative_gas_used != block_header.gas_used {
             return Err(ChainError::InvalidBlock(InvalidBlockError::GasUsedMismatch));
         }
