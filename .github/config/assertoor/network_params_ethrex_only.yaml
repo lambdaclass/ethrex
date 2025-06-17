@@ -11,14 +11,22 @@ network_params:
   electra_fork_epoch: 0 # This field won't be needed when ethereum-package is merged
 
 additional_services:
-  - assertoor
+#  - assertoor
   - dora
+  - spamoor
+  - prometheus_grafana
 
-assertoor_params:
-  run_stability_check: false
-  run_block_proposal_check: false
-  tests:
-    - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml
-    - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/blob-transactions-test.yaml
-    - https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml
-    - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/all-opcodes-test.yaml
+spamoor_params:
+  spammers:
+    - scenario: erctx
+      config:
+        count: 40
+
+# assertoor_params:
+#   run_stability_check: false
+#   run_block_proposal_check: false
+#   tests:
+#     - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml
+#     - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/blob-transactions-test.yaml
+#     - https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml
+#     - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/all-opcodes-test.yaml
