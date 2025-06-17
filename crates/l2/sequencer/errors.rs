@@ -21,8 +21,8 @@ use tokio::task::JoinError;
 pub enum SequencerError {
     #[error("Failed to start L1Watcher: {0}")]
     L1WatcherError(#[from] L1WatcherError),
-    #[error("Failed to start ProverServer: {0}")]
-    ProverServerError(#[from] ProverServerError),
+    #[error("Failed to start ProofCoordinator: {0}")]
+    ProofCoordinatorError(#[from] ProofCoordinatorError),
     #[error("Failed to start BlockProducer: {0}")]
     BlockProducerError(#[from] BlockProducerError),
     #[error("Failed to start Committer: {0}")]
@@ -64,46 +64,46 @@ pub enum L1WatcherError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ProverServerError {
-    #[error("ProverServer connection failed: {0}")]
+pub enum ProofCoordinatorError {
+    #[error("ProofCoordinator connection failed: {0}")]
     ConnectionError(#[from] std::io::Error),
-    #[error("ProverServer failed because of an EthClient error: {0}")]
+    #[error("ProofCoordinator failed because of an EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
-    #[error("ProverServer failed to send transaction: {0}")]
+    #[error("ProofCoordinator failed to send transaction: {0}")]
     FailedToVerifyProofOnChain(String),
-    #[error("ProverServer failed to access Store: {0}")]
+    #[error("ProofCoordinator failed to access Store: {0}")]
     FailedAccessingStore(#[from] StoreError),
-    #[error("ProverServer failed to retrieve block from storaga, data is None.")]
+    #[error("ProofCoordinator failed to retrieve block from storaga, data is None.")]
     StorageDataIsNone,
-    #[error("ProverServer failed to create ProverInputs: {0}")]
+    #[error("ProofCoordinator failed to create ProverInputs: {0}")]
     FailedToCreateProverInputs(#[from] EvmError),
-    #[error("ProverServer failed to create ExecutionWitness: {0}")]
+    #[error("ProofCoordinator failed to create ExecutionWitness: {0}")]
     FailedToCreateExecutionWitness(#[from] ChainError),
-    #[error("ProverServer JoinError: {0}")]
+    #[error("ProofCoordinator JoinError: {0}")]
     JoinError(#[from] JoinError),
-    #[error("ProverServer failed: {0}")]
+    #[error("ProofCoordinator failed: {0}")]
     Custom(String),
-    #[error("ProverServer failed to write to TcpStream: {0}")]
+    #[error("ProofCoordinator failed to write to TcpStream: {0}")]
     WriteError(String),
-    #[error("ProverServer failed to get data from Store: {0}")]
+    #[error("ProofCoordinator failed to get data from Store: {0}")]
     ItemNotFoundInStore(String),
-    #[error("ProverServer encountered a SaveStateError: {0}")]
+    #[error("ProofCoordinator encountered a SaveStateError: {0}")]
     SaveStateError(#[from] SaveStateError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Unexpected Error: {0}")]
     InternalError(String),
-    #[error("ProverServer failed when (de)serializing JSON: {0}")]
+    #[error("ProofCoordinator failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
-    #[error("ProverServer encountered a StateDiffError")]
+    #[error("ProofCoordinator encountered a StateDiffError")]
     StateDiffError(#[from] StateDiffError),
-    #[error("ProverServer encountered a ExecutionCacheError")]
+    #[error("ProofCoordinator encountered a ExecutionCacheError")]
     ExecutionCacheError(#[from] ExecutionCacheError),
-    #[error("ProverServer encountered a BlobsBundleError: {0}")]
+    #[error("ProofCoordinator encountered a BlobsBundleError: {0}")]
     BlobsBundleError(#[from] ethrex_common::types::BlobsBundleError),
     #[error("Failed to execute command: {0}")]
     ComandError(std::io::Error),
-    #[error("ProverServer failed failed because of a ProverDB error: {0}")]
+    #[error("ProofCoordinator failed failed because of a ProverDB error: {0}")]
     ProverDBError(#[from] ProverDBError),
     #[error("Missing blob for batch {0}")]
     MissingBlob(u64),
