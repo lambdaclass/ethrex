@@ -120,6 +120,69 @@ impl Trie {
         Ok(())
     }
 
+    /// Update an RLP-encoded value into the trie.
+    ///
+    /// If on_get returns None, no insert will be done.
+    pub fn update<T>(&mut self, path: PathRLP, on_get: T) -> Result<(), TrieError>
+    where
+        T: FnOnce(Option<ValueRLP>) -> Option<ValueRLP>,
+    {
+        /*
+        Should:
+        - Get the value
+        - If the value is not found, and some value is returned from the on_get, add it.
+        If the insert_node is None, insert as the new root.
+
+         */
+        let path = Nibbles::from_bytes(&path);
+
+        if !self.root.is_valid() {
+            // If the trie is empty, just add a leaf.
+            let new_value = on_get(None);
+
+            if let Some(value) = new_value {
+                self.root = Node::from(LeafNode::new(path, value)).into();
+            }
+
+            return Ok(());
+        }
+
+        let mut insert_node = None;
+        // First, get the previous value.
+        let prev = match self.root {
+            NodeRef::Node(ref node, _) => {
+                let value = node.get(self.db.as_ref(), path.clone())?;
+                insert_node = Some(node.clone());
+                value
+            }
+            NodeRef::Hash(hash) if hash.is_valid() => {
+                let node = Arc::new(
+                    Node::decode(&self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?)
+                        .map_err(TrieError::RLPDecode)?,
+                );
+
+                let value = node.get(self.db.as_ref(), path.clone())?;
+                insert_node = Some(node);
+
+                value
+            }
+            _ => None,
+        };
+
+        let new_value = on_get(prev);
+        if let Some(value) = new_value {
+            if let Some(insert_node) = insert_node {
+                self.root = (*insert_node)
+                    .clone()
+                    .insert(self.db(), path, value)?
+                    .into();
+            } else {
+                self.root = Node::from(LeafNode::new(path, value)).into();
+            }
+        }
+        Ok(())
+    }
+
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: PathRLP) -> Result<Option<ValueRLP>, TrieError> {
