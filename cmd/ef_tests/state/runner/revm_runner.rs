@@ -113,7 +113,7 @@ pub async fn re_run_failed_ef_test(
                 EFTestRunnerError::Internal(reason) => {
                     return Err(EFTestRunnerError::Internal(reason.to_owned()));
                 }
-                Err(EFTestRunnerError::TestsFailed) => {
+                EFTestRunnerError::TestsFailed => {
                     unreachable!(
                         "An EFTestRunnerError::TestsFailed can't happen at this point. This error is only thrown in run_ef_tests under the summary flag"
                     )

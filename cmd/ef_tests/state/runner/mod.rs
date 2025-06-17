@@ -95,13 +95,10 @@ pub async fn run_ef_tests(
     }
     if opts.summary {
         if reports.iter().any(|r| !r.passed()) {
-            println!("{}", EFTestsReport(
-                reports
-                    .iter()
-                    .filter(|&r| !r.passed())
-                    .cloned()
-                    .collect(),
-            ););
+            println!(
+                "{}",
+                EFTestsReport(reports.iter().filter(|&r| !r.passed()).cloned().collect(),)
+            );
             return Err(EFTestRunnerError::TestsFailed);
         }
         return Ok(());
