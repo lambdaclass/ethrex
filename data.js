@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750182523999,
+  "lastUpdate": 1750188320350,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13225,6 +13225,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 185081171485,
             "range": "± 614495935",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "89949621+ricomateo@users.noreply.github.com",
+            "name": "Mateo Rico",
+            "username": "ricomateo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5669bfd963f333e53823de07d660fce46b7fe0dc",
+          "message": "chore(l2): rename `ProverServerError` to `ProofCoordinatorError` (#3190)\n\n**Motivation**\n\nThe `ProofCoordinator` error type is currently named\n`ProverServerError`, however it should be named `ProofCoordinatorError`\nfor consistency.\n\n**Description**\n\nRenames the `ProverServerError` type to `ProofCoordinatorError`.",
+          "timestamp": "2025-06-17T18:32:47Z",
+          "tree_id": "22bf8e3e30d4945a2936f759072582ebb3d7168d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5669bfd963f333e53823de07d660fce46b7fe0dc"
+        },
+        "date": 1750188313824,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182972268672,
+            "range": "± 413941256",
             "unit": "ns/iter"
           }
         ]
