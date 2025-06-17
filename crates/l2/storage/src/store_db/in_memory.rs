@@ -5,8 +5,8 @@ use std::{
 };
 
 use ethrex_common::{
-    types::{Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 use ethrex_storage::error::StoreError;
 
@@ -19,8 +19,8 @@ pub struct Store(Arc<Mutex<StoreInner>>);
 struct StoreInner {
     /// Map of batches by block numbers
     batches_by_block: HashMap<BlockNumber, u64>,
-    /// Map of withdrawals hashes by batch numbers
-    withdrawal_hashes_by_batch: HashMap<u64, Vec<H256>>,
+    /// Map of message hashes by batch numbers
+    message_hashes_by_batch: HashMap<u64, Vec<H256>>,
     /// Map of batch number to block numbers
     block_numbers_by_batch: HashMap<u64, Vec<BlockNumber>>,
     /// Map of batch number to deposit logs hash
@@ -66,24 +66,24 @@ impl StoreEngineRollup for Store {
         Ok(())
     }
 
-    async fn get_withdrawal_hashes_by_batch(
+    async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, StoreError> {
         Ok(self
             .inner()?
-            .withdrawal_hashes_by_batch
+            .message_hashes_by_batch
             .get(&batch_number)
             .cloned())
     }
 
-    async fn store_withdrawal_hashes_by_batch(
+    async fn store_message_hashes_by_batch(
         &self,
         batch_number: u64,
         withdrawals: Vec<H256>,
     ) -> Result<(), StoreError> {
         self.inner()?
-            .withdrawal_hashes_by_batch
+            .message_hashes_by_batch
             .insert(batch_number, withdrawals);
         Ok(())
     }

@@ -1,8 +1,8 @@
 use std::{panic::RefUnwindSafe, sync::Arc};
 
 use ethrex_common::{
-    types::{Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -10,14 +10,14 @@ use redb::{AccessGuard, Database, Key, TableDefinition, Value};
 
 use crate::{
     api::StoreEngineRollup,
-    rlp::{BlockNumbersRLP, OperationsCountRLP, Rlp, WithdrawalHashesRLP},
+    rlp::{BlockNumbersRLP, MessageHashesRLP, OperationsCountRLP, Rlp},
 };
 
 const BATCHES_BY_BLOCK_NUMBER_TABLE: TableDefinition<BlockNumber, u64> =
     TableDefinition::new("BatchesByBlockNumbers");
 
-const WITHDRAWALS_BY_BATCH: TableDefinition<u64, WithdrawalHashesRLP> =
-    TableDefinition::new("WithdrawalHashesByBatch");
+const MESSAGES_BY_BATCH: TableDefinition<u64, MessageHashesRLP> =
+    TableDefinition::new("MesageHashesByBatch");
 
 const BLOCK_NUMBERS_BY_BATCH: TableDefinition<u64, BlockNumbersRLP> =
     TableDefinition::new("BlockNumbersByBatch");
@@ -65,7 +65,7 @@ impl RedBStoreRollup {
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let write_txn = db.begin_write()?;
+            let write_txn = db.begin_write().map_err(Box::new)?;
             write_txn.open_table(table)?.insert(key, value)?;
             write_txn.commit()?;
 
@@ -89,7 +89,7 @@ impl RedBStoreRollup {
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let read_txn = db.begin_read()?;
+            let read_txn = db.begin_read().map_err(Box::new)?;
             let table = read_txn.open_table(table)?;
             let result = table.get(key)?;
             Ok(result)
@@ -102,10 +102,10 @@ impl RedBStoreRollup {
 pub fn init_db() -> Result<Database, StoreError> {
     let db = Database::create("ethrex_l2.redb")?;
 
-    let table_creation_txn = db.begin_write()?;
+    let table_creation_txn = db.begin_write().map_err(Box::new)?;
 
     table_creation_txn.open_table(BATCHES_BY_BLOCK_NUMBER_TABLE)?;
-    table_creation_txn.open_table(WITHDRAWALS_BY_BATCH)?;
+    table_creation_txn.open_table(MESSAGES_BY_BATCH)?;
     table_creation_txn.open_table(OPERATIONS_COUNTS)?;
     table_creation_txn.open_table(BLOB_BUNDLES)?;
     table_creation_txn.open_table(STATE_ROOTS)?;
@@ -138,25 +138,25 @@ impl StoreEngineRollup for RedBStoreRollup {
             .await
     }
 
-    async fn get_withdrawal_hashes_by_batch(
+    async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, StoreError> {
         Ok(self
-            .read(WITHDRAWALS_BY_BATCH, batch_number)
+            .read(MESSAGES_BY_BATCH, batch_number)
             .await?
             .map(|w| w.value().to()))
     }
 
-    async fn store_withdrawal_hashes_by_batch(
+    async fn store_message_hashes_by_batch(
         &self,
         batch_number: u64,
-        withdrawals: Vec<H256>,
+        messages: Vec<H256>,
     ) -> Result<(), StoreError> {
         self.write(
-            WITHDRAWALS_BY_BATCH,
+            MESSAGES_BY_BATCH,
             batch_number,
-            <Vec<H256> as Into<WithdrawalHashesRLP>>::into(withdrawals),
+            <Vec<H256> as Into<MessageHashesRLP>>::into(messages),
         )
         .await
     }

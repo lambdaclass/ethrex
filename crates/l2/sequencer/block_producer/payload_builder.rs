@@ -2,23 +2,23 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use ethrex_blockchain::{
-    constants::TX_GAS_COST,
-    payload::{apply_plain_transaction, HeadTransaction, PayloadBuildContext, PayloadBuildResult},
     Blockchain,
+    constants::TX_GAS_COST,
+    payload::{HeadTransaction, PayloadBuildContext, PayloadBuildResult, apply_plain_transaction},
 };
 use ethrex_common::{
-    types::{Block, Receipt, Transaction, SAFE_BYTES_PER_BLOB},
     Address,
+    types::{Block, Receipt, SAFE_BYTES_PER_BLOB, Transaction},
 };
 use ethrex_l2_common::state_diff::{
-    AccountStateDiff, StateDiffError, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN,
-    SIMPLE_TX_STATE_DIFF_SIZE, WITHDRAWAL_LOG_LEN,
+    AccountStateDiff, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN, L1MESSAGE_LOG_LEN,
+    SIMPLE_TX_STATE_DIFF_SIZE, StateDiffError,
 };
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{
     metrics_blocks::METRICS_BLOCKS,
-    metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX},
+    metrics_transactions::{METRICS_TX, MetricsTxStatus, MetricsTxType},
 };
 use ethrex_storage::Store;
 use ethrex_vm::{Evm, EvmError};
@@ -221,7 +221,7 @@ pub async fn fill_transactions(
             &head_tx,
             &receipt,
             *DEPOSITS_LOG_LEN,
-            *WITHDRAWAL_LOG_LEN,
+            *L1MESSAGE_LOG_LEN,
         )?;
 
         if acc_size_without_accounts + tx_size_without_accounts + new_accounts_diff_size
@@ -268,7 +268,7 @@ fn get_account_diffs_in_tx(
         Evm::REVM { .. } => {
             return Err(BlockProducerError::EvmError(EvmError::InvalidEVM(
                 "REVM not supported for L2".to_string(),
-            )))
+            )));
         }
         Evm::LEVM { db } => {
             let transaction_backup = db.get_tx_backup().map_err(|e| {

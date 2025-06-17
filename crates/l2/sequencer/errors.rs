@@ -5,11 +5,11 @@ use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::deposits::DepositError;
+use ethrex_l2_common::l1messages::L1MessagingError;
 use ethrex_l2_common::state_diff::StateDiffError;
-use ethrex_l2_common::withdrawals::WithdrawalError;
 use ethrex_l2_sdk::merkle_tree::MerkleError;
-use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
+use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
 use ethrex_vm::{EvmError, ProverDBError};
 use spawned_concurrency::GenServerError;
@@ -227,8 +227,8 @@ pub enum CommitterError {
     FailedToGetWithdrawals(#[from] UtilsError),
     #[error("Deposit error: {0}")]
     DepositError(#[from] DepositError),
-    #[error("Withdrawal error: {0}")]
-    WithdrawalError(#[from] WithdrawalError),
+    #[error("L1Message error: {0}")]
+    L1MessageError(#[from] L1MessagingError),
     #[error("Spawned GenServer Error")]
     GenServerError(GenServerError),
 }
@@ -239,7 +239,9 @@ pub enum BlobEstimationError {
     OverflowError,
     #[error("Failed to calculate blob gas due to invalid parameters")]
     CalculationError,
-    #[error("Blob gas estimation resulted in an infinite or undefined value. Outside valid or expected ranges")]
+    #[error(
+        "Blob gas estimation resulted in an infinite or undefined value. Outside valid or expected ranges"
+    )]
     NonFiniteResult,
     #[error("{0}")]
     FakeExponentialError(#[from] FakeExponentialError),

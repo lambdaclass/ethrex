@@ -3,7 +3,7 @@ use std::{
     io::{BufReader, BufWriter},
 };
 
-use ethrex_common::types::{block_execution_witness::ExecutionWitnessResult, Block};
+use ethrex_common::types::{Block, block_execution_witness::ExecutionWitnessResult};
 
 use serde::{Deserialize, Serialize};
 

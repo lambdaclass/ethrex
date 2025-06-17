@@ -1,4 +1,4 @@
-use ethrex_common::{types::Transaction, Address, H256};
+use ethrex_common::H256;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 use serde::{Deserialize, Serialize};
@@ -271,23 +271,6 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
     }
 }
 
-/// Returns the formated hash of the withdrawal transaction,
-/// or None if the transaction is not a withdrawal.
-/// The hash is computed as keccak256(to || value || tx_hash)
-pub fn get_withdrawal_hash(tx: &Transaction) -> Option<H256> {
-    let to_bytes: [u8; 20] = match tx.data().get(16..36)?.try_into() {
-        Ok(value) => value,
-        Err(_) => return None,
-    };
-    let to = Address::from(to_bytes);
-
-    let value = tx.value().to_big_endian();
-
-    Some(keccak_hash::keccak(
-        [to.as_bytes(), &value, tx.compute_hash().as_bytes()].concat(),
-    ))
-}
-
 pub fn merkle_proof(data: Vec<H256>, base_element: H256) -> Option<Vec<H256>> {
     use keccak_hash::keccak;
 
@@ -343,12 +326,12 @@ pub mod test_utils {
 
     use crate::{
         eth::gas_tip_estimator::GasTipEstimator,
-        rpc::{start_api, NodeData, RpcApiContext},
+        rpc::{NodeData, RpcApiContext, start_api},
     };
     #[cfg(feature = "l2")]
     use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
     #[cfg(feature = "l2")]
-    use secp256k1::{rand, SecretKey};
+    use secp256k1::{SecretKey, rand};
 
     pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
     pub fn example_p2p_node() -> Node {

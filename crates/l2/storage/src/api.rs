@@ -3,8 +3,8 @@
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use ethrex_common::{
-    types::{Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 use ethrex_storage::error::StoreError;
 
@@ -26,16 +26,16 @@ pub trait StoreEngineRollup: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     /// Gets the withdrawal hashes by a given batch number.
-    async fn get_withdrawal_hashes_by_batch(
+    async fn get_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, StoreError>;
 
     /// Stores the withdrawal hashes by a given batch number.
-    async fn store_withdrawal_hashes_by_batch(
+    async fn store_message_hashes_by_batch(
         &self,
         batch_number: u64,
-        withdrawal_hashes: Vec<H256>,
+        message_hashes: Vec<H256>,
     ) -> Result<(), StoreError>;
 
     /// Stores the block numbers by a given batch_number

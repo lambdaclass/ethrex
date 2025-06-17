@@ -1,24 +1,25 @@
 use crate::{
+    DEFAULT_L2_DATADIR,
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
         init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
     },
     l2::options::Options,
-    utils::{set_datadir, store_node_config_file, NodeConfigFile},
-    DEFAULT_L2_DATADIR,
+    utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
 use clap::Subcommand;
 use ethrex_common::{
-    types::{batch::Batch, bytes_from_blob, BlobsBundle, BlockHeader, BYTES_PER_BLOB},
     Address, U256,
+    types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
 };
 use ethrex_l2::SequencerConfig;
+use ethrex_l2_common::l1messages::get_l1message_hash;
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
-    clients::{beacon::BeaconClient, eth::BlockByNumber},
     EthClient,
+    clients::{beacon::BeaconClient, eth::BlockByNumber},
 };
 use ethrex_storage::{EngineType, Store, UpdateBatch};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
@@ -53,9 +54,7 @@ pub enum Command {
         #[arg(long = "force", required = false, action = clap::ArgAction::SetTrue)]
         force: bool,
     },
-    #[command(
-        about = "Launch a server that listens for Blobs submissions and saves them offline."
-    )]
+    #[command(about = "Launch a server that listens for Blobs submissions and saves them offline.")]
     BlobsSaver {
         #[arg(
             short = 'c',
@@ -362,19 +361,10 @@ impl Command {
                             new_trie = store.open_state_trie(new_state_root).expect("Error opening new state trie");
 
                             // Get withdrawal hashes
-                            let withdrawal_hashes = state_diff
-                                .withdrawal_logs
+                            let message_hashes = state_diff
+                                .l1messages
                                 .iter()
-                                .map(|w| {
-                                    keccak_hash::keccak(
-                                        [
-                                            w.address.as_bytes(),
-                                            &w.amount.to_big_endian(),
-                                            w.tx_hash.as_bytes(),
-                                        ]
-                                        .concat(),
-                                    )
-                                })
+                                .map(get_l1message_hash)
                                 .collect();
 
                             // Get the first block of the batch
@@ -412,7 +402,7 @@ impl Command {
                                 last_block: new_block.number,
                                 state_root: new_block.state_root,
                                 deposit_logs_hash: H256::zero(),
-                                withdrawal_hashes,
+                                message_hashes,
                                 blobs_bundle: BlobsBundle::empty(),
                             };
 

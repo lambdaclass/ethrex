@@ -1,15 +1,11 @@
 use std::sync::LazyLock;
 
 use ethereum_types::{Address, H256};
-use ethrex_common::{
-    types::{Receipt, Transaction, TxKind},
-    H160, U256,
-};
+use ethrex_common::{H160, types::Receipt};
 use keccak_hash::keccak;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use ethrex_l2_sdk::calldata::{Value, encode_tuple};
 
 pub const L1MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -19,15 +15,15 @@ pub const L1MESSENGER_ADDRESS: Address = H160([
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct L1Message {
     pub from: Address,
-    pub data: Bytes,
+    pub data: H256,
 }
 
 impl L1Message {
-    pub fn encode(&self) -> Result<Vec<u8>, L1MessagingError> {
-        encode_tuple(&vec![
-            Value::Address(self.from),
-            Value::Bytes(self.data)
-        ])
+    pub fn encode(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&self.from.to_fixed_bytes());
+        bytes.extend_from_slice(&self.data.0);
+        bytes
     }
 }
 
@@ -45,32 +41,40 @@ pub enum L1MessagingError {
     L1MessageEncode,
 }
 
-pub fn get_block_message_hashes(
-    receipts: &[Receipt],
-) -> Result<Vec<H256>, L1MessagingError> {
-    get_block_messages(receipts)
+pub fn get_l1message_hash(msg: &L1Message) -> H256 {
+    keccak(msg.encode())
+}
+
+pub fn get_block_message_hashes(receipts: &[Receipt]) -> Result<Vec<H256>, L1MessagingError> {
+    Ok(get_block_messages(receipts)
         .iter()
-        .map(|msg| keccak(msg.encode()))
-        .collect()
+        .map(get_l1message_hash)
+        .collect())
 }
 
 pub fn get_block_messages(receipts: &[Receipt]) -> Vec<L1Message> {
     static L1MESSAGE_EVENT_SELECTOR: LazyLock<H256> =
         LazyLock::new(|| keccak("L1Message(address,bytes)".as_bytes()));
 
-    receipts.iter().flat_map(|receipt| {
-        receipt.logs.iter().filter(|log| {
-            log.address == L1MESSENGER_ADDRESS &&
-            log.topics
+    receipts
+        .iter()
+        .flat_map(|receipt| {
+            receipt
+                .logs
                 .iter()
-                .any(|topic| *topic == *L1MESSAGE_EVENT_SELECTOR)
-        }).map(|log| log.data)
-    })
+                .filter(|log| {
+                    log.address == L1MESSENGER_ADDRESS
+                        && log.topics.contains(&L1MESSAGE_EVENT_SELECTOR)
+                })
+                .map(|log| L1Message {
+                    from: Address::from_slice(&log.data.slice(0..20)),
+                    data: H256::from_slice(&log.data.slice(20..52)),
+                })
+        })
+        .collect()
 }
 
-pub fn compute_merkle_root(
-    withdrawals_hashes: &[H256],
-) -> Result<H256, L1MessagingError> {
+pub fn compute_merkle_root(withdrawals_hashes: &[H256]) -> Result<H256, L1MessagingError> {
     if !withdrawals_hashes.is_empty() {
         merkelize(withdrawals_hashes)
     } else {

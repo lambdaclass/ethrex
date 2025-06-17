@@ -1,5 +1,6 @@
 use crate::authentication::authenticate;
 use crate::engine::{
+    ExchangeCapabilitiesRequest,
     exchange_transition_config::ExchangeTransitionConfigV1Req,
     fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
     payload::{
@@ -7,7 +8,6 @@ use crate::engine::{
         GetPayloadV2Request, GetPayloadV3Request, GetPayloadV4Request, NewPayloadV1Request,
         NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
-    ExchangeCapabilitiesRequest,
 };
 use crate::eth::block::ExecutionWitness;
 use crate::eth::{
@@ -41,10 +41,10 @@ use crate::utils::{
 use crate::{admin, net};
 use crate::{eth, mempool};
 use axum::extract::State;
-use axum::{http::StatusCode, routing::post, Json, Router};
+use axum::{Json, Router, http::StatusCode, routing::post};
 use axum_extra::{
-    headers::{authorization::Bearer, Authorization},
     TypedHeader,
+    headers::{Authorization, authorization::Bearer},
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
@@ -444,11 +444,11 @@ pub async fn map_mempool_requests(
 
 #[cfg(feature = "l2")]
 pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-    use crate::l2::withdrawal::GetWithdrawalProof;
+    use crate::l2::l1message::GetL1MessageProof;
 
     match req.method.as_str() {
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
-        "ethrex_getWithdrawalProof" => GetWithdrawalProof::call(req, context).await,
+        "ethrex_getMessageProof" => GetL1MessageProof::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()))
         }
@@ -478,8 +478,8 @@ mod tests {
     use super::*;
     use crate::utils::test_utils::default_context_with_storage;
     use ethrex_common::{
-        types::{ChainConfig, Genesis},
         H160,
+        types::{ChainConfig, Genesis},
     };
     use ethrex_storage::{EngineType, Store};
     use sha3::{Digest, Keccak256};
