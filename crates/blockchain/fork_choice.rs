@@ -62,7 +62,7 @@ pub async fn apply_fork_choice(
     }
 
     // Find blocks that will be part of the new canonical chain.
-    let Some(new_canonical_blocks) = find_link_with_canonical_chain(store, &head).await? else {
+    let Some(mut new_canonical_blocks) = find_link_with_canonical_chain(store, &head).await? else {
         return Err(InvalidForkChoice::UnlinkedHead);
     };
 
