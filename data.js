@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750179046195,
+  "lastUpdate": 1750179067794,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13165,6 +13165,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181651157391,
             "range": "± 686925972",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "56402156+fkrause98@users.noreply.github.com",
+            "name": "Francisco Krause Arnim",
+            "username": "fkrause98"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2cbfda71be1d81e1e78ef63abe23c4d7495d70d0",
+          "message": "perf(core): \"build block\" benchmark (#2759)\n\n**Motivation**\n\nWe wanted a benchmark that measures how long it takes to build a block\nwith the \"payload\" related endpoints.\n**Description**\n- Imitate the payload workflow calling the relevant functions related\nwith it.\n\nCloses #2725",
+          "timestamp": "2025-06-17T15:57:45Z",
+          "tree_id": "ced805aff271988c70dc9188c5a6ab5d22ee8296",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2cbfda71be1d81e1e78ef63abe23c4d7495d70d0"
+        },
+        "date": 1750179060337,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182731830895,
+            "range": "± 704262231",
             "unit": "ns/iter"
           }
         ]
