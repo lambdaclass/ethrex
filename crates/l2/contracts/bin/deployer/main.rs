@@ -155,7 +155,7 @@ pub fn git_clone(
                 })?
                 .trim()
                 .split('/')
-                .last()
+                .next_back()
                 .ok_or(DeployerError::InternalError(
                     "Failed to parse default branch".to_string(),
                 ))?
