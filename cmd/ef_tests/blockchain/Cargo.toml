@@ -9,6 +9,8 @@ ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-rlp.workspace = true
 ethrex-vm.workspace = true
+ethrex-prover = { path = "../../../crates/l2/prover", default-features = false }
+zkvm_interface = { path = "../../../crates/l2/prover/zkvm/interface", default-features = false }
 
 serde.workspace = true
 serde_json.workspace = true

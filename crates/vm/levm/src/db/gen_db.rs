@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use ethrex_common::types::Account;
 use ethrex_common::Address;
 use ethrex_common::U256;
+use ethrex_common::types::Account;
 use keccak_hash::H256;
 
 use crate::call_frame::CallFrameBackup;
@@ -14,9 +14,9 @@ use crate::utils::restore_cache_state;
 use crate::vm::Substate;
 use crate::vm::VM;
 
-use super::cache;
 use super::CacheDB;
 use super::Database;
+use super::cache;
 
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
@@ -49,14 +49,14 @@ impl GeneralizedDatabase {
 
     /// **Accesses to an account's information.**
     ///
-    /// Accessed accounts are stored in the `touched_accounts` set.
+    /// Accessed accounts are stored in the `accessed_addresses` set.
     /// Accessed accounts take place in some gas cost computation.
     pub fn access_account(
         &mut self,
         accrued_substate: &mut Substate,
         address: Address,
     ) -> Result<(&Account, bool), InternalError> {
-        let address_was_cold = accrued_substate.touched_accounts.insert(address);
+        let address_was_cold = accrued_substate.accessed_addresses.insert(address);
         let account = self.get_account(address)?;
 
         Ok((account, address_was_cold))
@@ -244,7 +244,7 @@ impl<'a> VM<'a> {
 
     /// Accesses to an account's storage slot and returns the value in it.
     ///
-    /// Accessed storage slots are stored in the `touched_storage_slots` set.
+    /// Accessed storage slots are stored in the `accessed_storage_slots` set.
     /// Accessed storage slots take place in some gas cost computation.
     pub fn access_storage_slot(
         &mut self,
@@ -254,7 +254,7 @@ impl<'a> VM<'a> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
         let storage_slot_was_cold = self
             .substate
-            .touched_storage_slots
+            .accessed_storage_slots
             .entry(address)
             .or_default()
             .insert(key);

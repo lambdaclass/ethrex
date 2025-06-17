@@ -1,7 +1,7 @@
 [package]
 name = "ethrex"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -55,8 +55,9 @@ name = "ethrex"
 path = "./lib.rs"
 
 [features]
+debug = ["ethrex-vm/debug"]
 default = ["libmdbx", "c-kzg", "blst"]
-dev = ["dep:ethrex-dev"]
+dev = ["dep:ethrex-dev", "debug"]
 c-kzg = [
   "ethrex-vm/c-kzg",
   "ethrex-common/c-kzg",
@@ -78,8 +79,6 @@ l2 = [
 rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
 rollup_storage_redb = ["ethrex-storage-rollup/redb"]
 sync-test = []
-
-
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 

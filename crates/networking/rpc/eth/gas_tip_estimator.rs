@@ -1,4 +1,4 @@
-use ethrex_common::{types::MIN_GAS_TIP, H256};
+use ethrex_common::{H256, types::MIN_GAS_TIP};
 use ethrex_storage::Store;
 use tracing::error;
 
@@ -77,7 +77,9 @@ impl GasTipEstimator {
         // that returns a block range to not query them one-by-one.
         for block_num in block_range {
             let Some(block_body) = storage.get_block_body(block_num).await? else {
-                error!("Block body for block number {block_num} is missing but is below the latest known block!");
+                error!(
+                    "Block body for block number {block_num} is missing but is below the latest known block!"
+                );
                 return Err(RpcErr::Internal(
                     "Error calculating gas price: missing data".to_string(),
                 ));
@@ -124,8 +126,8 @@ impl Default for GasTipEstimator {
 mod tests {
     use super::*;
     use crate::eth::test_utils::{
-        add_eip1559_tx_blocks, add_empty_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks,
-        setup_store, BASE_PRICE_IN_WEI,
+        BASE_PRICE_IN_WEI, add_eip1559_tx_blocks, add_empty_blocks, add_legacy_tx_blocks,
+        add_mixed_tx_blocks, setup_store,
     };
 
     #[tokio::test]

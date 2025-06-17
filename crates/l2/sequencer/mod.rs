@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use crate::utils::prover::proving_systems::ProverType;
-use crate::SequencerConfig;
+use crate::based::sequencer_state::SequencerStatus;
+use crate::{BlockFetcher, SequencerConfig, StateUpdater};
+use crate::{based::sequencer_state::SequencerState, utils::prover::proving_systems::ProverType};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -16,7 +17,7 @@ use tracing::{error, info};
 use utils::get_needed_proof_types;
 
 pub mod block_producer;
-mod l1_committer;
+pub mod l1_committer;
 pub mod l1_proof_sender;
 pub mod l1_proof_verifier;
 mod l1_watcher;
@@ -38,7 +39,15 @@ pub async fn start_l2(
     cfg: SequencerConfig,
     #[cfg(feature = "metrics")] l2_url: String,
 ) {
-    info!("Starting Proposer");
+    let initial_status = if cfg.based.based {
+        SequencerStatus::default()
+    } else {
+        SequencerStatus::Sequencing
+    };
+
+    info!("Starting Sequencer in {initial_status} mode");
+
+    let shared_state = SequencerState::from(initial_status);
 
     let execution_cache = Arc::new(ExecutionCache::default());
 
@@ -53,20 +62,28 @@ pub async fn start_l2(
     };
 
     if needed_proof_types.contains(&ProverType::Aligned) && !cfg.aligned.aligned_mode {
-        error!("Aligned mode is required. Please set the `--aligned` flag or use the `ALIGNED_MODE` environment variable to true.");
+        error!(
+            "Aligned mode is required. Please set the `--aligned` flag or use the `ALIGNED_MODE` environment variable to true."
+        );
         return;
     }
 
-    let _ = L1Watcher::spawn(store.clone(), blockchain.clone(), cfg.clone())
-        .await
-        .inspect_err(|err| {
-            error!("Error starting Watcher: {err}");
-        });
+    let _ = L1Watcher::spawn(
+        store.clone(),
+        blockchain.clone(),
+        cfg.clone(),
+        shared_state.clone(),
+    )
+    .await
+    .inspect_err(|err| {
+        error!("Error starting Watcher: {err}");
+    });
     let _ = L1Committer::spawn(
         store.clone(),
         rollup_store.clone(),
         execution_cache.clone(),
         cfg.clone(),
+        shared_state.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -76,6 +93,7 @@ pub async fn start_l2(
         store.clone(),
         rollup_store.clone(),
         cfg.clone(),
+        blockchain.clone(),
         needed_proof_types.clone(),
     )
     .await
@@ -85,6 +103,7 @@ pub async fn start_l2(
 
     let _ = L1ProofSender::spawn(
         cfg.clone(),
+        shared_state.clone(),
         rollup_store.clone(),
         needed_proof_types.clone(),
     )
@@ -94,9 +113,10 @@ pub async fn start_l2(
     });
     let _ = BlockProducer::spawn(
         store.clone(),
-        blockchain,
+        blockchain.clone(),
         execution_cache.clone(),
         cfg.clone(),
+        shared_state.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -106,6 +126,30 @@ pub async fn start_l2(
     let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     if needed_proof_types.contains(&ProverType::Aligned) {
         task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(cfg.clone()));
+    }
+    if cfg.based.based {
+        let _ = StateUpdater::spawn(
+            cfg.clone(),
+            shared_state.clone(),
+            store.clone(),
+            rollup_store.clone(),
+        )
+        .await
+        .inspect_err(|err| {
+            error!("Error starting State Updater: {err}");
+        });
+
+        let _ = BlockFetcher::spawn(
+            &cfg,
+            store.clone(),
+            rollup_store.clone(),
+            blockchain.clone(),
+            shared_state.clone(),
+        )
+        .await
+        .inspect_err(|err| {
+            error!("Error starting Block Fetcher: {err}");
+        });
     }
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));

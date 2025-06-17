@@ -1,3 +1,5 @@
+use crate::based::block_fetcher::BlockFetcherError;
+use crate::based::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use crate::utils::prover::errors::SaveStateError;
 use crate::utils::prover::proving_systems::ProverType;
@@ -8,8 +10,8 @@ use ethrex_l2_common::deposits::DepositError;
 use ethrex_l2_common::state_diff::StateDiffError;
 use ethrex_l2_common::withdrawals::WithdrawalError;
 use ethrex_l2_sdk::merkle_tree::MerkleError;
-use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
+use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
 use ethrex_vm::{EvmError, ProverDBError};
 use spawned_concurrency::GenServerError;
@@ -33,6 +35,10 @@ pub enum SequencerError {
     MetricsGathererError(#[from] MetricsGathererError),
     #[error("Sequencer error: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("Failed to start StateUpdater: {0}")]
+    StateUpdaterError(#[from] StateUpdaterError),
+    #[error("Failed to start BlockFetcher: {0}")]
+    BlockFetcherError(#[from] BlockFetcherError),
     #[error("Failed to access Store: {0}")]
     FailedAccessingStore(#[from] StoreError),
     #[error("Failed to resolve network")]
@@ -71,6 +77,8 @@ pub enum ProverServerError {
     StorageDataIsNone,
     #[error("ProverServer failed to create ProverInputs: {0}")]
     FailedToCreateProverInputs(#[from] EvmError),
+    #[error("ProverServer failed to create ExecutionWitness: {0}")]
+    FailedToCreateExecutionWitness(#[from] ChainError),
     #[error("ProverServer JoinError: {0}")]
     JoinError(#[from] JoinError),
     #[error("ProverServer failed: {0}")]
@@ -237,7 +245,9 @@ pub enum BlobEstimationError {
     OverflowError,
     #[error("Failed to calculate blob gas due to invalid parameters")]
     CalculationError,
-    #[error("Blob gas estimation resulted in an infinite or undefined value. Outside valid or expected ranges")]
+    #[error(
+        "Blob gas estimation resulted in an infinite or undefined value. Outside valid or expected ranges"
+    )]
     NonFiniteResult,
     #[error("{0}")]
     FakeExponentialError(#[from] FakeExponentialError),

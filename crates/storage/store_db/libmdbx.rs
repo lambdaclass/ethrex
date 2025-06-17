@@ -1,3 +1,4 @@
+use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
@@ -10,26 +11,25 @@ use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
 use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
-use crate::UpdateBatch;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
-use ethrex_common::types::{
-    payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash,
-    BlockHeader, BlockNumber, ChainConfig, Index, Receipt, Transaction,
-};
 use ethrex_common::Address;
 use ethrex_common::H160;
+use ethrex_common::types::{
+    AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+    BlockNumber, ChainConfig, Index, Receipt, Transaction, payload::PayloadBundle,
+};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, NodeHash, Trie};
 use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
+use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use libmdbx::{
     dupsort,
-    orm::{table, Database},
+    orm::{Database, table},
     table_info,
 };
-use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::mem;
@@ -1662,7 +1662,7 @@ impl Encodable for AccountStorageLogEntry {
 
     fn encode(self) -> Self::Encoded {
         let mut encoded = [0u8; 96];
-        encoded[0..32].copy_from_slice(&self.0 .0);
+        encoded[0..32].copy_from_slice(&self.0.0);
         encoded[32..64].copy_from_slice(&self.1.to_big_endian());
         encoded[64..96].copy_from_slice(&self.2.to_big_endian());
         encoded
@@ -1692,7 +1692,7 @@ impl Encodable for BlockNumHash {
     fn encode(self) -> Self::Encoded {
         let mut encoded = [0u8; 40];
         encoded[0..8].copy_from_slice(&self.0.to_be_bytes());
-        encoded[8..40].copy_from_slice(&self.1 .0);
+        encoded[8..40].copy_from_slice(&self.1.0);
         encoded
     }
 }
@@ -1836,7 +1836,7 @@ impl Encodable for AccountAddress {
     type Encoded = [u8; 20];
 
     fn encode(self) -> Self::Encoded {
-        self.0 .0
+        self.0.0
     }
 }
 
@@ -1978,8 +1978,8 @@ mod tests {
     use crate::rlp::TupleRLP;
     use bytes::Bytes;
     use ethrex_common::{
-        types::{BlockHash, Index, Log, TxType},
         Address, H256,
+        types::{BlockHash, Index, Log, TxType},
     };
 
     #[test]
@@ -2160,7 +2160,7 @@ mod tests {
             let txn = db.begin_read().unwrap();
             let cursor = txn.cursor::<DupsortExample>().unwrap();
             let mut acc = 0;
-            for key in cursor.walk_key(key, None).map(|r| r.unwrap().0 .0) {
+            for key in cursor.walk_key(key, None).map(|r| r.unwrap().0.0) {
                 acc += key;
             }
 
@@ -2305,16 +2305,16 @@ mod tests {
         topics_size: usize,
     ) -> Receipt {
         let large_data: Bytes = Bytes::from(vec![1u8; data_size_in_bytes]);
-        let large_topics: Vec<H256> = std::iter::repeat(H256::random())
-            .take(topics_size)
-            .collect();
+        let large_topics: Vec<H256> = std::iter::repeat_n(H256::random(), topics_size).collect();
 
-        let logs = std::iter::repeat(Log {
-            address: Address::random(),
-            topics: large_topics.clone(),
-            data: large_data.clone(),
-        })
-        .take(logs_size)
+        let logs = std::iter::repeat_n(
+            Log {
+                address: Address::random(),
+                topics: large_topics.clone(),
+                data: large_data.clone(),
+            },
+            logs_size,
+        )
         .collect();
 
         Receipt {

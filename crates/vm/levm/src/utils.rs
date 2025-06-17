@@ -1,37 +1,37 @@
 use crate::{
+    EVMConfig,
     call_frame::CallFrameBackup,
     constants::*,
     db::{cache, gen_db::GeneralizedDatabase},
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
-        self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
-        BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
-        TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
+        self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
+        COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
+        TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST, fake_exponential,
     },
     opcodes::Opcode,
     precompiles::{
-        is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
-        SIZE_PRECOMPILES_PRE_CANCUN,
+        SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
+        is_precompile,
     },
     vm::{Substate, VM},
-    EVMConfig,
 };
+use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 use ethrex_common::types::{Account, TxKind};
 use ethrex_common::{
-    types::{tx_fields::*, Fork},
     Address, H256, U256,
+    types::{Fork, tx_fields::*},
 };
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
 use secp256k1::{
-    ecdsa::{RecoverableSignature, RecoveryId},
     Message,
+    ecdsa::{RecoverableSignature, RecoveryId},
 };
 use sha3::{Digest, Keccak256};
 use std::collections::{BTreeSet, HashMap, HashSet};
-use ExceptionalHalt::OutOfGas;
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
@@ -334,7 +334,7 @@ pub fn eip7702_recover_address(
 
 /// Gets code of an account, returning early if it's not a delegated account, otherwise
 /// Returns tuple (is_delegated, eip7702_cost, code_address, code).
-/// Notice that it also inserts the delegated account to the "touched accounts" set.
+/// Notice that it also inserts the delegated account to the "accessed accounts" set.
 ///
 /// Where:
 /// - `is_delegated`: True if account is a delegated account.
@@ -362,10 +362,10 @@ pub fn eip7702_get_code(
     // The delegation code has the authorized address
     let auth_address = get_authorized_address(account)?;
 
-    let access_cost = if accrued_substate.touched_accounts.contains(&auth_address) {
+    let access_cost = if accrued_substate.accessed_addresses.contains(&auth_address) {
         WARM_ADDRESS_ACCESS_COST
     } else {
-        accrued_substate.touched_accounts.insert(auth_address);
+        accrued_substate.accessed_addresses.insert(auth_address);
         COLD_ADDRESS_ACCESS_COST
     };
 
@@ -583,21 +583,21 @@ impl<'a> VM<'a> {
         self.substate_backups.push(self.substate.clone());
     }
 
-    /// Initializes the VM substate, mainly adding addresses to the "touched_addresses" field and the same with storage slots
+    /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize_substate(&mut self) -> Result<(), VMError> {
-        // Add sender and recipient to touched accounts [https://www.evm.codes/about#access_list]
-        let mut initial_touched_accounts = HashSet::new();
-        let mut initial_touched_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
+        // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
+        let mut initial_accessed_addresses = HashSet::new();
+        let mut initial_accessed_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
 
-        // Add Tx sender to touched accounts
-        initial_touched_accounts.insert(self.env.origin);
+        // Add Tx sender to accessed accounts
+        initial_accessed_addresses.insert(self.env.origin);
 
-        // [EIP-3651] - Add coinbase to touched accounts after Shanghai
+        // [EIP-3651] - Add coinbase to accessed accounts after Shanghai
         if self.env.config.fork >= Fork::Shanghai {
-            initial_touched_accounts.insert(self.env.coinbase);
+            initial_accessed_addresses.insert(self.env.coinbase);
         }
 
-        // Add precompiled contracts addresses to touched accounts.
+        // Add precompiled contracts addresses to accessed accounts.
         let max_precompile_address = match self.env.config.fork {
             spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
             spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
@@ -605,23 +605,23 @@ impl<'a> VM<'a> {
             _ => return Err(InternalError::InvalidFork.into()),
         };
         for i in 1..=max_precompile_address {
-            initial_touched_accounts.insert(Address::from_low_u64_be(i));
+            initial_accessed_addresses.insert(Address::from_low_u64_be(i));
         }
 
-        // Add access lists contents to touched accounts and touched storage slots.
+        // Add access lists contents to accessed accounts and accessed storage slots.
         for (address, keys) in self.tx.access_list().clone() {
-            initial_touched_accounts.insert(address);
+            initial_accessed_addresses.insert(address);
             let mut warm_slots = BTreeSet::new();
             for slot in keys {
                 warm_slots.insert(slot);
             }
-            initial_touched_storage_slots.insert(address, warm_slots);
+            initial_accessed_storage_slots.insert(address, warm_slots);
         }
 
         self.substate = Substate {
             selfdestruct_set: HashSet::new(),
-            touched_accounts: initial_touched_accounts,
-            touched_storage_slots: initial_touched_storage_slots,
+            accessed_addresses: initial_accessed_addresses,
+            accessed_storage_slots: initial_accessed_storage_slots,
             created_accounts: HashSet::new(),
             refunded_gas: 0,
             transient_storage: HashMap::new(),
@@ -634,7 +634,7 @@ impl<'a> VM<'a> {
     pub fn get_tx_callee(&mut self) -> Result<Address, VMError> {
         match self.tx.to() {
             TxKind::Call(address_to) => {
-                self.substate.touched_accounts.insert(address_to);
+                self.substate.accessed_addresses.insert(address_to);
 
                 Ok(address_to)
             }
@@ -644,7 +644,7 @@ impl<'a> VM<'a> {
 
                 let created_address = calculate_create_address(self.env.origin, sender_nonce)?;
 
-                self.substate.touched_accounts.insert(created_address);
+                self.substate.accessed_addresses.insert(created_address);
                 self.substate.created_accounts.insert(created_address);
 
                 Ok(created_address)

@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Index, Receipt, Transaction,
+    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+    Receipt, Transaction, payload::PayloadBundle,
 };
 use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::Address;
@@ -265,7 +265,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     /// Update latest block number
     async fn update_latest_block_number(&self, block_number: BlockNumber)
-        -> Result<(), StoreError>;
+    -> Result<(), StoreError>;
 
     /// Obtain latest block number
     async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
@@ -319,7 +319,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     /// Sets the hash of the last header downloaded during a snap sync
     async fn set_header_download_checkpoint(&self, block_hash: BlockHash)
-        -> Result<(), StoreError>;
+    -> Result<(), StoreError>;
 
     /// Gets the hash of the last header downloaded during a snap sync
     async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError>;

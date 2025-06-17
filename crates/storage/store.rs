@@ -10,14 +10,14 @@ use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{
-    code_hash, payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody,
-    BlockHash, BlockHeader, BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index,
-    Receipt, Transaction, EMPTY_TRIE_HASH,
+    AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+    BlockNumber, ChainConfig, EMPTY_TRIE_HASH, ForkId, Genesis, GenesisAccount, Index, Receipt,
+    Transaction, code_hash, payload::PayloadBundle,
 };
 use ethrex_common::H160;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, NodeHash, Trie, TrieNode};
+use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
@@ -534,6 +534,65 @@ impl Store {
             state_updates,
             storage_updates: ret_storage_updates,
         })
+    }
+
+    /// Performs the same actions as apply_account_updates_from_trie
+    ///  but also returns the used storage tries with witness recorded
+    pub async fn apply_account_updates_from_trie_with_witness(
+        &self,
+        mut state_trie: Trie,
+        account_updates: &[AccountUpdate],
+        mut storage_tries: HashMap<Address, (TrieWitness, Trie)>,
+    ) -> Result<(Trie, HashMap<Address, (TrieWitness, Trie)>), StoreError> {
+        for update in account_updates.iter() {
+            let hashed_address = hash_address(&update.address);
+            if update.removed {
+                // Remove account from trie
+                state_trie.remove(hashed_address)?;
+            } else {
+                // Add or update AccountState in the trie
+                // Fetch current state or create a new state to be inserted
+                let mut account_state = match state_trie.get(&hashed_address)? {
+                    Some(encoded_state) => AccountState::decode(&encoded_state)?,
+                    None => AccountState::default(),
+                };
+                if let Some(info) = &update.info {
+                    account_state.nonce = info.nonce;
+                    account_state.balance = info.balance;
+                    account_state.code_hash = info.code_hash;
+                    // Store updated code in DB
+                    if let Some(code) = &update.code {
+                        self.add_account_code(info.code_hash, code.clone()).await?;
+                    }
+                }
+                // Store the added storage in the account's storage trie and compute its new root
+                if !update.added_storage.is_empty() {
+                    let (_witness, storage_trie) = match storage_tries.entry(update.address) {
+                        std::collections::hash_map::Entry::Occupied(value) => value.into_mut(),
+                        std::collections::hash_map::Entry::Vacant(vacant) => {
+                            let trie = self.engine.open_storage_trie(
+                                H256::from_slice(&hashed_address),
+                                account_state.storage_root,
+                            )?;
+                            vacant.insert(TrieLogger::open_trie(trie))
+                        }
+                    };
+
+                    for (storage_key, storage_value) in &update.added_storage {
+                        let hashed_key = hash_key(storage_key);
+                        if storage_value.is_zero() {
+                            storage_trie.remove(hashed_key)?;
+                        } else {
+                            storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        }
+                    }
+                    account_state.storage_root = storage_trie.hash_no_commit();
+                }
+                state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            }
+        }
+
+        Ok((state_trie, storage_tries))
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
@@ -1416,8 +1475,8 @@ mod tests {
     use bytes::Bytes;
     use ethereum_types::{H256, U256};
     use ethrex_common::{
-        types::{Transaction, TxType, EMPTY_KECCACK_HASH},
         Bloom, H160,
+        types::{EMPTY_KECCACK_HASH, Transaction, TxType},
     };
     use ethrex_rlp::decode::RLPDecode;
     use std::{fs, str::FromStr};

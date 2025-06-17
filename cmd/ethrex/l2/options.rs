@@ -2,13 +2,13 @@ use crate::{cli::Options as NodeOptions, utils};
 use clap::Parser;
 use ethrex_common::Address;
 use ethrex_l2::{
+    BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
+    L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
     sequencer::{configs::AlignedConfig, utils::resolve_aligned_network},
-    BlockProducerConfig, CommitterConfig, EthConfig, L1WatcherConfig, ProofCoordinatorConfig,
-    SequencerConfig,
 };
 use ethrex_rpc::clients::eth::{
-    get_address_from_secret_key, BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY,
-    MIN_RETRY_DELAY,
+    BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
+    get_address_from_secret_key,
 };
 use secp256k1::SecretKey;
 use std::net::{IpAddr, Ipv4Addr};
@@ -58,6 +58,8 @@ pub struct SequencerOptions {
     #[command(flatten)]
     pub proof_coordinator_opts: ProofCoordinatorOptions,
     #[command(flatten)]
+    pub based_opts: BasedOptions,
+    #[command(flatten)]
     pub aligned_opts: AlignedOptions,
     #[arg(
         long = "validium",
@@ -68,6 +70,14 @@ pub struct SequencerOptions {
         long_help = "If true, L2 will run on validium mode as opposed to the default rollup mode, meaning it will not publish state diffs to the L1."
     )]
     pub validium: bool,
+    #[clap(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_BASED",
+        help_heading = "Based options"
+    )]
+    pub based: bool,
 }
 
 impl From<SequencerOptions> for SequencerConfig {
@@ -117,6 +127,21 @@ impl From<SequencerOptions> for SequencerConfig {
                 proof_send_interval_ms: opts.proof_coordinator_opts.proof_send_interval_ms,
                 dev_mode: opts.proof_coordinator_opts.dev_mode,
                 validium: opts.validium,
+            },
+            based: BasedConfig {
+                based: opts.based,
+                state_updater: StateUpdaterConfig {
+                    sequencer_registry: opts
+                        .based_opts
+                        .state_updater_opts
+                        .sequencer_registry
+                        .unwrap_or_default(),
+                    check_interval_ms: opts.based_opts.state_updater_opts.check_interval_ms,
+                },
+                block_fetcher: BlockFetcherConfig {
+                    fetch_interval_ms: opts.based_opts.block_fetcher.fetch_interval_ms,
+                    fetch_block_step: opts.based_opts.block_fetcher.fetch_block_step,
+                },
             },
             aligned: AlignedConfig {
                 aligned_mode: opts.aligned_opts.aligned,
@@ -399,8 +424,7 @@ impl Default for ProofCoordinatorOptions {
         }
     }
 }
-
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 pub struct AlignedOptions {
     #[arg(
         long,
@@ -473,4 +497,52 @@ impl Default for AlignedOptions {
             )),
         }
     }
+}
+
+#[derive(Parser, Default)]
+pub struct BasedOptions {
+    #[clap(flatten)]
+    pub state_updater_opts: StateUpdaterOptions,
+    #[clap(flatten)]
+    pub block_fetcher: BlockFetcherOptions,
+}
+
+#[derive(Parser, Default)]
+pub struct StateUpdaterOptions {
+    #[arg(
+        long = "state-updater.sequencer-registry",
+        value_name = "ADDRESS",
+        env = "ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY",
+        required_if_eq("based", "true"),
+        help_heading = "Based options"
+    )]
+    pub sequencer_registry: Option<Address>,
+    #[arg(
+        long = "state-updater.check-interval",
+        default_value = "1000",
+        value_name = "UINT64",
+        env = "ETHREX_STATE_UPDATER_CHECK_INTERVAL",
+        help_heading = "Based options"
+    )]
+    pub check_interval_ms: u64,
+}
+
+#[derive(Parser, Default)]
+pub struct BlockFetcherOptions {
+    #[arg(
+        long = "block-fetcher.fetch_interval_ms",
+        default_value = "5000",
+        value_name = "UINT64",
+        env = "ETHREX_BLOCK_FETCHER_FETCH_INTERVAL_MS",
+        help_heading = "Based options"
+    )]
+    pub fetch_interval_ms: u64,
+    #[arg(
+        long,
+        default_value = "5000",
+        value_name = "UINT64",
+        env = "ETHREX_BLOCK_FETCHER_FETCH_BLOCK_STEP",
+        help_heading = "Based options"
+    )]
+    pub fetch_block_step: u64,
 }

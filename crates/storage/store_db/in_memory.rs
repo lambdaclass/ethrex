@@ -1,17 +1,17 @@
 use crate::{
+    UpdateBatch,
     api::StoreEngine,
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
     store_db::libmdbx::{AccountAddress, BlockNumHash},
-    UpdateBatch,
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
-use ethrex_common::types::{
-    payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash,
-    BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
-};
 use ethrex_common::Address;
+use ethrex_common::types::{
+    AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+    BlockNumber, ChainConfig, Index, Receipt, payload::PayloadBundle,
+};
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
     collections::{BTreeMap, HashMap},
