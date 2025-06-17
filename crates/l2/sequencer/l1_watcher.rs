@@ -115,7 +115,7 @@ impl GenServer for L1Watcher {
             Self::InMsg::Watch => {
                 let check_interval = random_duration(state.check_interval);
                 send_after(check_interval, tx.clone(), Self::InMsg::Watch);
-                if let Ok(logs) = get_logs(state)
+                if let Ok(logs) = get_deposit_logs(state)
                     .await
                     .inspect_err(|err| error!("L1 Watcher Error: {err}"))
                 {
@@ -133,7 +133,7 @@ impl GenServer for L1Watcher {
     }
 }
 
-pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1WatcherError> {
+pub async fn get_deposit_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1WatcherError> {
     if state.last_block_fetched.is_zero() {
         state.last_block_fetched = state
             .eth_client
