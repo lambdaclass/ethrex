@@ -22,7 +22,7 @@
     - [Sequencer](./l2/sequencer.md)
     - [Contracts](./l2/contracts.md)
     - [Prover](./l2/prover.md)
-    - [State Diffs](./l2/state_diffs.md)
+    - [State diffs](./l2/state_diffs.md)
     - [Withdrawals](./l2/withdrawals.md)
     - [Aligned mode](./l2/aligned_mode.md)
     - [TDX execution module](./l2/tdx.md)

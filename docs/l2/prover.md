@@ -135,6 +135,7 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
 2. `ProofCoordinator`/`sequencer` &rarr; this server just needs rust installed.
    1. `cd ethrex/crates/l2`
    2. Create a `.env` file with the following content:
+
    ```env
    // Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
    ETHREX_DEPLOYER_L1_PRIVATE_KEY=<private_key>
@@ -157,7 +158,7 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
    // Set to any L1 endpoint.
    ETHREX_ETH_RPC_URL=<url>
    ```
-   3. `source .env`
+   4. `source .env`
 
 > [!NOTE]
 > Make sure to have funds, if you want to perform a quick test `0.2[ether]` on each account should be enough.
@@ -241,7 +242,7 @@ If a value is removed during block execution (meaning it existed initially but n
 
 Here, only **leaf 1** is part of the execution witness, so we lack the proof (and thus the node data) for **leaf 2**. After removing **leaf 1**, **branch 1** becomes redundant. During trie restructuring, it's replaced by **leaf 3**, whose path is the path of **leaf 2** concatenated with a prefix nibble (`k`) representing the choice taken at the original **branch 1**, and keeping **leaf 2**'s value.
 
-```
+```text
 branch1 = {c_1, c_2, ..., c_k, ..., c_16} # Only c_k = hash(leaf2) is non-empty
 leaf2 = {value, path}
 leaf3 = {value, concat(k, path)} # New leaf replacing branch1 and leaf2
