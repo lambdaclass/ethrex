@@ -102,8 +102,8 @@ jobs:
         run: |
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1 &
-          docker logs --follow ethrex_l2
+          docker logs --follow ethrex_l2 &
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex_prover -s SIGINT
 
   integration-test-based:
@@ -147,13 +147,13 @@ jobs:
           cd rex
           make cli
           echo "rex install successfully at $(which rex)"
-      
+
       - name: Register sequencer
         run: |
           cd crates/l2
           SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
           export SEQUENCER_REGISTRY
-          
+
           if [ -z "$SEQUENCER_REGISTRY" ]; then
             echo "Failed to get SEQUENCER_REGISTRY from .env file"
             exit 1
@@ -171,7 +171,7 @@ jobs:
           ETHREX_COMMITTER_VALIDIUM=false \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_BASED=true \
-          ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS="$SEQUENCER_REGISTRY" \
+          ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY="$SEQUENCER_REGISTRY" \
           docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
 
       - name: Run test

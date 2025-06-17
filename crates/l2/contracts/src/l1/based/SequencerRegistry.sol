@@ -3,7 +3,7 @@ pragma solidity =0.8.29;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "../interfaces/ISequencerRegistry.sol";
 import "./interfaces/IOnChainProposer.sol";
 
@@ -11,7 +11,7 @@ contract SequencerRegistry is
     ISequencerRegistry,
     Initializable,
     UUPSUpgradeable,
-    OwnableUpgradeable
+    Ownable2StepUpgradeable
 {
     uint256 public constant MIN_COLLATERAL = 1 ether;
 
@@ -31,9 +31,14 @@ contract SequencerRegistry is
             onChainProposer != address(0),
             "SequencerRegistry: Invalid onChainProposer"
         );
+
         ON_CHAIN_PROPOSER = onChainProposer;
 
-        _validateOwner(owner);
+        require(
+            owner != address(0),
+            "SequencerRegistry: Invalid owner"
+        );
+
         OwnableUpgradeable.__Ownable_init(owner);
     }
 
@@ -46,7 +51,14 @@ contract SequencerRegistry is
     }
 
     function register(address sequencer) public payable {
-        _validateRegisterRequest(sequencer, msg.value);
+        require(
+            collateral[sequencer] == 0,
+            "SequencerRegistry: Already registered"
+        );
+        require(
+            msg.value >= MIN_COLLATERAL,
+            "SequencerRegistry: Insufficient collateral"
+        );
 
         collateral[sequencer] = msg.value;
         sequencers.push(sequencer);
@@ -55,7 +67,7 @@ contract SequencerRegistry is
     }
 
     function unregister(address sequencer) public {
-        _validateUnregisterRequest(sequencer);
+        require(collateral[sequencer] > 0, "SequencerRegistry: Not registered");
 
         uint256 amount = collateral[sequencer];
         collateral[sequencer] = 0;
@@ -101,31 +113,6 @@ contract SequencerRegistry is
         address _leader = sequencers[_id % _sequencers];
 
         return _leader;
-    }
-
-    function _validateOwner(address potentialOwner) internal pure {
-        require(
-            potentialOwner != address(0),
-            "SequencerRegistry: Invalid owner"
-        );
-    }
-
-    function _validateRegisterRequest(
-        address sequencer,
-        uint256 amount
-    ) internal view {
-        require(
-            collateral[sequencer] == 0,
-            "SequencerRegistry: Already registered"
-        );
-        require(
-            amount >= MIN_COLLATERAL,
-            "SequencerRegistry: Insufficient collateral"
-        );
-    }
-
-    function _validateUnregisterRequest(address sequencer) internal view {
-        require(collateral[sequencer] > 0, "SequencerRegistry: Not registered");
     }
 
     /// @notice Allow owner to upgrade the contract.
