@@ -25,11 +25,9 @@ use serde_with::serde_as;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use tokio::sync::OwnedSemaphorePermit;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::TryAcquireError,
 };
 use tracing::{debug, error, info, warn};
 
@@ -276,42 +274,20 @@ impl GenServer for ProofCoordinator {
 }
 
 async fn handle_listens(state: &ProofCoordinatorState, listener: TcpListener) {
-    let concurent_clients = 3;
-    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurent_clients));
-    info!(
-        "Starting TCP server at {}:{} accepting {concurent_clients} concurrent clients.",
-        state.listen_ip, state.port
-    );
-
+    info!("Starting TCP server at {}:{}.", state.listen_ip, state.port);
     loop {
         let res = listener.accept().await;
         match res {
             Ok((stream, addr)) => {
-                match sem.clone().try_acquire_owned() {
-                    Ok(permit) => {
-                        // Cloning the ProofCoordinatorState structure to use the handle_connection() fn
-                        // in every spawned task.
-                        // The important fields are `Store` and `EthClient`
-                        // Both fields are wrapped with an Arc, making it possible to clone
-                        // the entire structure.
-                        let mut connection_handler = ConnectionHandler::start(state.clone());
-                        let _ = connection_handler
-                            .cast(ConnInMessage::Connection {
-                                stream,
-                                addr,
-                                permit,
-                            })
-                            .await;
-                    }
-                    Err(e) => match e {
-                        TryAcquireError::Closed => {
-                            error!("Fatal error the semaphore has been closed: {e}")
-                        }
-                        TryAcquireError::NoPermits => {
-                            warn!("Connection limit reached. Closing connection from {addr}.")
-                        }
-                    },
-                }
+                // Cloning the ProofCoordinatorState structure to use the handle_connection() fn
+                // in every spawned task.
+                // The important fields are `Store` and `EthClient`
+                // Both fields are wrapped with an Arc, making it possible to clone
+                // the entire structure.
+                let mut connection_handler = ConnectionHandler::start(state.clone());
+                let _ = connection_handler
+                    .cast(ConnInMessage::Connection { stream, addr })
+                    .await;
             }
             Err(e) => {
                 error!("Failed to accept connection: {e}");
@@ -325,11 +301,7 @@ async fn handle_listens(state: &ProofCoordinatorState, listener: TcpListener) {
 struct ConnectionHandler;
 
 pub enum ConnInMessage {
-    Connection {
-        stream: TcpStream,
-        addr: SocketAddr,
-        permit: OwnedSemaphorePermit,
-    },
+    Connection { stream: TcpStream, addr: SocketAddr },
 }
 
 #[derive(Clone, PartialEq)]
@@ -364,17 +336,12 @@ impl GenServer for ConnectionHandler {
     ) -> CastResponse {
         info!("Receiving message");
         match message {
-            ConnInMessage::Connection {
-                stream,
-                addr,
-                permit,
-            } => {
+            ConnInMessage::Connection { stream, addr } => {
                 if let Err(err) = handle_connection(state, stream).await {
                     error!("Error handling connection from {addr}: {err}");
                 } else {
                     debug!("Connection from {addr} handled successfully");
                 }
-                drop(permit);
             }
         }
         CastResponse::Stop
