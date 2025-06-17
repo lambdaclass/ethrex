@@ -17,6 +17,12 @@ struct MempoolContent {
     queued: MempoolContentEntry,
 }
 
+#[derive(Serialize)]
+struct MempoolStatus {
+    pending: String,
+    queued: String,
+}
+
 /// Handling of rpc endpoint `mempool_content`
 pub async fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
     let transactions = context.blockchain.mempool.content()?;
@@ -34,5 +40,18 @@ pub async fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
         // We have no concept of "queued" transactions yet so we will leave this empty
         queued: MempoolContentEntry::new(),
     };
+    Ok(serde_json::to_value(response)?)
+}
+
+pub async fn status(context: RpcApiContext) -> Result<Value, RpcErr> {
+    let pending = context.blockchain.mempool.status()?;
+    // We have no concept of "queued" transactions yet so we will leave this as 0
+    let queued = 0;
+
+    let response = MempoolStatus {
+        pending: format!("{:#x}", pending),
+        queued: format!("{:#x}", queued),
+    };
+
     Ok(serde_json::to_value(response)?)
 }
