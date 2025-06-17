@@ -15,7 +15,7 @@ use ethrex_common::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
+use ethrex_trie::{Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
@@ -55,11 +55,11 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
 }
 
-type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+type StorageUpdates = Vec<(H256, Vec<(H256, Vec<u8>)>)>;
 
 pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
-    pub state_updates: Vec<(NodeHash, Vec<u8>)>,
+    pub state_updates: Vec<(H256, Vec<u8>)>,
     pub storage_updates: StorageUpdates,
 }
 
@@ -1011,7 +1011,7 @@ impl Store {
         Ok(self
             .open_state_trie(*EMPTY_TRIE_HASH)?
             .db()
-            .get(node_hash.into())?
+            .get(node_hash)?
             .is_some())
     }
 
@@ -1025,7 +1025,7 @@ impl Store {
         Ok(self
             .open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?
             .db()
-            .get(node_hash.into())?
+            .get(node_hash)?
             .is_some())
     }
 

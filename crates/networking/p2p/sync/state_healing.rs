@@ -146,7 +146,7 @@ async fn heal_state_batch(
                 nodes
                     .into_iter()
                     .filter_map(|node| match node.compute_hash() {
-                        hash @ NodeHash::Hashed(_) => Some((hash, node.encode_to_vec())),
+                        NodeHash::Hashed(hash) => Some((hash, node.encode_to_vec())),
                         NodeHash::Inline(_) => None,
                     })
                     .collect(),

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use ethrex_trie::{NodeHash, TrieDB, TrieError};
+use ethrex_common::H256;
+use ethrex_trie::{TrieDB, TrieError};
 use redb::{Database, TableDefinition};
 
 const TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("StateTrieNodes");
@@ -16,7 +17,7 @@ impl RedBTrie {
 }
 
 impl TrieDB for RedBTrie {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: H256) -> Result<Option<Vec<u8>>, TrieError> {
         let read_txn = self
             .db
             .begin_read()
@@ -30,7 +31,7 @@ impl TrieDB for RedBTrie {
             .map(|value| value.value().to_vec()))
     }
 
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(H256, Vec<u8>)>) -> Result<(), TrieError> {
         let write_txn = self
             .db
             .begin_write()

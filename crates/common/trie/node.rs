@@ -40,7 +40,7 @@ impl NodeRef {
         match *self {
             NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
             NodeRef::Hash(hash) => db
-                .get(NodeHash::Hashed(hash))?
+                .get(hash)?
                 .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
                 .transpose(),
         }
@@ -53,7 +53,7 @@ impl NodeRef {
         }
     }
 
-    pub fn commit(&self, acc: &mut Vec<(NodeHash, Vec<u8>)>) -> NodeHash {
+    pub fn commit(&self, acc: &mut Vec<(H256, Vec<u8>)>) -> NodeHash {
         match self {
             Self::Node(node, _) => {
                 match node.as_ref() {
@@ -70,7 +70,9 @@ impl NodeRef {
 
                 let hash = self.compute_hash();
                 let encoded = node.encode_to_vec();
-                acc.push((hash, encoded));
+                if let NodeHash::Hashed(hash) = hash {
+                    acc.push((hash, encoded));
+                }
 
                 hash
             }

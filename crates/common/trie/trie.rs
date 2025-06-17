@@ -47,7 +47,7 @@ pub type ValueRLP = Vec<u8>;
 /// RLP-encoded trie node
 pub type NodeRLP = Vec<u8>;
 /// Represents a node in the Merkle Patricia Trie.
-pub type TrieNode = (NodeHash, NodeRLP);
+pub type TrieNode = (H256, NodeRLP);
 
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
@@ -92,14 +92,11 @@ impl Trie {
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), Nibbles::from_bytes(path))?,
-            NodeRef::Hash(hash) if !hash.is_zero() => Node::decode(
-                &self
-                    .db
-                    .get(NodeHash::Hashed(hash))?
-                    .ok_or(TrieError::InconsistentTree)?,
-            )
-            .map_err(TrieError::RLPDecode)?
-            .get(self.db.as_ref(), Nibbles::from_bytes(path))?,
+            NodeRef::Hash(hash) if !hash.is_zero() => {
+                Node::decode(&self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?)
+                    .map_err(TrieError::RLPDecode)?
+                    .get(self.db.as_ref(), Nibbles::from_bytes(path))?
+            }
             _ => None,
         })
     }
@@ -270,7 +267,7 @@ impl Trie {
             .collect::<HashMap<_, _>>();
         let nodes = storage
             .iter()
-            .map(|(node_hash, nodes)| (NodeHash::from_slice(&node_hash.0), (*nodes).clone()))
+            .map(|(node_hash, nodes)| (*node_hash, (*nodes).clone()))
             .collect::<HashMap<_, _>>();
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
         let Some(root) = root else {
@@ -338,7 +335,7 @@ impl Trie {
         struct NullTrieDB;
 
         impl TrieDB for NullTrieDB {
-            fn get(&self, _key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+            fn get(&self, _key: H256) -> Result<Option<Vec<u8>>, TrieError> {
                 Ok(None)
             }
 
@@ -430,7 +427,7 @@ impl Trie {
         use std::sync::Arc;
         use std::sync::Mutex;
 
-        let hmap: HashMap<NodeHash, Vec<u8>> = HashMap::new();
+        let hmap: HashMap<H256, Vec<u8>> = HashMap::new();
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
         Trie::new(Box::new(db))

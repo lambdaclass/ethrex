@@ -1,26 +1,26 @@
-use crate::{NodeHash, error::TrieError};
+use crate::error::TrieError;
+use ethereum_types::H256;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
 
 pub trait TrieDB: Send + Sync {
-    // TODO: Change API to use `H256` directly.
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError>;
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError>;
-    fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
+    fn get(&self, key: H256) -> Result<Option<Vec<u8>>, TrieError>;
+    fn put_batch(&self, key_values: Vec<(H256, Vec<u8>)>) -> Result<(), TrieError>;
+    fn put(&self, key: H256, value: Vec<u8>) -> Result<(), TrieError> {
         self.put_batch(vec![(key, value)])
     }
 }
 
 /// InMemory implementation for the TrieDB trait, with get and put operations.
 pub struct InMemoryTrieDB {
-    inner: Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>,
+    inner: Arc<Mutex<HashMap<H256, Vec<u8>>>>,
 }
 
 impl InMemoryTrieDB {
     // TODO: Change API to use `H256` directly.
-    pub const fn new(map: Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>) -> Self {
+    pub const fn new(map: Arc<Mutex<HashMap<H256, Vec<u8>>>>) -> Self {
         Self { inner: map }
     }
     pub fn new_empty() -> Self {
@@ -31,7 +31,7 @@ impl InMemoryTrieDB {
 }
 
 impl TrieDB for InMemoryTrieDB {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: H256) -> Result<Option<Vec<u8>>, TrieError> {
         Ok(self
             .inner
             .lock()
@@ -40,7 +40,7 @@ impl TrieDB for InMemoryTrieDB {
             .cloned())
     }
 
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(H256, Vec<u8>)>) -> Result<(), TrieError> {
         let mut db = self.inner.lock().map_err(|_| TrieError::LockError)?;
 
         for (key, value) in key_values {

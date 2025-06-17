@@ -10,13 +10,13 @@ use ethrex_common::types::{
     AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
     Receipt, payload::PayloadBundle,
 };
-use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
+use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
-pub type NodeMap = Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>;
+pub type NodeMap = Arc<Mutex<HashMap<H256, Vec<u8>>>>;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);

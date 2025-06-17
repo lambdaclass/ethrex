@@ -9,7 +9,6 @@ use crate::rlp::{
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
-use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -20,7 +19,7 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::{Nibbles, NodeHash, Trie};
+use ethrex_trie::{Nibbles, Trie};
 use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
 use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use libmdbx::{
@@ -133,14 +132,14 @@ impl StoreEngine for Store {
 
             // store account updates
             for (node_hash, node_data) in update_batch.account_updates {
-                tx.upsert::<StateTrieNodes>(node_hash, node_data)
+                tx.upsert::<StateTrieNodes>(node_hash.0, node_data)
                     .map_err(StoreError::LibmdbxError)?;
             }
 
             for (hashed_address, nodes) in update_batch.storage_updates {
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
-                    let key_2 = node_hash_to_fixed_size(node_hash);
+                    let key_2 = node_hash.0;
 
                     tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
                         .map_err(StoreError::LibmdbxError)?;
@@ -1231,7 +1230,7 @@ dupsort!(
 dupsort!(
     /// Table containing all storage trie's nodes
     /// Each node is stored by hashed account address and node hash in order to keep different storage trie's nodes separate
-    ( StorageTriesNodes ) ([u8;32], [u8;33])[[u8;32]] => Vec<u8>
+    ( StorageTriesNodes ) ([u8;32], [u8;32])[[u8;32]] => Vec<u8>
 );
 
 dupsort!(
@@ -1255,7 +1254,7 @@ table!(
 
 table!(
     /// state trie nodes
-    ( StateTrieNodes ) NodeHash => Vec<u8>
+    ( StateTrieNodes ) [u8; 32] => Vec<u8>
 );
 
 // Local Blocks
