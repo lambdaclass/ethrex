@@ -364,7 +364,7 @@ async fn initialize_contracts(
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
     );
 
-    let sp1_vk = read_sp1_vk(&opts)?;
+    let sp1_vk = read_sp1_vk(opts)?;
 
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
