@@ -53,6 +53,8 @@ pub struct UpdateBatch {
     pub blocks: Vec<Block>,
     /// Receipts added per block
     pub receipts: Vec<(H256, Vec<Receipt>)>,
+    /// Code updates
+    pub code_updates: Vec<(H256, Bytes)>,
 }
 
 type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
@@ -61,6 +63,7 @@ pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
     pub state_updates: Vec<(NodeHash, Vec<u8>)>,
     pub storage_updates: StorageUpdates,
+    pub code_updates: Vec<(H256, Bytes)>,
 }
 
 impl Store {
@@ -359,6 +362,7 @@ impl Store {
         account_updates: impl IntoIterator<Item = &AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
+        let mut code_updates = Vec::new();
         for update in account_updates {
             let hashed_address = hash_address(&update.address);
             if update.removed {
@@ -378,7 +382,7 @@ impl Store {
                 account_state.code_hash = info.code_hash;
                 // Store updated code in DB
                 if let Some(code) = &update.code {
-                    self.add_account_code(info.code_hash, code.clone()).await?;
+                    code_updates.push((info.code_hash, code.clone()));
                 }
             }
             // Store the added storage in the account's storage trie and compute its new root
@@ -408,6 +412,7 @@ impl Store {
             state_trie_hash,
             state_updates,
             storage_updates: ret_storage_updates,
+            code_updates,
         })
     }
 
