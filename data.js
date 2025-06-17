@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750169420666,
+  "lastUpdate": 1750169593097,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12925,6 +12925,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179749100511,
             "range": "± 368327543",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a031cd8b5539148f6360fa82670f7a748d511937",
+          "message": "chore(l1): match blockchain tests obtained error with expected error (#3113)\n\n**Motivation**\n\nInclude the exception comparison in the blockchain test runner, as it\ncould catch some inconsistencies.\n\n**Description**\n\nThis pr introduces an Include BlockChainExecutionError and a\ndeserializer function to parse the expected errors from the ef tests, as\nwell as a exception_is_expected function, just like in\n[levm](https://github.com/lambdaclass/ethrex/blob/main/cmd/ef_tests/state/runner/levm_runner.rs#L258)'s\ntest runner, to check if the error obtained matches the error expected.\n\nCloses #290\n\n---------\n\nCo-authored-by: SDartayet <44068466+SDartayet@users.noreply.github.com>",
+          "timestamp": "2025-06-17T13:19:15Z",
+          "tree_id": "bf669cf95977e656f8be807dc85c7e33390cb9fb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a031cd8b5539148f6360fa82670f7a748d511937"
+        },
+        "date": 1750169586510,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182245903333,
+            "range": "± 384786843",
             "unit": "ns/iter"
           }
         ]
