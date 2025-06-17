@@ -1306,7 +1306,7 @@ impl Transaction {
     }
 }
 
-fn recover_address(
+pub fn recover_address(
     signature_r: &U256,
     signature_s: &U256,
     signature_y_parity: bool,
