@@ -5,10 +5,13 @@ enum VM {
     Levm,
 }
 
+const DEFAULT_REPETITIONS: u64 = 10;
+const DEFAULT_ITERATIONS: u64 = 100;
+
 fn main() {
     let usage = "usage: benchmark [revm/levm] [bench_name] (#repetitions) (#iterations)";
-    let vm = std::env::args().nth(1).expect(usage);
 
+    let vm = std::env::args().nth(1).expect(usage);
     let vm = match vm.as_str() {
         "levm" => VM::Levm,
         "revm" => VM::Revm,
@@ -22,15 +25,15 @@ fn main() {
 
     let runs: u64 = std::env::args()
         .nth(3)
-        .unwrap_or_else(|| "10".to_string()) // Default to 10 runs
+        .unwrap_or_else(|| DEFAULT_REPETITIONS.to_string())
         .parse()
-        .expect(usage);
+        .expect("Invalid number of repetitions: must be an integer");
 
     let number_of_iterations: u64 = std::env::args()
         .nth(4)
-        .unwrap_or_else(|| "100".to_string()) // Default to 10 iterations
+        .unwrap_or_else(|| DEFAULT_ITERATIONS.to_string())
         .parse()
-        .expect(usage);
+        .expect("Invalid number of iterations: must be an integer");
 
     let bytecode = load_contract_bytecode(&benchmark);
     let calldata = generate_calldata("Benchmark", number_of_iterations);
