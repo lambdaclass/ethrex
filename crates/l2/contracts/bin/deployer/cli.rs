@@ -6,8 +6,6 @@ use ethrex_common::{Address, H160, H256};
 use hex::FromHexError;
 use secp256k1::SecretKey;
 
-// TODO(Feda): Waiting on the issue https://github.com/lambdaclass/rex/issues/129
-// of rex so that deploying contracts with rex can actually be done with web3signer
 #[derive(Parser)]
 pub struct DeployerOptions {
     #[arg(
