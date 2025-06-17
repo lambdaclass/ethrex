@@ -60,7 +60,6 @@ use tokio::{
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 use tracing::debug;
-#[cfg(feature = "l2")]
 use tracing::info;
 
 use super::{
