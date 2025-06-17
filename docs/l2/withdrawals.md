@@ -1,4 +1,4 @@
-# Withdrawal specs
+# Withdrawals
 
 This document contains a detailed explanation of the changes needed to handle withdrawals and the withdrawal flow.
 
