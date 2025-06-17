@@ -169,7 +169,7 @@ fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
     compile_contract(&opts.contracts_path, "src/l1/CommonBridge.sol", false)?;
     compile_contract(
         &opts.contracts_path,
-        "lib/sp1-contracts/contracts/src/v4.0.0-rc.3/SP1VerifierGroth16.sol",
+        "lib/sp1-contracts/contracts/src/v5.0.0/SP1VerifierGroth16.sol",
         false,
     )?;
     trace!("Contracts compiled");
