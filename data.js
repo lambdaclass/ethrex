@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750172185685,
+  "lastUpdate": 1750173396276,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13015,6 +13015,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183466073248,
             "range": "± 321992807",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e053c95bb6d3addf996f47a50abe80edf93cbb78",
+          "message": "fix(core): fix `Trie::verify_range` for proof of absences. (#3146)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-17T14:23:16Z",
+          "tree_id": "66b556e43e4e00d6df3414859960b48ee24cdd10",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e053c95bb6d3addf996f47a50abe80edf93cbb78"
+        },
+        "date": 1750173389336,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180253808612,
+            "range": "± 408310146",
             "unit": "ns/iter"
           }
         ]
