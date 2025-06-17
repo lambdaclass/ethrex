@@ -2,22 +2,6 @@
 
 There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeables.
 
-## ToC
-
-- [Ethrex L2 contracts](#ethrex-l2-contracts)
-  - [ToC](#toc)
-  - [L1 side](#l1-side)
-    - [`CommonBridge`](#commonbridge)
-      - [Deposit Functions](#deposit-functions)
-        - [Simple Deposits](#simple-deposits)
-        - [Deposits with Contract Interaction](#deposits-with-contract-interaction)
-    - [`OnChainOperator`](#onchainoperator)
-    - [`Verifier`](#verifier)
-  - [L2 side](#l2-side)
-    - [`L1MessageSender`](#l1messagesender)
-  - [Upgrade the contracts](#upgrade-the-contracts)
-  - [Transfer ownership](#transfer-ownership)
-
 ## L1 side
 
 ### `CommonBridge`
