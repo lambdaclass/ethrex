@@ -127,13 +127,6 @@ impl Trie {
     where
         T: FnOnce(Option<ValueRLP>) -> Option<ValueRLP>,
     {
-        /*
-        Should:
-        - Get the value
-        - If the value is not found, and some value is returned from the on_get, add it.
-        If the insert_node is None, insert as the new root.
-
-         */
         let path = Nibbles::from_bytes(&path);
 
         if !self.root.is_valid() {
@@ -148,7 +141,7 @@ impl Trie {
         }
 
         let mut insert_node = None;
-        // First, get the previous value.
+        // First, get the previous value saving the node we got it from.
         let prev = match self.root {
             NodeRef::Node(ref node, _) => {
                 let value = node.get(self.db.as_ref(), path.clone())?;

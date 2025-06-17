@@ -368,40 +368,60 @@ impl Store {
             }
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
-            let mut account_state = match state_trie.get(&hashed_address)? {
-                Some(encoded_state) => AccountState::decode(&encoded_state)?,
-                None => AccountState::default(),
-            };
-            if let Some(info) = &update.info {
-                account_state.nonce = info.nonce;
-                account_state.balance = info.balance;
-                account_state.code_hash = info.code_hash;
-                // Store updated code in DB
-                if let Some(code) = &update.code {
-                    self.add_account_code(info.code_hash, code.clone()).await?;
-                }
-            }
-            // Store the added storage in the account's storage trie and compute its new root
-            if !update.added_storage.is_empty() {
-                let mut storage_trie = self.engine.open_storage_trie(
-                    H256::from_slice(&hashed_address),
-                    account_state.storage_root,
-                )?;
-                for (storage_key, storage_value) in &update.added_storage {
-                    let hashed_key = hash_key(storage_key);
-                    if storage_value.is_zero() {
-                        storage_trie.remove(hashed_key)?;
-                    } else {
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+
+            let mut code_hash = None;
+            let mut acc_code: Option<_> = None;
+            state_trie.update(hashed_address.clone(), |encoded_state| {
+                let mut account_state = match encoded_state {
+                    Some(encoded_state) => AccountState::decode(&encoded_state).expect("test"),
+                    None => AccountState::default(),
+                };
+
+                if let Some(info) = &update.info {
+                    account_state.nonce = info.nonce;
+                    account_state.balance = info.balance;
+                    account_state.code_hash = info.code_hash;
+                    // Store updated code in DB
+                    if let Some(code) = &update.code {
+                        code_hash = Some(info.code_hash);
+                        acc_code = Some(code.clone());
                     }
                 }
-                let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash();
-                account_state.storage_root = storage_hash;
-                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+
+                // Store the added storage in the account's storage trie and compute its new root
+                if !update.added_storage.is_empty() {
+                    let mut storage_trie = self
+                        .engine
+                        .open_storage_trie(
+                            H256::from_slice(&hashed_address),
+                            account_state.storage_root,
+                        )
+                        .expect("a");
+                    for (storage_key, storage_value) in &update.added_storage {
+                        let hashed_key = hash_key(storage_key);
+                        if storage_value.is_zero() {
+                            storage_trie.remove(hashed_key).expect("a");
+                        } else {
+                            storage_trie
+                                .insert(hashed_key, storage_value.encode_to_vec())
+                                .expect("a");
+                        }
+                    }
+                    let (storage_hash, storage_updates) =
+                        storage_trie.collect_changes_since_last_hash();
+                    account_state.storage_root = storage_hash;
+                    ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+                }
+
+                Some(account_state.encode_to_vec())
+            })?;
+
+            // Store updated code in DB
+            if let (Some(code_hash), Some(acc_code)) = (code_hash, acc_code) {
+                self.add_account_code(code_hash, acc_code).await?;
             }
-            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
+
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
         Ok(AccountUpdatesList {
