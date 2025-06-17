@@ -19,7 +19,7 @@ For more information on how to run the L2 node with the prover attached to it, t
 
 The program that deploys our L2 contracts outputs the addresses in a `.env` file, that includes environment information used by each component, automatically loaded by our makefile.
 Apart from these, each component accepts multiple configuration options, which can be configured either in the `.env`, or with CLI flags.
-More information is available in [the documentation for each component](./architecture.md).
+More information is available in [the documentation for each component](./components.md).
 
 ## Bridge Assets
 

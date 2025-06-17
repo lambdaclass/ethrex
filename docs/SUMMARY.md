@@ -17,10 +17,10 @@
 - [Layer 2](./l2/README.md)
   - [Getting started](./l2/getting_started.md)
   - [General overview](./l2/overview.md)
-  - [Roadmap](./l2/roadmap.md)
-  - [Architecture](./l2/architecture.md)
+  - [Based roadmap (draft)](./l2/roadmap.md)
+  - [Smart contracts](./l2/contracts.md)
+  - [Components](./l2/components.md)
     - [Sequencer](./l2/sequencer.md)
-    - [Contracts](./l2/contracts.md)
     - [Prover](./l2/prover.md)
     - [State diffs](./l2/state_diffs.md)
     - [Withdrawals](./l2/withdrawals.md)
@@ -29,6 +29,7 @@
 
 - [Developers](./developers/README.md)
   - [Quickstart](./developers/quickstart.md)
+  - [L2 load-tests](./developers/l2_load_tests.md)
 
 - [CLI reference]()
 - [Troubleshooting]()
