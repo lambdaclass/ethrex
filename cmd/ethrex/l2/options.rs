@@ -5,7 +5,7 @@ use crate::{
 use clap::Parser;
 use ethrex_common::{
     Address,
-    types::signer::{LocalSigner, RemoteSigner},
+    types::signer::{LocalSigner, RemoteSigner, Signer},
 };
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
@@ -91,7 +91,7 @@ pub fn parse_signer(
     url: Option<Url>,
     public_key: Option<PublicKey>,
 ) -> Result<Signer, SequencerOptionsError> {
-    match url {
+    Ok(match url {
         Some(url) => RemoteSigner::new(
             url,
             public_key.ok_or(SequencerOptionsError::RemoteUrlWithoutPubkey)?,
@@ -101,7 +101,7 @@ pub fn parse_signer(
             "ProofCoordinator".to_string(),
         ))?)
         .into(),
-    }
+    })
 }
 
 #[derive(Debug, thiserror::Error)]
