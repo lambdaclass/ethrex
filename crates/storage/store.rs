@@ -125,7 +125,6 @@ impl Store {
         let account_state = self.engine.get_latest_account(address)?;
 
         if let Some(state) = account_state {
-            dbg!(&state.nonce);
             Ok(Some(AccountInfo {
                 code_hash: state.code_hash,
                 balance: state.balance,
