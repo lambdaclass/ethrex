@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750179067794,
+  "lastUpdate": 1750182523999,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13195,6 +13195,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182731830895,
             "range": "± 704262231",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e9249d599a8676e9493e433db80ae802e6a6a292",
+          "message": "docs(l2): add ethrex based L2 roadmap (#3163)\n\n**Description**\n\nThis PR adds a draft of the ethrex based L2 roadmap.",
+          "timestamp": "2025-06-17T16:54:31Z",
+          "tree_id": "da751d5f90c1c014268a5d16d01514fd7010aa0e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e9249d599a8676e9493e433db80ae802e6a6a292"
+        },
+        "date": 1750182515093,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 185081171485,
+            "range": "± 614495935",
             "unit": "ns/iter"
           }
         ]
