@@ -292,6 +292,7 @@ impl Subcommand {
 pub fn remove_db(datadir: &str, force: bool) {
     let data_dir = set_datadir(datadir);
     let path = Path::new(&data_dir);
+
     if path.exists() {
         if force {
             std::fs::remove_dir_all(path).expect("Failed to remove data directory");
