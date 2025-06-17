@@ -270,16 +270,7 @@ impl Trie {
             .collect::<HashMap<_, _>>();
         let nodes = storage
             .iter()
-            .map(|(node_hash, nodes)| {
-                (
-                    if nodes.len() >= 32 {
-                        NodeHash::Hashed(*node_hash)
-                    } else {
-                        todo!()
-                    },
-                    (*nodes).clone(),
-                )
-            })
+            .map(|(node_hash, nodes)| (NodeHash::from_slice(&node_hash.0), (*nodes).clone()))
             .collect::<HashMap<_, _>>();
         let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
         let Some(root) = root else {
