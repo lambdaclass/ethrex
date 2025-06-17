@@ -21,7 +21,7 @@ While Ethereum Foundation members are actively discussing and proposing EIPs to 
 | Based Rollup       | Protocol       | Sequencer Election | Proof System                    | Preconfs                |  Additional Context  |
 | ------------------ | -------------- | ------------------ | ------------------------------- | ----------------------- | --- |
 | Taiko Alethia      | Permissioned | -      | Multi-proof (sgxGeth (TEE), and sgxReth (ZK/TEE)) | Yes |  -  |
-| Based OP (Gattaca) | Permissioned   | Round Robin        | Single Proof (optimistic)       | Yes                     |   For phase 1, the Sequencer/Gateway is centrilized. For phase 2 (current phase) the Sequencer/Gateway is permissioned.  |
+| Based OP (Gattaca) | Permissioned   | Round Robin        | Single Proof (optimistic)       | Yes                     |   For phase 1, the Sequencer/Gateway is centralized. For phase 2 (current phase) the Sequencer/Gateway is permissioned.  |
 | Spire              | Permissionless | Dutch Auction      | Single Proof (optimistic)       | Yes                     |  -   |
 | R1                | Permissionless | Total Anarchy      | Multi-proof (ZK, TEE, Guardian) | No                      |  R1 is yet to be specified but planned to be built on top of Surge and Taiko's Stack. They're waiting until Taiko is mature enough to have preconfs   |
 | Surge            | Permissionless | Total Anarchy      | Multi-proof (ZK, TEE, Guardian) | No                      |  Surge is built on top of Taiko Alethia but it's tuned enough to be a Stage 2 rollup. They're waiting until Taiko is mature enough to have preconfs. |
@@ -79,7 +79,7 @@ During each auction period, a configurable number of tickets are auctioned off. 
 
 1. Sequencers individually opt in before auction period `n` ends, providing collateral via an L1 contract. This registration is a one-time process per Sequencer.
 2. During the auction, registered Sequencers bid for sequencing rights for a yet-to-be-revealed sequencing period within the allocated period.
-3. At the auction's conclusion, sequencing rights for the sequencing periods within the allocated period are assigend among the ticket holders.
+3. At the auction's conclusion, sequencing rights for the sequencing periods within the allocated period are assigned among the ticket holders.
 4. Finally, Sequencers submit L2 batch transactions to L1 during their assigned sequencing period (note: this step does not immediately follow step 3, as additional auctions and sequencing might occur in-between).
 
 To ensure L2 liveness in this decentralized protocol, Sequencers must participate in a peer-to-peer (P2P) network. The diagram below illustrates this process:
