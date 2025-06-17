@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750173396276,
+  "lastUpdate": 1750173972441,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13045,6 +13045,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180253808612,
             "range": "± 408310146",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d6e2e1196a488b0f6bc3895f69fc7c5156d66498",
+          "message": "ci(core): fix lint pr title job (#3184)\n\n**Motivation**\nSometimes, there are PRs that are merged that do not satisfy the PR\ntitle conventions, but the job does't appear as failing. This aims",
+          "timestamp": "2025-06-17T14:32:35Z",
+          "tree_id": "06967e53560c8ee602ee7ddabc7c53901c7587e5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d6e2e1196a488b0f6bc3895f69fc7c5156d66498"
+        },
+        "date": 1750173965403,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183017525111,
+            "range": "± 316892718",
             "unit": "ns/iter"
           }
         ]
