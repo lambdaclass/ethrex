@@ -1,4 +1,7 @@
 fn main() {
+    println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=PROVER_CLIENT_ALIGNED");
+
     #[cfg(feature = "risc0")]
     build_risc0_program();
 

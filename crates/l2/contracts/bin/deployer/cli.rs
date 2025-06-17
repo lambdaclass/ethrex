@@ -205,6 +205,15 @@ pub struct DeployerOptions {
         long,
         default_value = "false",
         value_name = "BOOLEAN",
+        env = "ETHREX_DEPLOYER_ALIGNED",
+        help_heading = "Deployer options",
+        help = "If true, L2 will run on aligned mode."
+    )]
+    pub aligned: bool,
+    #[arg(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
         action = ArgAction::SetTrue,
         env = "ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT",
         help_heading = "Deployer options",
@@ -310,6 +319,7 @@ impl Default for DeployerOptions {
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
             ]),
+            aligned: false,
             randomize_contract_deployment: false,
             validium: false,
             // 0x03d0a0aee676cc45bf7032649e0871927c947c8e

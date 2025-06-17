@@ -70,7 +70,6 @@ async fn main() -> Result<(), DeployerError> {
         risc0_verifier_address,
         sp1_verifier_address,
         tdx_verifier_address,
-        opts.aligned_aggregator_address,
         &eth_client,
         &opts,
     )
@@ -319,14 +318,12 @@ fn read_tdx_deployment_address(name: &str) -> Address {
     Address::from_str(&contents).unwrap_or(Address::zero())
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn initialize_contracts(
     on_chain_proposer_address: Address,
     bridge_address: Address,
     risc0_verifier_address: Address,
     sp1_verifier_address: Address,
     tdx_verifier_address: Address,
-    aligned_aggregator_address: Address,
     eth_client: &EthClient,
     opts: &DeployerOptions,
 ) -> Result<(), DeployerError> {
@@ -341,21 +338,8 @@ async fn initialize_contracts(
             .to_str()
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
     );
-    let sp1_vk_string = read_to_string(&opts.sp1_vk_path).unwrap_or_else(|_| {
-        warn!(
-            path = opts.sp1_vk_path,
-            "Failed to read SP1 verification key file, will use 0x00..00, this is expected in dev mode"
-        );
-        "0x00".to_string()
-    });
-    // TODO: ask if aligned is enabled and use the correct SP1 vk
-    let sp1_vk = hex::decode(sp1_vk_string.trim_start_matches("0x"))
-        .map_err(|err| {
-            DeployerError::DecodingError(format!(
-                "failed to parse sp1_vk ({sp1_vk_string}) from hex: {err}"
-            ))
-        })?
-        .into();
+
+    let sp1_vk = read_sp1_vk(&opts)?;
 
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
@@ -366,7 +350,7 @@ async fn initialize_contracts(
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(tdx_verifier_address),
-            Value::Address(aligned_aggregator_address),
+            Value::Address(opts.aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Array(vec![
@@ -638,6 +622,29 @@ fn write_contract_addresses_to_env(
     )?;
     trace!(?env_file_path, "Contract addresses written to .env");
     Ok(())
+}
+
+fn read_sp1_vk(opts: &DeployerOptions) -> Result<Bytes, DeployerError> {
+    if opts.aligned {
+        return Ok(std::fs::read(&opts.sp1_vk_path)
+            .map_err(|e| DeployerError::InternalError(format!("failed to read sp1_vk: {e}")))?
+            .into());
+    };
+    let sp1_vk_string = read_to_string(&opts.sp1_vk_path).unwrap_or_else(|_| {
+        warn!(
+            path = opts.sp1_vk_path,
+            "Failed to read SP1 verification key file, will use 0x00..00, this is expected in dev mode"
+        );
+        "0x00".to_string()
+    });
+
+    Ok(hex::decode(sp1_vk_string.trim_start_matches("0x"))
+        .map_err(|err| {
+            DeployerError::DecodingError(format!(
+                "failed to parse sp1_vk ({sp1_vk_string}) from hex: {err}"
+            ))
+        })?
+        .into())
 }
 
 #[allow(clippy::unwrap_used)]
