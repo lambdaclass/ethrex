@@ -40,7 +40,7 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                 continue;
             }
             match run_ef_test_tx(vector, test, fork).await {
-                Ok(_) | Err(EFTestRunnerError::CITestsFailed) => continue, // An EFTestRunnerError::CITestsFailed can't happen at this point.
+                Ok(_) => continue,
                 Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
                     ef_test_report_fork.register_vm_initialization_failure(reason, *vector);
                 }
@@ -79,6 +79,11 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                     return Err(EFTestRunnerError::Internal(InternalError::Custom(
                         "This case should not happen".to_owned(),
                     )));
+                }
+                Err(EFTestRunnerError::TestsFailed) => {
+                    unreachable!(
+                        "An EFTestRunnerError::TestsFailed can't happen at this point. This error is only thrown in run_ef_tests under the summary flag"
+                    )
                 }
             }
         }

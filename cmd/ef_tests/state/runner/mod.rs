@@ -36,7 +36,7 @@ pub enum EFTestRunnerError {
     #[error("This is a bug: {0}")]
     Internal(#[from] InternalError),
     #[error("Tests failed")]
-    CITestsFailed,
+    TestsFailed,
 }
 
 #[derive(Debug, thiserror::Error, Clone, Serialize, Deserialize)]
@@ -96,7 +96,7 @@ pub async fn run_ef_tests(
     if opts.summary {
         if reports.iter().any(|r| !r.passed()) {
             print_failed_tests(&reports);
-            return Err(EFTestRunnerError::CITestsFailed);
+            return Err(EFTestRunnerError::TestsFailed);
         }
         return Ok(());
     }
@@ -294,5 +294,5 @@ fn print_failed_tests(reports: &[EFTestReport]) {
             .cloned()
             .collect(),
     );
-    print!("{}", failed_test_reports)
+    println!("{}", failed_test_reports)
 }
