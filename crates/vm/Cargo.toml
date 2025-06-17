@@ -45,6 +45,7 @@ default = []
 l2 = ["ethrex-levm/l2"]
 c-kzg = ["revm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 blst = ["revm/blst"]
+debug = ["ethrex-levm/debug"]
 
 [lints.clippy]
 unwrap_used = "deny"

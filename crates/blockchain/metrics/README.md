@@ -13,7 +13,7 @@ To run the node with metrics, the next steps should be followed:
 docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l2.override.yaml up
 ```
 
->[!NOTE]
+> [!NOTE]
 > The L2's Makefile automatically starts the prometheus and grafana services with `make init` for the L2.
 
 
@@ -35,4 +35,3 @@ To enable this feature, add the `docker-compose-metrics-alerts.override.yaml` fi
 
 - `GRAFANA_SLACK_CHANNEL`: The name of the channel (or user ID) where the will be sent.
 - `GRAFANA_SLACK_TOKEN`: A Slack token with write permissions on the desired channel's chat. This token starts with `xoxb-`.
-
