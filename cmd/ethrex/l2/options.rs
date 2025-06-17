@@ -86,6 +86,24 @@ pub struct SequencerOptions {
     pub based: bool,
 }
 
+pub fn parse_signer(
+    private_key: Option<SecretKey>,
+    url: Option<Url>,
+    public_key: Option<PublicKey>,
+) -> Result<Signer, SequencerOptionsError> {
+    match url {
+        Some(url) => RemoteSigner::new(
+            url,
+            public_key.ok_or(SequencerOptionsError::RemoteUrlWithoutPubkey)?,
+        )
+        .into(),
+        None => LocalSigner::new(private_key.ok_or(SequencerOptionsError::NoSigner(
+            "ProofCoordinator".to_string(),
+        ))?)
+        .into(),
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SequencerOptionsError {
     #[error("Remote signer URL was provided without a public key")]
@@ -98,39 +116,17 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
     type Error = SequencerOptionsError;
 
     fn try_from(opts: SequencerOptions) -> Result<Self, Self::Error> {
-        let committer_signer = match opts.committer_opts.committer_remote_signer_url {
-            Some(url) => RemoteSigner::new(
-                url,
-                opts.committer_opts
-                    .committer_remote_signer_public_key
-                    .ok_or(SequencerOptionsError::RemoteUrlWithoutPubkey)?,
-            )
-            .into(),
-            None => LocalSigner::new(
-                opts.committer_opts
-                    .committer_l1_private_key
-                    .ok_or(SequencerOptionsError::NoSigner("Committer".to_string()))?,
-            )
-            .into(),
-        };
+        let committer_signer = parse_signer(
+            opts.committer_opts.committer_l1_private_key,
+            opts.committer_opts.committer_remote_signer_url,
+            opts.committer_opts.committer_remote_signer_public_key,
+        )?;
 
-        let proof_coordinator_signer = match opts.proof_coordinator_opts.remote_signer_url {
-            Some(url) => RemoteSigner::new(
-                url,
-                opts.proof_coordinator_opts
-                    .remote_signer_public_key
-                    .ok_or(SequencerOptionsError::RemoteUrlWithoutPubkey)?,
-            )
-            .into(),
-            None => LocalSigner::new(
-                opts.proof_coordinator_opts
-                    .proof_coordinator_l1_private_key
-                    .ok_or(SequencerOptionsError::NoSigner(
-                        "ProofCoordinator".to_string(),
-                    ))?,
-            )
-            .into(),
-        };
+        let proof_coordinator_signer = parse_signer(
+            opts.proof_coordinator_opts.proof_coordinator_l1_private_key,
+            opts.proof_coordinator_opts.remote_signer_url,
+            opts.proof_coordinator_opts.remote_signer_public_key,
+        )?;
 
         Ok(Self {
             block_producer: BlockProducerConfig {
