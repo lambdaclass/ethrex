@@ -57,7 +57,7 @@ For more information on what you can do with the `CommonBridge` see [Ethrex L2 c
 
 ### Withdrawing funds from L2 to L1
 
-To move funds back to the L2 from the L2, you need to first send balance to the L2 bridge and then claim that balance from the L1, as explained in this section.
+This section explains how to withdraw funds from the L2 through the native bridge.
 
 #### Prerequisites for L2 withdrawal
 
