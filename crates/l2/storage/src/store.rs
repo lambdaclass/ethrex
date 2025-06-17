@@ -58,7 +58,7 @@ impl Store {
 
     pub async fn init(&self) -> Result<(), StoreError> {
         // Stores batch 0 with block 0
-        self.store_batch(Batch {
+        self.seal_batch(Batch {
             number: 0,
             first_block: 0,
             last_block: 0,
@@ -238,7 +238,7 @@ impl Store {
         }))
     }
 
-    pub async fn store_batch(&self, batch: Batch) -> Result<(), StoreError> {
+    pub async fn seal_batch(&self, batch: Batch) -> Result<(), StoreError> {
         let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
 
         for block_number in blocks.iter() {

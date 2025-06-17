@@ -1,5 +1,10 @@
-use crate::{CommitterConfig, EthConfig, SequencerConfig, sequencer::errors::CommitterError};
+use crate::{
+    CommitterConfig, EthConfig, SequencerConfig,
+    based::sequencer_state::{SequencerState, SequencerStatus},
+    sequencer::errors::CommitterError,
+};
 
+use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     Address, H256, U256,
@@ -17,6 +22,7 @@ use ethrex_l2_sdk::calldata::{Value, encode_calldata};
 use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::metrics_l2::{METRICS_L2, MetricsL2BlockType};
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::eth::{
     BlockByNumber, EthClient, WrappedTransaction, eth_sender::Overrides,
 };
@@ -31,6 +37,8 @@ use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils:
 use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
 use spawned_rt::mpsc::Sender;
 
+const COMMIT_FUNCTION_SIGNATURE_BASED: &str =
+    "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32,bytes[])";
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
 
 #[derive(Clone)]
@@ -45,15 +53,20 @@ pub struct CommitterState {
     arbitrary_base_blob_gas_price: u64,
     execution_cache: Arc<ExecutionCache>,
     validium: bool,
+    based: bool,
+    sequencer_state: SequencerState,
 }
 
 impl CommitterState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
         store: Store,
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
+        based: bool,
+        sequencer_state: SequencerState,
     ) -> Result<Self, CommitterError> {
         Ok(Self {
             eth_client: EthClient::new_with_config(
@@ -74,6 +87,8 @@ impl CommitterState {
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
             validium: committer_config.validium,
+            based,
+            sequencer_state,
         })
     }
 }
@@ -98,6 +113,7 @@ impl L1Committer {
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
         cfg: SequencerConfig,
+        sequencer_state: SequencerState,
     ) -> Result<(), CommitterError> {
         let state = CommitterState::new(
             &cfg.l1_committer,
@@ -105,6 +121,8 @@ impl L1Committer {
             store.clone(),
             rollup_store.clone(),
             execution_cache.clone(),
+            cfg.based.based,
+            sequencer_state,
         )?;
         let mut l1_committer = L1Committer::start(state);
         l1_committer
@@ -141,11 +159,13 @@ impl GenServer for L1Committer {
         state: &mut Self::State,
     ) -> CastResponse {
         // Right now we only have the Commit message, so we ignore the message
+        if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
+            let _ = commit_next_batch_to_l1(state)
+                .await
+                .inspect_err(|err| error!("L1 Committer Error: {err}"));
+        }
         let check_interval = random_duration(state.commit_time_ms);
         send_after(check_interval, tx.clone(), Self::InMsg::Commit);
-        let _ = commit_next_batch_to_l1(state)
-            .await
-            .inspect_err(|err| error!("L1 Committer Error: {err}"));
         CastResponse::NoReply
     }
 }
@@ -200,7 +220,7 @@ async fn commit_next_batch_to_l1(state: &mut CommitterState) -> Result<(), Commi
                 blobs_bundle,
             };
 
-            state.rollup_store.store_batch(batch.clone()).await?;
+            state.rollup_store.seal_batch(batch.clone()).await?;
 
             debug!(
                 first_block = batch.first_block,
@@ -429,7 +449,9 @@ async fn prepare_batch_from_block(
 }
 
 /// Generate the blob bundle necessary for the EIP-4844 transaction.
-fn generate_blobs_bundle(state_diff: &StateDiff) -> Result<(BlobsBundle, usize), CommitterError> {
+pub fn generate_blobs_bundle(
+    state_diff: &StateDiff,
+) -> Result<(BlobsBundle, usize), CommitterError> {
     let blob_data = state_diff.encode().map_err(CommitterError::from)?;
 
     let blob_size = blob_data.len();
@@ -448,7 +470,8 @@ async fn send_commitment(
 ) -> Result<H256, CommitterError> {
     let messages_merkle_root = compute_merkle_root(&batch.message_hashes)?;
     let last_block_hash = get_last_block_hash(&state.store, batch.last_block)?;
-    let calldata_values = vec![
+
+    let mut calldata_values = vec![
         Value::Uint(U256::from(batch.number)),
         Value::FixedBytes(batch.state_root.0.to_vec().into()),
         Value::FixedBytes(messages_merkle_root.0.to_vec().into()),
@@ -456,7 +479,38 @@ async fn send_commitment(
         Value::FixedBytes(last_block_hash.0.to_vec().into()),
     ];
 
-    let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;
+    let (commit_function_signature, values) = if state.based {
+        let mut encoded_blocks: Vec<Bytes> = Vec::new();
+
+        for i in batch.first_block..=batch.last_block {
+            let block_header = state
+                .store
+                .get_block_header(i)
+                .map_err(CommitterError::from)?
+                .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
+
+            let block_body = state
+                .store
+                .get_block_body(i)
+                .await
+                .map_err(CommitterError::from)?
+                .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?;
+
+            let block = Block::new(block_header, block_body);
+
+            encoded_blocks.push(block.encode_to_vec().into());
+        }
+
+        calldata_values.push(Value::Array(
+            encoded_blocks.into_iter().map(Value::Bytes).collect(),
+        ));
+
+        (COMMIT_FUNCTION_SIGNATURE_BASED, calldata_values)
+    } else {
+        (COMMIT_FUNCTION_SIGNATURE, calldata_values)
+    };
+
+    let calldata = encode_calldata(commit_function_signature, &values)?;
 
     let gas_price = state
         .eth_client
