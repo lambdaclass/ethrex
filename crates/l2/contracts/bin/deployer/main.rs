@@ -21,7 +21,10 @@ use ethrex_l2_sdk::{
 };
 use ethrex_rpc::{
     EthClient,
-    clients::{Overrides, eth::{get_address_from_secret_key, BlockByNumber}},
+    clients::{
+        Overrides,
+        eth::{BlockByNumber, get_address_from_secret_key},
+    },
 };
 use keccak_hash::H256;
 use tracing::{Level, debug, error, info, trace, warn};
@@ -384,7 +387,7 @@ async fn initialize_contracts(
 
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
-    info!("Initializing OnChainProposer"); 
+    info!("Initializing OnChainProposer");
 
     if opts.deploy_based_contracts {
         // Initialize OnChainProposer with Based config and SequencerRegistry

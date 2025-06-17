@@ -16,8 +16,9 @@ use ethrex_blockchain::{
 use ethrex_common::{
     Address, H160,
     types::{
-        Block, EIP1559Transaction, Genesis, GenesisAccount, Signable,
-        Transaction, TxKind, payload::PayloadBundle, signer::{Signer, LocalSigner}
+        Block, EIP1559Transaction, Genesis, GenesisAccount, Signable, Transaction, TxKind,
+        payload::PayloadBundle,
+        signer::{LocalSigner, Signer},
     },
 };
 use ethrex_storage::{EngineType, Store};
