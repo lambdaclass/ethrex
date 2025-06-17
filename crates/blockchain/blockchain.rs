@@ -418,6 +418,7 @@ impl Blockchain {
             .get_block_header(header_no)?
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config()?;
+
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
         // Check init code size
