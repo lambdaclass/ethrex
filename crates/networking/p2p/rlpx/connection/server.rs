@@ -15,10 +15,11 @@ use spawned_concurrency::tasks::{
 use tokio::{
     net::{TcpSocket, TcpStream},
     sync::{broadcast, mpsc::Sender, Mutex},
+    task,
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use crate::{
     discv4::server::MAX_PEERS_TCP_CONNECTIONS,
@@ -48,9 +49,8 @@ use crate::{
 
 use super::{codec::RLPxCodec, handshake};
 
-pub(crate) const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
-pub(crate) const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration =
-    std::time::Duration::from_millis(500);
+pub(crate) const PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+pub(crate) const TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
@@ -124,10 +124,10 @@ pub enum CallMessage {
 
 pub enum CastMessage {
     PeerMessage(Message),
-    BroadcastMessage,
     BackendMessage(Message),
     SendPing,
     SendNewPooledTxHashes,
+    BroadcastMessage(task::Id, Arc<Message>),
 }
 
 #[derive(Clone)]
@@ -145,25 +145,16 @@ pub struct RLPxConnection {}
 
 impl RLPxConnection {
     pub async fn spawn_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
-        info!("spawn_as_receiver");
         let state = RLPxConnectionState::new_as_receiver(context, peer_addr);
-        info!("r new state");
         let mut conn = RLPxConnection::start(state);
-        info!("r connected");
         match conn.call(CallMessage::Init(stream)).await {
-            Ok(Ok(OutMessage::InitResponse { node, framed })) => {
-                info!("r listener");
-                spawn_listener(conn, node, framed);
-                info!("r done");
-            }
-            Ok(Ok(_)) => error!("Unexpected response from connection"),
+            Ok(Ok(_)) => {}
             Ok(Err(error)) => error!("Error starting RLPxConnection: {:?}", error),
             Err(error) => error!("Unhandled error starting RLPxConnection: {:?}", error),
         }
     }
 
     pub async fn spawn_as_initiator(context: P2PContext, node: &Node) {
-        info!("spawn_as_initiator");
         let addr = SocketAddr::new(node.ip, node.tcp_port);
         let stream = match tcp_stream(addr).await {
             Ok(result) => result,
@@ -173,18 +164,10 @@ impl RLPxConnection {
                 return;
             }
         };
-        info!("i stream");
         let state = RLPxConnectionState::new_as_initiator(context, node);
-        info!("i new state");
         let mut conn = RLPxConnection::start(state.clone());
-        info!("i connected");
         match conn.call(CallMessage::Init(stream)).await {
-            Ok(Ok(OutMessage::InitResponse { node, framed })) => {
-                info!("i listener");
-                spawn_listener(conn, node, framed);
-                info!("i done");
-            }
-            Ok(Ok(_)) => error!("Unexpected response from connection"),
+            Ok(Ok(_)) => {}
             Ok(Err(error)) => error!("Error starting RLPxConnection: {:?}", error),
             Err(error) => error!("Unhandled error starting RLPxConnection: {:?}", error),
         }
@@ -210,9 +193,7 @@ impl GenServer for RLPxConnection {
     ) -> CallResponse<Self::OutMsg> {
         match message {
             Self::CallMsg::Init(stream) => match init(state, handle, stream).await {
-                Ok((node, framed)) => {
-                    CallResponse::Reply(Ok(OutMessage::InitResponse { node, framed }))
-                }
+                Ok(()) => CallResponse::Reply(Ok(OutMessage::Done)),
                 Err(e) => CallResponse::Reply(Err(e)),
             },
         }
@@ -228,33 +209,44 @@ impl GenServer for RLPxConnection {
             match message {
                 // TODO: handle all these "let _"
                 Self::CastMsg::PeerMessage(message) => {
+                    log_peer_debug(
+                        &established_state.node,
+                        &format!("Received peer message: {message}"),
+                    );
                     let _ = handle_peer_message(&mut established_state, message).await;
                 }
-                Self::CastMsg::BroadcastMessage => todo!(),
                 Self::CastMsg::BackendMessage(message) => {
+                    log_peer_debug(
+                        &established_state.node,
+                        &format!("Received backend message: {message}"),
+                    );
                     let _ = handle_backend_message(&mut established_state, message).await;
                 }
                 Self::CastMsg::SendPing => {
                     let _ = send(&mut established_state, Message::Ping(PingMessage {})).await;
                     log_peer_debug(&established_state.node, "Ping sent");
                     // TODO this should be removed when spawned_concurrency::tasks::send_interval is implemented.
-                    send_after(
-                        PERIODIC_PING_INTERVAL,
-                        handle.clone(),
-                        CastMessage::SendPing,
-                    );
+                    send_after(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
                 }
                 Self::CastMsg::SendNewPooledTxHashes => {
                     let _ = send_new_pooled_tx_hashes(&mut established_state).await;
+                    log_peer_debug(&established_state.node, "SendNewPooledTxHashes sent");
                     // TODO this should be removed when spawned_concurrency::tasks::send_interval is implemented.
                     send_after(
-                        PERIODIC_TX_BROADCAST_INTERVAL,
+                        TX_BROADCAST_INTERVAL,
                         handle.clone(),
                         CastMessage::SendNewPooledTxHashes,
                     );
                 }
+                Self::CastMsg::BroadcastMessage(id, msg) => {
+                    log_peer_debug(
+                        &established_state.node,
+                        &format!("Received broadcasted message: {msg}"),
+                    );
+                    handle_broadcast(&mut established_state, (id, msg));
+                }
             }
-            // Update the state state
+            // Update the state
             state.0 = InnerState::Established(established_state);
             CastResponse::NoReply
         } else {
@@ -273,7 +265,7 @@ async fn init(
     state: &mut RLPxConnectionState,
     handle: &RLPxConnectionHandle,
     stream: TcpStream,
-) -> Result<(Node, Arc<Mutex<Framed<TcpStream, RLPxCodec>>>), RLPxError> {
+) -> Result<(), RLPxError> {
     let mut established_state = handshake::perform(state, stream).await?;
     log_peer_debug(&established_state.node, "Starting RLPx connection");
     if let Err(reason) = post_handshake_checks(established_state.table.clone()).await {
@@ -312,42 +304,31 @@ async fn init(
         }
         init_peer_conn(&mut established_state).await?;
         log_peer_debug(&established_state.node, "Peer connection initialized.");
-        // Subscribe this connection to the broadcasting channel.
-        // TODO this channel is not yet connected. Broadcast is not working
-        let broadcaster_receive = if established_state.negotiated_eth_capability.is_some() {
-            Some(
-                established_state
-                    .connection_broadcast_send
-                    .clone()
-                    .subscribe(),
-            )
-        } else {
-            None
-        };
+
         // Send transactions transaction hashes from mempool at connection start
-        send_new_pooled_tx_hashes(&mut established_state)
-            .await
-            .unwrap();
+        send_new_pooled_tx_hashes(&mut established_state).await?;
 
         // TODO this should be replaced with spawned_concurrency::tasks::send_interval once it is properly implemented.
         send_after(
-            PERIODIC_TX_BROADCAST_INTERVAL,
+            TX_BROADCAST_INTERVAL,
             handle.clone(),
             CastMessage::SendNewPooledTxHashes,
         );
 
         // TODO this should be replaced with spawned_concurrency::tasks::send_interval once it is properly implemented.
-        send_after(
-            PERIODIC_PING_INTERVAL,
+        send_after(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
+
+        spawn_listener(
             handle.clone(),
-            CastMessage::SendPing,
+            &established_state.node,
+            &established_state.framed,
         );
 
-        let node = established_state.clone().node;
-        let framed = established_state.clone().framed;
+        spawn_broadcast_listener(handle.clone(), &mut established_state);
+
         // New state
         state.0 = InnerState::Established(established_state);
-        Ok((node, framed))
+        Ok(())
     }
 }
 
@@ -387,51 +368,6 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
     }
     Ok(())
 }
-
-// async fn connection_loop(
-//     &mut self,
-//     sender: tokio::sync::mpsc::Sender<Message>,
-//     mut receiver: tokio::sync::mpsc::Receiver<Message>,
-// ) -> Result<(), RLPxError> {
-
-//     // Start listening for messages,
-//     loop {
-//         tokio::select! {
-//             // Expect a message from the remote peer
-//             Some(message) = self.receive() => {
-//                 match message {
-//                     Ok(message) => {
-//                         log_peer_debug(&self.node, &format!("Received message {}", message));
-//                         self.handle_message(message, sender.clone()).await?;
-//                     },
-//                     Err(e) => {
-//                         log_peer_debug(&self.node, &format!("Received RLPX Error in msg {}", e));
-//                         return Err(e);
-//                     }
-//                 }
-//             }
-//             // Expect a message from the backend
-//             Some(message) = receiver.recv() => {
-//                 log_peer_debug(&self.node, &format!("Sending message {}", message));
-//                 self.send(message).await?;
-//             }
-//             // This is not ideal, but using the receiver without
-//             // this function call, causes the loop to take ownwership
-//             // of the variable and the compiler will complain about it,
-//             // with this function, we avoid that.
-//             // If the broadcaster is Some (i.e. we're connected to a peer that supports an eth protocol),
-//             // we'll receive broadcasted messages from another connections through a channel, otherwise
-//             // the function below will yield immediately but the select will not match and
-//             // ignore the returned value.
-//             Some(broadcasted_msg) = Self::maybe_wait_for_broadcaster(&mut broadcaster_receive) => {
-//                 self.handle_broadcast(broadcasted_msg?).await?
-//             }
-//             // Allow an interruption to check periodic tasks
-//             _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => (), // noop
-//         }
-//         self.check_periodic_tasks().await?;
-//     }
-// }
 
 async fn init_peer_conn(state: &mut Established) -> Result<(), RLPxError> {
     // Sending eth Status if peer supports it
@@ -634,9 +570,11 @@ async fn receive(state: &mut Established) -> Option<Result<Message, RLPxError>> 
 
 fn spawn_listener(
     mut conn: RLPxConnectionHandle,
-    node: Node,
-    framed: Arc<Mutex<Framed<TcpStream, RLPxCodec>>>,
+    node: &Node,
+    framed: &Arc<Mutex<Framed<TcpStream, RLPxCodec>>>,
 ) {
+    let node = node.clone();
+    let framed = framed.clone();
     spawned_rt::tasks::spawn(async move {
         loop {
             match framed.lock().await.next().await {
@@ -655,6 +593,25 @@ fn spawn_listener(
             }
         }
     });
+}
+
+fn spawn_broadcast_listener(mut handle: RLPxConnectionHandle, state: &mut Established) {
+    // Subscribe this connection to the broadcasting channel.
+    // TODO currently spawning a listener task that will suscribe to a broadcast channel and
+    // create RLPxConnection Broadcast messages to send the Genserver
+    // We have to improve this mechanism to avoid manual creation of channels and subscriptions
+    // (That is, we should have a spawned-based broadcaster or maybe the backend should handle the
+    // transactions propagation)
+    if state.negotiated_eth_capability.is_some() {
+        let mut receiver = state.connection_broadcast_send.subscribe();
+        spawned_rt::tasks::spawn(async move {
+            loop {
+                if let Ok((id, msg)) = receiver.recv().await {
+                    let _ = handle.cast(CastMessage::BroadcastMessage(id, msg)).await;
+                };
+            }
+        });
+    };
 }
 
 async fn handle_peer_message(state: &mut Established, message: Message) -> Result<(), RLPxError> {
@@ -778,6 +735,30 @@ async fn handle_backend_message(
 ) -> Result<(), RLPxError> {
     log_peer_debug(&state.node, &format!("Sending message {}", message));
     send(state, message).await?;
+    Ok(())
+}
+
+async fn handle_broadcast(
+    state: &mut Established,
+    (id, broadcasted_msg): (task::Id, Arc<Message>),
+) -> Result<(), RLPxError> {
+    if id != tokio::task::id() {
+        match broadcasted_msg.as_ref() {
+            Message::Transactions(ref txs) => {
+                // TODO(#1131): Avoid cloning this vector.
+                let cloned = txs.transactions.clone();
+                let new_msg = Message::Transactions(Transactions {
+                    transactions: cloned,
+                });
+                send(state, new_msg).await?;
+            }
+            msg => {
+                let error_message = format!("Non-supported message broadcasted: {msg}");
+                log_peer_error(&state.node, &error_message);
+                return Err(RLPxError::BroadcastError(error_message));
+            }
+        }
+    }
     Ok(())
 }
 
