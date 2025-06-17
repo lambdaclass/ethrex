@@ -44,7 +44,6 @@ struct DumpAccount {
     #[serde(default, with = "serde_utils::bytes")]
     code: Bytes,
     #[serde(default)]
-    // Didn't parse a dump with storage yet, may fail
     storage: HashMap<H256, U256>,
     address: Option<Address>,
     #[serde(rename = "key")]
@@ -152,7 +151,7 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
 }
 
 async fn process_dump_storage(
-    dump_storage: HashMap<H256, DumpStorageValue>,
+    dump_storage: HashMap<H256, U256>,
     store: Store,
     hashed_address: H256,
     storage_root: H256,
@@ -160,7 +159,7 @@ async fn process_dump_storage(
     let mut trie = store.open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
     for (key, val) in dump_storage {
         // The key we receive is the preimage of the one stored in the trie
-        trie.insert(keccak(key.0).0.to_vec(), val.0.encode_to_vec())?;
+        trie.insert(keccak(key.0).0.to_vec(), val.encode_to_vec())?;
     }
     if trie.hash()? != storage_root {
         Err(eyre::ErrReport::msg(
