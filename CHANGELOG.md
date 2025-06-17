@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-06-16
+
+- Use a fork of libmdbx-rs for improved perfomance. [3097](https://github.com/lambdaclass/ethrex/pull/3097)
+
 ### 2025-05-27
 
 - Improved the performance of shift instructions. [2933](https://github.com/lambdaclass/ethrex/pull/2933)

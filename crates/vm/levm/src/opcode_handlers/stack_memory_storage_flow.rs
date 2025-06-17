@@ -11,7 +11,7 @@ use ethrex_common::{H256, U256, types::Fork};
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
 
-impl<'a> VM<'a> {
+impl VM<'_> {
     // POP operation
     pub fn op_pop(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;

@@ -10,7 +10,7 @@ use crate::{Node, NodeHash, Trie, TrieDB, TrieError};
 pub type TrieWitness = Arc<Mutex<HashSet<Vec<u8>>>>;
 
 pub struct TrieLogger {
-    inner_db: Box<dyn TrieDB>,
+    inner_db: Arc<dyn TrieDB>,
     witness: TrieWitness,
 }
 
@@ -28,7 +28,7 @@ impl TrieLogger {
             inner_db: db,
             witness: witness.clone(),
         };
-        (witness, Trie::open(Box::new(logger), root))
+        (witness, Trie::open(Arc::new(logger), root))
     }
 }
 

@@ -22,7 +22,7 @@ in
 
       system.stateVersion = "25.11";
       environment.systemPackages = lib.mkOverride 99 [];
-      
+
       boot.kernelModules = [ "tdx_guest" "tsm" ];
       boot.initrd.availableKernelModules  = [ "dm_mod" "dm_verity" "erofs" "sd_mod" "ahci" ];
       boot.initrd.includeDefaultModules = false;

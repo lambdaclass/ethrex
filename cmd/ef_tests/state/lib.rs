@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 mod deserialize;
 pub mod parser;
 mod report;

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     PathRLP, Trie, TrieDB, ValueRLP,
     nibbles::Nibbles,
@@ -5,7 +7,7 @@ use crate::{
 };
 
 pub struct TrieIterator {
-    db: Box<dyn TrieDB>,
+    db: Arc<dyn TrieDB>,
     // The stack contains the current traversed path and the next node to be traversed
     stack: Vec<(Nibbles, NodeRef)>,
 }

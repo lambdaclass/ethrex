@@ -13,6 +13,7 @@ pub trait TrieDB: Send + Sync {
 }
 
 /// InMemory implementation for the TrieDB trait, with get and put operations.
+#[derive(Default, Clone)]
 pub struct InMemoryTrieDB {
     inner: Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>,
 }

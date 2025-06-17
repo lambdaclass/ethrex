@@ -21,28 +21,20 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, NodeHash, Trie};
+use libmdbx::TransactionKind;
 use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
-use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use libmdbx::{
     dupsort,
     orm::{Database, table},
-    table_info,
 };
 use serde_json;
 use std::fmt::{Debug, Formatter};
-use std::path::Path;
 use std::sync::Arc;
 
 pub struct Store {
     db: Arc<Database>,
 }
 impl Store {
-    pub fn new(path: &str) -> Result<Self, StoreError> {
-        Ok(Self {
-            db: Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?),
-        })
-    }
-
     // Helper method to write into a libmdbx table
     async fn write<T: Table>(&self, key: T::Key, value: T::Value) -> Result<(), StoreError> {
         let db = self.db.clone();
@@ -596,7 +588,7 @@ impl StoreEngine for Store {
         hashed_address: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let db = Box::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
+        let db = Arc::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
             self.db.clone(),
             hashed_address.0,
         ));
@@ -604,7 +596,7 @@ impl StoreEngine for Store {
     }
 
     fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone()));
+        let db = Arc::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone()));
         Ok(Trie::open(db, state_root))
     }
 
@@ -1363,51 +1355,7 @@ impl Encodable for SnapStateIndex {
     }
 }
 
-/// default page size recommended by libmdbx
-///
-/// - See here: https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
-/// - and here: https://libmdbx.dqdkfa.ru/structmdbx_1_1env_1_1geometry.html#a45048bf2de9120d01dae2151c060d459
-const DB_PAGE_SIZE: usize = 4096;
-/// For a default page size of 4096, the max value size is roughly 1/2 page size.
 const DB_MAX_VALUE_SIZE: usize = 2022;
-// Maximum DB size, set to 2 TB
-const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 2; // 2 TB
-
-/// Initializes a new database with the provided path. If the path is `None`, the database
-/// will be temporary.
-pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
-    let tables = [
-        table_info!(BlockNumbers),
-        table_info!(Headers),
-        table_info!(Bodies),
-        table_info!(AccountCodes),
-        table_info!(Receipts),
-        table_info!(TransactionLocations),
-        table_info!(ChainData),
-        table_info!(StateTrieNodes),
-        table_info!(StorageTriesNodes),
-        table_info!(CanonicalBlockHashes),
-        table_info!(Payloads),
-        table_info!(PendingBlocks),
-        table_info!(SnapState),
-        table_info!(StateSnapShot),
-        table_info!(StorageSnapShot),
-        table_info!(StorageHealPaths),
-        table_info!(InvalidAncestors),
-    ]
-    .into_iter()
-    .collect();
-    let path = path.map(|p| p.as_ref().to_path_buf());
-    let options = DatabaseOptions {
-        page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
-        mode: Mode::ReadWrite(ReadWriteOptions {
-            max_size: Some(MAX_MAP_SIZE),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    Database::create_with_options(path, options, &tables)
-}
 
 #[cfg(test)]
 mod tests {
@@ -1418,6 +1366,17 @@ mod tests {
         Address, H256,
         types::{BlockHash, Index, Log, TxType},
     };
+    use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, table_info};
+
+    /// default page size recommended by libmdbx
+    ///
+    /// - See here: https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
+    /// - and here: https://libmdbx.dqdkfa.ru/structmdbx_1_1env_1_1geometry.html#a45048bf2de9120d01dae2151c060d459
+    ///
+    /// For a default page size of 4096, the max value size is roughly 1/2 page size.
+    const DB_PAGE_SIZE: usize = 4096;
+    // Maximum DB size, set to 2 TB
+    const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 2; // 2 TB
 
     #[test]
     fn mdbx_smoke_test() {

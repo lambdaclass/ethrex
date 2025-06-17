@@ -51,7 +51,7 @@ pub type TrieNode = (NodeHash, NodeRLP);
 
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
-    db: Box<dyn TrieDB>,
+    db: Arc<dyn TrieDB>,
     root: NodeRef,
 }
 
@@ -63,7 +63,7 @@ impl Default for Trie {
 
 impl Trie {
     /// Creates a new Trie from a clean DB
-    pub fn new(db: Box<dyn TrieDB>) -> Self {
+    pub fn new(db: Arc<dyn TrieDB>) -> Self {
         Self {
             db,
             root: NodeRef::default(),
@@ -71,7 +71,7 @@ impl Trie {
     }
 
     /// Creates a trie from an already-initialized DB and sets root as the root node of the trie
-    pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
+    pub fn open(db: Arc<dyn TrieDB>, root: H256) -> Self {
         Self {
             db,
             root: (root != *EMPTY_TRIE_HASH)
@@ -269,7 +269,7 @@ impl Trie {
             .map(|(node_hash, nodes)| (*node_hash, (*nodes).clone()))
             .collect::<HashMap<_, _>>();
         let Some(root) = root else {
-            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
+            let in_memory_trie = Arc::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
             return Ok(Trie::new(in_memory_trie));
         };
 
@@ -315,7 +315,7 @@ impl Trie {
             .into_iter()
             .map(|(node_hash, nodes)| (node_hash, nodes.clone()))
             .collect::<HashMap<_, _>>();
-        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
+        let in_memory_trie = Arc::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
 
         let mut trie = Trie::new(in_memory_trie);
         trie.root = root;
@@ -352,7 +352,7 @@ impl Trie {
             }
         }
 
-        Trie::new(Box::new(NullTrieDB))
+        Trie::new(Arc::new(NullTrieDB))
     }
 
     /// Obtain the encoded node given its path.
@@ -438,7 +438,7 @@ impl Trie {
         let hmap: HashMap<NodeHash, Vec<u8>> = HashMap::new();
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
-        Trie::new(Box::new(db))
+        Trie::new(Arc::new(db))
     }
 }
 
