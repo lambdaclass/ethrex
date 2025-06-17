@@ -73,7 +73,7 @@ pub enum ExceptionalHalt {
 pub enum TxValidationError {
     #[error("Sender account shouldn't be a contract")]
     SenderNotEOA,
-    #[error("Insufficient account founds")]
+    #[error("Insufficient account funds")]
     InsufficientAccountFunds,
     #[error("Nonce is max")]
     NonceIsMax,

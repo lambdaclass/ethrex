@@ -25,7 +25,7 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 	--sequencer-registry-owner <ADDRESS>
 ```
 
-> [!NOTE]  
+> [!NOTE]
 > In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers.  
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 
@@ -37,8 +37,9 @@ aligned \
 --private_key <PROOF_SENDER_PRIVATE_KEY> \
 --amount <DEPOSIT_AMOUNT>
 ```
-> [!IMPORTANT]  
-> Using the [Aligned cli](https://docs.alignedlayer.com/guides/9_aligned_cli)
+
+> [!IMPORTANT]
+> Using the [Aligned CLI](https://docs.alignedlayer.com/guides/9_aligned_cli)
 
 ### 3. Running a node
 
