@@ -1,9 +1,9 @@
-# ethrex L2 Prover
+# Ethrex L2 prover
 
-## Table of Contents
+## ToC
 
-- [ethrex L2 Prover](#ethrex-l2-prover)
-  - [Table of Contents](#table-of-contents)
+- [Ethrex L2 prover](#ethrex-l2-prover)
+  - [ToC](#toc)
   - [Intro](#intro)
   - [Workflow](#workflow)
   - [How](#how)
