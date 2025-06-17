@@ -1,14 +1,15 @@
 use bytes::Bytes;
 use ethrex_common::types::{
-    code_hash, Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody,
-    EIP1559Transaction, EIP2930Transaction, EIP4844Transaction, EIP7702Transaction,
-    LegacyTransaction, Transaction as ethrexTransaction, TxKind,
+    Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody, EIP1559Transaction,
+    EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, LegacyTransaction,
+    Transaction as ethrexTransaction, TxKind, code_hash,
 };
 use ethrex_common::types::{Genesis, GenesisAccount, Withdrawal};
-use ethrex_common::{types::BlockHeader, Address, Bloom, H256, H64, U256};
+use ethrex_common::{Address, Bloom, H64, H256, U256, types::BlockHeader};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::deserialize::deserialize_block_expected_exception;
 use crate::network::Network;
 
 #[derive(Debug, Deserialize)]
@@ -53,7 +54,7 @@ pub struct BlobSchedule {
 }
 
 impl TestUnit {
-    /// Checks wether a test has a block where the inner_block is none.
+    /// Checks whether a test has a block where the inner_block is none.
     /// These tests only check for failures in decoding invalid rlp and expect an exception.
     pub fn is_rlp_only_test(&self) -> bool {
         let mut is_rlp_only = false;
@@ -176,7 +177,12 @@ pub struct BlockWithRLP {
     pub rlp: Bytes,
     #[serde(flatten)]
     inner: Option<BlockInner>,
-    pub expect_exception: Option<String>,
+    #[serde(
+        rename = "expectException",
+        default,
+        deserialize_with = "deserialize_block_expected_exception"
+    )]
+    pub expect_exception: Option<Vec<BlockChainExpectedException>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
@@ -275,6 +281,7 @@ impl From<Header> for BlockHeader {
             excess_blob_gas: val.excess_blob_gas.map(|x| x.as_u64()),
             parent_beacon_block_root: val.parent_beacon_block_root,
             requests_hash: val.requests_hash,
+            ..Default::default()
         }
     }
 }
@@ -476,4 +483,25 @@ impl From<Account> for GenesisAccount {
             nonce: val.nonce.as_u64(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+pub enum BlockChainExpectedException {
+    TxtException(String),
+    BlockException(BlockExpectedException),
+    RLPException,
+    Other,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+pub enum BlockExpectedException {
+    RLPStructuresEncoding,
+    IncorrectBlobGasUsed,
+    BlobGasUsedAboveLimit,
+    IncorrectExcessBlobGas,
+    IncorrectBlockFormat,
+    InvalidRequest,
+    SystemContractEmpty,
+    SystemContractCallFailed,
+    Other, //TODO: Implement exceptions
 }

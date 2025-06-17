@@ -1,11 +1,11 @@
 use crate::{
     constants::LAST_AVAILABLE_BLOCK_LIMIT,
-    errors::{InternalError, OpcodeResult, VMError},
+    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost,
     utils::*,
     vm::VM,
 };
-use ethrex_common::{types::Fork, U256};
+use ethrex_common::{U256, types::Fork};
 
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
@@ -29,15 +29,12 @@ impl<'a> VM<'a> {
 
         let block_number: u64 = block_number
             .try_into()
-            .map_err(|_err| VMError::VeryLargeNumber)?;
+            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
 
-        if let Some(block_hash) = self.db.store.get_block_hash(block_number)? {
-            self.current_call_frame_mut()?
-                .stack
-                .push(U256::from_big_endian(block_hash.as_bytes()))?;
-        } else {
-            self.current_call_frame_mut()?.stack.push(U256::zero())?;
-        }
+        let block_hash = self.db.store.get_block_hash(block_number)?;
+        self.current_call_frame_mut()?
+            .stack
+            .push(U256::from_big_endian(block_hash.as_bytes()))?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -142,7 +139,7 @@ impl<'a> VM<'a> {
     pub fn op_blobhash(&mut self) -> Result<OpcodeResult, VMError> {
         // [EIP-4844] - BLOBHASH is only available from CANCUN
         if self.env.config.fork < Fork::Cancun {
-            return Err(VMError::InvalidOpcode);
+            return Err(ExceptionalHalt::InvalidOpcode.into());
         }
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::BLOBHASH)?;
@@ -157,12 +154,10 @@ impl<'a> VM<'a> {
 
         let index: usize = index
             .try_into()
-            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+            .map_err(|_| InternalError::TypeConversion)?;
 
         //This should never fail because we check if the index fits above
-        let blob_hash = blob_hashes
-            .get(index)
-            .ok_or(VMError::Internal(InternalError::BlobHashOutOfRange))?;
+        let blob_hash = blob_hashes.get(index).ok_or(InternalError::Slicing)?;
         let hash = U256::from_big_endian(blob_hash.as_bytes());
 
         self.current_call_frame_mut()?.stack.push(hash)?;
@@ -174,7 +169,7 @@ impl<'a> VM<'a> {
     pub fn op_blobbasefee(&mut self) -> Result<OpcodeResult, VMError> {
         // [EIP-7516] - BLOBBASEFEE is only available from CANCUN
         if self.env.config.fork < Fork::Cancun {
-            return Err(VMError::InvalidOpcode);
+            return Err(ExceptionalHalt::InvalidOpcode.into());
         }
 
         self.current_call_frame_mut()?

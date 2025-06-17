@@ -1,60 +1,92 @@
-use bytes::BufMut;
-use ethrex_common::H512;
-use ethrex_rlp::{
-    decode::RLPDecode,
-    encode::RLPEncode,
-    error::{RLPDecodeError, RLPEncodeError},
-    structs::{Decoder, Encoder},
-};
-use k256::PublicKey;
-
-use crate::rlpx::utils::{compress_pubkey, snappy_decompress};
-
 use super::{
     message::RLPxMessage,
     utils::{decompress_pubkey, snappy_compress},
 };
+use crate::rlpx::utils::{compress_pubkey, snappy_decompress};
+use bytes::BufMut;
+use ethrex_common::H512;
+use ethrex_rlp::structs::{Decoder, Encoder};
+use ethrex_rlp::{
+    decode::{RLPDecode, decode_rlp_item},
+    encode::RLPEncode,
+    error::{RLPDecodeError, RLPEncodeError},
+};
+use k256::PublicKey;
+use serde::Serialize;
+
+pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 1] = [Capability::eth(68)];
+pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
+pub const SUPPORTED_P2P_CAPABILITIES: [Capability; 1] = [Capability::p2p(5)];
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Capability {
-    P2p,
-    Eth,
-    Snap,
-    UnsupportedCapability(String),
+pub struct Capability {
+    pub protocol: &'static str,
+    pub version: u8,
+}
+
+impl Capability {
+    pub const fn eth(version: u8) -> Self {
+        Capability {
+            protocol: "eth",
+            version,
+        }
+    }
+
+    pub const fn p2p(version: u8) -> Self {
+        Capability {
+            protocol: "p2p",
+            version,
+        }
+    }
+
+    pub const fn snap(version: u8) -> Self {
+        Capability {
+            protocol: "snap",
+            version,
+        }
+    }
 }
 
 impl RLPEncode for Capability {
     fn encode(&self, buf: &mut dyn BufMut) {
-        match self {
-            Self::P2p => "p2p".encode(buf),
-            Self::Eth => "eth".encode(buf),
-            Self::Snap => "snap".encode(buf),
-            Self::UnsupportedCapability(name) => name.encode(buf),
-        }
+        Encoder::new(buf)
+            .encode_field(&self.protocol)
+            .encode_field(&self.version)
+            .finish();
     }
 }
 
 impl RLPDecode for Capability {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (cap_string, rest) = String::decode_unfinished(rlp)?;
-        match cap_string.as_str() {
-            "p2p" => Ok((Capability::P2p, rest)),
-            "eth" => Ok((Capability::Eth, rest)),
-            "snap" => Ok((Capability::Snap, rest)),
-            other => Ok((Capability::UnsupportedCapability(other.to_string()), rest)),
+        let (protocol, rest) = String::decode_unfinished(&rlp[1..])?;
+        let (version, rest) = u8::decode_unfinished(rest)?;
+        match protocol.as_str() {
+            "eth" => Ok((Capability::eth(version), rest)),
+            "p2p" => Ok((Capability::p2p(version), rest)),
+            "snap" => Ok((Capability::snap(version), rest)),
+            _ => Err(RLPDecodeError::MalformedData),
         }
+    }
+}
+
+impl Serialize for Capability {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&format!("{}/{}", self.protocol, self.version))
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct HelloMessage {
-    pub(crate) capabilities: Vec<(Capability, u8)>,
+    pub(crate) capabilities: Vec<Capability>,
     pub(crate) node_id: PublicKey,
     pub(crate) client_id: String,
 }
 
 impl HelloMessage {
-    pub fn new(capabilities: Vec<(Capability, u8)>, node_id: PublicKey, client_id: String) -> Self {
+    pub fn new(capabilities: Vec<Capability>, node_id: PublicKey, client_id: String) -> Self {
         Self {
             capabilities,
             node_id,
@@ -86,8 +118,7 @@ impl RLPxMessage for HelloMessage {
         let (client_id, decoder): (String, _) = decoder.decode_field("clientId")?;
 
         // [[cap1, capVersion1], [cap2, capVersion2], ...]
-        let (capabilities, decoder): (Vec<(Capability, u8)>, _) =
-            decoder.decode_field("capabilities")?;
+        let (capabilities, decoder): (Vec<Capability>, _) = decoder.decode_field("capabilities")?;
 
         // This field should be ignored
         let (_listen_port, decoder): (u16, _) = decoder.decode_field("listenPort")?;
@@ -253,12 +284,13 @@ impl RLPxMessage for PingMessage {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        // decode ping message: data is empty list [] but it is snappy compressed
+        // decode ping message: data is empty list [] or string but it is snappy compressed
         let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let result = decoder.finish_unchecked();
+        let (_, payload, remaining) = decode_rlp_item(&decompressed_data)?;
+
         let empty: &[u8] = &[];
-        assert_eq!(result, empty, "Ping msg_data should be &[]");
+        assert_eq!(payload, empty, "Ping payload should be &[]");
+        assert_eq!(remaining, empty, "Ping remaining should be &[]");
         Ok(Self {})
     }
 }
@@ -278,12 +310,13 @@ impl RLPxMessage for PongMessage {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        // decode pong message: data is empty list [] but it is snappy compressed
+        // decode pong message: data is empty list [] or string but it is snappy compressed
         let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let result = decoder.finish_unchecked();
+        let (_, payload, remaining) = decode_rlp_item(&decompressed_data)?;
+
         let empty: &[u8] = &[];
-        assert_eq!(result, empty, "Pong msg_data should be &[]");
+        assert_eq!(payload, empty, "Pong payload should be &[]");
+        assert_eq!(remaining, empty, "Pong remaining should be &[]");
         Ok(Self {})
     }
 }

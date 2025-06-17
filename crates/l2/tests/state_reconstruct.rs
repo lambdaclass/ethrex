@@ -16,18 +16,17 @@ use std::fs;
 // This test verifies the correct reconstruction of the L2 state from data blobs.
 
 // Test Data:
-// - The test uses 6 pre-generated data blobs located under test_data/blobs/
+// - The test uses 5 pre-generated data blobs located under test_data/blobs/
 // - Each blob contains a batch of blocks with specific deposit transactions:
 //
 // Blob Contents:
 // 1. blob_1: Batch of a single empty block (block 1)
-// 2. blob_2: Batch of blocks 2 through 5
-// 3. blob_3: Batch of blocks 6 through 9
-// 4. blob_4: Batch of blocks 10 through 14
-// 5. blob_5: Batch of blocks 15 through 18
-// 6. blob_6: Batch of blocks 19 through 23 (blocks 22 and 23 are empty)
+// 2. blob_2: Batch of blocks 2 through 6
+// 3. blob_3: Batch of blocks 7 through 11
+// 4. blob_4: Batch of blocks 12 through 16
+// 5. blob_5: Batch of blocks 17 through 21
 //
-// - Each non-empty block contains exactly 10 deposit transactions
+// - Each block contains exactly 10 deposit transactions
 #[tokio::test]
 async fn test_state_reconstruct() {
     let pks_path = std::env::var("PRIVATE_KEYS_PATH")
@@ -52,11 +51,10 @@ async fn test_state_reconstruct() {
         .collect::<Vec<_>>();
 
     test_state_block(&addresses, 0, 0).await;
-    test_state_block(&addresses, 5, 40).await;
-    test_state_block(&addresses, 9, 80).await;
-    test_state_block(&addresses, 14, 130).await;
-    test_state_block(&addresses, 18, 170).await;
-    test_state_block(&addresses, 23, addresses.len() as u64).await;
+    test_state_block(&addresses, 6, 50).await;
+    test_state_block(&addresses, 11, 100).await;
+    test_state_block(&addresses, 16, 150).await;
+    test_state_block(&addresses, 21, addresses.len() as u64).await;
 }
 
 async fn test_state_block(addresses: &[Address], block_number: u64, rich_accounts: u64) {
@@ -79,7 +77,7 @@ async fn test_state_block(addresses: &[Address], block_number: u64, rich_account
 }
 
 async fn connect() -> EthClient {
-    let client = EthClient::new(ETH_RPC_URL);
+    let client = EthClient::new(ETH_RPC_URL).unwrap();
 
     let mut retries = 0;
     while retries < 20 {

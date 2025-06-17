@@ -145,7 +145,7 @@ pub(crate) async fn fetch_logs_with_filter(
             .ok_or(RpcErr::Internal(format!(
                 "Could not get header for block {block_num}"
             )))?;
-        let block_hash = block_header.compute_block_hash();
+        let block_hash = block_header.hash();
 
         let mut block_log_index = 0_u64;
 
@@ -202,7 +202,7 @@ pub(crate) async fn fetch_logs_with_filter(
                             if !sub_topics.is_empty()
                                 && !sub_topics
                                     .iter()
-                                    .any(|st| st.map_or(true, |t| rpc_log.log.topics[i] == t))
+                                    .any(|st| st.is_none_or(|t| rpc_log.log.topics[i] == t))
                             {
                                 return false;
                             }

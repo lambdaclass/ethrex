@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, collections::HashMap, panic::RefUnwindSafe, sync::Arc};
+use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
 
 use crate::rlp::{
     AccountHashRLP, AccountStateRLP, BlockRLP, Rlp, TransactionHashRLP, TriePathsRLP,
@@ -14,11 +14,11 @@ use crate::{
 };
 use ethrex_common::types::{AccountState, BlockBody};
 use ethrex_common::{
-    types::{
-        payload::PayloadBundle, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-        Receipt,
-    },
     H256, U256,
+    types::{
+        Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt,
+        payload::PayloadBundle,
+    },
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -26,6 +26,8 @@ use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
 use redb::{AccessGuard, Database, Key, MultimapTableDefinition, TableDefinition, TypeName, Value};
 
+use crate::UpdateBatch;
+use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::SnapStateIndex;
 use crate::{api::StoreEngine, utils::ChainDataIndex};
 
@@ -97,7 +99,7 @@ impl RedBStore {
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let write_txn = db.begin_write()?;
+            let write_txn = db.begin_write().map_err(Box::new)?;
             write_txn.open_table(table)?.insert(key, value)?;
             write_txn.commit()?;
 
@@ -126,7 +128,7 @@ impl RedBStore {
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let write_txn = db.begin_write()?;
+            let write_txn = db.begin_write().map_err(Box::new)?;
             write_txn.open_multimap_table(table)?.insert(key, value)?;
             write_txn.commit()?;
 
@@ -154,7 +156,7 @@ impl RedBStore {
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let write_txn = db.begin_write()?;
+            let write_txn = db.begin_write().map_err(Box::new)?;
             {
                 let mut table = write_txn.open_table(table)?;
                 for (key, value) in key_values {
@@ -187,7 +189,7 @@ impl RedBStore {
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let write_txn = db.begin_write()?;
+            let write_txn = db.begin_write().map_err(Box::new)?;
             {
                 let mut table = write_txn.open_multimap_table(table)?;
                 for (key, value) in key_values {
@@ -217,7 +219,7 @@ impl RedBStore {
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let read_txn = db.begin_read()?;
+            let read_txn = db.begin_read().map_err(Box::new)?;
             let table = read_txn.open_table(table)?;
             let result = table.get(key)?;
 
@@ -237,7 +239,7 @@ impl RedBStore {
         K: Key + 'static,
         V: Value,
     {
-        let read_txn = self.db.begin_read()?;
+        let read_txn = self.db.begin_read().map_err(Box::new)?;
         let table = read_txn.open_table(table)?;
         let result = table.get(key)?;
 
@@ -259,7 +261,7 @@ impl RedBStore {
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let read_txn = db.begin_read()?;
+            let read_txn = db.begin_read().map_err(Box::new)?;
             let table = read_txn.open_table(table)?;
             let mut result = Vec::new();
             for key in keys {
@@ -283,7 +285,7 @@ impl RedBStore {
         K: Key + 'static,
         V: Value,
     {
-        let write_txn = self.db.begin_write()?;
+        let write_txn = self.db.begin_write().map_err(Box::new)?;
         write_txn.open_table(table)?.remove(key)?;
         write_txn.commit()?;
 
@@ -294,14 +296,86 @@ impl RedBStore {
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        Ok(self
-            .read_sync(CANONICAL_BLOCK_HASHES_TABLE, number)?
-            .map(|a| a.value().to()))
+        self.read_sync(CANONICAL_BLOCK_HASHES_TABLE, number)?
+            .map(|a| a.value().to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 }
 
 #[async_trait::async_trait]
 impl StoreEngine for RedBStore {
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let write_txn = db.begin_write().map_err(Box::new)?;
+            {
+                // store account updates
+                let mut state_trie_store = write_txn.open_table(STATE_TRIE_NODES_TABLE)?;
+                for (node_hash, node_data) in update_batch.account_updates {
+                    state_trie_store.insert(node_hash.as_ref(), &*node_data)?;
+                }
+
+                let mut addr_store = write_txn.open_multimap_table(STORAGE_TRIE_NODES_TABLE)?;
+                for (hashed_address, nodes) in update_batch.storage_updates {
+                    for (node_hash, node_data) in nodes {
+                        addr_store.insert(
+                            (hashed_address.0, node_hash_to_fixed_size(node_hash)),
+                            &*node_data,
+                        )?;
+                    }
+                }
+
+                let mut transaction_table = write_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
+                let mut bodies = write_txn.open_table(BLOCK_BODIES_TABLE)?;
+                let mut headers = write_txn.open_table(HEADERS_TABLE)?;
+                let mut block_numbers = write_txn.open_table(BLOCK_NUMBERS_TABLE)?;
+
+                for block in update_batch.blocks {
+                    // store block
+                    let number = block.header.number;
+                    let hash = <H256 as Into<BlockHashRLP>>::into(block.hash());
+
+                    for (index, transaction) in block.body.transactions.iter().enumerate() {
+                        transaction_table.insert(
+                            <H256 as Into<TransactionHashRLP>>::into(transaction.compute_hash()),
+                            <(u64, BlockHash, u64) as Into<Rlp<(BlockNumber, BlockHash, Index)>>>::into(
+                                (number, block.hash(), index as u64),
+                            ),
+                        )?;
+                    }
+                    bodies.insert(
+                        hash.clone(),
+                        <BlockBody as Into<BlockBodyRLP>>::into(block.body),
+                    )?;
+                    headers.insert(
+                        hash.clone(),
+                        <BlockHeader as Into<BlockHeaderRLP>>::into(block.header),
+                    )?;
+                    block_numbers.insert(hash, number)?;
+                }
+
+                let mut receipts_table = write_txn.open_table(RECEIPTS_TABLE)?;
+                for (block_hash, receipts) in update_batch.receipts {
+                    for (index, receipt) in receipts.into_iter().enumerate() {
+                        receipts_table.insert(
+                            <(BlockHash, u64) as Into<TupleRLP<BlockHash, Index>>>::into((
+                                block_hash,
+                                index as u64,
+                            )),
+                            <Receipt as Into<ReceiptRLP>>::into(receipt),
+                        )?;
+                    }
+                }
+            }
+
+            write_txn.commit()?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
     async fn add_block_header(
         &self,
         block_hash: BlockHash,
@@ -338,9 +412,10 @@ impl StoreEngine for RedBStore {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            Ok(self
-                .read_sync(HEADERS_TABLE, <H256 as Into<BlockHashRLP>>::into(hash))?
-                .map(|b| b.value().to()))
+            self.read_sync(HEADERS_TABLE, <H256 as Into<BlockHashRLP>>::into(hash))?
+                .map(|b| b.value().to())
+                .transpose()
+                .map_err(StoreError::from)
         } else {
             Ok(None)
         }
@@ -362,7 +437,7 @@ impl StoreEngine for RedBStore {
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let write_txn = db.begin_write()?;
+            let write_txn = db.begin_write().map_err(Box::new)?;
 
             {
                 // Begin block so that tables are opened once and dropped at the end.
@@ -446,7 +521,11 @@ impl StoreEngine for RedBStore {
             .await?;
         let hashes: Vec<BlockHashRLP> = hashes.into_iter().map(|v| v.value()).collect();
         let blocks = self.read_bulk(BLOCK_BODIES_TABLE, hashes).await?;
-        Ok(blocks.into_iter().map(|b| b.value().to()).collect())
+        let mut block_bodies = Vec::new();
+        for block_body in blocks.into_iter() {
+            block_bodies.push(block_body.value().to()?)
+        }
+        Ok(block_bodies)
     }
 
     async fn get_block_bodies_by_hash(
@@ -458,51 +537,58 @@ impl StoreEngine for RedBStore {
             .map(<H256 as Into<BlockHashRLP>>::into)
             .collect();
         let blocks = self.read_bulk(BLOCK_BODIES_TABLE, hashes).await?;
-        Ok(blocks.into_iter().map(|b| b.value().to()).collect())
+        let mut block_bodies = Vec::new();
+        for block_body in blocks.into_iter() {
+            block_bodies.push(block_body.value().to()?)
+        }
+        Ok(block_bodies)
     }
 
     async fn get_block_body_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        Ok(self
-            .read(
-                BLOCK_BODIES_TABLE,
-                <H256 as Into<BlockHashRLP>>::into(block_hash),
-            )
-            .await?
-            .map(|b| b.value().to()))
+        self.read(
+            BLOCK_BODIES_TABLE,
+            <H256 as Into<BlockHashRLP>>::into(block_hash),
+        )
+        .await?
+        .map(|b| b.value().to())
+        .transpose()
+        .map_err(StoreError::from)
     }
 
     fn get_block_header_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        Ok(self
-            .read_sync(
-                HEADERS_TABLE,
-                <H256 as Into<BlockHashRLP>>::into(block_hash),
-            )?
-            .map(|b| b.value().to()))
+        self.read_sync(
+            HEADERS_TABLE,
+            <H256 as Into<BlockHashRLP>>::into(block_hash),
+        )?
+        .map(|b| b.value().to())
+        .transpose()
+        .map_err(StoreError::from)
     }
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         self.write(
             PENDING_BLOCKS_TABLE,
-            <H256 as Into<BlockHashRLP>>::into(block.header.compute_block_hash()),
+            <H256 as Into<BlockHashRLP>>::into(block.hash()),
             <Block as Into<BlockRLP>>::into(block),
         )
         .await
     }
 
     async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
-        Ok(self
-            .read(
-                PENDING_BLOCKS_TABLE,
-                <H256 as Into<BlockHashRLP>>::into(block_hash),
-            )
-            .await?
-            .map(|b| b.value().to()))
+        self.read(
+            PENDING_BLOCKS_TABLE,
+            <H256 as Into<BlockHashRLP>>::into(block_hash),
+        )
+        .await?
+        .map(|b| b.value().to())
+        .transpose()
+        .map_err(StoreError::from)
     }
 
     async fn add_block_number(
@@ -531,6 +617,18 @@ impl StoreEngine for RedBStore {
             .map(|b| b.value()))
     }
 
+    fn get_block_number_sync(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        Ok(self
+            .read_sync(
+                BLOCK_NUMBERS_TABLE,
+                <H256 as Into<BlockHashRLP>>::into(block_hash),
+            )?
+            .map(|b| b.value()))
+    }
+
     async fn add_transaction_location(
         &self,
         transaction_hash: ethrex_common::H256,
@@ -554,16 +652,21 @@ impl StoreEngine for RedBStore {
         &self,
         transaction_hash: ethrex_common::H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
-        let read_txn = self.db.begin_read()?;
+        let read_txn = self.db.begin_read().map_err(Box::new)?;
         let table = read_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
 
-        Ok(table
+        let mut table_vec = Vec::new();
+        while let Some(Ok(res)) = table
             .get(<H256 as Into<TransactionHashRLP>>::into(transaction_hash))?
-            .map_while(|res| res.ok().map(|t| t.value().to()))
-            .find(|(number, hash, _index)| {
-                self.get_block_hash_by_block_number(*number)
-                    .is_ok_and(|o| o == Some(*hash))
-            }))
+            .next()
+        {
+            table_vec.push(res.value().to()?)
+        }
+
+        Ok(table_vec.into_iter().find(|(number, hash, _index)| {
+            self.get_block_hash_by_block_number(*number)
+                .is_ok_and(|o| o == Some(*hash))
+        }))
     }
 
     async fn add_receipt(
@@ -580,46 +683,20 @@ impl StoreEngine for RedBStore {
         .await
     }
 
-    async fn add_receipts_for_blocks(
-        &self,
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-    ) -> Result<(), StoreError> {
-        let mut key_values = vec![];
-
-        for (block_hash, receipts) in receipts.into_iter() {
-            let mut kv = receipts
-                .into_iter()
-                .enumerate()
-                .map(|(index, receipt)| {
-                    (
-                        <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((
-                            block_hash,
-                            index as u64,
-                        )),
-                        <Receipt as Into<ReceiptRLP>>::into(receipt),
-                    )
-                })
-                .collect();
-
-            key_values.append(&mut kv);
-        }
-
-        self.write_batch(RECEIPTS_TABLE, key_values).await
-    }
-
     async fn get_receipt(
         &self,
         block_number: BlockNumber,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            Ok(self
-                .read(
-                    RECEIPTS_TABLE,
-                    <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((hash, index)),
-                )
-                .await?
-                .map(|b| b.value().to()))
+            self.read(
+                RECEIPTS_TABLE,
+                <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((hash, index)),
+            )
+            .await?
+            .map(|b| b.value().to())
+            .transpose()
+            .map_err(StoreError::from)
         } else {
             Ok(None)
         }
@@ -642,12 +719,13 @@ impl StoreEngine for RedBStore {
         &self,
         code_hash: ethrex_common::H256,
     ) -> Result<Option<bytes::Bytes>, StoreError> {
-        Ok(self
-            .read_sync(
-                ACCOUNT_CODES_TABLE,
-                <H256 as Into<AccountCodeHashRLP>>::into(code_hash),
-            )?
-            .map(|b| b.value().to()))
+        self.read_sync(
+            ACCOUNT_CODES_TABLE,
+            <H256 as Into<AccountCodeHashRLP>>::into(code_hash),
+        )?
+        .map(|b| b.value().to())
+        .transpose()
+        .map_err(StoreError::from)
     }
 
     async fn get_canonical_block_hash(
@@ -656,7 +734,19 @@ impl StoreEngine for RedBStore {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read(CANONICAL_BLOCK_HASHES_TABLE, block_number)
             .await
-            .map(|o| o.map(|hash_rlp| hash_rlp.value().to()))
+            .map(|o| o.map(|hash_rlp| hash_rlp.value().to()))?
+            .transpose()
+            .map_err(StoreError::from)
+    }
+
+    fn get_canonical_block_hash_sync(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        Ok(self
+            .read_sync(CANONICAL_BLOCK_HASHES_TABLE, block_number)
+            .map(|o| o.map(|hash_rlp| hash_rlp.value().to()))?
+            .transpose()?)
     }
 
     async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
@@ -803,14 +893,17 @@ impl StoreEngine for RedBStore {
         &self,
         hashed_address: ethrex_common::H256,
         storage_root: ethrex_common::H256,
-    ) -> ethrex_trie::Trie {
+    ) -> Result<ethrex_trie::Trie, StoreError> {
         let db = Box::new(RedBMultiTableTrieDB::new(self.db.clone(), hashed_address.0));
-        Trie::open(db, storage_root)
+        Ok(Trie::open(db, storage_root))
     }
 
-    fn open_state_trie(&self, state_root: ethrex_common::H256) -> ethrex_trie::Trie {
+    fn open_state_trie(
+        &self,
+        state_root: ethrex_common::H256,
+    ) -> Result<ethrex_trie::Trie, StoreError> {
         let db = Box::new(RedBTrie::new(self.db.clone()));
-        Trie::open(db, state_root)
+        Ok(Trie::open(db, state_root))
     }
 
     async fn set_canonical_block(
@@ -840,10 +933,11 @@ impl StoreEngine for RedBStore {
     }
 
     async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        Ok(self
-            .read(PAYLOADS_TABLE, payload_id)
+        self.read(PAYLOADS_TABLE, payload_id)
             .await?
-            .map(|b| b.value().to()))
+            .map(|b| b.value().to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_receipts(
@@ -910,7 +1004,7 @@ impl StoreEngine for RedBStore {
     ) -> std::result::Result<Vec<Receipt>, StoreError> {
         let mut encoded_receipts = vec![];
         let mut receipt_index = 0;
-        let read_tx = self.db.begin_read()?;
+        let read_tx = self.db.begin_read().map_err(Box::new)?;
         let mut expected_key: TupleRLP<BlockHash, Index> = (*block_hash, 0).into();
         let table = read_tx.open_table(RECEIPTS_TABLE)?;
         // We're searching receipts for a block, the keys
@@ -927,10 +1021,11 @@ impl StoreEngine for RedBStore {
             receipt_index += 1;
             expected_key = (*block_hash, receipt_index).into()
         }
-        Ok(encoded_receipts
-            .into_iter()
-            .map(|receipt| receipt.to())
-            .collect())
+        let mut decoded_receipts = Vec::new();
+        for encoded_receipt in encoded_receipts.into_iter() {
+            decoded_receipts.push(encoded_receipt.to()?)
+        }
+        Ok(decoded_receipts)
     }
 
     async fn set_header_download_checkpoint(
@@ -995,19 +1090,20 @@ impl StoreEngine for RedBStore {
         limit: usize,
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
         // Read values
-        let txn = self.db.begin_read()?;
+        let txn = self.db.begin_read().map_err(Box::new)?;
         let table = txn.open_table(STORAGE_HEAL_PATHS_TABLE)?;
-        let res: Vec<(H256, Vec<Nibbles>)> = table
+        let mut res: Vec<(H256, Vec<Nibbles>)> = Vec::new();
+        while let Some(Ok((hash, paths))) = table
             .range(<H256 as Into<AccountHashRLP>>::into(Default::default())..)?
-            .map_while(|val| {
-                val.ok()
-                    .map(|(hash, paths)| (hash.value().to(), paths.value().to()))
-            })
-            .take(limit)
-            .collect();
-        txn.close()?;
+            .next()
+        {
+            res.push((hash.value().to()?, paths.value().to()?));
+        }
+
+        res = res.into_iter().take(limit).collect();
+        txn.close().map_err(Box::new)?;
         // Delete read values
-        let txn = self.db.begin_write()?;
+        let txn = self.db.begin_write().map_err(Box::new)?;
         {
             let mut table = txn.open_table(STORAGE_HEAL_PATHS_TABLE)?;
             for (hash, _) in res.iter() {
@@ -1016,25 +1112,6 @@ impl StoreEngine for RedBStore {
         }
         txn.commit()?;
         Ok(res)
-    }
-
-    async fn is_synced(&self) -> Result<bool, StoreError> {
-        match self
-            .read(CHAIN_DATA_TABLE, ChainDataIndex::IsSynced)
-            .await?
-        {
-            None => Err(StoreError::Custom("Sync status not found".to_string())),
-            Some(ref rlp) => RLPDecode::decode(&rlp.value()).map_err(|_| StoreError::DecodeError),
-        }
-    }
-
-    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
-        self.write(
-            CHAIN_DATA_TABLE,
-            ChainDataIndex::IsSynced,
-            is_synced.encode_to_vec(),
-        )
-        .await
     }
 
     async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
@@ -1055,7 +1132,7 @@ impl StoreEngine for RedBStore {
     }
 
     async fn clear_snap_state(&self) -> Result<(), StoreError> {
-        let write_txn = self.db.begin_write()?;
+        let write_txn = self.db.begin_write().map_err(Box::new)?;
         // Delete the whole table as it will be re-crated when we next open it
         write_txn.delete_table(SNAP_STATE_TABLE)?;
         write_txn.commit()?;
@@ -1088,7 +1165,7 @@ impl StoreEngine for RedBStore {
         storage_keys: Vec<H256>,
         storage_values: Vec<U256>,
     ) -> Result<(), StoreError> {
-        let write_tx = self.db.begin_write()?;
+        let write_tx = self.db.begin_write().map_err(Box::new)?;
         {
             let mut table = write_tx.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
             for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
@@ -1107,7 +1184,7 @@ impl StoreEngine for RedBStore {
         storage_keys: Vec<Vec<H256>>,
         storage_values: Vec<Vec<U256>>,
     ) -> Result<(), StoreError> {
-        let write_tx = self.db.begin_write()?;
+        let write_tx = self.db.begin_write().map_err(Box::new)?;
         {
             let mut table = write_tx.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
             for (account_hash, (storage_keys, storage_values)) in account_hashes
@@ -1180,7 +1257,7 @@ impl StoreEngine for RedBStore {
     }
 
     async fn clear_snapshot(&self) -> Result<(), StoreError> {
-        let write_tx = self.db.begin_write()?;
+        let write_tx = self.db.begin_write().map_err(Box::new)?;
         write_tx.delete_table(STATE_SNAPSHOT_TABLE)?;
         write_tx.delete_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
         write_tx.commit()?;
@@ -1191,16 +1268,18 @@ impl StoreEngine for RedBStore {
         &self,
         start: H256,
     ) -> Result<Vec<(H256, ethrex_common::types::AccountState)>, StoreError> {
-        let read_tx = self.db.begin_read()?;
+        let read_tx = self.db.begin_read().map_err(Box::new)?;
         let table = read_tx.open_table(STATE_SNAPSHOT_TABLE)?;
-        Ok(table
+        let mut table_vec = Vec::new();
+        while let Some(Ok((key, value))) = table
             .range(<H256 as Into<AccountHashRLP>>::into(start)..)?
             .take(MAX_SNAPSHOT_READS)
-            .map_while(|elem| {
-                elem.ok()
-                    .map(|(key, value)| (key.value().to(), value.value().to()))
-            })
-            .collect())
+            .next()
+        {
+            table_vec.push((key.value().to()?, value.value().to()?));
+        }
+
+        Ok(table_vec)
     }
 
     async fn read_storage_snapshot(
@@ -1208,7 +1287,7 @@ impl StoreEngine for RedBStore {
         start: H256,
         account_hash: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError> {
-        let read_tx = self.db.begin_read()?;
+        let read_tx = self.db.begin_read().map_err(Box::new)?;
         let table = read_tx.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
         Ok(table
             .get(<H256 as Into<AccountHashRLP>>::into(account_hash))?
@@ -1230,13 +1309,14 @@ impl StoreEngine for RedBStore {
         &self,
         block: BlockHash,
     ) -> Result<Option<BlockHash>, StoreError> {
-        Ok(self
-            .read(
-                INVALID_ANCESTORS_TABLE,
-                <H256 as Into<BlockHashRLP>>::into(block),
-            )
-            .await?
-            .map(|b| b.value().to()))
+        self.read(
+            INVALID_ANCESTORS_TABLE,
+            <H256 as Into<BlockHashRLP>>::into(block),
+        )
+        .await?
+        .map(|b| b.value().to())
+        .transpose()
+        .map_err(StoreError::from)
     }
 
     async fn set_latest_valid_ancestor(
@@ -1338,7 +1418,7 @@ impl redb::Key for SnapStateIndex {
 pub fn init_db() -> Result<Database, StoreError> {
     let db = Database::create("ethrex.redb")?;
 
-    let table_creation_txn = db.begin_write()?;
+    let table_creation_txn = db.begin_write().map_err(Box::new)?;
     table_creation_txn.open_table(STATE_TRIE_NODES_TABLE)?;
     table_creation_txn.open_table(BLOCK_NUMBERS_TABLE)?;
     table_creation_txn.open_table(CANONICAL_BLOCK_HASHES_TABLE)?;

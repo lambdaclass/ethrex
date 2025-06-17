@@ -1,4 +1,4 @@
-use ethrex_trie::{error::TrieError, NodeHash};
+use ethrex_trie::{NodeHash, error::TrieError};
 use libmdbx::orm::{Database, Table};
 use std::{marker::PhantomData, sync::Arc};
 /// Libmdbx implementation for the TrieDB trait, with get and put operations.
@@ -30,12 +30,6 @@ where
         txn.get::<T>(key).map_err(TrieError::DbError)
     }
 
-    fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
-        let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
-        txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
-        txn.commit().map_err(TrieError::DbError)
-    }
-
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
         for (key, value) in key_values {
@@ -48,12 +42,12 @@ where
 #[cfg(test)]
 mod test {
     use super::LibmdbxTrieDB;
-    use crate::trie_db::test_utils::libmdbx::{new_db, TestNodes};
+    use crate::trie_db::test_utils::libmdbx::{TestNodes, new_db};
     use ethrex_trie::NodeHash;
     use ethrex_trie::Trie;
     use ethrex_trie::TrieDB;
     use libmdbx::{
-        orm::{table, Database},
+        orm::{Database, table},
         table_info,
     };
     use std::sync::Arc;

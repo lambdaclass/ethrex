@@ -6,37 +6,33 @@ mod storage_fetcher;
 mod storage_healing;
 mod trie_rebuild;
 
+use crate::peer_handler::{BlockRequestOrder, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, PeerHandler};
 use bytecode_fetcher::bytecode_fetcher;
-use ethrex_blockchain::{error::ChainError, BatchBlockProcessingFailure, Blockchain};
+use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{
-    types::{Block, BlockHash, BlockHeader},
     BigEndianHash, H256, U256, U512,
+    types::{Block, BlockHash, BlockHeader},
 };
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_storage::{error::StoreError, EngineType, Store, STATE_TRIE_SEGMENTS};
-use ethrex_trie::{Nibbles, Node, TrieError, TrieState};
+use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
+use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
 use std::{
     array,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 use storage_healing::storage_healer;
 use tokio::{
-    sync::{mpsc::error::SendError, Mutex},
+    sync::mpsc::error::SendError,
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use trie_rebuild::TrieRebuilder;
-
-use crate::{
-    kademlia::KademliaTable,
-    peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST},
-};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
@@ -95,14 +91,14 @@ pub struct Syncer {
 
 impl Syncer {
     pub fn new(
-        peer_table: Arc<Mutex<KademliaTable>>,
+        peers: PeerHandler,
         snap_enabled: Arc<AtomicBool>,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
     ) -> Self {
         Self {
             snap_enabled,
-            peers: PeerHandler::new(peer_table),
+            peers,
             last_snap_pivot: 0,
             trie_rebuilder: None,
             cancel_token,
@@ -113,16 +109,15 @@ impl Syncer {
     /// Creates a dummy Syncer for tests where syncing is not needed
     /// This should only be used in tests as it won't be able to connect to the p2p network
     pub fn dummy() -> Self {
-        let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
         Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
-            peers: PeerHandler::new(dummy_peer_table),
+            peers: PeerHandler::dummy(),
             last_snap_pivot: 0,
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
             blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).unwrap(),
+                Store::new("", EngineType::InMemory).expect("Failed to start Sotre Engine"),
             )),
         }
     }
@@ -136,7 +131,10 @@ impl Syncer {
     /// [WARNING] Sync is done optimistically, so headers and bodies may be stored even if their data has not been fully synced if the sync is aborted halfway
     /// [WARNING] Sync is currenlty simplified and will not download bodies + receipts previous to the pivot during snap sync
     pub async fn start_sync(&mut self, current_head: H256, sync_head: H256, store: Store) {
-        info!("Syncing from current head {current_head} to sync_head {sync_head}");
+        info!(
+            "Syncing from current head {:?} to sync_head {:?}",
+            current_head, sync_head
+        );
         let start_time = Instant::now();
         match self.sync_cycle(current_head, sync_head, store).await {
             Ok(()) => {
@@ -199,6 +197,9 @@ impl Syncer {
                 return Ok(());
             };
 
+            let mut block_hashes: Vec<BlockHash> =
+                block_headers.iter().map(|header| header.hash()).collect();
+
             let first_block_header = match block_headers.first() {
                 Some(header) => header.clone(),
                 None => continue,
@@ -210,7 +211,7 @@ impl Syncer {
             // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
             // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
             if first_block_header == last_block_header
-                && first_block_header.compute_block_hash() == search_head
+                && first_block_header.hash() == search_head
                 && search_head != sync_head
             {
                 // There is no path to the sync head this goes back until it find a common ancerstor
@@ -218,11 +219,6 @@ impl Syncer {
                 search_head = first_block_header.parent_hash;
                 continue;
             }
-
-            let mut block_hashes = block_headers
-                .iter()
-                .map(|header| header.compute_block_hash())
-                .collect::<Vec<_>>();
 
             debug!(
                 "Received {} block headers| First Number: {} Last Number: {}",
@@ -234,7 +230,7 @@ impl Syncer {
             // If we have a pending block from new_payload request
             // attach it to the end if it matches the parent_hash of the latest received header
             if let Some(ref block) = pending_block {
-                if block.header.parent_hash == last_block_header.compute_block_hash() {
+                if block.header.parent_hash == last_block_header.hash() {
                     block_hashes.push(block.hash());
                     block_headers.push(block.header.clone());
                 }
@@ -248,7 +244,7 @@ impl Syncer {
             }
 
             // Update current fetch head if needed
-            let last_block_hash = last_block_header.compute_block_hash();
+            let last_block_hash = last_block_header.hash();
             if !sync_head_found {
                 debug!(
                     "Syncing head not found, updated current_head {:?}",
@@ -277,26 +273,28 @@ impl Syncer {
             // Discard the first header as we already have it
             block_hashes.remove(0);
             block_headers.remove(0);
-            // Store headers and save hashes for full block retrieval
-            all_block_hashes.extend_from_slice(&block_hashes[..]);
-            // This step is necessary for full sync because some opcodes depend on previous blocks during execution.
-            store
-                .add_block_headers(block_hashes.clone(), block_headers.clone())
-                .await?;
 
-            if sync_mode == SyncMode::Full {
-                let last_block_hash = self
-                    .download_and_run_blocks(
-                        &block_hashes,
-                        &block_headers,
-                        sync_head,
-                        sync_head_found,
-                        store.clone(),
-                    )
-                    .await?;
-                if let Some(last_block_hash) = last_block_hash {
-                    current_head = last_block_hash;
-                    search_head = current_head;
+            match sync_mode {
+                SyncMode::Snap => {
+                    // Store headers and save hashes for full block retrieval
+                    all_block_hashes.extend_from_slice(&block_hashes[..]);
+                    store
+                        .add_block_headers(block_hashes.clone(), block_headers.clone())
+                        .await?;
+                }
+                SyncMode::Full => {
+                    let last_block_hash = self
+                        .download_and_run_blocks(
+                            &block_hashes,
+                            &block_headers,
+                            sync_head_found,
+                            store.clone(),
+                        )
+                        .await?;
+                    if let Some(last_block_hash) = last_block_hash {
+                        current_head = last_block_hash;
+                        search_head = current_head;
+                    }
                 }
             }
 
@@ -366,7 +364,6 @@ impl Syncer {
         &mut self,
         block_hashes: &[BlockHash],
         block_headers: &[BlockHeader],
-        sync_head: BlockHash,
         sync_head_found: bool,
         store: Store,
     ) -> Result<Option<H256>, SyncError> {
@@ -380,40 +377,35 @@ impl Syncer {
             Some(res) => res.clone(),
             None => return Ok(None),
         };
-        let mut headers_iter = block_headers.iter();
+        let mut headers_consumed = 0;
         let mut blocks: Vec<Block> = vec![];
 
         let since = Instant::now();
         loop {
             debug!("Requesting Block Bodies");
-            let Some(block_bodies) = self
+            let mut headers_iter = block_headers.iter().skip(headers_consumed);
+            let block_request_result = self
                 .peers
-                .request_block_bodies(current_block_hashes_chunk.clone())
-                .await
-            else {
-                break;
-            };
+                .request_and_validate_block_bodies(
+                    &mut current_block_hashes_chunk,
+                    &mut headers_iter,
+                )
+                .await;
 
-            let block_bodies_len = block_bodies.len();
+            let new_blocks = block_request_result.ok_or(SyncError::BodiesNotFound)?;
+            let new_blocks_len = new_blocks.len();
 
-            let first_block_hash = current_block_hashes_chunk
-                .first()
-                .map_or(H256::default(), |a| *a);
+            headers_consumed += new_blocks_len;
+            blocks.extend(new_blocks);
 
             debug!(
-                "Received {} Block Bodies, starting from block hash {:?}",
-                block_bodies_len, first_block_hash
+                "Accumulated {} Blocks, with {} blocks added starting from block hash {:?}",
+                blocks.len(),
+                new_blocks_len,
+                current_block_hashes_chunk
+                    .first()
+                    .map_or(H256::default(), |a| *a)
             );
-
-            // Push blocks
-            for (_, body) in current_block_hashes_chunk
-                .drain(..block_bodies_len)
-                .zip(block_bodies)
-            {
-                let header = headers_iter.next().ok_or(SyncError::BodiesNotFound)?;
-                let block = Block::new(header.clone(), body);
-                blocks.push(block);
-            }
 
             if current_block_hashes_chunk.is_empty() {
                 current_chunk_idx += 1;
@@ -465,12 +457,8 @@ impl Syncer {
                     .set_latest_valid_ancestor(failed_block_hash, last_valid_hash)
                     .await?;
 
-                // TODO(#2127): Just marking the failing ancestor and the sync head is enough
-                // to fix the Missing Ancestors hive test, we want to look at a more robust
-                // solution in the future if needed.
-                store
-                    .set_latest_valid_ancestor(sync_head, last_valid_hash)
-                    .await?;
+                // TODO(#2127): Just marking the failing ancestor is enough for the the Missing Ancestors hive test,
+                // we want to look at a more robust solution in the future if needed.
             }
 
             return Err(error.into());
@@ -620,16 +608,19 @@ impl Syncer {
                     .any(|(ch, end)| ch < end)
             })
         {
+            let storage_trie_rebuilder_sender = self
+                .trie_rebuilder
+                .as_ref()
+                .ok_or(SyncError::Trie(TrieError::InconsistentTree))?
+                .storage_rebuilder_sender
+                .clone();
+
             let stale_pivot = state_sync(
                 state_root,
                 store.clone(),
                 self.peers.clone(),
                 key_checkpoints,
-                self.trie_rebuilder
-                    .as_ref()
-                    .unwrap()
-                    .storage_rebuilder_sender
-                    .clone(),
+                storage_trie_rebuilder_sender,
             )
             .await?;
             if stale_pivot {
@@ -642,7 +633,12 @@ impl Syncer {
         // Wait for the trie rebuilder to finish
         info!("Waiting for the trie rebuild to finish");
         let rebuild_start = Instant::now();
-        self.trie_rebuilder.take().unwrap().complete().await?;
+        let rebuilder = self
+            .trie_rebuilder
+            .take()
+            .ok_or(SyncError::Trie(TrieError::InconsistentTree))?;
+        rebuilder.complete().await?;
+
         info!(
             "State trie rebuilt from snapshot, overtime: {}",
             rebuild_start.elapsed().as_secs()
@@ -671,19 +667,19 @@ impl Syncer {
 fn node_missing_children(
     node: &Node,
     parent_path: &Nibbles,
-    trie_state: &TrieState,
+    trie_state: &dyn TrieDB,
 ) -> Result<Vec<Nibbles>, TrieError> {
     let mut paths = Vec::new();
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid() && trie_state.get_node(*child)?.is_none() {
+                if child.is_valid() && child.get_node(trie_state)?.is_none() {
                     paths.push(parent_path.append_new(index as u8));
                 }
             }
         }
         Node::Extension(node) => {
-            if node.child.is_valid() && trie_state.get_node(node.child)?.is_none() {
+            if node.child.is_valid() && node.child.get_node(trie_state)?.is_none() {
                 paths.push(parent_path.concat(node.prefix.clone()));
             }
         }
@@ -725,6 +721,8 @@ enum SyncError {
     CorruptDB,
     #[error("No bodies were found for the given headers")]
     BodiesNotFound,
+    #[error("Range received is invalid")]
+    InvalidRangeReceived,
 }
 
 impl<T> From<SendError<T>> for SyncError {

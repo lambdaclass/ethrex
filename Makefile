@@ -9,11 +9,11 @@ build: ## 🔨 Build the client
 	cargo build --workspace
 
 lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface --exclude ethrex-prover-bench -- -D warnings
+	cargo clippy --all-targets --all-features --workspace --exclude ethrex-replay --exclude ethrex-prover --exclude zkvm_interface --exclude ef_tests-blockchain -- -D warnings
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-prover --exclude ethrex-prover-bench --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation
+	cargo test -p '$(CRATE)' --workspace --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation
 	$(MAKE) -C cmd/ef_tests/blockchain test
 
 clean: clean-vectors ## 🧹 Remove build artifacts
@@ -40,7 +40,8 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := e73f52c34fd785700e9555aa41a78b0d5ca50173
+ETHEREUM_PACKAGE_REVISION := 7d7864cf1cc34138b427c3c7d0e36623efc19300
+
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
@@ -62,6 +63,9 @@ localnet-assertoor-blob: stop-localnet-silent build-image checkout-ethereum-pack
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_blob.yaml
 	docker logs -f $$(docker ps -q --filter ancestor=ethrex)
 
+localnet-assertoor-ethrex-only: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
+	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_ethrex_only.yaml
+	docker logs -f $$(docker ps -q -n 1 --filter ancestor=ethrex)
 
 localnet-assertoor-tx: stop-localnet-silent build-image checkout-ethereum-package ## 🌐 Start local network with assertoor test
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file .github/config/assertoor/network_params_tx.yaml
@@ -76,71 +80,53 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-HIVE_REVISION := f9004c7e85de003bbdeb4fbcc4a9dbf8c3c4c9c2
-# Shallow clones can't specify a single revision, but at least we avoid working
-# the whole history by making it shallow since a given date (one day before our
-# target revision).
-HIVE_SHALLOW_SINCE := 2024-09-02
-QUIET ?= false
+HIVE_BRANCH ?= master
 
-hive:
-	if [ "$(QUIET)" = "true" ]; then \
-		git clone --quiet --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
-		cd hive && git checkout --quiet --detach $(HIVE_REVISION) && go build .; \
+setup-hive: ## 🐝 Set up Hive testing framework
+	if [ -d "hive" ]; then \
+		cd hive && \
+		git fetch origin && \
+		git checkout $(HIVE_BRANCH) && \
+		git pull origin $(HIVE_BRANCH) && \
+		go build .; \
 	else \
-		git clone --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
-		cd hive && git checkout --detach $(HIVE_REVISION) && go build .; \
-	fi
-
-setup-hive: hive ## 🐝 Set up Hive testing framework
-	if [ "$$(cd hive && git rev-parse HEAD)" != "$(HIVE_REVISION)" ]; then \
-		if [ "$(QUIET)" = "true" ]; then \
-			cd hive && \
-			git checkout --quiet master && \
-			git fetch --quiet --shallow-since=$(HIVE_SHALLOW_SINCE) && \
-			git checkout --quiet --detach $(HIVE_REVISION) && go build .;\
-		else \
-			cd hive && \
-			git checkout master && \
-			git fetch --shallow-since=$(HIVE_SHALLOW_SINCE) && \
-			git checkout --detach $(HIVE_REVISION) && go build .;\
-		fi \
+		git clone --branch $(HIVE_BRANCH) https://github.com/lambdaclass/hive && \
+		cd hive && \
+		git checkout $(HIVE_BRANCH) && \
+		go build .; \
 	fi
 
 TEST_PATTERN ?= /
-SIM_LOG_LEVEL ?= 4
-EVM_BACKEND := levm
-SIM_PARALLELISM := 16
-SYNCMODE := full
+SIM_LOG_LEVEL ?= 1
+SIM_PARALLELISM ?= 16
 
-L1_CLIENT       ?= ethrex
-
-display-hive-alternatives:
-	@echo ""
-	@echo "Running L1 with ${L1_CLIENT} as client. Other clients are available in order to compare tests results."
-	@echo "In order to use a different client, use the environment variable 'L1_CLIENT' with one of the follwoing values:"
-	@echo "   - ethrex: https://github.com/lambdaclass/ethrex"
-	@echo "   - go-ethereum: https://github.com/ethereum/go-ethereum"
-	@echo ""
-
-# Runs a hive testing suite
+# Runs a hive testing suite and opens an web interface on http://127.0.0.1:8080
 # The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
-run-hive: display-hive-alternatives build-image setup-hive ## 🧪 Run Hive testing suite
-	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
+# The evm can be selected by using seting HIVE_ETHREX_FLAGS='--evm revm' (the default is levm)
+# The log level can be selected by switching SIM_LOG_LEVEL from 1 up to 4
 
-run-hive-all: display-hive-alternatives build-image setup-hive ## 🧪 Run all Hive testing suites
-	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
+HIVE_CLIENT_FILE := ../test_data/network/hive_clients/ethrex.yml
+HIVE_CLIENT_FILE_GIT := ../test_data/network/hive_clients/ethrex_git.yml
+HIVE_CLIENT_FILE_LOCAL := ../test_data/network/hive_clients/ethrex_local.yml
 
-run-hive-debug: display-hive-alternatives build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive && ./hive --sim $(SIMULATION) --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
+run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL)
+	$(MAKE) view-hive
+
+run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ".*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) 
+	$(MAKE) view-hive
+
+run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
+	cd hive && ./hive --sim $(SIMULATION) --client-file $(HIVE_CLIENT_FILE)  --client ethrex --sim.loglevel 4 --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
 
-install-cli: ## 🛠️ Installs the ethrex-l2 cli
-	cargo install --path cmd/ethrex_l2/ --force
+view-hive: ## 🛠️ Builds hiveview with the logs from the hive execution
+	cd hive && go build ./cmd/hiveview && ./hiveview --serve --logdir ./workspace/logs
 
 start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
 	@if [ -z "$$L" ]; then \
@@ -162,16 +148,16 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--datadir test_ethrex
 
 load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
-	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t eth-transfers
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t eth-transfers
 
 load-test-erc20:
-	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t erc20
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t erc20
 
 load-test-fibonacci:
-	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t fibonacci
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t fibonacci
 
 load-test-io:
-	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t io-heavy
+	cargo run --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t io-heavy
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
@@ -180,4 +166,4 @@ test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 	solc ./test_data/ERC20.sol -o $@
 
 sort-genesis-files:
-	cd ./tools && cargo run
+	cd ./tooling/genesis && cargo run

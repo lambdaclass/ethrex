@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.87.0
 
       - name: Cache Extra Binaries
         id: cache-binaries
@@ -87,7 +87,7 @@ jobs:
       - name: Download EF Tests
         run: |
           if [ ! -f "$HOME/ethrex/ethrex/cmd/ef_tests/state/vectors" ]; then
-            cd crates/vm/levm
+            cd cmd/ef_tests/state
             make download-evm-ef-tests
           fi
 
@@ -167,7 +167,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.87.0
 
       - name: Caching
         uses: Swatinem/rust-cache@v2
@@ -273,7 +273,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_RETH_VERSION }}
 
-      # We need a reth version that requires a rustc version <= 1.82.0
+      # We need a reth version that requires a rustc version <= 1.87.0
       - name: Checkout reth
         uses: actions/checkout@v4
         with:

@@ -1,14 +1,15 @@
 use crate::{
     constants::STACK_LIMIT,
-    errors::{InternalError, OutOfGasError, VMError},
+    errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
     opcodes::Opcode,
-    utils::get_valid_jump_destinations,
+    utils::{get_valid_jump_destinations, restore_cache_state},
+    vm::VM,
 };
 use bytes::Bytes;
 use ethrex_common::{
-    types::{Account, Log},
     Address, U256,
+    types::{Account, Log},
 };
 use keccak_hash::H256;
 use std::collections::{HashMap, HashSet};
@@ -20,13 +21,13 @@ pub struct Stack {
 }
 
 impl Stack {
-    pub fn pop(&mut self) -> Result<U256, VMError> {
-        self.stack.pop().ok_or(VMError::StackUnderflow)
+    pub fn pop(&mut self) -> Result<U256, ExceptionalHalt> {
+        self.stack.pop().ok_or(ExceptionalHalt::StackUnderflow)
     }
 
-    pub fn push(&mut self, value: U256) -> Result<(), VMError> {
+    pub fn push(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
         if self.stack.len() >= STACK_LIMIT {
-            return Err(VMError::StackOverflow);
+            return Err(ExceptionalHalt::StackOverflow);
         }
         self.stack.push(value);
         Ok(())
@@ -40,13 +41,13 @@ impl Stack {
         self.stack.is_empty()
     }
 
-    pub fn get(&self, index: usize) -> Result<&U256, VMError> {
-        self.stack.get(index).ok_or(VMError::StackUnderflow)
+    pub fn get(&self, index: usize) -> Result<&U256, ExceptionalHalt> {
+        self.stack.get(index).ok_or(ExceptionalHalt::StackUnderflow)
     }
 
-    pub fn swap(&mut self, a: usize, b: usize) -> Result<(), VMError> {
+    pub fn swap(&mut self, a: usize, b: usize) -> Result<(), ExceptionalHalt> {
         if a >= self.stack.len() || b >= self.stack.len() {
-            return Err(VMError::StackUnderflow);
+            return Err(ExceptionalHalt::StackUnderflow);
         }
         self.stack.swap(a, b);
         Ok(())
@@ -108,6 +109,20 @@ pub struct CallFrameBackup {
     pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
 }
 
+impl CallFrameBackup {
+    pub fn clear(&mut self) {
+        self.original_accounts_info.clear();
+        self.original_account_storage_slots.clear();
+    }
+
+    pub fn extend(&mut self, other: CallFrameBackup) {
+        self.original_account_storage_slots
+            .extend(other.original_account_storage_slots);
+        self.original_accounts_info
+            .extend(other.original_accounts_info);
+    }
+}
+
 impl CallFrame {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -153,10 +168,7 @@ impl CallFrame {
     }
 
     pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
-        self.pc = self
-            .pc
-            .checked_add(count)
-            .ok_or(VMError::Internal(InternalError::PCOverflowed))?;
+        self.pc = self.pc.checked_add(count).ok_or(InternalError::Overflow)?;
         Ok(())
     }
 
@@ -169,13 +181,86 @@ impl CallFrame {
         let potential_consumed_gas = self
             .gas_used
             .checked_add(gas)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            .ok_or(ExceptionalHalt::OutOfGas)?;
         if potential_consumed_gas > self.gas_limit {
-            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
+            return Err(ExceptionalHalt::OutOfGas.into());
         }
 
         self.gas_used = potential_consumed_gas;
 
         Ok(())
+    }
+
+    pub fn set_code(&mut self, code: Bytes) -> Result<(), VMError> {
+        self.valid_jump_destinations = get_valid_jump_destinations(&code)?;
+        self.bytecode = code;
+        Ok(())
+    }
+}
+
+impl<'a> VM<'a> {
+    pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, InternalError> {
+        self.call_frames.last_mut().ok_or(InternalError::CallFrame)
+    }
+
+    pub fn current_call_frame(&self) -> Result<&CallFrame, InternalError> {
+        self.call_frames.last().ok_or(InternalError::CallFrame)
+    }
+
+    pub fn pop_call_frame(&mut self) -> Result<CallFrame, InternalError> {
+        self.call_frames.pop().ok_or(InternalError::CallFrame)
+    }
+
+    pub fn is_initial_call_frame(&self) -> bool {
+        self.call_frames.len() == 1
+    }
+
+    /// Restores the cache state to the state before changes made during a callframe.
+    pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
+        let callframe_backup = self.current_call_frame()?.call_frame_backup.clone();
+        restore_cache_state(self.db, callframe_backup)
+    }
+
+    // The CallFrameBackup of the current callframe has to be merged with the backup of its parent, in the following way:
+    //   - For every account that's present in the parent backup, do nothing (i.e. keep the one that's already there).
+    //   - For every account that's NOT present in the parent backup but is on the child backup, add the child backup to it.
+    //   - Do the same for every individual storage slot.
+    pub fn merge_call_frame_backup_with_parent(
+        &mut self,
+        child_call_frame_backup: &CallFrameBackup,
+    ) -> Result<(), VMError> {
+        let parent_backup_accounts = &mut self
+            .current_call_frame_mut()?
+            .call_frame_backup
+            .original_accounts_info;
+        for (address, account) in child_call_frame_backup.original_accounts_info.iter() {
+            if parent_backup_accounts.get(address).is_none() {
+                parent_backup_accounts.insert(*address, account.clone());
+            }
+        }
+
+        let parent_backup_storage = &mut self
+            .current_call_frame_mut()?
+            .call_frame_backup
+            .original_account_storage_slots;
+        for (address, storage) in child_call_frame_backup
+            .original_account_storage_slots
+            .iter()
+        {
+            let parent_storage = parent_backup_storage
+                .entry(*address)
+                .or_insert(HashMap::new());
+            for (key, value) in storage {
+                if parent_storage.get(key).is_none() {
+                    parent_storage.insert(*key, *value);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
+        self.current_call_frame_mut()?.increment_pc_by(count)
     }
 }

@@ -1,7 +1,11 @@
-use ethrex_common::{types::Account, Address};
+use ethrex_common::{Address, types::Account};
 use std::collections::HashMap;
 
 pub type CacheDB = HashMap<Address, Account>;
+
+pub fn account_is_cached(cached_accounts: &CacheDB, address: &Address) -> bool {
+    cached_accounts.contains_key(address)
+}
 
 pub fn get_account<'cache>(
     cached_accounts: &'cache CacheDB,

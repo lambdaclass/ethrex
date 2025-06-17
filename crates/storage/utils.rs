@@ -8,7 +8,6 @@ pub enum ChainDataIndex {
     SafeBlockNumber = 3,
     LatestBlockNumber = 4,
     PendingBlockNumber = 5,
-    IsSynced = 6,
 }
 
 impl From<u8> for ChainDataIndex {
@@ -26,7 +25,6 @@ impl From<u8> for ChainDataIndex {
             x if x == ChainDataIndex::PendingBlockNumber as u8 => {
                 ChainDataIndex::PendingBlockNumber
             }
-            x if x == ChainDataIndex::IsSynced as u8 => ChainDataIndex::IsSynced,
             _ => panic!("Invalid value when casting to ChainDataIndex: {}", value),
         }
     }

@@ -4,7 +4,7 @@ use super::{
 };
 use bytes::{Bytes, BytesMut};
 use ethereum_types::{
-    Address, Bloom, Signature, H128, H160, H256, H264, H32, H512, H520, H64, U256,
+    Address, Bloom, H32, H64, H128, H160, H256, H264, H512, H520, Signature, U256,
 };
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -513,7 +513,7 @@ pub fn decode_bytes(data: &[u8]) -> Result<(&[u8], &[u8]), RLPDecodeError> {
 /// Pads a slice of bytes with zeros on the left to make it a fixed size slice.
 /// The size of the data must be less than or equal to the size of the output array.
 #[inline]
-pub(crate) fn static_left_pad<const N: usize>(data: &[u8]) -> Result<[u8; N], RLPDecodeError> {
+pub fn static_left_pad<const N: usize>(data: &[u8]) -> Result<[u8; N], RLPDecodeError> {
     let mut result = [0; N];
 
     if data.is_empty() {

@@ -1,4 +1,4 @@
-use ethrex_common::{serde_utils, H256};
+use ethrex_common::{H256, serde_utils};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{info, warn};
@@ -64,7 +64,7 @@ impl RpcHandler for ExchangeTransitionConfigV1Req {
         let block = context
             .storage
             .get_block_header(payload.terminal_block_number)?;
-        let terminal_block_hash = block.map_or(H256::zero(), |block| block.compute_block_hash());
+        let terminal_block_hash = block.map_or(H256::zero(), |block| block.hash());
 
         serde_json::to_value(ExchangeTransitionConfigPayload {
             terminal_block_hash,

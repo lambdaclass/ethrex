@@ -3,13 +3,11 @@ use ethrex_rlp::error::RLPDecodeError;
 use serde::{Deserialize, Serialize};
 
 use ethrex_common::{
-    serde_utils,
+    Address, Bloom, H256, U256, serde_utils,
     types::{
-        compute_transactions_root, compute_withdrawals_root, requests::EncodedRequests,
-        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, Transaction, Withdrawal,
-        DEFAULT_OMMERS_HASH,
+        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, DEFAULT_OMMERS_HASH, Transaction,
+        Withdrawal, compute_transactions_root, compute_withdrawals_root, requests::EncodedRequests,
     },
-    Address, Bloom, H256, U256,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -132,6 +130,7 @@ impl ExecutionPayload {
             parent_beacon_block_root,
             // TODO: set the value properly
             requests_hash,
+            ..Default::default()
         };
 
         Ok(Block::new(header, body))

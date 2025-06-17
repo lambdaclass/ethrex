@@ -1,11 +1,11 @@
 use bytes::BufMut;
 use bytes::Bytes;
-use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::error::MempoolError;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::P2PTransaction;
 use ethrex_common::types::WrappedEIP4844Transaction;
-use ethrex_common::{types::Transaction, H256};
+use ethrex_common::{H256, types::Transaction};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -33,7 +33,7 @@ impl Transactions {
 }
 
 impl RLPxMessage for Transactions {
-    const CODE: u8 = 0x12;
+    const CODE: u8 = 0x02;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         let mut encoder = Encoder::new(&mut encoded_data);
@@ -121,7 +121,7 @@ impl NewPooledTransactionHashes {
 }
 
 impl RLPxMessage for NewPooledTransactionHashes {
-    const CODE: u8 = 0x18;
+    const CODE: u8 = 0x08;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -233,7 +233,7 @@ impl GetPooledTransactions {
 }
 
 impl RLPxMessage for GetPooledTransactions {
-    const CODE: u8 = 0x19;
+    const CODE: u8 = 0x09;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -274,7 +274,6 @@ impl PooledTransactions {
     }
 
     /// Saves every incoming pooled transaction to the mempool.
-
     pub async fn handle(self, node: &Node, blockchain: &Blockchain) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
@@ -300,7 +299,7 @@ impl PooledTransactions {
 }
 
 impl RLPxMessage for PooledTransactions {
-    const CODE: u8 = 0x1A;
+    const CODE: u8 = 0x0A;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -325,7 +324,7 @@ impl RLPxMessage for PooledTransactions {
 
 #[cfg(test)]
 mod tests {
-    use ethrex_common::{types::P2PTransaction, H256};
+    use ethrex_common::{H256, types::P2PTransaction};
 
     use crate::rlpx::{
         eth::transactions::{GetPooledTransactions, PooledTransactions},

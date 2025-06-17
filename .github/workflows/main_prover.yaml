@@ -1,3 +1,4 @@
+# TODO: uncomment "if: ${{ always() && github.event_name == 'merge_group' }}" lines when reenabling this workflow in the merge queue
 name: L2 (SP1 Backend)
 on:
   push:
@@ -20,55 +21,44 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.87.0
 
       - name: Set up Rust cache
-        if: ${{ always() && github.event_name == 'merge_group' }}
+        # if: ${{ always() && github.event_name == 'merge_group' }}
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: "true"
 
       - name: RISC-V SP1 toolchain install
-        if: ${{ always() && github.event_name == 'merge_group' }}
+        # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           . "$HOME/.cargo/env"
           curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 4.1.7
+          ~/.sp1/bin/sp1up --version 5.0.0
 
       - name: Set up Docker Buildx
-        if: ${{ always() && github.event_name == 'merge_group' }}
+        # if: ${{ always() && github.event_name == 'merge_group' }}
         uses: docker/setup-buildx-action@v3
 
       # This step is needed because of an state bug in the GPU runner.
       # Issue to fix this: https://github.com/lambdaclass/ethrex/pull/2741.
       - name: Clean .env
-        if: ${{ always() && github.event_name == 'merge_group' }}
+        # if: ${{ always() && github.event_name == 'merge_group' }}
         run: rm -rf crates/l2/.env
 
-      - name: Bake docker images
-        if: ${{ always() && github.event_name == 'merge_group' }}
-        uses: docker/bake-action@v6
-        with:
-          workdir: "crates/l2"
-          files: "crates/l2/docker-compose-l2.yaml"
-          load: true
-          set: |
-            *.cache-to=type=gha,mode=max
-            *.cache-from=type=gha
-
       - name: Build prover
-        if: ${{ always() && github.event_name == 'merge_group' }}
+        # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
           make build-prover
 
       - name: Build test
-        if: ${{ always() && github.event_name == 'merge_group' }}
+        # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cargo test l2 --no-run --release
 
       - name: Start L1 & Deploy contracts
-        if: ${{ always() && github.event_name == 'merge_group' }}
+        # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
           touch .env
@@ -78,21 +68,27 @@ jobs:
           docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Start Sequencer
-        if: ${{ always() && github.event_name == 'merge_group' }}
+        # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
           CI_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_PROPOSER_BLOCK_TIME_MS=12000 \
+          ETHREX_PROPOSER_BLOCK_TIME=12000 \
           ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
           docker compose -f docker-compose-l2.yaml up ethrex_l2 --detach
 
       - name: Run test
-        if: ${{ always() && github.event_name == 'merge_group' }}
+        # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
           killall ethrex_prover -s SIGINT
+
+      - name: Destroy Docker containers
+        if: always()
+        run: |
+          cd crates/l2
+          docker compose -f docker-compose-l2.yaml down -t 0
 
       - name: Ensure admin permissions in _work
         if: always()

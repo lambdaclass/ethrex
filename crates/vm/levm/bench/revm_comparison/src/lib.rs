@@ -1,19 +1,23 @@
 use bytes::Bytes;
+use ethrex_blockchain::vm::StoreVmDatabase;
+use ethrex_common::H256;
 use ethrex_common::{
-    types::{code_hash, Account, AccountInfo, EIP1559Transaction, Transaction, TxKind},
     Address as EthrexAddress, U256,
+    types::{Account, AccountInfo, EIP1559Transaction, Transaction, TxKind, code_hash},
 };
 use ethrex_levm::{
-    db::{cache, gen_db::GeneralizedDatabase, CacheDB},
-    errors::{TxResult, VMError},
-    vm::VM,
     Environment,
+    db::{CacheDB, cache, gen_db::GeneralizedDatabase},
+    errors::TxResult,
+    tracing::LevmCallTracer,
+    vm::VM,
 };
-use ethrex_vm::ProverDB;
+use ethrex_storage::Store;
+use ethrex_vm::DynVmDatabase;
 use revm::{
-    db::BenchmarkDB,
-    primitives::{address, Address, Bytecode, TransactTo},
     Evm,
+    db::BenchmarkDB,
+    primitives::{Address, Bytecode, TransactTo, address},
 };
 use sha3::{Digest, Keccak256};
 use std::hint::black_box;
@@ -55,13 +59,10 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
         ),
     ];
 
-    let mut prover_db = ProverDB::default();
-
-    accounts.iter().for_each(|(address, account)| {
-        prover_db.accounts.insert(*address, account.info.clone());
-    });
-
-    let mut db = GeneralizedDatabase::new(Arc::new(prover_db), CacheDB::new());
+    // The store type for this bench shouldn't matter as all operations use the LEVM cache
+    let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
+    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
+    let mut db = GeneralizedDatabase::new(Arc::new(store), CacheDB::new());
 
     cache::insert_account(
         &mut db.cache,
@@ -83,18 +84,17 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
             HashMap::new(),
         ),
     );
+    db.immutable_cache = db.cache.clone();
 
     // when using stateful execute() we have to use nonce when instantiating the vm. Otherwise use 0.
     for _nonce in 0..runs - 1 {
-        let mut vm = new_vm_with_bytecode(&mut db, 0).unwrap();
-        vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
+        let mut vm = new_vm_with_bytecode(&mut db, 0, calldata.clone());
         vm.env.gas_limit = u64::MAX - 1;
         vm.env.block_gas_limit = u64::MAX;
         let tx_report = black_box(vm.stateless_execute().unwrap());
         assert!(tx_report.result == TxResult::Success);
     }
-    let mut vm = new_vm_with_bytecode(&mut db, 0).unwrap();
-    vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
+    let mut vm = new_vm_with_bytecode(&mut db, 0, calldata.clone());
     vm.env.gas_limit = u64::MAX - 1;
     vm.env.block_gas_limit = u64::MAX;
     let tx_report = black_box(vm.stateless_execute().unwrap());
@@ -171,8 +171,8 @@ fn load_file_bytecode(path: &str) -> String {
     contents
 }
 
-pub fn new_vm_with_bytecode(db: &mut GeneralizedDatabase, nonce: u64) -> Result<VM, VMError> {
-    new_vm_with_ops_addr_bal_db(EthrexAddress::from_low_u64_be(100), nonce, db)
+pub fn new_vm_with_bytecode(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> VM {
+    new_vm_with_ops_addr_bal_db(EthrexAddress::from_low_u64_be(100), nonce, db, calldata)
 }
 
 /// This function is for testing purposes only.
@@ -180,7 +180,8 @@ fn new_vm_with_ops_addr_bal_db(
     sender_address: EthrexAddress,
     nonce: u64,
     db: &mut GeneralizedDatabase,
-) -> Result<VM, VMError> {
+    calldata: Bytes,
+) -> VM {
     let env = Environment {
         origin: sender_address,
         tx_nonce: nonce,
@@ -190,7 +191,8 @@ fn new_vm_with_ops_addr_bal_db(
 
     let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
         to: TxKind::Call(EthrexAddress::from_low_u64_be(42)),
+        data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx)
+    VM::new(env, db, &tx, LevmCallTracer::disabled())
 }
