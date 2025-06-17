@@ -166,7 +166,7 @@ async fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u
     };
     let id = payload_args.id();
     let block = create_payload(&payload_args, store).unwrap();
-    (block, id)
+    (block, id.unwrap())
 }
 
 async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
@@ -259,11 +259,11 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
                         .map(|sk| recover_address_for_sk(&sk))
                         .collect();
 
-                    let (store_with_genesis, gen) = setup_genesis(&addresses).await;
+                    let (store_with_genesis, genesis) = setup_genesis(&addresses).await;
                     let block_chain = Blockchain::new(EvmEngine::LEVM, store_with_genesis.clone());
                     fill_mempool(&block_chain, accounts).await;
 
-                    (block_chain, gen.get_block(), store_with_genesis)
+                    (block_chain, genesis.get_block(), store_with_genesis)
                 };
                 let input = (&mut blockchain, genesis_block, &store);
                 let (duration, gas_used) = bench_payload(&input).await;
