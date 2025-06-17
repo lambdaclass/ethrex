@@ -18,7 +18,7 @@ ethrex-l2-common = { path = "../../../../common", default-features = false }
 
 [patch.crates-io]
 sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.8-risczero.0" }
-c-kzg = { git = "https://github.com/risc0/c-kzg-4844", tag = "c-kzg/v1.0.3-risczero.1" }
+c-kzg = { git = "https://github.com/risc0/c-kzg-4844", tag = "c-kzg/v2.1.1-risczero.1" }
 sp1_bls12_381 = { git = "https://github.com/risc0/zkcrypto-bls12_381", package = "bls12_381", tag = "bls12_381/v0.8.0-risczero.0" }
 
 # This git repo seems to be private

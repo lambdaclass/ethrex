@@ -26,7 +26,7 @@ num-bigint = "0.4.5"
 lambdaworks-math = "0.11.0"
 k256 = { version = "0.13.3", features = ["ecdh"] }
 kzg-rs = {version = "0.2.6", optional = true }
-c-kzg = { version = "^1.0.3", optional = true }
+c-kzg = { version = "2.1.1", optional = true }
 bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose-fp-struct", features = [
   "groups",
   "bits",
