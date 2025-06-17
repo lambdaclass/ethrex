@@ -15,8 +15,8 @@
   - [Pruning]()
 
 - [Layer 2](./l2/README.md)
-  - [General overview](./l2/overview.md)
   - [Getting started](./l2/getting_started.md)
+  - [General overview](./l2/overview.md)
   - [Roadmap](./l2/roadmap.md)
   - [Architecture](./l2/architecture.md)
     - [Sequencer](./l2/sequencer.md)
