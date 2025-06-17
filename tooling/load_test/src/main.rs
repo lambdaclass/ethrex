@@ -19,7 +19,9 @@ use tokio::{task::JoinSet, time::sleep};
 // https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
 // If you want to modify the behaviour of the contract, edit the ERC20.sol file,
 // and compile it with solc.
-const ERC20: &str = include_str!("../../../test_data/fixtures/contracts/ERC20/ERC20.bin/TestToken.bin").trim_ascii();
+const ERC20: &str =
+    include_str!("../../../test_data/fixtures/contracts/ERC20/ERC20.bin/TestToken.bin")
+        .trim_ascii();
 
 // This is the bytecode for the contract with the following functions
 // version() -> always returns 2
