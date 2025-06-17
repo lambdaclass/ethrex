@@ -10,10 +10,6 @@ For how to install our dependencies, go to their official documentation:
 - [Solc 0.29](https://docs.soliditylang.org/en/latest/installing-solidity.html)
 - [Docker](https://docs.docker.com/engine/install/)
 
-## Configuration
-
-Configuration consists of the creation and modification of a `.env` file done automatically by the contract deployer, then each component reads the `.env` to load the environment variables. A detailed list is available in each part documentation.
-
 ## Testing
 
 Load tests are available via L2 CLI and Makefile targets.
