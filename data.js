@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750173972441,
+  "lastUpdate": 1750174106309,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13075,6 +13075,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183017525111,
             "range": "± 316892718",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "rodrigooliveri10@gmail.com",
+            "name": "Rodrigo Oliveri",
+            "username": "rodrigo-o"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5512b046a8d769fe2ead33867ec104d26f6d9a58",
+          "message": "feat(l1): grafana metric exporter (#3061)\n\n**Motivation**\n\nAdd the\n[ethreum-metric-exporter](https://github.com/ethpandaops/ethereum-metrics-exporter)\nto have an initial view of the node during execution\n\n**Description**\n\nThis PR enables the ethereum-metrics-exporter and set up the\ntxpool_status endpoint to be able to show the number of pending txs in\nthe pool as part of the exporter dashboard.\n\nThis is an initial iteration and we have an ongoing issue for further\nimprovements in the dashboard panels: #3104\n\n---------\n\nCo-authored-by: SDartayet <44068466+SDartayet@users.noreply.github.com>\nCo-authored-by: SDartayet <sofiadartayet@gmail.com>",
+          "timestamp": "2025-06-17T14:34:30Z",
+          "tree_id": "8278d7cf56e8dc328ac7f4214b6eb04decae164d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5512b046a8d769fe2ead33867ec104d26f6d9a58"
+        },
+        "date": 1750174099520,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182048656679,
+            "range": "± 1162733043",
             "unit": "ns/iter"
           }
         ]
