@@ -1,44 +1,44 @@
 use std::{
-    cmp::{max, Ordering},
+    cmp::{Ordering, max},
     collections::HashMap,
     ops::Div,
     time::Instant,
 };
 
 use ethrex_common::{
+    Address, Bloom, Bytes, H256, U256,
     constants::GAS_PER_BLOB,
     types::{
-        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
-        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
-        requests::{compute_requests_hash, EncodedRequests},
-        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-        MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
-        DEFAULT_REQUESTS_HASH,
+        AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+        ChainConfig, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, MempoolTransaction, Receipt,
+        Transaction, Withdrawal, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
+        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
+        compute_withdrawals_root,
+        requests::{EncodedRequests, compute_requests_hash},
     },
-    Address, Bloom, Bytes, H256, U256,
 };
 
-use ethrex_vm::{
-    EvmError, {Evm, EvmEngine},
-};
+use ethrex_vm::{Evm, EvmEngine, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, AccountUpdate, Store};
+use ethrex_storage::{Store, error::StoreError};
 
 use sha3::{Digest, Keccak256};
 
 use ethrex_metrics::metrics;
 
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
+use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxStatus, MetricsTxType};
 
 use crate::{
+    Blockchain,
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
-    Blockchain,
+    vm::StoreVmDatabase,
 };
 
+use thiserror::Error;
 use tracing::{debug, error};
 
 pub struct BuildPayloadArgs {
@@ -52,9 +52,15 @@ pub struct BuildPayloadArgs {
     pub elasticity_multiplier: u64,
 }
 
+#[derive(Debug, Error)]
+pub enum BuildPayloadArgsError {
+    #[error("Payload hashed has wrong size")]
+    FailedToConvertPayload,
+}
+
 impl BuildPayloadArgs {
     /// Computes an 8-byte identifier by hashing the components of the payload arguments.
-    pub fn id(&self) -> u64 {
+    pub fn id(&self) -> Result<u64, BuildPayloadArgsError> {
         let mut hasher = Keccak256::new();
         hasher.update(self.parent);
         hasher.update(self.timestamp.to_be_bytes());
@@ -68,7 +74,9 @@ impl BuildPayloadArgs {
         }
         let res = &mut hasher.finalize()[..8];
         res[0] = self.version;
-        u64::from_be_bytes(res.try_into().unwrap())
+        Ok(u64::from_be_bytes(res.try_into().map_err(|_| {
+            BuildPayloadArgsError::FailedToConvertPayload
+        })?))
     }
 }
 
@@ -127,6 +135,7 @@ pub fn create_payload(args: &BuildPayloadArgs, storage: &Store) -> Result<Block,
         requests_hash: chain_config
             .is_prague_activated(args.timestamp)
             .then_some(*DEFAULT_REQUESTS_HASH),
+        ..Default::default()
     };
 
     let body = BlockBody {
@@ -178,7 +187,9 @@ pub struct PayloadBuildContext {
 
 impl PayloadBuildContext {
     pub fn new(payload: Block, evm_engine: EvmEngine, storage: &Store) -> Result<Self, EvmError> {
-        let config = storage.get_chain_config()?;
+        let config = storage
+            .get_chain_config()
+            .map_err(|e| EvmError::DB(e.to_string()))?;
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
             config
@@ -186,7 +197,9 @@ impl PayloadBuildContext {
                 .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
         );
-        let vm = Evm::new(evm_engine, storage.clone(), payload.header.parent_hash);
+
+        let vm_db = StoreVmDatabase::new(storage.clone(), payload.header.parent_hash);
+        let vm = Evm::new(evm_engine, vm_db);
 
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
@@ -214,7 +227,9 @@ impl PayloadBuildContext {
     }
 
     fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        Ok(self.store.get_chain_config()?)
+        self.store
+            .get_chain_config()
+            .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     fn base_fee_per_gas(&self) -> Option<u64> {
@@ -282,8 +297,8 @@ impl Blockchain {
             if interval != 0 {
                 let throughput = (as_gigas) / (interval as f64) * 1000_f64;
                 tracing::info!(
-                "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
-            );
+                    "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
+                );
             }
         }
 
@@ -298,10 +313,7 @@ impl Blockchain {
             .withdrawals
             .as_ref()
             .unwrap_or(&binding);
-        context
-            .vm
-            .process_withdrawals(withdrawals)
-            .map_err(EvmError::from)
+        context.vm.process_withdrawals(withdrawals)
     }
 
     // This function applies system level operations:
@@ -411,11 +423,6 @@ impl Blockchain {
                 continue;
             }
 
-            // Increment the total transaction counter
-            // CHECK: do we want it here to count every processed transaction
-            // or we want it before the return?
-            metrics!(METRICS_TX.inc_tx());
-
             // Execute tx
             let receipt = match self.apply_transaction(&head_tx, context) {
                 Ok(receipt) => {
@@ -451,14 +458,14 @@ impl Blockchain {
 
     /// Executes the transaction, updates gas-related context values & return the receipt
     /// The payload build context should have enough remaining gas to cover the transaction's gas_limit
-    pub fn apply_transaction(
+    fn apply_transaction(
         &self,
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
         match **head {
             Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
-            _ => self.apply_plain_transaction(head, context),
+            _ => apply_plain_transaction(head, context),
         }
     }
 
@@ -486,29 +493,13 @@ impl Blockchain {
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
         // Apply transaction
-        let receipt = self.apply_plain_transaction(head, context)?;
+        let receipt = apply_plain_transaction(head, context)?;
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
             Some(prev_blob_gas + blobs_bundle.blobs.len() as u64 * GAS_PER_BLOB);
         context.blobs_bundle += blobs_bundle;
         Ok(receipt)
-    }
-
-    /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
-    fn apply_plain_transaction(
-        &self,
-        head: &HeadTransaction,
-        context: &mut PayloadBuildContext,
-    ) -> Result<Receipt, ChainError> {
-        let (report, gas_used) = context.vm.execute_tx(
-            &head.tx,
-            &context.payload.header,
-            &mut context.remaining_gas,
-            head.tx.sender(),
-        )?;
-        context.block_value += U256::from(gas_used) * head.tip;
-        Ok(report)
     }
 
     pub fn extract_requests(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
@@ -535,11 +526,15 @@ impl Blockchain {
     ) -> Result<(), ChainError> {
         let account_updates = context.vm.get_state_transitions()?;
 
-        context.payload.header.state_root = context
-            .store
-            .apply_account_updates(context.parent_hash(), &account_updates)
+        let ret_acount_updates_list = self
+            .storage
+            .apply_account_updates_batch(context.parent_hash(), &account_updates)
             .await?
-            .unwrap_or_default();
+            .ok_or(ChainError::ParentStateNotFound)?;
+
+        let state_root = ret_acount_updates_list.state_trie_hash;
+
+        context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =
             compute_transactions_root(&context.payload.body.transactions);
         context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
@@ -548,6 +543,21 @@ impl Blockchain {
         context.account_updates = account_updates;
         Ok(())
     }
+}
+
+/// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
+pub fn apply_plain_transaction(
+    head: &HeadTransaction,
+    context: &mut PayloadBuildContext,
+) -> Result<Receipt, ChainError> {
+    let (report, gas_used) = context.vm.execute_tx(
+        &head.tx,
+        &context.payload.header,
+        &mut context.remaining_gas,
+        head.tx.sender(),
+    )?;
+    context.block_value += U256::from(gas_used) * head.tip;
+    Ok(report)
 }
 
 /// A struct representing suitable mempool transactions waiting to be included in a block
@@ -564,7 +574,7 @@ pub struct TransactionQueue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeadTransaction {
     pub tx: MempoolTransaction,
-    tip: u64,
+    pub tip: u64,
 }
 
 impl std::ops::Deref for HeadTransaction {

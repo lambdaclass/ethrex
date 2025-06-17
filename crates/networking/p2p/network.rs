@@ -6,14 +6,14 @@ use crate::rlpx::{
 use crate::types::{Node, NodeRecord};
 use crate::{
     discv4::server::{DiscoveryError, Discv4Server},
-    rlpx::utils::log_peer_error,
+    rlpx::utils::log_peer_debug,
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{H256, H512};
 use ethrex_storage::Store;
 use k256::{
     ecdsa::SigningKey,
-    elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
+    elliptic_curve::{PublicKey, sec1::ToEncodedPoint},
 };
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
@@ -79,6 +79,16 @@ impl P2PContext {
             broadcast: channel_broadcast_send_end,
             client_version,
         }
+    }
+
+    pub async fn set_fork_id(&self) -> Result<(), String> {
+        if let Ok(fork_id) = self.storage.get_fork_id().await {
+            self.local_node_record
+                .lock()
+                .await
+                .set_fork_id(&fork_id, &self.signer)?
+        }
+        Ok(())
     }
 }
 
@@ -150,7 +160,7 @@ pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
     let stream = match tcp_stream(addr).await {
         Ok(result) => result,
         Err(e) => {
-            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
+            log_peer_debug(&node, &format!("Error creating tcp connection {e}"));
             context.table.lock().await.replace_peer(node.node_id());
             return;
         }
@@ -159,7 +169,7 @@ pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
     match handshake::as_initiator(context, node.clone(), stream).await {
         Ok(mut conn) => conn.start(table, false).await,
         Err(e) => {
-            log_peer_error(&node, &format!("Error creating tcp connection {e}"));
+            log_peer_debug(&node, &format!("Error creating tcp connection {e}"));
             table.lock().await.replace_peer(node.node_id());
         }
     };
@@ -197,7 +207,9 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
                         .any(|cap| peer.supported_capabilities.contains(cap))
             })
             .count();
-        info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");
+        info!(
+            "Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}"
+        );
         interval.tick().await;
     }
 }

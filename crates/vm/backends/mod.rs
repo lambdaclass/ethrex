@@ -2,22 +2,22 @@ pub mod levm;
 pub mod revm;
 
 use self::revm::db::evm_state;
+use crate::db::{DynVmDatabase, VmDatabase};
+use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
-use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
-use crate::{db::StoreWrapper, errors::EvmError};
-use crate::{ProverDB, ProverDBError};
+use crate::helpers::{SpecId, fork_to_spec_id, spec_id};
+use ethrex_common::Address;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
-    AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
+    AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
+    Withdrawal,
 };
-use ethrex_common::{Address, H256};
+pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-use ethrex_levm::db::CacheDB;
-use ethrex_storage::Store;
-use ethrex_storage::{error::StoreError, AccountUpdate};
+use ethrex_levm::db::{CacheDB, Database as LevmDatabase};
 use levm::LEVM;
-use revm::db::EvmState;
 use revm::REVM;
+use revm::db::EvmState;
 use std::fmt;
 use std::sync::Arc;
 
@@ -50,6 +50,7 @@ impl TryFrom<String> for EvmEngine {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum Evm {
     REVM { state: EvmState },
@@ -69,35 +70,23 @@ impl std::fmt::Debug for Evm {
 
 impl Evm {
     /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
-    pub fn new(engine: EvmEngine, store: Store, parent_hash: H256) -> Self {
+    pub fn new(engine: EvmEngine, db: impl VmDatabase + 'static) -> Self {
+        let wrapped_db: DynVmDatabase = Box::new(db);
+
         match engine {
             EvmEngine::REVM => Evm::REVM {
-                state: evm_state(store.clone(), parent_hash),
+                state: evm_state(wrapped_db),
             },
             EvmEngine::LEVM => Evm::LEVM {
-                db: GeneralizedDatabase::new(
-                    Arc::new(StoreWrapper {
-                        store: store.clone(),
-                        block_hash: parent_hash,
-                    }),
-                    CacheDB::new(),
-                ),
+                db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
             },
         }
     }
 
-    pub fn from_prover_db(db: ProverDB) -> Self {
+    pub fn new_from_db(store: Arc<impl LevmDatabase + 'static>) -> Self {
         Evm::LEVM {
-            db: GeneralizedDatabase::new(Arc::new(db), CacheDB::new()),
+            db: GeneralizedDatabase::new(store, CacheDB::new()),
         }
-    }
-
-    pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, ProverDBError> {
-        LEVM::to_prover_db(blocks, store).await
-    }
-
-    pub fn default(store: Store, parent_hash: H256) -> Self {
-        Self::new(EvmEngine::default(), store, parent_hash)
     }
 
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
@@ -156,6 +145,15 @@ impl Evm {
         }
     }
 
+    pub fn undo_last_tx(&mut self) -> Result<(), EvmError> {
+        match self {
+            Evm::REVM { .. } => Err(EvmError::InvalidEVM(
+                "Undoing transaction not supported in REVM".to_string(),
+            )),
+            Evm::LEVM { db } => LEVM::undo_last_tx(db),
+        }
+    }
+
     /// Wraps [REVM::beacon_root_contract_call], [REVM::process_block_hash_history]
     /// and [LEVM::beacon_root_contract_call], [LEVM::process_block_hash_history].
     /// This function is used to run/apply all the system contracts to the state.
@@ -175,7 +173,7 @@ impl Evm {
                 Ok(())
             }
             Evm::LEVM { db } => {
-                let chain_config = db.store.get_chain_config();
+                let chain_config = db.store.get_chain_config()?;
                 let fork = chain_config.fork(block_header.timestamp);
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
@@ -208,7 +206,7 @@ impl Evm {
 
     /// Wraps the [REVM::process_withdrawals] and [LEVM::process_withdrawals].
     /// Applies the withdrawals to the state or the block_chache if using [LEVM].
-    pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), StoreError> {
+    pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), EvmError> {
         match self {
             Evm::REVM { state } => REVM::process_withdrawals(state, withdrawals),
             Evm::LEVM { db } => LEVM::process_withdrawals(db, withdrawals),

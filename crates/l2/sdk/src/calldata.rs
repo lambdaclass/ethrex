@@ -70,7 +70,10 @@ fn parse_signature(signature: &str) -> Result<(String, Vec<String>), CalldataEnc
     Ok((name.to_string(), splitted_params))
 }
 
-fn compute_function_selector(name: &str, params: &[String]) -> Result<H32, CalldataEncodeError> {
+pub fn compute_function_selector(
+    name: &str,
+    params: &[String],
+) -> Result<H32, CalldataEncodeError> {
     let normalized_signature = format!("{name}({})", params.join(","));
     let hash = keccak(normalized_signature.as_bytes());
 
@@ -111,7 +114,7 @@ pub fn encode_calldata(signature: &str, values: &[Value]) -> Result<Vec<u8>, Cal
 // The dynamic part always follows at the end of the static one.
 // Arguments are encoded in order. If the argument is static, it is encoded in place, i.e, there's no dynamic part.
 // If the argument is dynamic, only its offset to the dynamic part is recorded on the static sector.
-fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
+pub fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
     let mut current_offset = 0;
     let mut current_dynamic_offset = 0;
     for value in values {
@@ -437,8 +440,7 @@ fn correct_tuple_parsing() {
     // - ((address, address), uint256)
     // - (uint256, (address, address))
     // - address
-    let raw_function_signature =
-        "my_function(uint256,(uin256,address),((address,address),(uint256,bytes)),((address,address),uint256),(uint256,(address,address)),address)";
+    let raw_function_signature = "my_function(uint256,(uin256,address),((address,address),(uint256,bytes)),((address,address),uint256),(uint256,(address,address)),address)";
 
     let exepected_arguments: Vec<String> = vec![
         "uint256".to_string(),

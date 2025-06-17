@@ -1,3 +1,4 @@
+use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
@@ -8,27 +9,26 @@ use crate::rlp::{
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
 use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
+use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
-use anyhow::Result;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Index, Receipt, Transaction,
+    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+    Receipt, Transaction, payload::PayloadBundle,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, NodeHash, Trie};
 use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
+use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use libmdbx::{
     dupsort,
-    orm::{table, Database},
+    orm::{Database, table},
     table_info,
 };
-use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
-use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ pub struct Store {
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
         Ok(Self {
-            db: Arc::new(init_db(Some(path))),
+            db: Arc::new(init_db(Some(path)).map_err(StoreError::LibmdbxError)?),
         })
     }
 
@@ -117,14 +117,92 @@ impl Store {
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        Ok(self
-            .read_sync::<CanonicalBlockHashes>(number)?
-            .map(|a| a.to()))
+        self.read_sync::<CanonicalBlockHashes>(number)?
+            .map(|block_hash| block_hash.to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 }
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+
+            // store account updates
+            for (node_hash, node_data) in update_batch.account_updates {
+                tx.upsert::<StateTrieNodes>(node_hash, node_data)
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
+            for (hashed_address, nodes) in update_batch.storage_updates {
+                for (node_hash, node_data) in nodes {
+                    let key_1: [u8; 32] = hashed_address.into();
+                    let key_2 = node_hash_to_fixed_size(node_hash);
+
+                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+            }
+            for block in update_batch.blocks {
+                // store block
+                let number = block.header.number;
+                let hash = block.hash();
+
+                for (index, transaction) in block.body.transactions.iter().enumerate() {
+                    tx.upsert::<TransactionLocations>(
+                        transaction.compute_hash().into(),
+                        (number, hash, index as u64).into(),
+                    )
+                    .map_err(StoreError::LibmdbxError)?;
+                }
+
+                tx.upsert::<Bodies>(
+                    hash.into(),
+                    BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+
+                tx.upsert::<Headers>(
+                    hash.into(),
+                    BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+
+                tx.upsert::<BlockNumbers>(hash.into(), number)
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+            for (block_hash, receipts) in update_batch.receipts {
+                // store receipts
+                let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
+                for mut entries in
+                    receipts
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(index, receipt)| {
+                            let key = (block_hash, index as u64).into();
+                            let receipt_rlp = receipt.encode_to_vec();
+                            IndexedChunk::from::<Receipts>(key, &receipt_rlp)
+                        })
+                {
+                    key_values.append(&mut entries);
+                }
+                let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
+                for (key, value) in key_values {
+                    cursor
+                        .upsert(key, value)
+                        .map_err(StoreError::LibmdbxError)?;
+                }
+            }
+
+            tx.commit().map_err(StoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
     async fn add_block_header(
         &self,
         block_hash: BlockHash,
@@ -151,11 +229,14 @@ impl StoreEngine for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            Ok(self.read_sync::<Headers>(hash.into())?.map(|b| b.to()))
-        } else {
-            Ok(None)
-        }
+        let Some(block_hash) = self.get_block_hash_by_block_number(block_number)? else {
+            return Ok(None);
+        };
+
+        self.read_sync::<Headers>(block_hash.into())?
+            .map(|b| b.to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_block_body(
@@ -234,7 +315,11 @@ impl StoreEngine for Store {
         let numbers = (from..=to).collect();
         let hashes = self.read_bulk::<CanonicalBlockHashes>(numbers).await?;
         let blocks = self.read_bulk::<Bodies>(hashes).await?;
-        Ok(blocks.into_iter().map(|b| b.to()).collect())
+        let mut block_bodies = Vec::new();
+        for block_body in blocks.into_iter() {
+            block_bodies.push(block_body.to()?)
+        }
+        Ok(block_bodies)
     }
 
     async fn get_block_bodies_by_hash(
@@ -243,26 +328,32 @@ impl StoreEngine for Store {
     ) -> Result<Vec<BlockBody>, StoreError> {
         let hashes = hashes.into_iter().map(|h| h.into()).collect();
         let blocks = self.read_bulk::<Bodies>(hashes).await?;
-        Ok(blocks.into_iter().map(|b| b.to()).collect())
+        let mut block_bodies = Vec::new();
+        for block_body in blocks.into_iter() {
+            block_bodies.push(block_body.to()?)
+        }
+        Ok(block_bodies)
     }
 
     async fn get_block_body_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        Ok(self
-            .read::<Bodies>(block_hash.into())
+        self.read::<Bodies>(block_hash.into())
             .await?
-            .map(|b| b.to()))
+            .map(|b| b.to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     fn get_block_header_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        Ok(self
-            .read_sync::<Headers>(block_hash.into())?
-            .map(|b| b.to()))
+        self.read_sync::<Headers>(block_hash.into())?
+            .map(|b| b.to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_block_number(
@@ -281,15 +372,23 @@ impl StoreEngine for Store {
         self.read::<BlockNumbers>(block_hash.into()).await
     }
 
+    fn get_block_number_sync(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        self.read_sync::<BlockNumbers>(block_hash.into())
+    }
+
     async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         self.write::<AccountCodes>(code_hash.into(), code.into())
             .await
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
-        Ok(self
-            .read_sync::<AccountCodes>(code_hash.into())?
-            .map(|b| b.to()))
+        self.read_sync::<AccountCodes>(code_hash.into())?
+            .map(|b| b.to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_receipt(
@@ -342,9 +441,15 @@ impl StoreEngine for Store {
         let cursor = txn
             .cursor::<TransactionLocations>()
             .map_err(StoreError::LibmdbxError)?;
-        Ok(cursor
-            .walk_key(transaction_hash.into(), None)
-            .map_while(|res| res.ok().map(|t| t.to()))
+
+        let mut transaction_hashes = Vec::new();
+        let mut cursor_it = cursor.walk_key(transaction_hash.into(), None);
+        while let Some(Ok(tx)) = cursor_it.next() {
+            transaction_hashes.push(tx.to().map_err(StoreError::from)?);
+        }
+
+        Ok(transaction_hashes
+            .into_iter()
             .find(|(number, hash, _index)| {
                 self.get_block_hash_by_block_number(*number)
                     .is_ok_and(|o| o == Some(*hash))
@@ -486,17 +591,21 @@ impl StoreEngine for Store {
         }
     }
 
-    fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
+    fn open_storage_trie(
+        &self,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
         let db = Box::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
             self.db.clone(),
             hashed_address.0,
         ));
-        Trie::open(db, storage_root)
+        Ok(Trie::open(db, storage_root))
     }
 
-    fn open_state_trie(&self, state_root: H256) -> Trie {
+    fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone()));
-        Trie::open(db, state_root)
+        Ok(Trie::open(db, state_root))
     }
 
     async fn set_canonical_block(
@@ -514,7 +623,19 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read::<CanonicalBlockHashes>(number)
             .await
-            .map(|o| o.map(|hash_rlp| hash_rlp.to()))
+            .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
+            .transpose()
+            .map_err(StoreError::from)
+    }
+
+    fn get_canonical_block_hash_sync(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        self.read_sync::<CanonicalBlockHashes>(number)
+            .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
@@ -523,8 +644,12 @@ impl StoreEngine for Store {
     }
 
     async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        let r = self.read::<Payloads>(payload_id).await?;
-        Ok(r.map(|b| b.to()))
+        Ok(self
+            .read::<Payloads>(payload_id)
+            .await?
+            .map(|b| b.to())
+            .transpose()
+            .map_err(StoreError::from)?)
     }
 
     async fn update_payload(
@@ -588,15 +713,16 @@ impl StoreEngine for Store {
     }
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        self.write::<PendingBlocks>(block.header.compute_block_hash().into(), block.into())
+        self.write::<PendingBlocks>(block.hash().into(), block.into())
             .await
     }
 
     async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
-        Ok(self
-            .read::<PendingBlocks>(block_hash.into())
+        self.read::<PendingBlocks>(block_hash.into())
             .await?
-            .map(|b| b.to()))
+            .map(|b| b.to())
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn add_transaction_locations(
@@ -629,27 +755,6 @@ impl StoreEngine for Store {
             };
 
             key_values.append(&mut entries);
-        }
-
-        self.write_batch::<Receipts>(key_values).await
-    }
-
-    async fn add_receipts_for_blocks(
-        &self,
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-    ) -> Result<(), StoreError> {
-        let mut key_values = vec![];
-
-        for (block_hash, receipts) in receipts.into_iter() {
-            for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).into();
-                let receipt_rlp = receipt.encode_to_vec();
-                let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
-                    continue;
-                };
-
-                key_values.append(&mut entries);
-            }
         }
 
         self.write_batch::<Receipts>(key_values).await
@@ -743,11 +848,15 @@ impl StoreEngine for Store {
         let cursor = txn
             .cursor::<StorageHealPaths>()
             .map_err(StoreError::LibmdbxError)?;
-        let res = cursor
-            .walk(None)
-            .map_while(|res| res.ok().map(|(hash, paths)| (hash.to(), paths.to())))
-            .take(limit)
-            .collect::<Vec<_>>();
+
+        let mut res = Vec::new();
+        let mut cursor_it = cursor.walk(None);
+        while let Some(Ok((hash, paths))) = cursor_it.next() {
+            res.push((hash.to()?, paths.to()?));
+        }
+
+        res = res.into_iter().take(limit).collect::<Vec<_>>();
+
         // Delete fetched entries from the table
         let txn = self
             .db
@@ -921,7 +1030,13 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?;
         let iter = cursor
             .walk(Some(start.into()))
-            .map_while(|res| res.ok().map(|(hash, acc)| (hash.to(), acc.to())))
+            .map_while(|res| {
+                res.ok().map(|(hash, acc)| match (hash.to(), acc.to()) {
+                    (Ok(hash), Ok(acc)) => Some((hash, acc)),
+                    _ => None,
+                })
+            })
+            .flatten()
             .take(MAX_SNAPSHOT_READS);
         Ok(iter.collect::<Vec<_>>())
     }
@@ -951,7 +1066,9 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read::<InvalidAncestors>(block.into())
             .await
-            .map(|o| o.map(|a| a.to()))
+            .map(|o| o.map(|a| a.to()))?
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     async fn set_latest_valid_ancestor(
@@ -1253,10 +1370,12 @@ impl Encodable for SnapStateIndex {
 const DB_PAGE_SIZE: usize = 4096;
 /// For a default page size of 4096, the max value size is roughly 1/2 page size.
 const DB_MAX_VALUE_SIZE: usize = 2022;
+// Maximum DB size, set to 2 TB
+const MAX_MAP_SIZE: isize = 1024_isize.pow(4) * 2; // 2 TB
 
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
-pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
+pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
     let tables = [
         table_info!(BlockNumbers),
         table_info!(Headers),
@@ -1282,13 +1401,12 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
     let options = DatabaseOptions {
         page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
         mode: Mode::ReadWrite(ReadWriteOptions {
-            // Set max DB size to 1TB
-            max_size: Some(1024_isize.pow(4)),
+            max_size: Some(MAX_MAP_SIZE),
             ..Default::default()
         }),
         ..Default::default()
     };
-    Database::create_with_options(path, options, &tables).unwrap()
+    Database::create_with_options(path, options, &tables)
 }
 
 #[cfg(test)]
@@ -1297,8 +1415,8 @@ mod tests {
     use crate::rlp::TupleRLP;
     use bytes::Bytes;
     use ethrex_common::{
+        Address, H256,
         types::{BlockHash, Index, Log, TxType},
-        Address, Bloom, H256,
     };
 
     #[test]
@@ -1479,7 +1597,7 @@ mod tests {
             let txn = db.begin_read().unwrap();
             let cursor = txn.cursor::<DupsortExample>().unwrap();
             let mut acc = 0;
-            for key in cursor.walk_key(key, None).map(|r| r.unwrap().0 .0) {
+            for key in cursor.walk_key(key, None).map(|r| r.unwrap().0.0) {
                 acc += key;
             }
 
@@ -1499,7 +1617,7 @@ mod tests {
         let options = DatabaseOptions {
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
-                max_size: Some(1024_isize.pow(4)),
+                max_size: Some(MAX_MAP_SIZE),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1561,7 +1679,7 @@ mod tests {
         let options = DatabaseOptions {
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
-                max_size: Some(1024_isize.pow(4)),
+                max_size: Some(MAX_MAP_SIZE),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1594,7 +1712,7 @@ mod tests {
         let options = DatabaseOptions {
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
-                max_size: Some(1024_isize.pow(4)),
+                max_size: Some(MAX_MAP_SIZE),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1624,23 +1742,22 @@ mod tests {
         topics_size: usize,
     ) -> Receipt {
         let large_data: Bytes = Bytes::from(vec![1u8; data_size_in_bytes]);
-        let large_topics: Vec<H256> = std::iter::repeat(H256::random())
-            .take(topics_size)
-            .collect();
+        let large_topics: Vec<H256> = std::iter::repeat_n(H256::random(), topics_size).collect();
 
-        let logs = std::iter::repeat(Log {
-            address: Address::random(),
-            topics: large_topics.clone(),
-            data: large_data.clone(),
-        })
-        .take(logs_size)
+        let logs = std::iter::repeat_n(
+            Log {
+                address: Address::random(),
+                topics: large_topics.clone(),
+                data: large_data.clone(),
+            },
+            logs_size,
+        )
         .collect();
 
         Receipt {
             tx_type: TxType::EIP7702,
             succeeded: true,
             cumulative_gas_used: u64::MAX,
-            bloom: Bloom::default(),
             logs,
         }
     }

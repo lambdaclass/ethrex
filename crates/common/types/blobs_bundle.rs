@@ -1,12 +1,12 @@
 use std::ops::AddAssign;
 
 use crate::serde_utils;
-use crate::{types::constants::VERSIONED_HASH_VERSION_KZG, Bytes, H256};
+use crate::{Bytes, H256, types::constants::VERSIONED_HASH_VERSION_KZG};
 
 #[cfg(feature = "c-kzg")]
 use {
     crate::types::transaction::EIP4844Transaction,
-    c_kzg::{ethereum_kzg_settings, KzgCommitment, KzgProof, KzgSettings},
+    c_kzg::{KzgCommitment, KzgProof, KzgSettings, ethereum_kzg_settings},
     lazy_static::lazy_static,
 };
 
@@ -75,7 +75,7 @@ pub fn bytes_from_blob(blob: Bytes) -> [u8; SAFE_BYTES_PER_BLOB] {
     buf
 }
 
-fn kzg_commitment_to_versioned_hash(data: &Commitment) -> H256 {
+pub fn kzg_commitment_to_versioned_hash(data: &Commitment) -> H256 {
     use k256::sha2::Digest;
     let mut versioned_hash: [u8; 32] = k256::sha2::Sha256::digest(data).into();
     versioned_hash[0] = VERSIONED_HASH_VERSION_KZG;
@@ -83,7 +83,9 @@ fn kzg_commitment_to_versioned_hash(data: &Commitment) -> H256 {
 }
 
 #[cfg(feature = "c-kzg")]
-fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proof), BlobsBundleError> {
+pub fn blob_to_kzg_commitment_and_proof(
+    blob: &Blob,
+) -> Result<(Commitment, Proof), BlobsBundleError> {
     let blob: c_kzg::Blob = (*blob).into();
 
     let commitment = KzgCommitment::blob_to_kzg_commitment(&blob, &KZG_SETTINGS)
@@ -241,8 +243,8 @@ pub enum BlobsBundleError {
 mod tests {
     use super::*;
     use crate::{
-        types::{blobs_bundle, transaction::EIP4844Transaction},
         Address, Bytes, U256,
+        types::{blobs_bundle, transaction::EIP4844Transaction},
     };
     mod shared {
         pub fn convert_str_to_bytes48(s: &str) -> [u8; 48] {

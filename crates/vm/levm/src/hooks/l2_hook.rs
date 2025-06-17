@@ -1,23 +1,20 @@
 use crate::{
-    errors::{ExecutionReport, InternalError, TxValidationError, VMError},
+    errors::{InternalError, TxValidationError, VMError},
     hooks::{default_hook, hook::Hook},
-    utils::get_valid_jump_destinations,
     vm::VM,
 };
 
-use ethrex_common::{types::Fork, Address, U256};
+use ethrex_common::{Address, U256, types::Fork};
 
 pub struct L2Hook {
     pub recipient: Option<Address>,
 }
 
 impl Hook for L2Hook {
-    fn prepare_execution(&self, vm: &mut crate::vm::VM<'_>) -> Result<(), crate::errors::VMError> {
+    fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
         if vm.env.is_privileged {
             let Some(recipient) = self.recipient else {
-                return Err(VMError::Internal(
-                    InternalError::RecipientNotFoundForPrivilegeTransaction,
-                ));
+                return Err(InternalError::RecipientNotFoundForPrivilegedTransaction.into());
             };
             vm.increase_account_balance(recipient, vm.current_call_frame()?.msg_value)?;
             vm.current_call_frame_mut()?.msg_value = U256::from(0);
@@ -39,9 +36,7 @@ impl Hook for L2Hook {
                 .env
                 .gas_price
                 .checked_mul(vm.env.gas_limit.into())
-                .ok_or(VMError::TxValidation(
-                    TxValidationError::GasLimitPriceProductOverflow,
-                ))?;
+                .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
             default_hook::validate_sender_balance(vm, sender_balance)?;
 
@@ -50,14 +45,15 @@ impl Hook for L2Hook {
 
             // (7) NONCE_IS_MAX
             vm.increment_account_nonce(sender_address)
-                .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
+                .map_err(|_| TxValidationError::NonceIsMax)?;
 
             // check for nonce mismatch
             if sender_nonce != vm.env.tx_nonce {
-                return Err(VMError::TxValidation(TxValidationError::NonceMismatch {
+                return Err(TxValidationError::NonceMismatch {
                     expected: sender_nonce,
                     actual: vm.env.tx_nonce,
-                }));
+                }
+                .into());
             }
 
             // (9) SENDER_NOT_EOA
@@ -86,9 +82,7 @@ impl Hook for L2Hook {
             vm.env.tx_max_fee_per_gas,
         ) {
             if tx_max_priority_fee > tx_max_fee_per_gas {
-                return Err(VMError::TxValidation(
-                    TxValidationError::PriorityGreaterThanMaxFeePerGas,
-                ));
+                return Err(TxValidationError::PriorityGreaterThanMaxFeePerGas.into());
             }
         }
 
@@ -106,25 +100,15 @@ impl Hook for L2Hook {
             default_hook::validate_type_4_tx(vm)?;
         }
 
-        if vm.is_create() {
-            // Assign bytecode to context and empty calldata
-            vm.current_call_frame_mut()?.bytecode =
-                std::mem::take(&mut vm.current_call_frame_mut()?.calldata);
-            vm.current_call_frame_mut()?.valid_jump_destinations =
-                get_valid_jump_destinations(&vm.current_call_frame()?.bytecode).unwrap_or_default();
-        } else if !vm.env.is_privileged {
-            // Transfer value to receiver
-            // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
-            vm.increase_account_balance(
-                vm.current_call_frame()?.to,
-                vm.current_call_frame()?.msg_value,
-            )?;
-        }
+        default_hook::transfer_value_if_applicable(vm)?;
+
+        default_hook::set_bytecode_and_code_address(vm)?;
+
         Ok(())
     }
 
     fn finalize_execution(
-        &self,
+        &mut self,
         vm: &mut crate::vm::VM<'_>,
         report: &mut crate::errors::ExecutionReport,
     ) -> Result<(), crate::errors::VMError> {
@@ -139,10 +123,7 @@ impl Hook for L2Hook {
 
         // 2. Return unused gas + gas refunds to the sender.
 
-        if vm.env.is_privileged {
-            let gas_to_pay_coinbase = compute_coinbase_fee(vm, report)?;
-            default_hook::pay_coinbase(vm, gas_to_pay_coinbase)?;
-        } else {
+        if !vm.env.is_privileged {
             let gas_refunded = default_hook::compute_gas_refunded(report)?;
             let actual_gas_used =
                 default_hook::compute_actual_gas_used(vm, gas_refunded, report.gas_used)?;
@@ -164,24 +145,4 @@ pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
         )?;
     }
     Ok(())
-}
-
-pub fn compute_coinbase_fee(vm: &mut VM<'_>, report: &mut ExecutionReport) -> Result<u64, VMError> {
-    let mut gas_refunded = default_hook::compute_gas_refunded(report)?;
-    let mut gas_consumed = report.gas_used;
-
-    report.gas_refunded = gas_refunded;
-
-    if vm.env.config.fork >= Fork::Prague {
-        let floor_gas_price = vm.get_min_gas_used()?;
-        let execution_gas_used = gas_consumed.saturating_sub(gas_refunded);
-        if floor_gas_price > execution_gas_used {
-            gas_consumed = floor_gas_price;
-            gas_refunded = 0;
-        }
-    }
-
-    gas_consumed
-        .checked_sub(gas_refunded)
-        .ok_or(VMError::Internal(InternalError::UndefinedState(2)))
 }

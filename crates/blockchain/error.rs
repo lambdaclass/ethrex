@@ -1,4 +1,6 @@
-use ethrex_common::types::{BlobsBundleError, BlockHash, InvalidBlockHeaderError};
+use ethrex_common::types::{
+    BlobsBundleError, BlockHash, InvalidBlockBodyError, InvalidBlockHeaderError,
+};
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 
@@ -16,6 +18,10 @@ pub enum ChainError {
     StoreError(#[from] StoreError),
     #[error("EVM error: {0}")]
     EvmError(#[from] EvmError),
+    #[error("Invalid Transaction: {0}")]
+    InvalidTransaction(String),
+    #[error("Failed to generate witness: {0}")]
+    WitnessGeneration(String),
     #[error("{0}")]
     Custom(String),
 }
@@ -30,6 +36,8 @@ pub enum InvalidBlockError {
     ReceiptsRootMismatch,
     #[error("Invalid Header, validation failed pre-execution: {0}")]
     InvalidHeader(#[from] InvalidBlockHeaderError),
+    #[error("Invalid Body, validation failed pre-execution: {0}")]
+    InvalidBody(#[from] InvalidBlockBodyError),
     #[error("Exceeded MAX_BLOB_GAS_PER_BLOCK")]
     ExceededMaxBlobGasPerBlock,
     #[error("Exceeded MAX_BLOB_NUMBER_PER_BLOCK")]
@@ -52,6 +60,8 @@ pub enum MempoolError {
     BlobsBundleError(#[from] BlobsBundleError),
     #[error("Transaction max init code size exceeded")]
     TxMaxInitCodeSizeError,
+    #[error("Transaction max data size exceeded")]
+    TxMaxDataSizeError,
     #[error("Transaction gas limit exceeded")]
     TxGasLimitExceededError,
     #[error("Transaction priority fee above gas fee")]
@@ -65,6 +75,8 @@ pub enum MempoolError {
     #[error("Blob transaction submited without blobs bundle")]
     BlobTxNoBlobsBundle,
     #[error("Nonce for account too low")]
+    NonceTooLow,
+    #[error("Nonce already used")]
     InvalidNonce,
     #[error("Transaction chain id mismatch, expected chain id: {0}")]
     InvalidChainId(u64),
@@ -103,4 +115,6 @@ pub enum InvalidForkChoice {
     InvalidHead,
     #[error("Previously rejected block.")]
     InvalidAncestor(BlockHash),
+    #[error("Cannot find link between Head and the canonical chain")]
+    UnlinkedHead,
 }

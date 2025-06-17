@@ -63,5 +63,13 @@ Accessing a **cold** address incurs higher gas costs than accessing a **warm** a
 **CacheDB:**
 - The `CacheDB` is a structure that is persisted between transactions and keeps track of changes that are eventually going to be committed to the Database.
 
-So if you want to access an account that's in the `CacheDB` it will be cheap for the EVM (because it won't look up in the `Database`) but if it was accessed in a transaction that never touched that account the address will still be **cold** and therefore the gas cost will be higher than if it was **warm**.
+So if you want to access an account that's in the `CacheDB` it will be cheap for the EVM (because it won't look up in the `Database`) but if it was accessed in a transaction that never accessed that account the address will still be **cold** and therefore the gas cost will be higher than if it was **warm**.
 
+## Errors
+
+These are the kinds of errors:
+- `InternalErorr`: These are errors that break execution, they shouldn't ever happen. For example, an underflow when substracting two values and we know for sure the first one is greater than the second.
+  - `DatabaseError`: Subcategory of `InternalError`, this error is only used within the `Database` trait that the LEVM crate exposes. This should be returned when there's an unexpected error when trying to read from the database.
+- `TxValidation`: These are thrown if the transaction doesn't pass the required validations, like the sender having enough value to pay for the transaction gas fees, or that the transaction nonce should match with sender's nonce. These errors **INVALIDATE** the transaction, they shouldn't make any changes to the state.
+- `ExceptionalHalt`: Any error that's contemplated in the EVM and is expected to happen, like Out-of-Gas and Stack Overflow. These errors cause the current executing context to **Revert** consuming all context gas left. Some examples include a Stack Overflow and when bytecode contains an Invalid Opcode.
+- `RevertOpcode`: Triggered by Revert Opcode, it behaves like an `ExceptionalHalt` except this one doesn't consume the gas left.

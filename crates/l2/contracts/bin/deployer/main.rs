@@ -1,36 +1,38 @@
 use std::{
-    fs::{read_to_string, File, OpenOptions},
+    fs::{File, OpenOptions, read_to_string},
     io::{BufWriter, Write},
     path::PathBuf,
-    process::{Command, ExitStatus},
+    process::{Command, ExitStatus, Stdio},
     str::FromStr,
 };
 
 use bytes::Bytes;
 use clap::Parser;
-use cli::{parse_private_key, DeployerOptions};
+use cli::{DeployerOptions, parse_private_key};
 use error::DeployerError;
 use ethrex_common::{Address, U256};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::{
-    calldata::{encode_calldata, Value},
+    calldata::{Value, encode_calldata},
     compile_contract, deploy_contract, deploy_with_proxy, get_address_from_secret_key,
     initialize_contract,
 };
 use ethrex_rpc::{
-    clients::{eth::BlockByNumber, Overrides},
     EthClient,
+    clients::{Overrides, eth::BlockByNumber},
 };
 use keccak_hash::H256;
-use tracing::{debug, error, info, trace, warn, Level};
+use tracing::{Level, debug, error, info, trace, warn};
 
 mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,bytes32,bytes32,address[])";
+    "initialize(bool,address,address,address,address,address,bytes32,bytes32,address[])";
+
 const INITIALIZE_BRIDGE_ADDRESS_SIGNATURE: &str = "initializeBridgeAddress(address)";
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
+const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 
 #[tokio::main]
@@ -58,8 +60,8 @@ async fn main() -> Result<(), DeployerError> {
         on_chain_proposer_address,
         bridge_address,
         sp1_verifier_address,
-        pico_verifier_address,
         risc0_verifier_address,
+        tdx_verifier_address,
     ) = deploy_contracts(&eth_client, &opts).await?;
 
     initialize_contracts(
@@ -67,22 +69,28 @@ async fn main() -> Result<(), DeployerError> {
         bridge_address,
         risc0_verifier_address,
         sp1_verifier_address,
-        pico_verifier_address,
+        tdx_verifier_address,
+        opts.aligned_aggregator_address,
         &eth_client,
         &opts,
     )
     .await?;
 
     if opts.deposit_rich {
-        make_deposits(bridge_address, &eth_client, &opts).await?;
+        let _ = make_deposits(bridge_address, &eth_client, &opts)
+            .await
+            .inspect_err(|err| {
+                warn!("Failed to make deposits: {err}");
+            });
     }
 
     write_contract_addresses_to_env(
         on_chain_proposer_address,
         bridge_address,
         sp1_verifier_address,
-        pico_verifier_address,
         risc0_verifier_address,
+        opts.aligned_aggregator_address,
+        tdx_verifier_address,
         opts.env_file_path,
     )?;
     trace!("Deployer binary finished successfully");
@@ -112,16 +120,6 @@ fn download_contract_deps(opts: &DeployerOptions) -> Result<(), DeployerError> {
             .to_str()
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
         None,
-        false,
-    )?;
-
-    git_clone(
-        "https://github.com/brevis-network/pico-zkapp-template.git",
-        opts.contracts_path
-            .join("lib/pico-zkapp-template")
-            .to_str()
-            .ok_or(DeployerError::FailedToGetStringFromPath)?,
-        Some("evm"),
         false,
     )?;
 
@@ -158,17 +156,16 @@ pub fn git_clone(
 
 fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
     trace!("Compiling contracts");
-    compile_contract(&opts.contracts_path, "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol", false)?;
+    compile_contract(
+        &opts.contracts_path,
+        "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol",
+        false,
+    )?;
     compile_contract(&opts.contracts_path, "src/l1/OnChainProposer.sol", false)?;
     compile_contract(&opts.contracts_path, "src/l1/CommonBridge.sol", false)?;
     compile_contract(
         &opts.contracts_path,
         "lib/sp1-contracts/contracts/src/v4.0.0-rc.3/SP1VerifierGroth16.sol",
-        false,
-    )?;
-    compile_contract(
-        &opts.contracts_path,
-        "lib/pico-zkapp-template/contracts/src/PicoVerifier.sol",
         false,
     )?;
     trace!("Contracts compiled");
@@ -253,27 +250,6 @@ async fn deploy_contracts(
             ))?
     };
 
-    let pico_verifier_address = if opts.pico_deploy_verifier {
-        info!("Deploying PicoVerifier (if pico_deploy_verifier is true)");
-        let (verifier_deployment_tx_hash, pico_verifier_address) = deploy_contract(
-            &[],
-            &opts.contracts_path.join("solc_out/PicoVerifier.bin"),
-            &opts.private_key,
-            &salt,
-            eth_client,
-        )
-        .await?;
-
-        info!(address = %format!("{pico_verifier_address:#x}"), tx_hash = %format!("{verifier_deployment_tx_hash:#x}"), "PicoVerifier deployed");
-
-        pico_verifier_address
-    } else {
-        opts.pico_verifier_address
-            .ok_or(DeployerError::InternalError(
-                "PicoVerifier address is not set and pico_deploy_verifier is false".to_string(),
-            ))?
-    };
-
     // TODO: Add Risc0Verifier deployment
     let risc0_verifier_address =
         opts.risc0_verifier_address
@@ -281,23 +257,66 @@ async fn deploy_contracts(
                 "Risc0Verifier address is not set and risc0_deploy_verifier is false".to_string(),
             ))?;
 
+    let tdx_verifier_address = if opts.tdx_deploy_verifier {
+        info!("Deploying TDXVerifier (if tdx_deploy_verifier is true)");
+        let tdx_verifier_address =
+            deploy_tdx_contracts(opts, on_chain_proposer_deployment.proxy_address)?;
+
+        info!(address = %format!("{tdx_verifier_address:#x}"), "TDXVerifier deployed");
+        tdx_verifier_address
+    } else {
+        opts.tdx_verifier_address
+            .ok_or(DeployerError::InternalError(
+                "TDXVerifier address is not set and tdx_deploy_verifier is false".to_string(),
+            ))?
+    };
+
     trace!(
         on_chain_proposer_proxy_address = ?on_chain_proposer_deployment.proxy_address,
         bridge_proxy_address = ?bridge_deployment.proxy_address,
         on_chain_proposer_implementation_address = ?on_chain_proposer_deployment.implementation_address,
         bridge_implementation_address = ?bridge_deployment.implementation_address,
         sp1_verifier_address = ?sp1_verifier_address,
-        pico_verifier_address = ?pico_verifier_address,
         risc0_verifier_address = ?risc0_verifier_address,
+        tdx_verifier_address = ?tdx_verifier_address,
         "Contracts deployed"
     );
     Ok((
         on_chain_proposer_deployment.proxy_address,
         bridge_deployment.proxy_address,
         sp1_verifier_address,
-        pico_verifier_address,
         risc0_verifier_address,
+        tdx_verifier_address,
     ))
+}
+
+fn deploy_tdx_contracts(
+    opts: &DeployerOptions,
+    on_chain_proposer: Address,
+) -> Result<Address, DeployerError> {
+    Command::new("make")
+        .arg("deploy-all")
+        .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
+        .env("RPC_URL", &opts.rpc_url)
+        .env("ON_CHAIN_PROPOSER", format!("{:#x}", on_chain_proposer))
+        .current_dir("tee/contracts")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| DeployerError::DependencyError(format!("Failed to spawn make: {err}")))?
+        .wait()
+        .map_err(|err| DeployerError::DependencyError(format!("Failed to wait for make: {err}")))?;
+
+    let address = read_tdx_deployment_address("TDXVerifier");
+    Ok(address)
+}
+
+fn read_tdx_deployment_address(name: &str) -> Address {
+    let path = format!("tee/contracts/deploydeps/automata-dcap-attestation/evm/deployment/{name}");
+    let Ok(contents) = read_to_string(path) else {
+        return Address::zero();
+    };
+    Address::from_str(&contents).unwrap_or(Address::zero())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -306,7 +325,8 @@ async fn initialize_contracts(
     bridge_address: Address,
     risc0_verifier_address: Address,
     sp1_verifier_address: Address,
-    pico_verifier_address: Address,
+    tdx_verifier_address: Address,
+    aligned_aggregator_address: Address,
     eth_client: &EthClient,
     opts: &DeployerOptions,
 ) -> Result<(), DeployerError> {
@@ -316,6 +336,11 @@ async fn initialize_contracts(
 
     trace!(committer_l1_address = %opts.committer_l1_address, "Using committer L1 address for OnChainProposer initialization");
 
+    let genesis = read_genesis_file(
+        opts.genesis_l2_path
+            .to_str()
+            .ok_or(DeployerError::FailedToGetStringFromPath)?,
+    );
     let sp1_vk_string = read_to_string(&opts.sp1_vk_path).unwrap_or_else(|_| {
         warn!(
             path = opts.sp1_vk_path,
@@ -331,7 +356,6 @@ async fn initialize_contracts(
         })?
         .into();
 
-    let genesis = read_genesis_file(&opts.genesis_l2_path);
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
     let initialize_tx_hash = {
@@ -340,7 +364,8 @@ async fn initialize_contracts(
             Value::Address(deployer_address),
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
-            Value::Address(pico_verifier_address),
+            Value::Address(tdx_verifier_address),
+            Value::Address(aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Array(vec![
@@ -398,10 +423,35 @@ async fn initialize_contracts(
             .await?
         };
 
-        info!(
-            tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
-            "OnChainProposer ownership transfered"
-        );
+        if let Some(owner_pk) = opts.on_chain_proposer_owner_pk {
+            let accept_ownership_calldata = encode_calldata(ACCEPT_OWNERSHIP_SIGNATURE, &[])?;
+            let accept_tx = eth_client
+                .build_eip1559_transaction(
+                    on_chain_proposer_address,
+                    opts.on_chain_proposer_owner,
+                    accept_ownership_calldata.into(),
+                    Overrides::default(),
+                )
+                .await?;
+            let accept_tx_hash = eth_client
+                .send_eip1559_transaction(&accept_tx, &owner_pk)
+                .await?;
+
+            eth_client
+                .wait_for_transaction_receipt(accept_tx_hash, 100)
+                .await?;
+
+            info!(
+                transfer_tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
+                accept_tx_hash = %format!("{accept_tx_hash:#x}"),
+                "OnChainProposer ownership transfered"
+            );
+        } else {
+            info!(
+                transfer_tx_hash = %format!("{transfer_ownership_tx_hash:#x}"),
+                "OnChainProposer ownership transfered but not accepted yet"
+            );
+        }
     }
 
     info!("Initializing CommonBridge");
@@ -423,6 +473,7 @@ async fn initialize_contracts(
     };
 
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
+
     trace!("Contracts initialized");
     Ok(())
 }
@@ -433,9 +484,19 @@ async fn make_deposits(
     opts: &DeployerOptions,
 ) -> Result<(), DeployerError> {
     trace!("Making deposits");
-    let genesis = read_genesis_file(&opts.genesis_l1_path);
-    let pks = read_to_string(&opts.private_keys_file_path)
-        .map_err(|_| DeployerError::FailedToGetStringFromPath)?;
+    let genesis = read_genesis_file(
+        opts.genesis_l1_path
+            .clone()
+            .ok_or(DeployerError::ConfigValueNotSet(
+                "--genesis-l1-path".to_string(),
+            ))?
+            .to_str()
+            .ok_or(DeployerError::FailedToGetStringFromPath)?,
+    );
+    let pks = read_to_string(opts.private_keys_file_path.clone().ok_or(
+        DeployerError::ConfigValueNotSet("--private-keys-file-path".to_string()),
+    )?)
+    .map_err(|_| DeployerError::FailedToGetStringFromPath)?;
     let private_keys: Vec<String> = pks
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -503,12 +564,14 @@ async fn make_deposits(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_contract_addresses_to_env(
     on_chain_proposer_address: Address,
     bridge_address: Address,
     sp1_verifier_address: Address,
-    pico_verifier_address: Address,
     risc0_verifier_address: Address,
+    tdx_verifier_address: Address,
+    aligned_aggregator_address: Address,
     env_file_path: Option<PathBuf>,
 ) -> Result<(), DeployerError> {
     trace!("Writing contract addresses to .env file");
@@ -541,11 +604,36 @@ fn write_contract_addresses_to_env(
 
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER={pico_verifier_address:#x}"
+        "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={risc0_verifier_address:#x}"
     )?;
     writeln!(
         writer,
-        "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={risc0_verifier_address:#x}"
+        "ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS={aligned_aggregator_address:#x}"
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER={tdx_verifier_address:#x}"
+    )?;
+    // TDX aux contracts, qpl-tool depends on exact env var naming
+    writeln!(
+        writer,
+        "ENCLAVE_ID_DAO={:#x}",
+        read_tdx_deployment_address("AutomataEnclaveIdentityDao")
+    )?;
+    writeln!(
+        writer,
+        "FMSPC_TCB_DAO={:#x}",
+        read_tdx_deployment_address("AutomataFmspcTcbDao")
+    )?;
+    writeln!(
+        writer,
+        "PCK_DAO={:#x}",
+        read_tdx_deployment_address("AutomataPckDao")
+    )?;
+    writeln!(
+        writer,
+        "PCS_DAO={:#x}",
+        read_tdx_deployment_address("AutomataPcsDao")
     )?;
     trace!(?env_file_path, "Contract addresses written to .env");
     Ok(())
@@ -556,7 +644,7 @@ fn write_contract_addresses_to_env(
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod test {
-    use crate::{compile_contracts, download_contract_deps, DeployerError, DeployerOptions};
+    use crate::{DeployerError, DeployerOptions, compile_contracts, download_contract_deps};
     use std::{env, path::Path};
 
     #[test]

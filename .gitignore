@@ -65,3 +65,6 @@ cmd/ef_tests/state/levm_perfgraphs
 prof_*.json
 prof.json
 profile.json.gz
+
+# Mdbook artifacts
+book

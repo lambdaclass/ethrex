@@ -1,4 +1,3 @@
-use crate::eth::fee_calculator::estimate_gas_tip;
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::utils::RpcErr;
 use serde_json::Value;
@@ -18,28 +17,25 @@ impl RpcHandler for GasPrice {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let latest_block_number = context.storage.get_latest_block_number().await?;
-
-        let estimated_gas_tip = estimate_gas_tip(&context.storage).await?;
-
-        let base_fee = context
+        let latest_header = context
             .storage
-            .get_block_header(latest_block_number)
-            .ok()
-            .flatten()
-            .and_then(|header| header.base_fee_per_gas);
-
-        // To complete the gas price, we need to add the base fee to the estimated gas.
-        // If we don't have the estimated gas, we'll use the base fee as the gas price.
-        // If we don't have the base fee, we'll return an Error.
-        let gas_price = match (estimated_gas_tip, base_fee) {
-            (Some(gas_tip), Some(base_fee)) => gas_tip + base_fee,
-            (None, Some(base_fee)) => base_fee,
-            (_, None) => {
-                return Err(RpcErr::Internal(
-                    "Error calculating gas price: missing base_fee on block".to_string(),
-                ))
-            }
+            .get_block_header(latest_block_number)?
+            .ok_or(RpcErr::Internal(format!(
+                "Missing latest block with number {latest_block_number}"
+            )))?;
+        let Some(base_fee) = latest_header.base_fee_per_gas else {
+            return Err(RpcErr::Internal(
+                "Error calculating gas price: missing base_fee on block".to_string(),
+            ));
         };
+        let estimated_gas_tip = context
+            .gas_tip_estimator
+            .lock()
+            .await
+            .estimate_gas_tip(&context.storage)
+            .await?;
+        // To complete the gas price, we need to add the base fee to the estimated gas tip.
+        let gas_price = base_fee + estimated_gas_tip;
 
         let gas_as_hex = format!("0x{:x}", gas_price);
         Ok(serde_json::Value::String(gas_as_hex))
@@ -50,15 +46,16 @@ impl RpcHandler for GasPrice {
 mod tests {
     use super::GasPrice;
     use crate::eth::test_utils::{
-        add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks, setup_store,
-        BASE_PRICE_IN_WEI,
+        BASE_PRICE_IN_WEI, add_eip1559_tx_blocks, add_legacy_tx_blocks, add_mixed_tx_blocks,
+        setup_store,
     };
 
     use crate::utils::test_utils::default_context_with_storage;
     use crate::{
-        rpc::{map_http_requests, RpcHandler},
-        utils::{parse_json_hex, RpcRequest},
+        rpc::{RpcHandler, map_http_requests},
+        utils::{RpcRequest, parse_json_hex},
     };
+    use ethrex_common::types::MIN_GAS_TIP;
     use serde_json::json;
 
     #[tokio::test]
@@ -108,7 +105,7 @@ mod tests {
         let gas_price = GasPrice {};
         let response = gas_price.handle(context).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
-        assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
+        assert_eq!(parsed_result, BASE_PRICE_IN_WEI + MIN_GAS_TIP);
     }
     #[tokio::test]
     async fn test_with_no_blocks_but_genesis() {
@@ -116,7 +113,7 @@ mod tests {
         let context = default_context_with_storage(storage).await;
         let gas_price = GasPrice {};
         // genesis base fee is = BASE_PRICE_IN_WEI
-        let expected_gas_price = BASE_PRICE_IN_WEI;
+        let expected_gas_price = BASE_PRICE_IN_WEI + MIN_GAS_TIP;
         let response = gas_price.handle(context).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, expected_gas_price);

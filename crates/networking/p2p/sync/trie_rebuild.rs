@@ -7,11 +7,11 @@
 
 use ethrex_common::{BigEndianHash, H256, U256, U512};
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
-use ethrex_trie::{Nibbles, EMPTY_TRIE_HASH};
+use ethrex_storage::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS, Store};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles};
 use std::array;
 use tokio::{
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::mpsc::{Receiver, Sender, channel},
     task::JoinSet,
     time::Instant,
 };
@@ -21,10 +21,9 @@ use tracing::{info, warn};
 use crate::sync::seconds_to_readable;
 
 use super::{
-    SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, SHOW_PROGRESS_INTERVAL_DURATION,
-    STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
+    MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, SHOW_PROGRESS_INTERVAL_DURATION,
+    STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START, SyncError,
 };
-
 /// The storage root used to indicate that the storage to be rebuilt is not complete
 /// This will tell the rebuilder to skip storage root validations for this trie
 /// The storage should be queued for rebuilding by the sender
@@ -163,7 +162,7 @@ async fn rebuild_state_trie_segment(
     store: Store,
     cancel_token: CancellationToken,
 ) -> Result<(H256, H256), SyncError> {
-    let mut state_trie = store.open_state_trie(root);
+    let mut state_trie = store.open_state_trie(root)?;
     let mut snapshot_reads_since_last_commit = 0;
     loop {
         if cancel_token.is_cancelled() {
@@ -236,7 +235,9 @@ async fn rebuild_storage_trie_in_background(
             if pending_storages.is_empty() {
                 break;
             }
-            let (account_hash, expected_root) = pending_storages.pop().unwrap();
+            let (account_hash, expected_root) = pending_storages
+                .pop()
+                .expect("Unreachable code, pending_storages can't be empty in this point");
             let store = store.clone();
             rebuild_tasks.spawn(rebuild_storage_trie(
                 account_hash,
@@ -263,7 +264,7 @@ async fn rebuild_storage_trie(
     store: Store,
 ) -> Result<(), SyncError> {
     let mut start = H256::zero();
-    let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
+    let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
     let mut snapshot_reads_since_last_commit = 0;
     loop {
         snapshot_reads_since_last_commit += 1;

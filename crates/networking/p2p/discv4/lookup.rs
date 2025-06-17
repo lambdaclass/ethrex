@@ -4,8 +4,8 @@ use super::{
     server::DiscoveryError,
 };
 use crate::{
-    kademlia::{bucket_number, MAX_NODES_PER_BUCKET},
-    network::{public_key_from_signing_key, P2PContext},
+    kademlia::{MAX_NODES_PER_BUCKET, bucket_number},
+    network::{P2PContext, public_key_from_signing_key},
     rlpx::utils::node_id,
     types::Node,
 };
@@ -269,11 +269,11 @@ mod tests {
 
     use super::*;
     use crate::discv4::server::{
+        Discv4Server,
         tests::{
             connect_servers, fill_table_with_random_nodes, insert_random_node_on_custom_bucket,
             start_discovery_server,
         },
-        Discv4Server,
     };
 
     fn lookup_handler_from_server(server: Discv4Server) -> Discv4LookupHandler {
@@ -294,8 +294,8 @@ mod tests {
      * This test for only one lookup, and not recursively.
      */
     async fn discovery_server_lookup() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(8000, true).await?;
-        let mut server_b = start_discovery_server(8001, true).await?;
+        let mut server_a = start_discovery_server(8000, 1, true).await?;
+        let mut server_b = start_discovery_server(8001, 1, true).await?;
 
         fill_table_with_random_nodes(server_a.ctx.table.clone()).await;
 
@@ -366,10 +366,10 @@ mod tests {
      * - We'll run a recursive lookup on server `a` and we expect to end with `b`, `c`, `d` and its mock nodes
      */
     async fn discovery_server_recursive_lookup() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(8002, true).await?;
-        let mut server_b = start_discovery_server(8003, true).await?;
-        let mut server_c = start_discovery_server(8004, true).await?;
-        let mut server_d = start_discovery_server(8005, true).await?;
+        let mut server_a = start_discovery_server(8002, 1, true).await?;
+        let mut server_b = start_discovery_server(8003, 1, true).await?;
+        let mut server_c = start_discovery_server(8004, 1, true).await?;
+        let mut server_d = start_discovery_server(8005, 1, true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
         connect_servers(&mut server_b, &mut server_c).await?;

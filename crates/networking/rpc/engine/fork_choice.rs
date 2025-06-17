@@ -1,7 +1,7 @@
 use ethrex_blockchain::{
     error::{ChainError, InvalidForkChoice},
     fork_choice::apply_fork_choice,
-    payload::{create_payload, BuildPayloadArgs},
+    payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
 use ethrex_p2p::sync::SyncMode;
@@ -114,44 +114,6 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
             fork_choice_state,
             payload_attributes,
         })
-    }
-
-    #[cfg(feature = "based")]
-    async fn relay_to_gateway_or_fallback(
-        req: &RpcRequest,
-        context: RpcApiContext,
-    ) -> Result<Value, RpcErr> {
-        info!("Relaying engine_forkchoiceUpdatedV3 to gateway");
-
-        let request = Self::parse(&req.params)?;
-
-        let gateway_auth_client = context.gateway_auth_client.clone();
-
-        let gateway_request = gateway_auth_client
-            .engine_forkchoice_updated_v3(request.fork_choice_state, request.payload_attributes);
-
-        // Parse it again as it was consumed for gateway_response and it is the same as cloning it.
-        let request = Self::parse(&req.params)?;
-        let client_response = request.handle(context).await;
-
-        let gateway_response = gateway_request
-            .await
-            .map_err(|err| {
-                RpcErr::Internal(format!(
-                    "Could not relay engine_forkchoiceUpdatedV3 to gateway: {err}",
-                ))
-            })
-            .and_then(|response| {
-                serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
-            });
-
-        if gateway_response.is_err() {
-            warn!(error = ?gateway_response, "Gateway engine_forkchoiceUpdatedV3 failed, falling back to local node");
-        } else {
-            info!("Successfully relayed engine_forkchoiceUpdatedV3 to gateway");
-        }
-
-        gateway_response.or(client_response)
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -268,11 +230,7 @@ async fn handle_forkchoice(
             context.blockchain.set_synced();
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
-            match context
-                .storage
-                .get_block_by_hash(head.compute_block_hash())
-                .await
-            {
+            match context.storage.get_block_by_hash(head.hash()).await {
                 Ok(Some(block)) => {
                     for tx in &block.body.transactions {
                         context
@@ -282,13 +240,15 @@ async fn handle_forkchoice(
                     }
                 }
                 Ok(None) => {
-                    warn!("Couldn't get block by hash to remove transactions from the mempool. This is expected in a reconstruted network")
+                    warn!(
+                        "Couldn't get block by hash to remove transactions from the mempool. This is expected in a reconstruted network"
+                    )
                 }
                 Err(_) => {
                     return Err(RpcErr::Internal(
                         "Failed to get block by hash to remove transactions from the mempool"
                             .to_string(),
-                    ))
+                    ));
                 }
             };
 
@@ -417,7 +377,9 @@ async fn build_payload(
         version,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
     };
-    let payload_id = args.id();
+    let payload_id = args
+        .id()
+        .map_err(|error| RpcErr::Internal(error.to_string()))?;
     let payload = match create_payload(&args, &context.storage) {
         Ok(payload) => payload,
         Err(ChainError::EvmError(error)) => return Err(error.into()),

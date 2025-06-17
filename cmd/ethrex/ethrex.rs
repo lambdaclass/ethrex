@@ -5,18 +5,43 @@ use ethrex::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
         init_metrics, init_rpc_api, init_store, init_tracing,
     },
-    utils::{set_datadir, store_node_config_file, NodeConfigFile},
+    utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
 use ethrex_p2p::network::peer_table;
+#[cfg(feature = "sync-test")]
+use ethrex_storage::Store;
+#[cfg(feature = "sync-test")]
+use std::env;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
-#[cfg(any(feature = "l2", feature = "based"))]
+#[cfg(feature = "l2")]
 use ethrex::l2::L2Options;
 #[cfg(feature = "l2")]
 use ethrex_storage_rollup::StoreRollup;
+#[cfg(feature = "sync-test")]
+async fn set_sync_block(store: &Store) {
+    if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
+        let block_number = block_number
+            .parse()
+            .expect("Block number provided by environment is not numeric");
+        let block_hash = store
+            .get_canonical_block_hash(block_number)
+            .await
+            .expect("Could not get hash for block number provided by env variable")
+            .expect("Could not get hash for block number provided by env variable");
+        store
+            .update_latest_block_number(block_number)
+            .await
+            .expect("Failed to update latest block number");
+        store
+            .set_canonical_block(block_number, block_hash)
+            .await
+            .expect("Failed to set latest canonical block");
+    }
+}
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -32,7 +57,11 @@ async fn main() -> eyre::Result<()> {
 
     let network = get_network(&opts);
 
-    let store = init_store(&data_dir, &network).await;
+    let genesis = network.get_genesis();
+    let store = init_store(&data_dir, genesis).await;
+
+    #[cfg(feature = "sync-test")]
+    set_sync_block(&store).await;
 
     let blockchain = init_blockchain(opts.evm, store.clone());
 
@@ -55,7 +84,7 @@ async fn main() -> eyre::Result<()> {
 
     init_rpc_api(
         &opts,
-        #[cfg(any(feature = "l2", feature = "based"))]
+        #[cfg(feature = "l2")]
         &L2Options::default(),
         peer_table.clone(),
         local_p2p_node.clone(),

@@ -1,8 +1,11 @@
 use ethrex_common::{
+    Address, Bloom, Bytes, H256,
     constants::GAS_PER_BLOB,
     serde_utils,
-    types::{BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType},
-    Address, Bloom, Bytes, H256,
+    types::{
+        BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType,
+        bloom_from_logs,
+    },
 };
 use ethrex_vm::create_contract_address;
 
@@ -59,7 +62,7 @@ impl From<Receipt> for RpcReceiptInfo {
             tx_type: receipt.tx_type,
             status: receipt.succeeded,
             cumulative_gas_used: receipt.cumulative_gas_used,
-            logs_bloom: receipt.bloom,
+            logs_bloom: bloom_from_logs(&receipt.logs),
         }
     }
 }
@@ -129,7 +132,7 @@ pub struct RpcReceiptBlockInfo {
 impl RpcReceiptBlockInfo {
     pub fn from_block_header(block_header: BlockHeader) -> Self {
         RpcReceiptBlockInfo {
-            block_hash: block_header.compute_block_hash(),
+            block_hash: block_header.hash(),
             block_number: block_header.number,
         }
     }
@@ -202,8 +205,8 @@ impl RpcReceiptTxInfo {
 mod tests {
     use super::*;
     use ethrex_common::{
+        Bytes,
         types::{Log, TxType},
-        Bloom, Bytes,
     };
     use hex_literal::hex;
 
@@ -214,7 +217,6 @@ mod tests {
                 tx_type: TxType::EIP4844,
                 succeeded: true,
                 cumulative_gas_used: 147,
-                bloom: Bloom::zero(),
                 logs: vec![Log {
                     address: Address::zero(),
                     topics: vec![],
@@ -240,7 +242,7 @@ mod tests {
             },
             0,
         );
-        let expected = r#"{"type":"0x3","status":"0x1","cumulativeGasUsed":"0x93","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","logs":[{"address":"0x0000000000000000000000000000000000000000","topics":[],"data":"0x73747261776265727279","logIndex":"0x0","removed":false,"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}],"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","from":"0x0000000000000000000000000000000000000000","to":"0x7435ed30a8b4aeb0877cef0c6e8cffe834eb865f","contractAddress":null,"gasUsed":"0x93","effectiveGasPrice":"0x9d","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}"#;
+        let expected = r#"{"type":"0x3","status":"0x1","cumulativeGasUsed":"0x93","logsBloom":"0x00000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","logs":[{"address":"0x0000000000000000000000000000000000000000","topics":[],"data":"0x73747261776265727279","logIndex":"0x0","removed":false,"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}],"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","from":"0x0000000000000000000000000000000000000000","to":"0x7435ed30a8b4aeb0877cef0c6e8cffe834eb865f","contractAddress":null,"gasUsed":"0x93","effectiveGasPrice":"0x9d","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}"#;
         assert_eq!(serde_json::to_string(&receipt).unwrap(), expected);
     }
 }
