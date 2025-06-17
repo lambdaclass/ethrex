@@ -18,7 +18,6 @@ fn walk_and_compile(dir: &Path) {
         if path.is_dir() && path.file_name().unwrap() != "lib" {
             walk_and_compile(&path);
         } else if let Some(ext) = path.extension() {
-            println!("Found file: {}", path.display());
             if ext == "sol" {
                 compile_contract(&path);
             }
