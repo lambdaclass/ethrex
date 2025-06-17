@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750176142589,
+  "lastUpdate": 1750179046195,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13135,6 +13135,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180325082541,
             "range": "± 230114937",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "89949621+ricomateo@users.noreply.github.com",
+            "name": "Mateo Rico",
+            "username": "ricomateo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4a914f9947f2f7a20bc5bd1c46c6128d3433866a",
+          "message": "chore(l2): correct `L1ProofSender` start error message (#3188)\n\n**Motivation**\n\nThe `L1ProofSender` logs the error message `\"Error starting Proof\nCoordinator: ...\"` when it fails to start, but this is wrong, since the\nerror message should be `\"Error starting L1 Proof Sender: ...\"` to\ncorrectly identify the failing service.\n\n**Description**\n\nCorrects the `L1ProofSender` start error message.\n\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>",
+          "timestamp": "2025-06-17T15:52:19Z",
+          "tree_id": "3251758fb85dfe1c0f5c128f739291652546571a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4a914f9947f2f7a20bc5bd1c46c6128d3433866a"
+        },
+        "date": 1750179038583,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181651157391,
+            "range": "± 686925972",
             "unit": "ns/iter"
           }
         ]
