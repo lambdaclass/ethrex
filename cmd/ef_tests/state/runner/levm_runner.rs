@@ -5,7 +5,7 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_common::{
-    H256, U256,
+    BigEndianHash, H256, U256,
     types::{
         AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction, TxKind,
         tx_fields::*,
@@ -13,7 +13,7 @@ use ethrex_common::{
 };
 use ethrex_levm::{
     EVMConfig, Environment,
-    db::gen_db::GeneralizedDatabase,
+    db::{cache, gen_db::GeneralizedDatabase},
     errors::{ExecutionReport, TxValidationError, VMError},
     tracing::LevmCallTracer,
     vm::VM,
@@ -71,6 +71,9 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                 Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(reason)) => {
                     ef_test_report_fork
                         .register_post_state_validation_error_mismatch(reason, *vector);
+                }
+                Err(EFTestRunnerError::FailedToRevertLEVMState(reason)) => {
+                    ef_test_report_fork.register_vm_initialization_failure(reason, *vector);
                 }
                 Err(EFTestRunnerError::Internal(reason)) => {
                     return Err(EFTestRunnerError::Internal(reason));
@@ -392,6 +395,7 @@ pub async fn ensure_post_state(
                             error_reason,
                         ));
                     }
+                    ensure_levm_state_was_reverted(cache, test)?;
                 }
                 // Execution result was unsuccessful but no exception was expected.
                 None => {
@@ -411,4 +415,59 @@ pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -
         .unwrap()
         .unwrap();
     ret_account_updates_batch.state_trie_hash
+}
+
+pub fn ensure_levm_state_was_reverted(
+    mut cache: cache::CacheDB,
+    test: &EFTest,
+) -> Result<(), EFTestRunnerError> {
+    for (address, pre_value) in &test.pre.0 {
+        if let Some(account) = cache::get_account_mut(&mut cache, &address) {
+            ensure_reverted_state_condition(
+                account.info.balance == pre_value.balance,
+                format!(
+                    "Failed to restore balance: cache balance: {} should equal pre state balance: {}",
+                    account.info.balance, pre_value.balance
+                ),
+            )?;
+            ensure_reverted_state_condition(
+                account.info.nonce == pre_value.nonce,
+                format!(
+                    "Failed to restore nonce: cache nonce: {} should equal pre state nonce: {}",
+                    account.info.nonce, pre_value.nonce
+                ),
+            )?;
+            ensure_reverted_state_condition(
+                account.info.code_hash.as_bytes() == pre_value.code,
+                format!(
+                    "Failed to restore code hash: cache code hash: {} should equal pre state code hash: {:?}",
+                    account.info.code_hash, pre_value.code
+                ),
+            )?;
+
+            for (k, v) in &pre_value.storage {
+                ensure_reverted_state_condition(
+                    account.storage.contains_key(&H256::from_uint(k))
+                        && account.storage.get(&H256::from_uint(k)) == Some(v),
+                    format!("Failed to restore storage"),
+                )?;
+            }
+        } else {
+            return Err(EFTestRunnerError::FailedToRevertLEVMState(format!(
+                "Failed to restore cache: Account address {address} is not in cache. Cache addresses are: {:?}",
+                cache.keys()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_reverted_state_condition(
+    condition: bool,
+    error_reason: String,
+) -> Result<(), EFTestRunnerError> {
+    if !condition {
+        return Err(EFTestRunnerError::FailedToRevertLEVMState(error_reason));
+    }
+    Ok(())
 }

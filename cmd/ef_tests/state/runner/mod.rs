@@ -34,6 +34,8 @@ pub enum EFTestRunnerError {
     EIP7702ShouldNotBeCreateType,
     #[error("This is a bug: {0}")]
     Internal(#[from] InternalError),
+    #[error("Failed to revert levm state after transaction error: {0}")]
+    FailedToRevertLEVMState(String),
 }
 
 #[derive(Debug, thiserror::Error, Clone, Serialize, Deserialize)]
