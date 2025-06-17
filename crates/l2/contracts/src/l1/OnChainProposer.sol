@@ -419,7 +419,7 @@ contract OnChainProposer is
     ) internal view {
         require(
             publicData.length == 192,
-            "OnChainProposer: invaid public data length"
+            "OnChainProposer: invalid public data length"
         );
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         require(
