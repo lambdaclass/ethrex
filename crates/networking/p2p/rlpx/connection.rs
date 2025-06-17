@@ -3,7 +3,6 @@ use super::{
     p2p::DisconnectReason,
     utils::log_peer_warn,
 };
-use crate::rlpx::eth::transactions::PooledTransactions;
 use crate::{
     kademlia::PeerChannels,
     rlpx::{
@@ -30,13 +29,11 @@ use crate::{
     types::Node,
 };
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::WrappedEIP4844Transaction;
 use ethrex_common::{
     H256, H512,
-    types::{MempoolTransaction, P2PTransaction, Transaction},
+    types::{MempoolTransaction, Transaction},
 };
 use ethrex_storage::Store;
-use ethrex_storage::error::StoreError;
 use futures::SinkExt;
 use k256::{PublicKey, SecretKey, ecdsa::SigningKey};
 use rand::random;
@@ -601,20 +598,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::GetPooledTransactions(request)).await?;
             }
             Message::GetPooledTransactions(msg) => {
-                // TODO(#1615): get transactions in batch instead of iterating over them.
-                let txs = msg
-                    .transaction_hashes
-                    .iter()
-                    .map(|hash| self.get_p2p_transaction(hash))
-                    // Return an error in case anything failed.
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    // As per the spec, Nones are perfectly acceptable, for example if a transaction was
-                    // taken out of the mempool due to payload building after being advertised.
-                    .flatten()
-                    .collect();
-
-                let response = PooledTransactions::new(msg.id, txs);
+                let response = msg.handle(&self.blockchain)?;
                 self.send(Message::PooledTransactions(response)).await?;
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
@@ -759,39 +743,5 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 Err(RLPxError::BroadcastError(error_message))
             }
         }
-    }
-
-    /// Gets a p2p transaction given a hash.
-    pub(crate) fn get_p2p_transaction(
-        &self,
-        hash: &H256,
-    ) -> Result<Option<P2PTransaction>, StoreError> {
-        let Some(tx) = self.blockchain.mempool.get_transaction_by_hash(*hash)? else {
-            return Ok(None);
-        };
-        let result = match tx {
-            Transaction::LegacyTransaction(itx) => P2PTransaction::LegacyTransaction(itx),
-            Transaction::EIP2930Transaction(itx) => P2PTransaction::EIP2930Transaction(itx),
-            Transaction::EIP1559Transaction(itx) => P2PTransaction::EIP1559Transaction(itx),
-            Transaction::EIP4844Transaction(itx) => {
-                let Some(bundle) = self.blockchain.mempool.get_blobs_bundle(*hash)? else {
-                    return Err(StoreError::Custom(format!(
-                        "Blob transaction present without its bundle: hash {}",
-                        hash
-                    )));
-                };
-
-                P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
-                    tx: itx,
-                    blobs_bundle: bundle,
-                })
-            }
-            Transaction::EIP7702Transaction(itx) => P2PTransaction::EIP7702Transaction(itx),
-            Transaction::PrivilegedL2Transaction(itx) => {
-                P2PTransaction::PrivilegedL2Transaction(itx)
-            }
-        };
-
-        Ok(Some(result))
     }
 }

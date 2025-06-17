@@ -176,6 +176,25 @@ impl GetPooledTransactions {
             id,
         }
     }
+
+    pub fn handle(&self, blockchain: &Blockchain) -> Result<PooledTransactions, StoreError> {
+        // TODO(#1615): get transactions in batch instead of iterating over them.
+        let txs = self
+            .transaction_hashes
+            .iter()
+            .map(|hash| blockchain.get_p2p_transaction_by_hash(hash))
+            // Return an error in case anything failed.
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            // As per the spec, Nones are perfectly acceptable, for example if a transaction was
+            // taken out of the mempool due to payload building after being advertised.
+            .collect();
+
+        Ok(PooledTransactions {
+            id: self.id,
+            pooled_transactions: txs,
+        })
+    }
 }
 
 impl RLPxMessage for GetPooledTransactions {
