@@ -37,29 +37,27 @@ pub fn get_block_deposits(txs: &[Transaction]) -> Vec<PrivilegedL2Transaction> {
 }
 
 pub fn compute_deposit_logs_hash(deposit_log_hashes: Vec<H256>) -> Result<H256, DepositError> {
-    if !deposit_log_hashes.is_empty() {
-        let deposit_hashes_len: u16 = deposit_log_hashes
-            .len()
-            .try_into()
-            .map_err(DepositError::from)?;
-        Ok(H256::from_slice(
-            [
-                &deposit_hashes_len.to_be_bytes(),
-                keccak(
-                    deposit_log_hashes
-                        .iter()
-                        .map(H256::as_bytes)
-                        .collect::<Vec<&[u8]>>()
-                        .concat(),
-                )
-                .as_bytes()
-                .get(2..32)
-                .ok_or(DepositError::FailedToDecodeHash)?,
-            ]
-            .concat()
-            .as_slice(),
-        ))
-    } else {
-        Ok(H256::zero())
+    if deposit_log_hashes.is_empty() {
+        return Ok(H256::zero());
     }
+
+    let deposit_hashes_len: u16 = deposit_log_hashes.len().try_into()?;
+
+    Ok(H256::from_slice(
+        [
+            &deposit_hashes_len.to_be_bytes(),
+            keccak(
+                deposit_log_hashes
+                    .iter()
+                    .map(H256::as_bytes)
+                    .collect::<Vec<&[u8]>>()
+                    .concat(),
+            )
+            .as_bytes()
+            .get(2..32)
+            .ok_or(DepositError::FailedToDecodeHash)?,
+        ]
+        .concat()
+        .as_slice(),
+    ))
 }
