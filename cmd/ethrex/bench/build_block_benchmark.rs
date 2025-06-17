@@ -6,20 +6,19 @@ use std::{
 
 use bytes::Bytes;
 use criterion::{
-    criterion_group, criterion_main,
+    Criterion, Throughput, criterion_group, criterion_main,
     measurement::{Measurement, ValueFormatter},
-    Criterion, Throughput,
 };
 use ethrex_blockchain::{
-    payload::{create_payload, BuildPayloadArgs, PayloadBuildResult},
     Blockchain,
+    payload::{BuildPayloadArgs, PayloadBuildResult, create_payload},
 };
 use ethrex_common::{
-    types::{
-        payload::PayloadBundle, Block, EIP1559Transaction, Genesis, GenesisAccount,
-        LegacyTransaction, Signable, Transaction, TxKind,
-    },
     Address, H160, U256,
+    types::{
+        Block, EIP1559Transaction, Genesis, GenesisAccount, LegacyTransaction, Signable,
+        Transaction, TxKind, payload::PayloadBundle,
+    },
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
@@ -233,13 +232,15 @@ pub async fn bench_payload(input: &(&mut Blockchain, Block, &Store)) -> (Duratio
     let executed = Instant::now();
     // EXTRA: Sanity check to not benchmark n empty block.
     let hash = &block.hash();
-    assert!(!store
-        .get_block_body_by_hash(*hash)
-        .await
-        .unwrap()
-        .unwrap()
-        .transactions
-        .is_empty());
+    assert!(
+        !store
+            .get_block_body_by_hash(*hash)
+            .await
+            .unwrap()
+            .unwrap()
+            .transactions
+            .is_empty()
+    );
     let header = store.get_block_header_by_hash(*hash).unwrap().unwrap();
     let duration = executed.duration_since(since);
     (duration, header.gas_used)
