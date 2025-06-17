@@ -20,29 +20,27 @@ pub use leaf::LeafNode;
 use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
+use ethereum_types::H256;
 
 /// A reference to a node.
 #[derive(Clone, Debug)]
 pub enum NodeRef {
     /// The node is embedded within the reference.
-    Node(Arc<Node>, OnceLock<NodeHash>),
+    Node(Arc<Node>, OnceLock<H256>),
     /// The node is in the database, referenced by its hash.
-    Hash(NodeHash),
+    Hash(H256),
 }
 
 impl NodeRef {
     pub const fn const_default() -> Self {
-        Self::Hash(NodeHash::const_default())
+        Self::Hash(H256([0; 32]))
     }
 
     pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
         match *self {
             NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
-            NodeRef::Hash(NodeHash::Inline((data, len))) => {
-                Ok(Some(Node::decode_raw(&data[..len as usize])?))
-            }
-            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
-                .get(hash)?
+            NodeRef::Hash(hash) => db
+                .get(NodeHash::Hashed(hash))?
                 .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
                 .transpose(),
         }
@@ -51,16 +49,16 @@ impl NodeRef {
     pub fn is_valid(&self) -> bool {
         match self {
             NodeRef::Node(_, _) => true,
-            NodeRef::Hash(hash) => hash.is_valid(),
+            NodeRef::Hash(hash) => !hash.is_zero(),
         }
     }
 
-    pub fn commit(&mut self, acc: &mut Vec<(NodeHash, Vec<u8>)>) -> NodeHash {
-        match *self {
-            NodeRef::Node(ref mut node, ref mut hash) => {
-                match Arc::make_mut(node) {
+    pub fn commit(&self, acc: &mut Vec<(NodeHash, Vec<u8>)>) -> NodeHash {
+        match self {
+            Self::Node(node, _) => {
+                match node.as_ref() {
                     Node::Branch(node) => {
-                        for node in &mut node.choices {
+                        for node in &node.choices {
                             node.commit(acc);
                         }
                     }
@@ -70,22 +68,28 @@ impl NodeRef {
                     Node::Leaf(_) => {}
                 }
 
-                let hash = hash.get_or_init(|| node.compute_hash());
-                acc.push((*hash, node.encode_to_vec()));
-
-                let hash = *hash;
-                *self = hash.into();
+                let hash = self.compute_hash();
+                acc.push((hash, node.encode_to_vec()));
 
                 hash
             }
-            NodeRef::Hash(hash) => hash,
+            Self::Hash(hash) => NodeHash::Hashed(*hash),
         }
     }
 
     pub fn compute_hash(&self) -> NodeHash {
         match self {
-            NodeRef::Node(node, hash) => *hash.get_or_init(|| node.compute_hash()),
-            NodeRef::Hash(hash) => *hash,
+            Self::Node(node, hash_lock) => match hash_lock.get() {
+                Some(hash) => NodeHash::Hashed(*hash),
+                None => {
+                    let hash = node.compute_hash();
+                    if let NodeHash::Hashed(hash) = hash {
+                        _ = hash_lock.set(hash);
+                    }
+                    hash
+                }
+            },
+            Self::Hash(hash) => NodeHash::Hashed(*hash),
         }
     }
 }
@@ -104,7 +108,13 @@ impl From<Node> for NodeRef {
 
 impl From<NodeHash> for NodeRef {
     fn from(value: NodeHash) -> Self {
-        Self::Hash(value)
+        match value {
+            NodeHash::Hashed(hash) => Self::Hash(hash),
+            NodeHash::Inline((data, len)) => Self::Node(
+                Arc::new(Node::decode_raw(&data[..len as usize]).unwrap()),
+                OnceLock::new(),
+            ),
+        }
     }
 }
 

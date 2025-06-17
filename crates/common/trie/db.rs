@@ -5,6 +5,7 @@ use std::{
 };
 
 pub trait TrieDB: Send + Sync {
+    // TODO: Change API to use `H256` directly.
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError>;
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError>;
     fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
@@ -18,6 +19,7 @@ pub struct InMemoryTrieDB {
 }
 
 impl InMemoryTrieDB {
+    // TODO: Change API to use `H256` directly.
     pub const fn new(map: Arc<Mutex<HashMap<NodeHash, Vec<u8>>>>) -> Self {
         Self { inner: map }
     }

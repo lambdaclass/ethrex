@@ -115,7 +115,7 @@ pub fn verify_range(
     // Fill up the state with the nodes from the proof
     let mut trie = ProofTrie::from(trie);
     for (partial_path, external_ref) in external_refs {
-        trie.insert(partial_path, external_ref)?;
+        trie.insert(partial_path, NodeHash::Hashed(external_ref))?;
     }
 
     // Check that the hash is the one we expected (aka the trie was properly reconstructed from the edge proofs and the range)
@@ -139,7 +139,7 @@ pub fn verify_range(
 /// Also returns the number of references strictly to the right of the bounds. If the right bound
 /// is unbounded (aka. not provided), all nodes to the right (inclusive) of the left bound will
 /// be counted. Leaf nodes are not counted (the leaf nodes within the proof do not count).
-type ProcessProofNodesResult = (Vec<(Nibbles, NodeHash)>, (Vec<u8>, Vec<u8>), usize);
+type ProcessProofNodesResult = (Vec<(Nibbles, H256)>, (Vec<u8>, Vec<u8>), usize);
 fn process_proof_nodes(
     proof: &[Vec<u8>],
     root: NodeHash,
@@ -188,13 +188,14 @@ fn process_proof_nodes(
             let cmp_r = bounds.1.as_ref().map(|x| x.compare_prefix(&partial_path));
 
             if cmp_l != Ordering::Less || cmp_r.is_none_or(|x| x != Ordering::Greater) {
+                // TODO: This is probably reachable now (due to the way inline nodes are decoded).
                 let NodeRef::Hash(hash) = child else {
                     // This is unreachable because the nodes have just been decoded, therefore only
                     // having hash references.
                     unreachable!()
                 };
 
-                match get_node(&proof, hash)? {
+                match get_node(&proof, NodeHash::Hashed(hash))? {
                     Some(node) => {
                         // Append implicit leaf extension when pushing leaves.
                         if let Node::Leaf(node) = &node {

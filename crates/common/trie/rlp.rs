@@ -9,6 +9,7 @@ use ethrex_rlp::{
 
 use super::node::{BranchNode, ExtensionNode, LeafNode, Node};
 use crate::{NodeHash, node::NodeRef};
+use std::sync::{Arc, OnceLock};
 
 enum NodeType {
     Branch = 0,
@@ -67,7 +68,16 @@ impl RLPDecode for BranchNode {
             "Error decoding field 'choices' of type [H256;16]: Invalid Length";
         let decoder = Decoder::new(rlp)?;
         let (choices, decoder) = decoder.decode_field::<Vec<NodeHash>>("choices")?;
-        let choices = choices.into_iter().map(NodeRef::Hash).collect::<Vec<_>>();
+        let choices = choices
+            .into_iter()
+            .map(|hash| match hash {
+                NodeHash::Hashed(hash) => NodeRef::Hash(hash),
+                NodeHash::Inline((data, len)) => NodeRef::Node(
+                    Arc::new(Node::decode_raw(&data[..len as usize]).unwrap()),
+                    OnceLock::new(),
+                ),
+            })
+            .collect::<Vec<_>>();
         let choices = choices
             .try_into()
             .map_err(|_| RLPDecodeError::Custom(CHOICES_LEN_ERROR_MSG.to_string()))?;
