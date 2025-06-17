@@ -1092,3 +1092,295 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::network::public_key_from_signing_key;
+
+    use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
+    use ethrex_common::{
+        H160,
+        types::{BlockHeader, ELASTICITY_MULTIPLIER},
+    };
+    use ethrex_storage::EngineType;
+    use k256::SecretKey;
+    use sha3::{Digest, Keccak256};
+    use std::fs::File;
+    use std::io::BufReader;
+    use std::time::Duration;
+    use tokio::io::duplex;
+    use tokio::sync::mpsc;
+
+    /// Creates a new in-memory store for testing purposes
+    /// Copied behavior from smoke_test.rs
+    async fn test_store(path: &str) -> Store {
+        // Get genesis
+        let file = File::open("../../../test_data/genesis-execution-api.json")
+            .expect("Failed to open genesis file");
+        let reader = BufReader::new(file);
+        let genesis = serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+
+        // Build store with genesis
+        let store = Store::new(path, EngineType::InMemory).expect("Failed to build DB for testing");
+
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis state");
+
+        store
+    }
+
+    /// Creates a new block using the blockchain's payload building logic,
+    /// Copied behavior from smoke_test.rs
+    async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
+        let args = BuildPayloadArgs {
+            parent: dbg!(parent.hash()),
+            timestamp: parent.timestamp + 1, // Increment timestamp to be valid
+            fee_recipient: H160::random(),
+            random: H256::random(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::random()),
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        };
+
+        // Create a temporary blockchain instance to use its building logic
+        let blockchain = Blockchain::default_with_store(store.clone());
+
+        let block = create_payload(&args, store).unwrap();
+        let result = blockchain.build_payload(block).await.unwrap();
+        blockchain.add_block(&result.payload).await.unwrap();
+        result.payload
+    }
+
+    /// A helper function to create an RLPxConnection for testing
+    async fn create_rlpx_connection(
+        signer: SigningKey,
+        stream: tokio::io::DuplexStream,
+        codec: RLPxCodec,
+    ) -> RLPxConnection<tokio::io::DuplexStream> {
+        let node = Node::new(
+            "127.0.0.1".parse().unwrap(),
+            30303,
+            30303,
+            public_key_from_signing_key(&signer),
+        );
+        let storage = test_store("store.db").await;
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+        let (broadcast, _) = broadcast::channel(10);
+        let committer_key = Some(SigningKeySecp256k1::new(&mut rand::rngs::OsRng));
+
+        let mut connection = RLPxConnection::new(
+            signer,
+            node,
+            stream,
+            codec,
+            storage,
+            blockchain,
+            "test-client/0.1.0".to_string(),
+            broadcast,
+            StoreRollup::default(),
+            true,
+            committer_key,
+        );
+        connection.capabilities.push(SUPPORTED_BASED_CAPABILITIES);
+        connection.negotiated_eth_capability = Some(SUPPORTED_ETH_CAPABILITIES[0].clone());
+        connection.blockchain.set_synced();
+        // all have the same signing key for testing, for now the signature is not verified. In the future this will change
+        connection.committer_key = Some(
+            SigningKeySecp256k1::from_slice(
+                &hex::decode("385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924")
+                    .unwrap(),
+            )
+            .unwrap(),
+        );
+        connection
+    }
+
+    /// Helper function to create and send a NewBlock message for the test.
+    async fn send_block(conn: &mut RLPxConnection<tokio::io::DuplexStream>, block: &Block) {
+        let secret_key = conn.committer_key.as_ref().unwrap();
+        let (recovery_id, signature) = secp256k1::SECP256K1
+            .sign_ecdsa_recoverable(
+                &SignedMessage::from_digest(block.hash().to_fixed_bytes()),
+                secret_key,
+            )
+            .serialize_compact();
+        let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+
+        let message_to_send = Message::NewBlock(NewBlockMessage {
+            block: block.clone(),
+            signature,
+            recovery_id,
+        });
+        println!(
+            "Sender (conn_a) sending block {} with hash {:?}.",
+            block.header.number,
+            block.hash()
+        );
+        conn.send(message_to_send).await.unwrap();
+    }
+
+    #[tokio::test]
+    /// Tests to ensure that blocks are added in the correct order to the RLPxConnection when received out of order.
+    async fn add_block_in_correct_order() {
+        // Stream for testing
+        let (stream_a, stream_b) = duplex(4096);
+
+        let eph_sk_a = SecretKey::random(&mut rand::rngs::OsRng);
+        let nonce_a = H256::random();
+        let eph_sk_b = SecretKey::random(&mut rand::rngs::OsRng);
+        let nonce_b = H256::random();
+        let hashed_nonces = Keccak256::digest([nonce_b.0, nonce_a.0].concat()).into();
+
+        let local_state_a = LocalState {
+            nonce: nonce_a,
+            ephemeral_key: eph_sk_a.clone(),
+            init_message: vec![],
+        };
+        let remote_state_a = RemoteState {
+            nonce: nonce_b,
+            ephemeral_key: eph_sk_b.public_key(),
+            init_message: vec![],
+            public_key: H512::zero(),
+        };
+        let codec_a = RLPxCodec::new(&local_state_a, &remote_state_a, hashed_nonces).unwrap();
+
+        let local_state_b = LocalState {
+            nonce: nonce_b,
+            ephemeral_key: eph_sk_b,
+            init_message: vec![],
+        };
+        let remote_state_b = RemoteState {
+            nonce: nonce_a,
+            ephemeral_key: eph_sk_a.public_key(),
+            init_message: vec![],
+            public_key: H512::zero(),
+        };
+        let codec_b = RLPxCodec::new(&local_state_b, &remote_state_b, hashed_nonces).unwrap();
+
+        // Create the two RLPxConnection instances
+        let mut conn_a = create_rlpx_connection(
+            SigningKey::random(&mut rand::rngs::OsRng),
+            stream_a,
+            codec_a,
+        )
+        .await;
+        let mut conn_b = create_rlpx_connection(
+            SigningKey::random(&mut rand::rngs::OsRng),
+            stream_b,
+            codec_b,
+        )
+        .await;
+
+        // Channel to communicate between tasks and receive the values for the assertions
+        let (tx, mut rx) = mpsc::channel::<&'static str>(2);
+
+        let b_task = tokio::spawn(async move {
+            println!("Receiver task (conn_b) started.");
+            let mut blocks_received_count = 0;
+
+            loop {
+                let Some(Ok(message)) = conn_b.receive().await else {
+                    println!("Receiver task (conn_b) stream ended or failed.");
+                    break;
+                };
+
+                let Message::NewBlock(msg) = message else {
+                    continue;
+                };
+
+                blocks_received_count += 1;
+                println!(
+                    "Receiver task received block {}. Total received: {}",
+                    msg.block.header.number, blocks_received_count
+                );
+
+                // Process the message
+                let (dummy_tx, _) = mpsc::channel(1);
+                match conn_b
+                    .handle_message(Message::NewBlock(msg.clone()), dummy_tx)
+                    .await
+                {
+                    Ok(_) | Err(RLPxError::BroadcastError(_)) => {}
+                    Err(e) => panic!("handle_message failed: {:?}", e),
+                }
+
+                // Perform assertions based on how many blocks have been received
+                match blocks_received_count {
+                    1 => {
+                        // Received block 3. No checks yet.
+                    }
+                    2 => {
+                        // Received block 2. Now check intermediate state.
+                        println!("Receiver task: Checking intermediate state...");
+                        assert_eq!(
+                            conn_b.blocks_on_queue.len(),
+                            2,
+                            "Queue should contain blocks 2 and 3"
+                        );
+                        assert!(conn_b.blocks_on_queue.contains_key(&2));
+                        assert!(conn_b.blocks_on_queue.contains_key(&3));
+                        assert_eq!(
+                            conn_b.latest_block_added, 0,
+                            "No blocks should be added to the chain yet"
+                        );
+                        tx.send("intermediate check passed").await.unwrap();
+                    }
+                    3 => {
+                        // Received block 1. Now check final state.
+                        println!("Receiver task: Checking final state...");
+                        assert!(
+                            conn_b.blocks_on_queue.is_empty(),
+                            "Queue should be empty after processing"
+                        );
+                        assert_eq!(
+                            conn_b.latest_block_added, 3,
+                            "All blocks up to 3 should have been added"
+                        );
+                        tx.send("final check passed").await.unwrap();
+                        break; // Test is complete, exit the loop
+                    }
+                    _ => panic!("Received more blocks than expected"),
+                }
+            }
+        });
+
+        // Here we create a new store for simulating another node and create blocks to be sent
+        let storage_2 = test_store("store_2.db").await;
+        let genesis_header = storage_2.get_block_header(0).unwrap().unwrap();
+        let block1 = new_block(&storage_2, &genesis_header).await;
+        let block2 = new_block(&storage_2, &block1.header).await;
+        let block3 = new_block(&storage_2, &block2.header).await;
+
+        // Send blocks in reverse order
+        send_block(&mut conn_a, &block3).await;
+        send_block(&mut conn_a, &block2).await;
+
+        // Wait for the intermediate check to pass
+        match tokio::time::timeout(Duration::from_secs(2), rx.recv()).await {
+            Ok(Some("intermediate check passed")) => {
+                println!("Main thread: Intermediate check confirmed.");
+            }
+            other => panic!(
+                "Did not receive intermediate check confirmation: {:?}",
+                other
+            ),
+        }
+
+        // Send the final block that allows the queue to be processed
+        send_block(&mut conn_a, &block1).await;
+
+        // Wait for the final check to pass
+        match tokio::time::timeout(Duration::from_secs(2), rx.recv()).await {
+            Ok(Some("final check passed")) => {
+                println!("Main thread: Final check confirmed. Test successful.");
+            }
+            other => panic!("Did not receive final check confirmation: {:?}", other),
+        }
+
+        b_task.abort();
+    }
+}
