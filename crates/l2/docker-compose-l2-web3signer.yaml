@@ -13,15 +13,16 @@ services:
 
   ethrex_l2:
     command: >
-      l2 init 
-      --network /genesis-l2.json 
-      --http.addr 0.0.0.0 
-      --http.port 1729 
-      --authrpc.port 8552 
-      --evm levm 
-      --proof-coordinator-listen-ip 0.0.0.0 
-      --bridge-address ${ETHREX_WATCHER_BRIDGE_ADDRESS}
-      --on-chain-proposer-address ${ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS}
+      l2 init
+      --network /genesis-l2.json
+      --http.addr 0.0.0.0
+      --http.port 1729
+      --authrpc.port 8552
+      --evm levm
+      --proof-coordinator.addr 0.0.0.0
+      --l1.bridge-address ${ETHREX_WATCHER_BRIDGE_ADDRESS}
+      --l1.on-chain-proposer-address ${ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS}
+      --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
       --committer.remote-signer-url http://web3signer:9000 
       --committer.remote-signer-public-key 02eadbea0cdb17fda8d56fc9c51df8a6158c2ab157aabf2ca57c3a32cd69f98bbc 
       --proof-coordinator.remote-signer-url http://web3signer:9000 
