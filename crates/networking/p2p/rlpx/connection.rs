@@ -964,6 +964,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             // is empty batch
             return Ok(false);
         }
+        if self.latest_block_added < msg.batch.last_block {
+            debug!(
+                "Not processing batch {} because the last block {} is not added yet",
+                msg.batch.number, msg.batch.last_block
+            );
+            return Ok(false);
+        }
 
         let hash = get_hash_batch_sealed(&msg.batch);
 
