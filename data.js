@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750174106309,
+  "lastUpdate": 1750176142589,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13105,6 +13105,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182048656679,
             "range": "± 1162733043",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7f8f6b7fc5ab4c63f78942bd3751d39b81033bd5",
+          "message": "feat(l2): based feature (#2931)\n\n**Motivation**\n\nInitial implementation of a based rollup architecture supporting\nmultiple sequencers coordinated via a contract on L1. Subsequent\nsequencers can synchronize through both L1 and peer-to-peer (P2P)\ncommunication.\n\n**Description**\n\n- Add a new state `sequencer_state` shared across all L2 processes. This\nwill lead to different behaviors on whether is `Sequencing` or\n`Following` for each component of the L2.\n- Add two new processes for the L2 `state_updater` and `block_fetcher`: \n- `state_updater`: handles the change from `Following` to `Sequencing`\nstate.\n- `block_fetcher`: fetches missing blocks and syncs to current L2 state.\n- Add `--based` flag to the sequencer to enable the logic of changing\nstate. If not enabled, it will always be `Sequencing` as a centralized\nsequencer.\n- Add `--deploy-based-contracts` to the deployer binary to deploy the\nnew `OnChainProposer` and `SequencerRegistry`.\n- Created `SequencerRegistry` contract that handles the batch\nassignment, registering and unregistering.\n\n**How to test**\n\nRead the `Run Locally` section from `crates/l2/based/README.md` to run 3\nnodes and register 2 of them as Sequencers.\n\n> [!TIP]\n> To enrich the review, I strongly suggest you read the documentation in\n`crates/l2/based/docs`.\n\n---------\n\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: Leandro Serra <leandro.serra@lambdaclass.com>\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>\nCo-authored-by: Tomás Grüner <47506558+MegaRedHand@users.noreply.github.com>",
+          "timestamp": "2025-06-17T15:09:15Z",
+          "tree_id": "3360473165920a025aa9de452bab6e31d7417a02",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7f8f6b7fc5ab4c63f78942bd3751d39b81033bd5"
+        },
+        "date": 1750176135383,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180325082541,
+            "range": "± 230114937",
             "unit": "ns/iter"
           }
         ]
