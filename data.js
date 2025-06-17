@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750170443412,
+  "lastUpdate": 1750172185685,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -12985,6 +12985,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183445095640,
             "range": "± 404948914",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fdceb7e043f80fae04ce3e4c75e35577ddd9a7c4",
+          "message": "fix(l1): add hive debug make target again (#3151)\n\n**Motivation**\n\nrun-hive-debug has been removed in a previous PR, so it was added again.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-17T14:03:32Z",
+          "tree_id": "d137b28dfde952f4e0700e483b89c75162d3abd5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/fdceb7e043f80fae04ce3e4c75e35577ddd9a7c4"
+        },
+        "date": 1750172178667,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183466073248,
+            "range": "± 321992807",
             "unit": "ns/iter"
           }
         ]
