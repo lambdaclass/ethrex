@@ -1,3 +1,5 @@
+use crate::based::block_fetcher::BlockFetcherError;
+use crate::based::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use crate::utils::prover::errors::SaveStateError;
 use crate::utils::prover::proving_systems::ProverType;
@@ -34,6 +36,10 @@ pub enum SequencerError {
     MetricsGathererError(#[from] MetricsGathererError),
     #[error("Sequencer error: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("Failed to start StateUpdater: {0}")]
+    StateUpdaterError(#[from] StateUpdaterError),
+    #[error("Failed to start BlockFetcher: {0}")]
+    BlockFetcherError(#[from] BlockFetcherError),
     #[error("Failed to access Store: {0}")]
     FailedAccessingStore(#[from] StoreError),
     #[error("Failed to resolve network")]

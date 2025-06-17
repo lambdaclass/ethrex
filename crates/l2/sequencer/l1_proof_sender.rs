@@ -3,6 +3,10 @@ use std::collections::HashMap;
 use ethrex_common::{Address, U256};
 use ethrex_l2_sdk::calldata::{Value, encode_calldata};
 use ethrex_rpc::EthClient;
+use ethrex_storage_rollup::StoreRollup;
+use secp256k1::SecretKey;
+use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
+use spawned_rt::mpsc::Sender;
 use tracing::{debug, error, info};
 
 use super::{
@@ -12,6 +16,7 @@ use super::{
 };
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
+    based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::errors::ProofSenderError,
     utils::prover::{
         proving_systems::ProverType,
@@ -38,6 +43,7 @@ pub struct L1ProofSenderState {
     on_chain_proposer_address: Address,
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
+    sequencer_state: SequencerState,
     rollup_storage: StoreRollup,
     l1_chain_id: u64,
     network: Network,
@@ -50,6 +56,7 @@ impl L1ProofSenderState {
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
+        sequencer_state: SequencerState,
         aligned_cfg: &AlignedConfig,
         rollup_storage: StoreRollup,
         needed_proof_types: Vec<ProverType>,
@@ -68,6 +75,7 @@ impl L1ProofSenderState {
                 on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
                 needed_proof_types: vec![ProverType::Exec],
                 proof_send_interval_ms: cfg.proof_send_interval_ms,
+                sequencer_state,
                 rollup_storage,
                 l1_chain_id,
                 network: aligned_cfg.network.clone(),
@@ -82,6 +90,7 @@ impl L1ProofSenderState {
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
+            sequencer_state,
             rollup_storage,
             l1_chain_id,
             network: aligned_cfg.network.clone(),
@@ -106,13 +115,15 @@ pub struct L1ProofSender;
 impl L1ProofSender {
     pub async fn spawn(
         cfg: SequencerConfig,
+        sequencer_state: SequencerState,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
-    ) -> Result<(), SequencerError> {
+    ) -> Result<(), ProofSenderError> {
         let state = L1ProofSenderState::new(
             &cfg.proof_coordinator,
             &cfg.l1_committer,
             &cfg.eth,
+            sequencer_state,
             &cfg.aligned,
             rollup_store,
             needed_proof_types,
@@ -154,9 +165,11 @@ impl GenServer for L1ProofSender {
         state: &mut Self::State,
     ) -> CastResponse {
         // Right now we only have the Send message, so we ignore the message
-        let _ = verify_and_send_proof(state)
-            .await
-            .inspect_err(|err| error!("L1 Proof Sender: {err}"));
+        if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
+            let _ = verify_and_send_proof(state)
+                .await
+                .inspect_err(|err| error!("L1 Proof Sender: {err}"));
+        }
         let check_interval = random_duration(state.proof_send_interval_ms);
         send_after(check_interval, tx.clone(), Self::InMsg::Send);
         CastResponse::NoReply

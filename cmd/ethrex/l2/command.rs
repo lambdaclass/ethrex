@@ -420,7 +420,7 @@ impl Command {
 
                             // Store batch info in L2 storage
                             rollup_store
-                                .store_batch(batch)
+                                .seal_batch(batch)
                                 .await
                                 .expect("Error storing batch");
                         }
