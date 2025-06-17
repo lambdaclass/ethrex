@@ -184,9 +184,9 @@ impl Syncer {
 
         // TODO(#2126): To avoid modifying the current_head while backtracking we use a separate search_head
         let mut search_head = current_head;
-
+        let interval = Instant::now();
         loop {
-            debug!("Requesting Block Headers from {search_head}");
+            info!("[SYNCING] Requesting Block Headers from {search_head}");
 
             let Some(mut block_headers) = self
                 .peers
@@ -302,6 +302,11 @@ impl Syncer {
                 break;
             };
         }
+        info!(
+            "[SYNCING] Fetched {} block headers in {} seconds",
+            all_block_hashes.len(),
+            interval.elapsed().as_secs()
+        );
         match sync_mode {
             SyncMode::Snap => {
                 // snap-sync: launch tasks to fetch blocks and state in parallel
@@ -382,7 +387,7 @@ impl Syncer {
 
         let since = Instant::now();
         loop {
-            debug!("Requesting Block Bodies");
+            info!("[SYNCING] Requesting Block Bodies");
             let mut headers_iter = block_headers.iter().skip(headers_consumed);
             let block_request_result = self
                 .peers
@@ -427,6 +432,14 @@ impl Syncer {
         let Some(last_block) = blocks.last().cloned() else {
             return Err(SyncError::BodiesNotFound);
         };
+
+        info!(
+            "[SYNCING] Received {} blocks , starting from block with number {}, until block with number {}, in {} seconds.",
+            blocks_len,
+            first_block.header.number,
+            last_block.header.number,
+            since.elapsed().as_secs()
+        );
 
         // To ensure proper execution, we set the chain as canonical before processing the blocks.
         // Some opcodes rely on previous block hashes, and due to our current setup, we only support a single chain (no sidechains).
