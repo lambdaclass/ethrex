@@ -147,13 +147,13 @@ jobs:
           cd rex
           make cli
           echo "rex install successfully at $(which rex)"
-      
+
       - name: Register sequencer
         run: |
           cd crates/l2
           SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
           export SEQUENCER_REGISTRY
-          
+
           if [ -z "$SEQUENCER_REGISTRY" ]; then
             echo "Failed to get SEQUENCER_REGISTRY from .env file"
             exit 1
@@ -171,7 +171,7 @@ jobs:
           ETHREX_COMMITTER_VALIDIUM=false \
           ETHREX_WATCHER_BLOCK_DELAY=0 \
           ETHREX_BASED=true \
-          ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS="$SEQUENCER_REGISTRY" \
+          ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY="$SEQUENCER_REGISTRY" \
           docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
 
       - name: Run test
