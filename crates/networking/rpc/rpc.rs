@@ -438,6 +438,7 @@ pub async fn map_mempool_requests(
     match req.method.as_str() {
         // TODO: The endpoint name matches geth's endpoint for compatibility, consider changing it in the future
         "txpool_content" => mempool::content(contex).await,
+        "txpool_status" => mempool::status(contex).await,
         unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
     }
 }
