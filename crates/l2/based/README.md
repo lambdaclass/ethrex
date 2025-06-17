@@ -181,7 +181,11 @@ cargo run --release --bin ethrex --features l2 -- l2 init \
   --state-updater.sequencer-registry 0xad860cee33bf496141b9f47d48c3955fa0ecf7ac \
   --l1.on-chain-proposer-address 0x0cc759688cdb4aba65f1a356c6ebdb82edca3b46 \
   --l1.bridge-address 0x765498d4d68eac9bf869a2bf9a870384c303e4f9 \
-  --based
+  --based \
+  --p2p.enabled \
+  --p2p.port \
+  --p2p.port 30303 \
+  --discovery.port 30303
 ```
 
 After running this command, the node will start syncing with the L1 and will be able to follow the lead Sequencer.
@@ -199,6 +203,12 @@ After running this command, the node will start syncing with the L1 and will be 
 > - `--datadir`
 > - `--committer-l1-private-key`
 > - `--proof-coordinator-l1-private-key`
+> - `--p2p.port`
+> - `--discovery.port`
+>
+> Also, once a node has booted you can add it to the newer nodes for the P2P communication with:
+>
+> `--bootnodes <[ENODES]>`
 
 ### 3. Becoming a Sequencer
 
