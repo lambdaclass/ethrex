@@ -371,7 +371,7 @@ impl StoreEngine for Store {
 
                         let old_value = log_entry.1;
                         let slot = log_entry.0;
-                        let storage_key = (read_key_address.into(), slot.into());
+                        let storage_key = (read_key_address, slot.into());
                         if !old_value.is_zero() {
                             flat_storage_cursor
                                 .upsert(storage_key, old_value.into())
@@ -451,7 +451,7 @@ impl StoreEngine for Store {
 
                         let new_value = log_entry.2;
                         let slot = log_entry.0;
-                        let storage_key = (read_key_address.into(), slot.into());
+                        let storage_key = (read_key_address, slot.into());
                         if !new_value.is_zero() {
                             flat_storage_cursor
                                 .upsert(storage_key, new_value.into())
