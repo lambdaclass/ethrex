@@ -4,7 +4,7 @@ mod leaf;
 
 use std::{
     array,
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, mpsc::Sender},
 };
 
 pub use branch::BranchNode;
@@ -25,7 +25,7 @@ use super::{ValueRLP, node_hash::NodeHash};
 #[derive(Clone, Debug)]
 pub enum NodeRef {
     /// The node is embedded within the reference.
-    Node(Arc<Node>, OnceLock<NodeHash>),
+    Node(Arc<Node>, Arc<OnceLock<NodeHash>>),
     /// The node is in the database, referenced by its hash.
     Hash(NodeHash),
 }
@@ -82,6 +82,30 @@ impl NodeRef {
         }
     }
 
+    pub fn commit_par(&self, sender: Sender<(NodeHash, Vec<u8>)>) {
+        match self.clone() {
+            NodeRef::Node(node, hash) => {
+                match node.as_ref() {
+                    Node::Branch(node) => {
+                        for node in &node.choices {
+                            node.commit_par(sender.clone());
+                        }
+                    }
+                    Node::Extension(node) => {
+                        node.child.commit_par(sender.clone());
+                    }
+                    Node::Leaf(_) => {}
+                }
+
+                rayon::spawn(move || {
+                    let hash = hash.get_or_init(|| node.compute_hash());
+                    sender.send((*hash, node.encode_to_vec())).expect("failed to send");
+                });
+            }
+            NodeRef::Hash(_hash) => {},
+        }
+    }
+
     pub fn compute_hash(&self) -> NodeHash {
         match self {
             NodeRef::Node(node, hash) => *hash.get_or_init(|| node.compute_hash()),
@@ -98,7 +122,7 @@ impl Default for NodeRef {
 
 impl From<Node> for NodeRef {
     fn from(value: Node) -> Self {
-        Self::Node(Arc::new(value), OnceLock::new())
+        Self::Node(Arc::new(value), Arc::new(OnceLock::new()))
     }
 }
 

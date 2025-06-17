@@ -13,6 +13,7 @@ use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
 use std::collections::{HashMap, HashSet};
+use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
@@ -184,12 +185,24 @@ impl Trie {
     /// Computes the nodes that would be added if updating the trie.
     /// Nodes are given with their hash pre-calculated.
     pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
-        let mut acc = Vec::new();
         if self.root.is_valid() {
-            self.root.commit(&mut acc);
-        }
+            let rx = {
+                // Get tx out of scope so it dies.
+                let (tx, rx) = channel();
+                self.root.commit_par(tx);
+                rx
+            };
 
-        acc
+            let mut acc = Vec::new();
+
+            while let Ok(x) = rx.recv() {
+                acc.push(x);
+            }
+
+            acc
+        } else {
+            Vec::new()
+        }
     }
 
     /// Obtain a merkle proof for the given path.
