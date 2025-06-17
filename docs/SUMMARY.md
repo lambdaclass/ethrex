@@ -16,6 +16,7 @@
 
 - [Layer 2](./l2/README.md)
   - [General overview](./l2/overview.md)
+  - [Getting started](./l2/getting_started.md)
   - [Roadmap](./l2/roadmap.md)
   - [Sequencer](./l2/sequencer.md)
   - [Contracts](./l2/contracts.md)
