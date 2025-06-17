@@ -938,7 +938,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                         block.hash()
                     ))
                 })?;
-
+            info!(
+                "Added new block {} with hash {:?}",
+                next_block_to_add, block_hash
+            );
             self.latest_block_added = next_block_to_add;
             next_block_to_add += 1;
         }
