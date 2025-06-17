@@ -5,6 +5,7 @@ on:
     types:
       - opened
       - edited
+      - synchronize
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
