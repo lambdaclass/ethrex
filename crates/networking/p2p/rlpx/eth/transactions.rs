@@ -244,13 +244,10 @@ impl PooledTransactions {
         requested: &NewPooledTransactionHashes,
     ) -> Result<(), MempoolError> {
         for tx in &self.pooled_transactions {
-            let tx_hash = match tx {
-                P2PTransaction::EIP4844TransactionWithBlobs(itx) => {
-                    itx.blobs_bundle.validate(&itx.tx)?;
-                    Transaction::EIP4844Transaction(itx.tx.clone()).compute_hash()
-                }
-                tx => tx.compute_hash(),
-            };
+            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
+                itx.blobs_bundle.validate(&itx.tx)?;
+            }
+            let tx_hash = tx.compute_hash();
             let Some(pos) = requested
                 .transaction_hashes
                 .iter()

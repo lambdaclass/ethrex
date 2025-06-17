@@ -1506,10 +1506,26 @@ mod canonic_encoding {
         }
 
         pub fn compute_hash(&self) -> H256 {
-            if let P2PTransaction::PrivilegedL2Transaction(tx) = self {
-                return tx.get_deposit_hash().unwrap_or_default();
+            match self {
+                P2PTransaction::LegacyTransaction(t) => {
+                    Transaction::LegacyTransaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP2930Transaction(t) => {
+                    Transaction::EIP2930Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP1559Transaction(t) => {
+                    Transaction::EIP1559Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP4844TransactionWithBlobs(t) => {
+                    Transaction::EIP4844Transaction(t.tx.clone()).compute_hash()
+                }
+                P2PTransaction::EIP7702Transaction(t) => {
+                    Transaction::EIP7702Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::PrivilegedL2Transaction(t) => {
+                    Transaction::PrivilegedL2Transaction(t.clone()).compute_hash()
+                }
             }
-            keccak_hash::keccak(self.encode_canonical_to_vec())
         }
     }
 }
