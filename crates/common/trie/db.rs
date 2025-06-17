@@ -19,7 +19,6 @@ pub struct InMemoryTrieDB {
 }
 
 impl InMemoryTrieDB {
-    // TODO: Change API to use `H256` directly.
     pub const fn new(map: Arc<Mutex<HashMap<H256, Vec<u8>>>>) -> Self {
         Self { inner: map }
     }
