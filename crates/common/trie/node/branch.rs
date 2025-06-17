@@ -227,7 +227,9 @@ impl BranchNode {
         let mut encoder = Encoder::new(&mut buf);
         for child in self.choices.iter() {
             match child.compute_hash() {
-                NodeHash::Hashed(hash) => encoder = encoder.encode_bytes(&hash.0),
+                NodeHash::Hashed(hash) if !hash.is_zero() => {
+                    encoder = encoder.encode_bytes(&hash.0)
+                }
                 child @ NodeHash::Inline(raw) if raw.1 != 0 => {
                     encoder = encoder.encode_raw(child.as_ref())
                 }

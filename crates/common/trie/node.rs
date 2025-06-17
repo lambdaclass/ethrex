@@ -26,7 +26,7 @@ use ethereum_types::H256;
 #[derive(Clone, Debug)]
 pub enum NodeRef {
     /// The node is embedded within the reference.
-    Node(Arc<Node>, OnceLock<H256>),
+    Node(Arc<Node>, OnceLock<NodeHash>),
     /// The node is in the database, referenced by its hash.
     Hash(H256),
 }
@@ -69,7 +69,8 @@ impl NodeRef {
                 }
 
                 let hash = self.compute_hash();
-                acc.push((hash, node.encode_to_vec()));
+                let encoded = node.encode_to_vec();
+                acc.push((hash, encoded));
 
                 hash
             }
@@ -79,16 +80,7 @@ impl NodeRef {
 
     pub fn compute_hash(&self) -> NodeHash {
         match self {
-            Self::Node(node, hash_lock) => match hash_lock.get() {
-                Some(hash) => NodeHash::Hashed(*hash),
-                None => {
-                    let hash = node.compute_hash();
-                    if let NodeHash::Hashed(hash) = hash {
-                        _ = hash_lock.set(hash);
-                    }
-                    hash
-                }
-            },
+            Self::Node(node, hash_lock) => *hash_lock.get_or_init(|| node.compute_hash()),
             Self::Hash(hash) => NodeHash::Hashed(*hash),
         }
     }
@@ -110,10 +102,13 @@ impl From<NodeHash> for NodeRef {
     fn from(value: NodeHash) -> Self {
         match value {
             NodeHash::Hashed(hash) => Self::Hash(hash),
-            NodeHash::Inline((data, len)) => Self::Node(
-                Arc::new(Node::decode_raw(&data[..len as usize]).unwrap()),
-                OnceLock::new(),
-            ),
+            NodeHash::Inline((data, len)) => match len {
+                0 => Self::Hash(H256::zero()),
+                _ => Self::Node(
+                    Arc::new(Node::decode_raw(&data[..len as usize]).unwrap()),
+                    OnceLock::new(),
+                ),
+            },
         }
     }
 }

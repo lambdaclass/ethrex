@@ -152,7 +152,7 @@ impl Trie {
     /// Return the hash of the trie's root node.
     /// Returns keccak(RLP_NULL) if the trie is empty
     pub fn hash_no_commit(&self) -> H256 {
-        if dbg!(self.root.is_valid()) {
+        if self.root.is_valid() {
             self.root.compute_hash().finalize()
         } else {
             *EMPTY_TRIE_HASH
@@ -174,14 +174,15 @@ impl Trie {
     ///
     /// This method will also compute the hash of all internal nodes indirectly. It will not clear
     /// the cached nodes.
-    pub fn commit(&mut self) -> Result<(), TrieError> {
-        if self.root.is_valid() {
+    pub fn commit(&mut self) -> Result<NodeHash, TrieError> {
+        Ok(if self.root.is_valid() {
             let mut acc = Vec::new();
-            self.root.commit(&mut acc);
+            let hash = self.root.commit(&mut acc);
             self.db.put_batch(acc)?; // we'll try to avoid calling this for every commit
-        }
-
-        Ok(())
+            hash
+        } else {
+            NodeHash::default()
+        })
     }
 
     /// Computes the nodes that would be added if updating the trie.
@@ -515,7 +516,6 @@ mod test {
         let mut trie = Trie::new_temp();
         trie.insert(b"first".to_vec(), b"value".to_vec()).unwrap();
         trie.insert(b"second".to_vec(), b"value".to_vec()).unwrap();
-        dbg!(&trie.root);
 
         assert_eq!(
             trie.hash().unwrap().as_ref(),
