@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750188320350,
+  "lastUpdate": 1750193272769,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13255,6 +13255,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182972268672,
             "range": "± 413941256",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "89949621+ricomateo@users.noreply.github.com",
+            "name": "Mateo Rico",
+            "username": "ricomateo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "da55a5e01d10ba593652d02439acd858e64845b3",
+          "message": "chore(l2): rename L1Watcher's `get_logs` and `process_logs` functions (#3189)\n\n**Motivation**\nThe L1Watcher's `get_logs` and `process_logs` function names are\nmisleading, as they only handle **deposit** logs, not all logs.\n\n**Description**\nRenames `get_logs` to `get_deposit_logs`, and `process_logs` to\n`process_deposit_logs` for clarity.",
+          "timestamp": "2025-06-17T19:55:28Z",
+          "tree_id": "90c2a1b28c69477bbe116bff8842bed7d63ead59",
+          "url": "https://github.com/lambdaclass/ethrex/commit/da55a5e01d10ba593652d02439acd858e64845b3"
+        },
+        "date": 1750193266338,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182020825131,
+            "range": "± 448946411",
             "unit": "ns/iter"
           }
         ]
