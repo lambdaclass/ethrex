@@ -5,13 +5,16 @@ use crate::{
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
 use ethrex_blockchain::{
-    Blockchain, 
-    error::{ChainError, InvalidBlockError}, 
+    Blockchain,
+    error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
 use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
-    types::{Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader},
+    types::{
+        Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
+        InvalidBlockHeaderError,
+    },
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
