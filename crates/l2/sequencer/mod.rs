@@ -93,7 +93,7 @@ pub async fn start_l2(
     )
     .await
     .inspect_err(|err| {
-        error!("Error starting Proof Coordinator: {err}");
+        error!("Error starting L1 Proof Sender: {err}");
     });
     let _ = BlockProducer::spawn(
         store.clone(),
