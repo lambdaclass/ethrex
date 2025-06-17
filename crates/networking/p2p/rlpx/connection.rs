@@ -1106,6 +1106,7 @@ mod tests {
     use crate::network::public_key_from_signing_key;
 
     use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
+    #[cfg(feature = "l2")]
     use ethrex_common::types::batch::Batch;
     use ethrex_common::{
         H160,
@@ -1178,6 +1179,7 @@ mod tests {
         let storage = test_store("store.db").await;
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let (broadcast, _) = broadcast::channel(10);
+        #[cfg(feature = "l2")]
         let committer_key = Some(SigningKeySecp256k1::new(&mut rand::rngs::OsRng));
 
         let mut connection = RLPxConnection::new(
@@ -1189,46 +1191,56 @@ mod tests {
             blockchain,
             "test-client/0.1.0".to_string(),
             broadcast,
+            #[cfg(feature = "l2")]
             StoreRollup::default(),
             true,
+            #[cfg(feature = "l2")]
             committer_key,
         );
         connection.capabilities.push(SUPPORTED_BASED_CAPABILITIES);
         connection.negotiated_eth_capability = Some(SUPPORTED_ETH_CAPABILITIES[0].clone());
         connection.blockchain.set_synced();
         // all have the same signing key for testing, for now the signature is not verified. In the future this will change
-        connection.committer_key = Some(
-            SigningKeySecp256k1::from_slice(
-                &hex::decode("385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924")
+        #[cfg(feature = "l2")]
+        {
+            connection.committer_key = Some(
+                SigningKeySecp256k1::from_slice(
+                    &hex::decode(
+                        "385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
+                    )
                     .unwrap(),
-            )
-            .unwrap(),
-        );
+                )
+                .unwrap(),
+            );
+        }
         connection
     }
 
     /// Helper function to create and send a NewBlock message for the test.
-    async fn send_block(conn: &mut RLPxConnection<tokio::io::DuplexStream>, block: &Block) {
-        let secret_key = conn.committer_key.as_ref().unwrap();
-        let (recovery_id, signature) = secp256k1::SECP256K1
-            .sign_ecdsa_recoverable(
-                &SignedMessage::from_digest(block.hash().to_fixed_bytes()),
-                secret_key,
-            )
-            .serialize_compact();
-        let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+    async fn send_block(_conn: &mut RLPxConnection<tokio::io::DuplexStream>, _block: &Block) {
+        #[cfg(feature = "l2")]
+        {
+            let secret_key = _conn.committer_key.as_ref().unwrap();
+            let (recovery_id, signature) = secp256k1::SECP256K1
+                .sign_ecdsa_recoverable(
+                    &SignedMessage::from_digest(_block.hash().to_fixed_bytes()),
+                    secret_key,
+                )
+                .serialize_compact();
+            let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
 
-        let message_to_send = Message::NewBlock(NewBlockMessage {
-            block: block.clone(),
-            signature,
-            recovery_id,
-        });
-        println!(
-            "Sender (conn_a) sending block {} with hash {:?}.",
-            block.header.number,
-            block.hash()
-        );
-        conn.send(message_to_send).await.unwrap();
+            let message_to_send = Message::NewBlock(NewBlockMessage {
+                block: _block.clone(),
+                signature,
+                recovery_id,
+            });
+            println!(
+                "Sender (conn_a) sending block {} with hash {:?}.",
+                _block.header.number,
+                _block.hash()
+            );
+            _conn.send(message_to_send).await.unwrap();
+        }
     }
 
     /// Helper function to create and send a BatchSealed message for the test.
