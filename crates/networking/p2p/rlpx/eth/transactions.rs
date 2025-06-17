@@ -259,13 +259,13 @@ impl PooledTransactions {
                 return Err(MempoolError::RequestedPooledTxNotFound);
             };
 
-            let tx_type = requested.transaction_types[pos];
-            let size = requested.transaction_sizes[pos];
-            if tx.tx_type() as u8 != tx_type {
-                return Err(MempoolError::InvalidPooledTxType(tx_type));
+            let expected_type = requested.transaction_types[pos];
+            let expected_size = requested.transaction_sizes[pos];
+            if tx.tx_type() as u8 != expected_type {
+                return Err(MempoolError::InvalidPooledTxType(expected_type));
             }
             // remove the code from the encoding (-4)
-            if tx.encode_to_vec().len() - 4 != size {
+            if tx.encode_to_vec().len() - 4 != expected_size {
                 return Err(MempoolError::InvalidPooledTxSize);
             }
         }
