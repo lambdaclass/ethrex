@@ -1106,6 +1106,7 @@ mod tests {
     use crate::network::public_key_from_signing_key;
 
     use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
+    use ethrex_common::types::batch::Batch;
     use ethrex_common::{
         H160,
         types::{BlockHeader, ELASTICITY_MULTIPLIER},
@@ -1226,6 +1227,41 @@ mod tests {
             "Sender (conn_a) sending block {} with hash {:?}.",
             block.header.number,
             block.hash()
+        );
+        conn.send(message_to_send).await.unwrap();
+    }
+
+    /// Helper function to create and send a BatchSealed message for the test.
+    #[cfg(feature = "l2")]
+    async fn send_sealed_batch(
+        conn: &mut RLPxConnection<tokio::io::DuplexStream>,
+        batch_number: u64,
+        first_block: u64,
+        last_block: u64,
+    ) {
+        let batch = Batch {
+            number: batch_number,
+            first_block,
+            last_block,
+            ..Default::default()
+        };
+        let secret_key = conn.committer_key.as_ref().unwrap();
+        let (recovery_id, signature) = secp256k1::SECP256K1
+            .sign_ecdsa_recoverable(
+                &SignedMessage::from_digest(get_hash_batch_sealed(&batch)),
+                secret_key,
+            )
+            .serialize_compact();
+        let recovery_id: [u8; 4] = recovery_id.to_i32().to_be_bytes();
+
+        let message_to_send = Message::BatchSealed(BatchSealedMessage {
+            batch,
+            signature,
+            recovery_id,
+        });
+        println!(
+            "Sender (conn_a) sending sealed batch {} for blocks {}-{}.",
+            batch_number, first_block, last_block
         );
         conn.send(message_to_send).await.unwrap();
     }
@@ -1379,6 +1415,154 @@ mod tests {
 
         // Send the final block that allows the queue to be processed
         send_block(&mut conn_a, &block1).await;
+
+        // Wait for the final check to pass
+        match tokio::time::timeout(Duration::from_secs(2), rx.recv()).await {
+            Ok(Some("final check passed")) => {
+                println!("Main thread: Final check confirmed. Test successful.");
+            }
+            other => panic!("Did not receive final check confirmation: {:?}", other),
+        }
+
+        b_task.abort();
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "l2")]
+    /// Tests that a batch can be sealed after all its blocks have been received.
+    async fn test_seal_batch_with_blocks() {
+        let (stream_a, stream_b) = duplex(4096);
+
+        let eph_sk_a = SecretKey::random(&mut rand::rngs::OsRng);
+        let nonce_a = H256::random();
+        let eph_sk_b = SecretKey::random(&mut rand::rngs::OsRng);
+        let nonce_b = H256::random();
+        let hashed_nonces = Keccak256::digest([nonce_b.0, nonce_a.0].concat()).into();
+
+        let local_state_a = LocalState {
+            nonce: nonce_a,
+            ephemeral_key: eph_sk_a.clone(),
+            init_message: vec![],
+        };
+        let remote_state_a = RemoteState {
+            nonce: nonce_b,
+            ephemeral_key: eph_sk_b.public_key(),
+            init_message: vec![],
+            public_key: H512::zero(),
+        };
+        let codec_a = RLPxCodec::new(&local_state_a, &remote_state_a, hashed_nonces).unwrap();
+
+        let local_state_b = LocalState {
+            nonce: nonce_b,
+            ephemeral_key: eph_sk_b,
+            init_message: vec![],
+        };
+        let remote_state_b = RemoteState {
+            nonce: nonce_a,
+            ephemeral_key: eph_sk_a.public_key(),
+            init_message: vec![],
+            public_key: H512::zero(),
+        };
+        let codec_b = RLPxCodec::new(&local_state_b, &remote_state_b, hashed_nonces).unwrap();
+
+        let mut conn_a = create_rlpx_connection(
+            SigningKey::random(&mut rand::rngs::OsRng),
+            stream_a,
+            codec_a,
+        )
+        .await;
+        let mut conn_b = create_rlpx_connection(
+            SigningKey::random(&mut rand::rngs::OsRng),
+            stream_b,
+            codec_b,
+        )
+        .await;
+
+        // Channel for synchronization and assertions
+        let (tx, mut rx) = mpsc::channel::<&'static str>(2);
+
+        let b_task = tokio::spawn(async move {
+            println!("Receiver task (conn_b) started.");
+            let mut blocks_received_count = 0;
+
+            loop {
+                let Some(Ok(message)) = conn_b.receive().await else {
+                    println!("Receiver task (conn_b) stream ended or failed.");
+                    break;
+                };
+
+                let (dummy_tx, _) = mpsc::channel(1);
+                match message {
+                    Message::NewBlock(msg) => {
+                        blocks_received_count += 1;
+                        println!(
+                            "Receiver task received block {}. Total received: {}",
+                            msg.block.header.number, blocks_received_count
+                        );
+
+                        // Process the message
+                        match conn_b
+                            .handle_message(Message::NewBlock(msg.clone()), dummy_tx)
+                            .await
+                        {
+                            Ok(_) | Err(RLPxError::BroadcastError(_)) => {}
+                            Err(e) => panic!("handle_message failed: {:?}", e),
+                        }
+
+                        if blocks_received_count == 3 {
+                            println!("Receiver task: All blocks received, checking state...");
+                            assert_eq!(
+                                conn_b.latest_block_added, 3,
+                                "All blocks up to 3 should have been added"
+                            );
+                            tx.send("blocks processed").await.unwrap();
+                        }
+                    }
+                    Message::BatchSealed(msg) => {
+                        println!("Receiver task received sealed batch {}.", msg.batch.number);
+                        // Process the message
+                        match conn_b
+                            .handle_message(Message::BatchSealed(msg.clone()), dummy_tx)
+                            .await
+                        {
+                            Ok(_) | Err(RLPxError::BroadcastError(_)) => {}
+                            Err(e) => panic!("handle_message failed: {:?}", e),
+                        }
+
+                        println!("Receiver task: Checking for sealed batch...");
+                        assert!(
+                            conn_b.store_rollup.contains_batch(&1).await.unwrap(),
+                            "Batch 1 should be sealed in the store"
+                        );
+                        tx.send("final check passed").await.unwrap();
+                        break; // Test complete
+                    }
+                    _ => panic!("Received unexpected message type in receiver task"),
+                }
+            }
+        });
+
+        let storage = test_store("store_for_sending.db").await;
+        let genesis_header = storage.get_block_header(0).unwrap().unwrap();
+        let block1 = new_block(&storage, &genesis_header).await;
+        let block2 = new_block(&storage, &block1.header).await;
+        let block3 = new_block(&storage, &block2.header).await;
+
+        // Send blocks in order
+        send_block(&mut conn_a, &block1).await;
+        send_block(&mut conn_a, &block2).await;
+        send_block(&mut conn_a, &block3).await;
+
+        // Wait for receiver to process all blocks
+        match tokio::time::timeout(Duration::from_secs(2), rx.recv()).await {
+            Ok(Some("blocks processed")) => {
+                println!("Main thread: Blocks processed confirmation received.");
+            }
+            other => panic!("Did not receive blocks processed confirmation: {:?}", other),
+        }
+
+        // Now send the sealed batch message
+        send_sealed_batch(&mut conn_a, 1, 1, 3).await;
 
         // Wait for the final check to pass
         match tokio::time::timeout(Duration::from_secs(2), rx.recv()).await {
