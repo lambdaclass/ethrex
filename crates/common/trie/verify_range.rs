@@ -188,15 +188,13 @@ fn process_proof_nodes(
             let cmp_r = bounds.1.as_ref().map(|x| x.compare_prefix(&partial_path));
 
             if cmp_l != Ordering::Less || cmp_r.is_none_or(|x| x != Ordering::Greater) {
-                // TODO: This is probably reachable now (due to the way inline nodes are decoded).
-                let NodeRef::Hash(hash) = child else {
-                    // This is unreachable because the nodes have just been decoded, therefore only
-                    // having hash references.
-                    unreachable!()
+                let node = match child {
+                    NodeRef::Node(node, _) => Ok(node.as_ref().clone()),
+                    NodeRef::Hash(hash) => get_node(&proof, NodeHash::Hashed(hash))?.ok_or(hash),
                 };
 
-                match get_node(&proof, NodeHash::Hashed(hash))? {
-                    Some(node) => {
+                match node {
+                    Ok(node) => {
                         // Append implicit leaf extension when pushing leaves.
                         if let Node::Leaf(node) = &node {
                             partial_path.extend(&node.partial);
@@ -204,7 +202,7 @@ fn process_proof_nodes(
 
                         stack.push_back((partial_path, node));
                     }
-                    None => {
+                    Err(hash) => {
                         if cmp_l == Ordering::Equal || cmp_r.is_some_and(|x| x == Ordering::Equal) {
                             return Err(TrieError::Verify(format!("proof node missing: {hash:?}")));
                         }
@@ -242,7 +240,12 @@ fn process_proof_nodes(
                 process_child(&mut stack, current_path.clone(), node.child)?;
                 Vec::new()
             }
-            Node::Leaf(node) => node.value,
+            Node::Leaf(node) => {
+                if current_path.is_empty() {
+                    current_path.extend(&node.partial);
+                }
+                node.value
+            }
         };
 
         if !value.is_empty() {
@@ -341,6 +344,20 @@ mod tests {
         let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
         // Our trie contains more elements to the right
         assert!(fetch_more)
+    }
+
+    #[test]
+    fn verify_range_inline_leaves() {
+        let mut trie = Trie::stateless();
+
+        trie.insert(vec![1; 32], vec![0]).unwrap();
+        let mut key = vec![1; 32];
+        key[31] = 2;
+        trie.insert(key, vec![0]).unwrap();
+
+        let root = trie.hash_no_commit();
+        let proof = trie.get_proof(&vec![1; 32]).unwrap();
+        verify_range(root, &H256([1; 32]), &[H256([1; 32])], &[vec![0]], &proof).unwrap();
     }
 
     // Proptests for verify_range
