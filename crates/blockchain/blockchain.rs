@@ -512,7 +512,7 @@ impl Blockchain {
             "[SYNCING] Processed all {} blocks, last valid hash: {}, took {} s",
             blocks_len,
             last_valid_hash,
-            interval.elapsed().as_millis() / 1000
+            (interval.elapsed().as_millis() as f64 / 1000_f64)
         );
 
         let interval_2 = Instant::now();
@@ -523,7 +523,7 @@ impl Blockchain {
 
         info!(
             "[SYNCING] Get state transitions, took {} s",
-            interval_2.elapsed().as_millis() / 1000 
+            (interval_2.elapsed().as_millis() as f64 / 1000_f64)
         );
 
         let interval_3 = Instant::now();
@@ -545,7 +545,7 @@ impl Blockchain {
 
         info!(
             "[SYNCING] Account updates applied, took {} s",
-            interval_3.elapsed().as_millis() / 1000
+            (interval_3.elapsed().as_millis() as f64 / 1000_f64)
         );
 
         let interval_4 = Instant::now();
@@ -559,7 +559,7 @@ impl Blockchain {
 
         info!(
             "[SYNCING] State root validated, took {} s",
-            interval_4.elapsed().as_millis() / 1000
+            (interval_4.elapsed().as_millis() as f64 / 1000_f64)
         );
 
         let interval_5 = Instant::now();
@@ -578,7 +578,7 @@ impl Blockchain {
 
         info!(
             "[SYNCING] Blocks stored, took {} s",
-            interval_5.elapsed().as_millis() / 1000
+            (interval_5.elapsed().as_millis() as f64 / 1000_f64)
         );
 
         let elapsed_seconds = interval.elapsed().as_millis() / 1000;
