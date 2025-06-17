@@ -22,8 +22,6 @@ pub enum ChainError {
     InvalidTransaction(String),
     #[error("Failed to generate witness: {0}")]
     WitnessGeneration(String),
-    #[error("Failed to obtain Genesis: {0}")]
-    Genesis(String),
     #[error("{0}")]
     Custom(String),
 }

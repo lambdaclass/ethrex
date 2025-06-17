@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap},
-    io::BufReader,
+    io::{BufReader, Error},
     path::Path,
 };
 
@@ -48,19 +48,25 @@ pub struct Genesis {
     pub requests_hash: Option<H256>,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum GenesisError {
+    #[error("Failed to decode genesis file: {0}")]
+    Decode(#[from] serde_json::Error),
+    #[error("Fork not supported. Only post-merge networks are supported.")]
+    InvalidFork(),
+    #[error("Failed to open genesis.json file: {0}")]
+    File(#[from] Error),
+}
+
 impl TryFrom<&Path> for Genesis {
-    type Error = String;
+    type Error = GenesisError;
 
     fn try_from(genesis_file_path: &Path) -> Result<Self, Self::Error> {
-        let genesis_file = std::fs::File::open(genesis_file_path)
-            .map_err(|e| format!("Failed to open genesis file: {}", e))?;
+        let genesis_file = std::fs::File::open(genesis_file_path)?;
         let genesis_reader = BufReader::new(genesis_file);
-        let genesis: Genesis =
-            serde_json::from_reader(genesis_reader).map_err(|m| m.to_string())?;
+        let genesis: Genesis = serde_json::from_reader(genesis_reader)?;
         if genesis.config.merge_netsplit_block != Some(0) {
-            return Err(String::from(
-                "Fork not supported. Only post-merge networks are supported.",
-            ));
+            return Err(GenesisError::InvalidFork());
         }
         Ok(genesis)
     }

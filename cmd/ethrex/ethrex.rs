@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, error::Error};
 use ethrex::{
     cli::CLI,
     initializers::{
