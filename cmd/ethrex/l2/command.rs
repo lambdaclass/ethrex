@@ -155,9 +155,8 @@ impl Command {
                 }
 
                 let l2_sequencer_cfg =
-                    SequencerConfig::try_from(opts.sequencer_opts).map_err(|err| {
+                    SequencerConfig::try_from(opts.sequencer_opts).inspect_err(|err| {
                         error!("{err}");
-                        err
                     })?;
 
                 let l2_sequencer = ethrex_l2::start_l2(
