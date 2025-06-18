@@ -22,3 +22,24 @@ In more detail, the full changes/additions are:
   - Verify the merkle proof given by the user, passing the proof, the root, and the `tx_hash`.
   - If any check above failed, revert. If all checks passed, send the appropriate funds to the user, then set the `withdrawLog` as claimed.
   - After the withdrawal is sent, we mark it as claimed so it cannot be claimed twice.
+
+## Native ETH withdrawals
+
+This section explains step by step how native ETH withdrawals work.
+
+On L2:
+
+1. The user sends a transaction calling `withdraw(address _receiverOnL1)` on the `CommonBridgeL2` contract.
+2. The bridge calls `sendMessageToL1(bytes32 data)` on the `L1Messenger` contract, with `data` being:
+
+    ```solidity
+    bytes32 data = keccak256(abi.encodePacked(_receiverOnL1, msg.value))
+    ```
+
+3. `L1Messenger` emits an `L1Message` event, with the address of the L2 bridge contract and `data` as topics.
+
+On L1:
+
+1. A sequencer commits the batch on L1, publishing the `L1Message` with `publishWithdrawals` on the L1 `CommonBridge`.
+2. The user submits a withdrawal proof when calling `claimWithdrawal` on the L1 `CommonBridge`.
+3. The bridge asserts the proof is valid and sends the locked funds specified in the `L1Message` to the user.
