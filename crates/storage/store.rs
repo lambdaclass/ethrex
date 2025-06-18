@@ -373,7 +373,7 @@ impl Store {
             let mut acc_code: Option<_> = None;
             state_trie.update(hashed_address.clone(), |encoded_state| {
                 let mut account_state = match encoded_state {
-                    Some(encoded_state) => AccountState::decode(&encoded_state).expect("test"),
+                    Some(encoded_state) => AccountState::decode(&encoded_state)?,
                     None => AccountState::default(),
                 };
 
@@ -390,21 +390,16 @@ impl Store {
 
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let mut storage_trie = self
-                        .engine
-                        .open_storage_trie(
-                            H256::from_slice(&hashed_address),
-                            account_state.storage_root,
-                        )
-                        .expect("a");
+                    let mut storage_trie = self.engine.open_storage_trie(
+                        H256::from_slice(&hashed_address),
+                        account_state.storage_root,
+                    )?;
                     for (storage_key, storage_value) in &update.added_storage {
                         let hashed_key = hash_key(storage_key);
                         if storage_value.is_zero() {
-                            storage_trie.remove(hashed_key).expect("a");
+                            storage_trie.remove(hashed_key)?;
                         } else {
-                            storage_trie
-                                .insert(hashed_key, storage_value.encode_to_vec())
-                                .expect("a");
+                            storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
                     }
                     let (storage_hash, storage_updates) =
@@ -413,7 +408,7 @@ impl Store {
                     ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
                 }
 
-                Some(account_state.encode_to_vec())
+                Ok(Some(account_state.encode_to_vec()))
             })?;
 
             // Store updated code in DB

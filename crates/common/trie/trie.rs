@@ -125,13 +125,13 @@ impl Trie {
     /// If on_get returns None, no insert will be done.
     pub fn update<T>(&mut self, path: PathRLP, on_get: T) -> Result<(), TrieError>
     where
-        T: FnOnce(Option<ValueRLP>) -> Option<ValueRLP>,
+        T: FnOnce(Option<ValueRLP>) -> Result<Option<ValueRLP>, TrieError>,
     {
         let path = Nibbles::from_bytes(&path);
 
         if !self.root.is_valid() {
             // If the trie is empty, just add a leaf.
-            let new_value = on_get(None);
+            let new_value = on_get(None)?;
 
             if let Some(value) = new_value {
                 self.root = Node::from(LeafNode::new(path, value)).into();
@@ -162,7 +162,7 @@ impl Trie {
             _ => None,
         };
 
-        let new_value = on_get(prev);
+        let new_value = on_get(prev)?;
         if let Some(value) = new_value {
             if let Some(insert_node) = insert_node {
                 self.root = (*insert_node)
@@ -740,7 +740,7 @@ mod test {
         trie.update(vec![16], |prev| {
             assert_eq!(prev, Some(vec![0]));
 
-            Some(vec![1])
+            Ok(Some(vec![1]))
         })
         .unwrap();
 
@@ -750,7 +750,7 @@ mod test {
         trie.update(vec![17], |prev| {
             assert_eq!(prev, None);
 
-            Some(vec![1])
+            Ok(Some(vec![1]))
         })
         .unwrap();
 
@@ -760,7 +760,7 @@ mod test {
         trie.update(vec![18], |prev| {
             assert_eq!(prev, None);
 
-            None
+            Ok(None)
         })
         .unwrap();
 
