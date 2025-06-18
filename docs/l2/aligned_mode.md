@@ -86,7 +86,7 @@ In a console with `ethrex/crates/l2` as the current directory, run the following
 SP1_PROVER=cuda make init-prover PROVER=sp1 PROVER_CLIENT_ALIGNED=true
 ```
 
-## How to Run Using an Aligned Development Environment
+## How to Run Using an Aligned Dev Environment
 
 ### Set Up the Aligned Environment
 
