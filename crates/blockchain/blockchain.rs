@@ -344,6 +344,7 @@ impl Blockchain {
         let new_state_root = apply_updates_list.state_trie_hash;
         let state_updates = apply_updates_list.state_updates;
         let accounts_updates = apply_updates_list.storage_updates;
+        let code_updates = apply_updates_list.code_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
@@ -353,6 +354,7 @@ impl Blockchain {
             storage_updates: accounts_updates,
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
+            code_updates,
         };
 
         self.storage
@@ -506,6 +508,7 @@ impl Blockchain {
         let new_state_root = account_updates_list.state_trie_hash;
         let state_updates = account_updates_list.state_updates;
         let accounts_updates = account_updates_list.storage_updates;
+        let code_updates = account_updates_list.code_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
@@ -515,6 +518,7 @@ impl Blockchain {
             storage_updates: accounts_updates,
             blocks,
             receipts: all_receipts,
+            code_updates,
         };
 
         self.storage
@@ -562,7 +566,7 @@ impl Blockchain {
         blobs_bundle.validate(&transaction)?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
-        let sender = transaction.sender();
+        let sender = transaction.sender()?;
 
         // Validate transaction
         self.validate_transaction(&transaction, sender).await?;
@@ -584,7 +588,7 @@ impl Blockchain {
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
-        let sender = transaction.sender();
+        let sender = transaction.sender()?;
         // Validate transaction
         self.validate_transaction(&transaction, sender).await?;
 

@@ -10,10 +10,11 @@ use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::H160;
+use ethrex_common::constants::EMPTY_TRIE_HASH;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, EMPTY_TRIE_HASH, ForkId, Genesis, GenesisAccount, Index, Receipt,
-    Transaction, code_hash, payload::PayloadBundle,
+    BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt, Transaction,
+    code_hash, payload::PayloadBundle,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -56,6 +57,8 @@ pub struct UpdateBatch {
     pub blocks: Vec<Block>,
     /// Receipts added per block
     pub receipts: Vec<(H256, Vec<Receipt>)>,
+    /// Code updates
+    pub code_updates: Vec<(H256, Bytes)>,
 }
 
 type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
@@ -64,6 +67,7 @@ pub struct AccountUpdatesList {
     pub state_trie_hash: H256,
     pub state_updates: Vec<(NodeHash, Vec<u8>)>,
     pub storage_updates: StorageUpdates,
+    pub code_updates: Vec<(H256, Bytes)>,
 }
 
 impl Store {
@@ -470,6 +474,7 @@ impl Store {
         account_updates: impl IntoIterator<Item = &AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
+        let mut code_updates = Vec::new();
         for update in account_updates {
             let hashed_address = hash_address(&update.address);
             if update.removed {
@@ -489,7 +494,7 @@ impl Store {
                 account_state.code_hash = info.code_hash;
                 // Store updated code in DB
                 if let Some(code) = &update.code {
-                    self.add_account_code(info.code_hash, code.clone()).await?;
+                    code_updates.push((info.code_hash, code.clone()));
                 }
             }
             // Store the added storage in the account's storage trie and compute its new root
@@ -520,6 +525,7 @@ impl Store {
             state_trie_hash,
             state_updates,
             storage_updates: ret_storage_updates,
+            code_updates,
         })
     }
 
@@ -1463,7 +1469,8 @@ mod tests {
     use ethereum_types::{H256, U256};
     use ethrex_common::{
         Bloom, H160,
-        types::{EMPTY_KECCACK_HASH, Transaction, TxType},
+        constants::EMPTY_KECCACK_HASH,
+        types::{Transaction, TxType},
     };
     use ethrex_rlp::decode::RLPDecode;
     use std::{fs, str::FromStr};
