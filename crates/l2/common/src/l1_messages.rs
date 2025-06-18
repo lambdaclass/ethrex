@@ -20,7 +20,7 @@ pub const L1MESSENGER_ADDRESS: Address = H160([
 pub struct L1Message {
     /// Address that called the L1Messanger
     pub from: Address,
-    /// Hash of the data given to the L1Messanger
+    /// Hash of the data given to the L1Messenger
     pub data_hash: H256,
     /// L2 Transaction the message was included in, for ease of usage
     pub tx_hash: H256,
