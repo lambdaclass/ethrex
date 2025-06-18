@@ -140,6 +140,19 @@ table!(
     ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
 );
 
+table!(
+    /// Tracks the (BlockNumber, BlockHash, ParentHash) corresponding to the current FlatAccountStorage and FlatAccountInfo
+    ( FlatTablesBlockMetadata ) FlatTablesBlockMetadataKey => BlockNumHash
+);
+table!(
+    /// Account storage as a flat mapping from (AccountAddress, Slot) to (Value)
+    ( FlatAccountStorage ) (AccountAddress, AccountStorageKeyBytes) [AccountAddress] => AccountStorageValueBytes
+);
+table!(
+    /// Account state as a flat mapping from (AccountAddress) to (State)
+    ( FlatAccountInfo ) AccountAddress => EncodableAccountInfo
+);
+
 pub struct Store {
     db: Arc<Database>,
 }
@@ -202,11 +215,11 @@ impl Store {
             let mut res = Vec::new();
             let txn = db.begin_read().map_err(StoreError::LibmdbxError)?;
             for key in keys {
-                let val = txn.get::<T>(key).map_err(StoreError::LibmdbxError)?;
-                match val {
-                    Some(val) => res.push(val),
-                    None => Err(StoreError::ReadError)?,
-                }
+                let val = txn
+                    .get::<T>(key)
+                    .map_err(StoreError::LibmdbxError)?
+                    .ok_or(StoreError::ReadError)?;
+                res.push(val);
             }
             Ok(res)
         })
@@ -1693,18 +1706,6 @@ impl Decodable for FlatTablesBlockMetadataKey {
         Ok(FlatTablesBlockMetadataKey {})
     }
 }
-table!(
-    /// Tracks the (BlockNumber, BlockHash, ParentHash) corresponding to the current FlatAccountStorage and FlatAccountInfo
-    ( FlatTablesBlockMetadata ) FlatTablesBlockMetadataKey => BlockNumHash
-);
-table!(
-    /// Account storage as a flat mapping from (AccountAddress, Slot) to (Value)
-    ( FlatAccountStorage ) (AccountAddress, AccountStorageKeyBytes) [AccountAddress] => AccountStorageValueBytes
-);
-table!(
-    /// Account state as a flat mapping from (AccountAddress) to (State)
-    ( FlatAccountInfo ) AccountAddress => EncodableAccountInfo
-);
 
 // Storage values are stored as bytes instead of using their rlp encoding
 // As they are stored in a dupsort table, they need to have a fixed size, and encoding them doesn't preserve their size
