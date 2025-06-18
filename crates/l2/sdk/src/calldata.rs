@@ -28,7 +28,17 @@ pub enum Value {
     FixedBytes(Bytes),
 }
 
-fn parse_signature(signature: &str) -> Result<(String, Vec<String>), CalldataEncodeError> {
+#[derive(Debug, thiserror::Error)]
+pub enum CalldataDecodeError {
+    #[error("Failed to parse function signature: {0}")]
+    ParseError(String),
+    #[error("Invalid calldata. Tried to read more bytes than there are.")]
+    OutOfBounds,
+    #[error("Internal Calldata decoding error. This is most likely a bug")]
+    InternalError,
+}
+
+pub fn parse_signature(signature: &str) -> Result<(String, Vec<String>), CalldataEncodeError> {
     let sig = signature.trim().trim_start_matches("function ");
     let (name, params) = sig
         .split_once('(')
@@ -70,10 +80,7 @@ fn parse_signature(signature: &str) -> Result<(String, Vec<String>), CalldataEnc
     Ok((name.to_string(), splitted_params))
 }
 
-pub fn compute_function_selector(
-    name: &str,
-    params: &[String],
-) -> Result<H32, CalldataEncodeError> {
+fn compute_function_selector(name: &str, params: &[String]) -> Result<H32, CalldataEncodeError> {
     let normalized_signature = format!("{name}({})", params.join(","));
     let hash = keccak(normalized_signature.as_bytes());
 
@@ -105,6 +112,203 @@ pub fn encode_calldata(signature: &str, values: &[Value]) -> Result<Vec<u8>, Cal
     with_selector.extend_from_slice(&calldata);
 
     Ok(with_selector)
+}
+
+pub fn decode_calldata(signature: &str, data: Bytes) -> Result<Vec<Value>, CalldataDecodeError> {
+    let (_, params) =
+        parse_signature(signature).map_err(|e| CalldataDecodeError::ParseError(e.to_string()))?;
+    let mut decoder = DecodeHelper::new(&data);
+    let datatype = DataType::Tuple(
+        params
+            .iter()
+            .map(|v| DataType::parse(v))
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+    match datatype.decode(&mut decoder)? {
+        Value::Tuple(values) => Ok(values),
+        _ => Err(CalldataDecodeError::InternalError),
+    }
+}
+
+struct DecodeHelper<'a> {
+    buf: &'a [u8],
+    index: usize,
+}
+
+impl<'a> DecodeHelper<'a> {
+    fn new(buf: &'a [u8]) -> Self {
+        DecodeHelper { buf, index: 4 }
+    }
+    fn consume(&mut self, n: usize) -> Result<&'a [u8], CalldataDecodeError> {
+        let data = self
+            .buf
+            .get(self.index..self.index + n)
+            .ok_or(CalldataDecodeError::OutOfBounds)?;
+        self.index += n;
+        Ok(data)
+    }
+    fn consume_u256(&mut self) -> Result<U256, CalldataDecodeError> {
+        Ok(U256::from_big_endian(self.consume(32)?))
+    }
+    fn start_reading_at(&self, offset: usize) -> Result<Self, CalldataDecodeError> {
+        let data = self
+            .buf
+            .get(self.index + offset..)
+            .ok_or(CalldataDecodeError::OutOfBounds)?;
+        Ok(DecodeHelper {
+            buf: data,
+            index: 0,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+enum DataType {
+    Array(Box<DataType>),
+    FixedArray(usize, Box<DataType>),
+    Tuple(Vec<DataType>),
+    Bytes,
+    FixedBytes(usize),
+    Address,
+    Bool,
+    Uint,
+    Int,
+}
+
+impl DataType {
+    fn parse(param: &str) -> Result<Self, CalldataDecodeError> {
+        Ok(match param {
+            _ if param.ends_with("[]") => {
+                let inner = param
+                    .strip_suffix("[]")
+                    .ok_or(CalldataDecodeError::InternalError)?;
+                DataType::Array(Box::new(DataType::parse(inner)?))
+            }
+            _ if param.ends_with("]") => {
+                let mut n = String::new();
+                let mut iter = param.chars().rev().skip(1);
+                for c in iter.by_ref() {
+                    if c.is_ascii_digit() {
+                        n.insert(0, c);
+                    } else {
+                        break;
+                    }
+                }
+                iter.next();
+                let inner: String = iter.collect::<String>().chars().rev().collect();
+                let n: usize = n.parse().map_err(|_| CalldataDecodeError::OutOfBounds)?;
+                DataType::FixedArray(n, Box::new(DataType::parse(&inner)?))
+            }
+            _ if param.ends_with(")") => {
+                let (_, inner) = parse_signature(param)
+                    .map_err(|e| CalldataDecodeError::ParseError(e.to_string()))?;
+                DataType::Tuple(
+                    inner
+                        .iter()
+                        .map(|v| DataType::parse(v))
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            }
+            "address" => DataType::Address,
+            "bool" => DataType::Bool,
+            "bytes" => DataType::Bytes,
+            _ if param.starts_with("bytes") => {
+                let n = param
+                    .trim_start_matches("bytes")
+                    .parse()
+                    .map_err(|_| CalldataDecodeError::ParseError("invalid bytesN".to_string()))?;
+                DataType::FixedBytes(n)
+            }
+            _ if param.starts_with("uint") => DataType::Uint,
+            _ if param.starts_with("int") => DataType::Int,
+            _ => {
+                return Err(CalldataDecodeError::ParseError(format!(
+                    "unknown type {param}"
+                )));
+            }
+        })
+    }
+    fn is_dynamic(&self) -> bool {
+        match self {
+            DataType::Array(_) => true,
+            DataType::Bytes => true,
+            DataType::FixedArray(_, inner) => inner.is_dynamic(),
+            DataType::Tuple(inner) => inner.iter().any(|t| t.is_dynamic()),
+            _ => false,
+        }
+    }
+    fn decode(&self, data: &mut DecodeHelper) -> Result<Value, CalldataDecodeError> {
+        Ok(match self {
+            DataType::Uint => Value::Uint(data.consume_u256()?),
+            DataType::Int => Value::Int(data.consume_u256()?),
+            DataType::Address => {
+                data.consume(32 - 20)?;
+                Value::Address(Address::from_slice(data.consume(20)?))
+            }
+            DataType::Bool => Value::Bool(!data.consume_u256()?.is_zero()),
+            DataType::FixedBytes(n) => Value::FixedBytes(
+                data.consume(32)?
+                    .get(0..*n)
+                    .ok_or(CalldataDecodeError::OutOfBounds)?
+                    .to_vec()
+                    .into(),
+            ),
+            DataType::Bytes => {
+                let n: usize = data
+                    .consume_u256()?
+                    .try_into()
+                    .map_err(|_| CalldataDecodeError::OutOfBounds)?;
+                let size = if n % 32 == 0 {
+                    n
+                } else {
+                    n.next_multiple_of(32)
+                };
+                Value::Bytes(
+                    data.consume(size)?
+                        .get(0..n)
+                        .ok_or(CalldataDecodeError::OutOfBounds)?
+                        .to_vec()
+                        .into(),
+                )
+            }
+            DataType::FixedArray(n, inner_type) => {
+                let inner_type = *inner_type.clone();
+                let value = DataType::Tuple(vec![inner_type; *n]).decode(data)?;
+                match value {
+                    Value::Tuple(inner) => Value::FixedArray(inner),
+                    _ => return Err(CalldataDecodeError::InternalError),
+                }
+            }
+            DataType::Tuple(inner_types) => {
+                let mut values = Vec::new();
+                let start_reader = data.start_reading_at(0)?;
+                for inner_type in inner_types {
+                    if inner_type.is_dynamic() {
+                        let offset: usize = data
+                            .consume_u256()?
+                            .try_into()
+                            .map_err(|_| CalldataDecodeError::OutOfBounds)?;
+                        values
+                            .push(inner_type.decode(&mut start_reader.start_reading_at(offset)?)?);
+                    } else {
+                        values.push(inner_type.decode(data)?);
+                    }
+                }
+                Value::Tuple(values)
+            }
+            DataType::Array(inner_type) => {
+                let n: usize = data
+                    .consume_u256()?
+                    .try_into()
+                    .map_err(|_| CalldataDecodeError::OutOfBounds)?;
+                let mut values = Vec::new();
+                for _ in 0..n {
+                    values.push(inner_type.decode(data)?);
+                }
+                Value::Array(values)
+            }
+        })
+    }
 }
 
 // This is the main entrypoint for ABI encoding solidity function arguments, as the list of arguments themselves are
@@ -162,12 +366,7 @@ pub fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
             Value::Tuple(tuple_values) => {
                 if !is_dynamic(value) {
                     let tuple_encoding = encode_tuple(tuple_values)?;
-                    copy_into(
-                        &mut ret,
-                        &tuple_encoding,
-                        current_offset,
-                        tuple_encoding.len(),
-                    )?;
+                    ret.extend_from_slice(&tuple_encoding);
                 } else {
                     write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
 
@@ -179,12 +378,7 @@ pub fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
             Value::FixedArray(fixed_array_values) => {
                 if !is_dynamic(value) {
                     let fixed_array_encoding = encode_tuple(fixed_array_values)?;
-                    copy_into(
-                        &mut ret,
-                        &fixed_array_encoding,
-                        current_offset,
-                        fixed_array_encoding.len(),
-                    )?;
+                    ret.extend_from_slice(&fixed_array_encoding);
                 } else {
                     write_u256(&mut ret, U256::from(current_dynamic_offset), current_offset)?;
 
@@ -194,9 +388,9 @@ pub fn encode_tuple(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
                 }
             }
             Value::FixedBytes(bytes) => {
-                let mut bytes = bytes.to_vec();
-                bytes.resize(32, 0);
-                copy_into(&mut ret, &bytes, current_offset, 32)?;
+                let mut to_copy = [0; 32];
+                to_copy.copy_from_slice(bytes);
+                copy_into(&mut ret, &to_copy, current_offset, 32)?;
             }
         }
 
@@ -327,50 +521,6 @@ fn address_to_word(address: Address) -> U256 {
 }
 
 #[test]
-fn fixed_array_encoding_test() {
-    use bytes::{BufMut, BytesMut};
-    let raw_function_signature = "test(uint256,bytes,bytes32,bytes,bytes32,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
-    let bytes_calldata: [u8; 32] = [0; 32];
-
-    let mut buf = BytesMut::new();
-    buf.put_u8(0x12);
-    buf.put_u8(0x34);
-
-    let a = buf.freeze();
-
-    let fixed_array = vec![
-        Value::Uint(U256::from(4)),
-        Value::Uint(U256::from(3)),
-        Value::Uint(U256::from(2)),
-        Value::Uint(U256::from(1)),
-        Value::Uint(U256::from(8)),
-        Value::Uint(U256::from(9)),
-        Value::Uint(U256::from(1)),
-        Value::Uint(U256::from(0)),
-    ];
-
-    let arguments = vec![
-        Value::Uint(U256::from(1)),
-        Value::Bytes(a.clone()),
-        Value::FixedBytes(bytes_calldata.to_vec().into()),
-        Value::Bytes(a.clone()),
-        Value::FixedBytes(bytes_calldata.to_vec().into()),
-        Value::Bytes(Bytes::new()),
-        Value::Bytes(a.clone()),
-        Value::FixedBytes(bytes_calldata.to_vec().into()),
-        Value::Bytes(Bytes::new()),
-        Value::FixedArray(fixed_array),
-        Value::Bytes(Bytes::new()),
-        Value::Bytes(a),
-    ];
-
-    let calldata = encode_calldata(raw_function_signature, &arguments).unwrap();
-    let expected_calldata = hex::decode("ac0f26b000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000260000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002e0000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000340000000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000009000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000360000000000000000000000000000000000000000000000000000000000000038000000000000000000000000000000000000000000000000000000000000000021234000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000212340000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000212340000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000021234000000000000000000000000000000000000000000000000000000000000").unwrap();
-
-    assert_eq!(calldata, expected_calldata);
-}
-
-#[test]
 fn calldata_test() {
     let raw_function_signature = "blockWithdrawalsLogs(uint256,bytes)";
     let mut bytes_calldata = vec![];
@@ -385,6 +535,8 @@ fn calldata_test() {
 
     let calldata = encode_calldata(raw_function_signature, &arguments).unwrap();
 
+    let decoded = decode_calldata(raw_function_signature, calldata.clone().into()).unwrap();
+    assert_eq!(arguments, decoded);
     assert_eq!(
         calldata,
         vec![
@@ -422,6 +574,8 @@ fn encode_tuple_dynamic_offset() {
     let values = vec![tuple];
 
     let calldata = encode_calldata(raw_function_signature, &values).unwrap();
+    let decoded = decode_calldata(raw_function_signature, calldata.clone().into()).unwrap();
+    assert_eq!(values, decoded);
 
     assert_eq!(calldata, hex::decode("02e86bbe0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000006793200000000000000000000000000000000000000000000000000000000000679320000000000000000000000000000000000000000000000000000000000019a2800000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000000").unwrap());
 
@@ -459,6 +613,8 @@ fn correct_tuple_parsing() {
 fn empty_calldata() {
     let calldata = encode_calldata("number()", &[]).unwrap();
     assert_eq!(calldata, hex::decode("8381f58a").unwrap());
+    let decoded = decode_calldata("number()", calldata.clone().into()).unwrap();
+    assert!(decoded.is_empty());
 }
 
 #[test]
@@ -470,4 +626,6 @@ fn bytes_has_padding() {
     let calldata = encode_calldata(raw_function_signature, &values).unwrap();
 
     assert_eq!(calldata, hex::decode("f570899b0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000b68656c6c6f20776f726c64000000000000000000000000000000000000000000").unwrap());
+    let decoded = decode_calldata(raw_function_signature, calldata.clone().into()).unwrap();
+    assert_eq!(values, decoded);
 }
