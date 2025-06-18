@@ -152,7 +152,7 @@ impl RLPEncode for NodeHash {
 
 impl RLPDecode for NodeHash {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
-        let (hash, rest): ([u8; 32], &[u8]);
+        let (hash, rest): (Vec<u8>, &[u8]);
         (hash, rest) = RLPDecode::decode_unfinished(rlp)?;
         if hash.len() > 32 {
             return Err(RLPDecodeError::InvalidLength);
