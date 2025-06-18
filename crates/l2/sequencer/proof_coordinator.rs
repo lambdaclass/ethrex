@@ -1,4 +1,4 @@
-use crate::sequencer::errors::ProverServerError;
+use crate::sequencer::errors::{ConnectionHandlerError, ProverServerError};
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_latest_sent_batch;
 use crate::utils::prover::proving_systems::{BatchProof, ProverType};
@@ -279,15 +279,17 @@ async fn handle_listens(state: &ProofCoordinatorState, listener: TcpListener) {
         let res = listener.accept().await;
         match res {
             Ok((stream, addr)) => {
+                let message = ConnInMessage::Connection { stream, addr };
                 // Cloning the ProofCoordinatorState structure to use the handle_connection() fn
                 // in every spawned task.
                 // The important fields are `Store` and `EthClient`
                 // Both fields are wrapped with an Arc, making it possible to clone
                 // the entire structure.
-                let mut connection_handler = ConnectionHandler::start(state.clone());
-                let _ = connection_handler
-                    .cast(ConnInMessage::Connection { stream, addr })
-                    .await;
+                let _ = ConnectionHandler::spawn(state.clone(), message)
+                    .await
+                    .inspect_err(|err| {
+                        error!("Error starting ConnectionHandler: {err}");
+                    });
             }
             Err(e) => {
                 error!("Failed to accept connection: {e}");
@@ -299,6 +301,19 @@ async fn handle_listens(state: &ProofCoordinatorState, listener: TcpListener) {
 }
 
 struct ConnectionHandler;
+
+impl ConnectionHandler {
+    async fn spawn(
+        state: ProofCoordinatorState,
+        message: ConnInMessage,
+    ) -> Result<(), ConnectionHandlerError> {
+        let mut connection_handler = ConnectionHandler::start(state);
+        connection_handler
+            .cast(message)
+            .await
+            .map_err(ConnectionHandlerError::GenServerError)
+    }
+}
 
 pub enum ConnInMessage {
     Connection { stream: TcpStream, addr: SocketAddr },
