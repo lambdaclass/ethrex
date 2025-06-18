@@ -12,10 +12,10 @@ interface IL1Messenger {
     /// @param data the data being sent
     event L1Message(
         address indexed senderOnL2,
-        bytes indexed data
+        bytes32 indexed data
     );
 
     /// @notice Sends the given data to the L1
     /// @param data data to be sent to L1
-    function sendMessageToL1(bytes calldata data) external;
+    function sendMessageToL1(bytes32 data) external;
 }

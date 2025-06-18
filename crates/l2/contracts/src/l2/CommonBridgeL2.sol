@@ -18,9 +18,9 @@ contract CommonBridgeL2 is ICommonBridgeL2 {
         (bool success, ) = BURN_ADDRESS.call{value: msg.value}("");
         require(success, "Failed to burn Ether");
 
-        IL1Messenger(L1_MESSENGER).sendMessageToL1(abi.encodePacked(
+        IL1Messenger(L1_MESSENGER).sendMessageToL1(keccak256(abi.encodePacked(
             _receiverOnL1,
             msg.value
-        ));
+        )));
     }
 }
