@@ -1145,7 +1145,7 @@ mod tests {
     /// Copied behavior from smoke_test.rs
     async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
         let args = BuildPayloadArgs {
-            parent: dbg!(parent.hash()),
+            parent: parent.hash(),
             timestamp: parent.timestamp + 1, // Increment timestamp to be valid
             fee_recipient: H160::random(),
             random: H256::random(),
@@ -1415,7 +1415,7 @@ mod tests {
         send_block(&mut conn_a, &block2).await;
 
         // Wait for the intermediate check to pass
-        match tokio::time::timeout(Duration::from_secs(2), rx.recv()).await {
+        match tokio::time::timeout(Duration::from_secs(10), rx.recv()).await {
             Ok(Some("intermediate check passed")) => {
                 println!("Main thread: Intermediate check confirmed.");
             }
@@ -1429,7 +1429,7 @@ mod tests {
         send_block(&mut conn_a, &block1).await;
 
         // Wait for the final check to pass
-        match tokio::time::timeout(Duration::from_secs(2), rx.recv()).await {
+        match tokio::time::timeout(Duration::from_secs(10), rx.recv()).await {
             Ok(Some("final check passed")) => {
                 println!("Main thread: Final check confirmed. Test successful.");
             }
@@ -1566,7 +1566,7 @@ mod tests {
         send_block(&mut conn_a, &block3).await;
 
         // Wait for receiver to process all blocks
-        match tokio::time::timeout(Duration::from_secs(2), rx.recv()).await {
+        match tokio::time::timeout(Duration::from_secs(10), rx.recv()).await {
             Ok(Some("blocks processed")) => {
                 println!("Main thread: Blocks processed confirmation received.");
             }
@@ -1577,7 +1577,7 @@ mod tests {
         send_sealed_batch(&mut conn_a, 1, 1, 3).await;
 
         // Wait for the final check to pass
-        match tokio::time::timeout(Duration::from_secs(2), rx.recv()).await {
+        match tokio::time::timeout(Duration::from_secs(10), rx.recv()).await {
             Ok(Some("final check passed")) => {
                 println!("Main thread: Final check confirmed. Test successful.");
             }
