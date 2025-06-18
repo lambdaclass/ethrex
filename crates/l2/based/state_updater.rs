@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use ethrex_blockchain::fork_choice::apply_fork_choice;
+use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
 use ethrex_common::{Address, types::Block};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::{EthClient, clients::Overrides};
@@ -44,12 +44,14 @@ pub struct StateUpdaterState {
     rollup_store: StoreRollup,
     check_interval_ms: u64,
     sequencer_state: SequencerState,
+    blockchain: Arc<Blockchain>,
 }
 
 impl StateUpdaterState {
     pub fn new(
         sequencer_cfg: SequencerConfig,
         sequencer_state: SequencerState,
+        blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
     ) -> Result<Self, StateUpdaterError> {
@@ -64,6 +66,7 @@ impl StateUpdaterState {
             rollup_store,
             check_interval_ms: sequencer_cfg.based.state_updater.check_interval_ms,
             sequencer_state,
+            blockchain,
         })
     }
 }
@@ -84,10 +87,17 @@ impl StateUpdater {
     pub async fn spawn(
         sequencer_cfg: SequencerConfig,
         sequencer_state: SequencerState,
+        blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
     ) -> Result<(), StateUpdaterError> {
-        let state = StateUpdaterState::new(sequencer_cfg, sequencer_state, store, rollup_store)?;
+        let state = StateUpdaterState::new(
+            sequencer_cfg,
+            sequencer_state,
+            blockchain,
+            store,
+            rollup_store,
+        )?;
         let mut state_updater = StateUpdater::start(state);
         state_updater
             .cast(InMessage::UpdateState)
@@ -185,9 +195,11 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
                 info!("Node is now the lead sequencer.");
             }
             SequencerStatus::Following => {
+                state.blockchain.set_synced();
                 info!("Node is up to date and following the lead sequencer.");
             }
             SequencerStatus::Syncing => {
+                state.blockchain.set_not_synced();
                 info!("Node is synchronizing to catch up with the latest state.");
             }
         }

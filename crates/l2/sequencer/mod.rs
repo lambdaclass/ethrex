@@ -131,6 +131,7 @@ pub async fn start_l2(
         let _ = StateUpdater::spawn(
             cfg.clone(),
             shared_state.clone(),
+            blockchain.clone(),
             store.clone(),
             rollup_store.clone(),
         )

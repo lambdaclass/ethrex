@@ -150,11 +150,9 @@ impl GenServer for BlockFetcher {
         state: &mut Self::State,
     ) -> spawned_concurrency::CastResponse {
         if let SequencerStatus::Syncing = state.sequencer_state.status().await {
-            state.blockchain.set_not_synced();
             let _ = fetch(state).await.inspect_err(|err| {
                 error!("Block Fetcher Error: {err}");
             });
-            state.blockchain.set_synced();
         }
         send_after(
             Duration::from_millis(state.fetch_interval_ms),
