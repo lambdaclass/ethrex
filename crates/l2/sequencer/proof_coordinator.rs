@@ -279,13 +279,12 @@ async fn handle_listens(state: &ProofCoordinatorState, listener: TcpListener) {
         let res = listener.accept().await;
         match res {
             Ok((stream, addr)) => {
-                let message = ConnInMessage::Connection { stream, addr };
                 // Cloning the ProofCoordinatorState structure to use the handle_connection() fn
                 // in every spawned task.
                 // The important fields are `Store` and `EthClient`
                 // Both fields are wrapped with an Arc, making it possible to clone
                 // the entire structure.
-                let _ = ConnectionHandler::spawn(state.clone(), message)
+                let _ = ConnectionHandler::spawn(state.clone(), stream, addr)
                     .await
                     .inspect_err(|err| {
                         error!("Error starting ConnectionHandler: {err}");
@@ -305,11 +304,12 @@ struct ConnectionHandler;
 impl ConnectionHandler {
     async fn spawn(
         state: ProofCoordinatorState,
-        message: ConnInMessage,
+        stream: TcpStream,
+        addr: SocketAddr,
     ) -> Result<(), ConnectionHandlerError> {
         let mut connection_handler = ConnectionHandler::start(state);
         connection_handler
-            .cast(message)
+            .cast(ConnInMessage::Connection { stream, addr })
             .await
             .map_err(ConnectionHandlerError::GenServerError)
     }
