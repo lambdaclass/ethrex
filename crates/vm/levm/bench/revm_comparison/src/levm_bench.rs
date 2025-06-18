@@ -11,7 +11,6 @@ use ethrex_levm::{
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
 use std::hint::black_box;
-use std::u64;
 use std::{collections::HashMap, sync::Arc};
 
 // Use a constant byte array to define the Address at compile time.
