@@ -16,6 +16,7 @@ use ethrex_rlp::{
 };
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
+use smallvec::{SmallVec, smallvec};
 
 use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
 
@@ -228,27 +229,23 @@ impl Node {
 
     /// Decodes the node
     pub fn decode_raw(rlp: &[u8]) -> Result<Self, RLPDecodeError> {
-        let mut rlp_items = vec![];
+        let mut rlp_items: SmallVec<[&[u8]; 17]> = smallvec![];
         let mut decoder = Decoder::new(rlp)?;
         let mut item;
         // Get encoded fields
-        loop {
+        while !decoder.is_done() && rlp_items.len() < 17 {
             (item, decoder) = decoder.get_encoded_item()?;
             rlp_items.push(item);
-            // Check if we reached the end or if we decoded more items than the ones we need
-            if decoder.is_done() || rlp_items.len() > 17 {
-                break;
-            }
         }
         // Deserialize into node depending on the available fields
         Ok(match rlp_items.len() {
             // Leaf or Extension Node
             2 => {
-                let (path, _) = decode_bytes(&rlp_items[0])?;
+                let (path, _) = decode_bytes(rlp_items[0])?;
                 let path = Nibbles::decode_compact(path);
                 if path.is_leaf() {
                     // Decode as Leaf
-                    let (value, _) = decode_bytes(&rlp_items[1])?;
+                    let (value, _) = decode_bytes(rlp_items[1])?;
                     LeafNode {
                         partial: path,
                         value: value.to_vec(),
@@ -258,15 +255,15 @@ impl Node {
                     // Decode as Extension
                     ExtensionNode {
                         prefix: path,
-                        child: decode_child(&rlp_items[1]).into(),
+                        child: decode_child(rlp_items[1]).into(),
                     }
                     .into()
                 }
             }
             // Branch Node
             17 => {
-                let choices = array::from_fn(|i| decode_child(&rlp_items[i]).into());
-                let (value, _) = decode_bytes(&rlp_items[16])?;
+                let choices = array::from_fn(|i| decode_child(rlp_items[i]).into());
+                let (value, _) = decode_bytes(rlp_items[16])?;
                 BranchNode {
                     choices,
                     value: value.to_vec(),
