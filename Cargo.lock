@@ -114,7 +114,7 @@ dependencies = [
 [[package]]
 name = "aligned-sdk"
 version = "0.1.0"
-source = "git+https://github.com/yetanotherco/aligned_layer?rev=124eba82524bd95d1419ace19f8d959c492ffee0#124eba82524bd95d1419ace19f8d959c492ffee0"
+source = "git+https://github.com/yetanotherco/aligned_layer?tag=v0.16.1#d6c5ffd0b7e4952724c4ee167187bf0945238d0d"
 dependencies = [
  "ciborium",
  "dialoguer",
@@ -3717,6 +3717,7 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "secp256k1",
  "serde_json",
  "sha3",
  "thiserror 2.0.12",
@@ -3966,6 +3967,7 @@ dependencies = [
  "revm 19.7.0",
  "revm-inspectors",
  "revm-primitives 15.2.0",
+ "secp256k1",
  "serde",
  "serde_json",
  "tokio",
