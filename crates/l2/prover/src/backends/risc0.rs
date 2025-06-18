@@ -1,6 +1,4 @@
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
-use ethrex_l2::sequencer::proof_coordinator::ProofData;
-use ethrex_l2::utils::prover::proving_systems::BatchProof;
 use ethrex_l2_sdk::calldata::Value;
 use risc0_ethereum_contracts::encode_seal;
 use risc0_zkvm::{
@@ -49,9 +47,9 @@ pub fn verify(receipt: &Receipt) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub fn to_batch_proof(
-    proof: Receipt,
+    proof: ProveOutput,
     _aligned_mode: bool,
-) -> Result<BatchProof, Box<dyn std::error::Error>> {
+) -> Result<ProofData, Box<dyn std::error::Error>> {
     Ok(BatchProof::ProofCalldata(to_calldata(proof)))
 }
 
