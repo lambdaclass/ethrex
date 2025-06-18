@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750264498236,
+  "lastUpdate": 1750264715757,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13315,6 +13315,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184829639977,
             "range": "± 1053944978",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f72399e5d22655ba882cf4fabfcb4b0010cbb58d",
+          "message": "fix(l2): update sp1 verifier contract version (#3194)\n\n**Motivation**\n\nThe contract was set for an old version of SP1. This PR bumps it to\n5.0.0.\n\nAlso modified the git clone function to update existing (local) cloned\nrepos",
+          "timestamp": "2025-06-18T15:45:28Z",
+          "tree_id": "81272f7d70a21d4e13f8d757352580603040a839",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f72399e5d22655ba882cf4fabfcb4b0010cbb58d"
+        },
+        "date": 1750264707804,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182252901436,
+            "range": "± 570168225",
             "unit": "ns/iter"
           }
         ]
