@@ -16,6 +16,8 @@
 
 - [Layer 2](./l2/README.md)
   - [Getting started](./l2/getting_started.md)
+    - [Depositing assets](./l2/guides/depositing.md)
+    - [Withdrawing assets](./l2/guides/withdrawing.md)
   - [General overview](./l2/overview.md)
     - [State diffs](./l2/state_diffs.md)
     - [Withdrawals](./l2/withdrawals.md)
