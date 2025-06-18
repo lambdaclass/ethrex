@@ -1,5 +1,6 @@
 use crate::authentication::authenticate;
 use crate::engine::{
+    ExchangeCapabilitiesRequest,
     exchange_transition_config::ExchangeTransitionConfigV1Req,
     fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
     payload::{
@@ -7,7 +8,6 @@ use crate::engine::{
         GetPayloadV2Request, GetPayloadV3Request, GetPayloadV4Request, NewPayloadV1Request,
         NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
-    ExchangeCapabilitiesRequest,
 };
 use crate::eth::block::ExecutionWitness;
 use crate::eth::{
@@ -41,10 +41,10 @@ use crate::utils::{
 use crate::{admin, net};
 use crate::{eth, mempool};
 use axum::extract::State;
-use axum::{http::StatusCode, routing::post, Json, Router};
+use axum::{Json, Router, http::StatusCode, routing::post};
 use axum_extra::{
-    headers::{authorization::Bearer, Authorization},
     TypedHeader,
+    headers::{Authorization, authorization::Bearer},
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
@@ -438,6 +438,7 @@ pub async fn map_mempool_requests(
     match req.method.as_str() {
         // TODO: The endpoint name matches geth's endpoint for compatibility, consider changing it in the future
         "txpool_content" => mempool::content(contex).await,
+        "txpool_status" => mempool::status(contex).await,
         unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
     }
 }
@@ -478,8 +479,8 @@ mod tests {
     use super::*;
     use crate::utils::test_utils::default_context_with_storage;
     use ethrex_common::{
-        types::{ChainConfig, Genesis},
         H160,
+        types::{ChainConfig, Genesis},
     };
     use ethrex_storage::{EngineType, Store};
     use sha3::{Digest, Keccak256};

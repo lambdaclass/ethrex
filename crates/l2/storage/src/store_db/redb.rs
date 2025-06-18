@@ -1,8 +1,8 @@
 use std::{panic::RefUnwindSafe, sync::Arc};
 
 use ethrex_common::{
-    types::{Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -65,7 +65,7 @@ impl RedBStoreRollup {
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let write_txn = db.begin_write()?;
+            let write_txn = db.begin_write().map_err(Box::new)?;
             write_txn.open_table(table)?.insert(key, value)?;
             write_txn.commit()?;
 
@@ -89,7 +89,7 @@ impl RedBStoreRollup {
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let read_txn = db.begin_read()?;
+            let read_txn = db.begin_read().map_err(Box::new)?;
             let table = read_txn.open_table(table)?;
             let result = table.get(key)?;
             Ok(result)
@@ -102,7 +102,7 @@ impl RedBStoreRollup {
 pub fn init_db() -> Result<Database, StoreError> {
     let db = Database::create("ethrex_l2.redb")?;
 
-    let table_creation_txn = db.begin_write()?;
+    let table_creation_txn = db.begin_write().map_err(Box::new)?;
 
     table_creation_txn.open_table(BATCHES_BY_BLOCK_NUMBER_TABLE)?;
     table_creation_txn.open_table(WITHDRAWALS_BY_BATCH)?;
@@ -306,7 +306,7 @@ impl StoreEngineRollup for RedBStoreRollup {
             return Ok(());
         };
         let last_kept_block = *kept_blocks.iter().max().unwrap_or(&0);
-        let txn = self.db.begin_write()?;
+        let txn = self.db.begin_write().map_err(Box::new)?;
         delete_starting_at(&txn, BATCHES_BY_BLOCK_NUMBER_TABLE, last_kept_block + 1)?;
         delete_starting_at(&txn, WITHDRAWALS_BY_BATCH, batch_number + 1)?;
         delete_starting_at(&txn, BLOCK_NUMBERS_BY_BATCH, batch_number + 1)?;

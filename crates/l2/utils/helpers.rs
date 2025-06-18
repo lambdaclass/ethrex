@@ -1,6 +1,6 @@
 use ethrex_common::{
-    types::{Receipt, Transaction, TxKind},
     H256,
+    types::{Receipt, Transaction, TxKind},
 };
 use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
 
@@ -14,11 +14,10 @@ const WITHDRAWAL_EVENT_SELECTOR: H256 = H256([
 pub fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> bool {
     if let TxKind::Call(to) = tx.to() {
         if to == COMMON_BRIDGE_L2_ADDRESS {
-            receipt.logs.iter().any(|log| {
-                log.topics
-                    .iter()
-                    .any(|topic| *topic == WITHDRAWAL_EVENT_SELECTOR)
-            })
+            receipt
+                .logs
+                .iter()
+                .any(|log| log.topics.contains(&WITHDRAWAL_EVENT_SELECTOR))
         } else {
             false
         }

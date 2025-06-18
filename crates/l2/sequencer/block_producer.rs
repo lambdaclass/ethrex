@@ -5,20 +5,25 @@ use std::{
 };
 
 use ethrex_blockchain::{
+    Blockchain,
     fork_choice::apply_fork_choice,
-    payload::{create_payload, BuildPayloadArgs},
-    validate_block, Blockchain,
+    payload::{BuildPayloadArgs, create_payload},
+    validate_block,
 };
 use ethrex_common::Address;
 use ethrex_storage::Store;
 use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
 use payload_builder::build_payload;
-use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
+use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
 use spawned_rt::mpsc::Sender;
 use tracing::{debug, error, info};
 
-use crate::{sequencer::execution_cache::ExecutionCache, BlockProducerConfig, SequencerConfig};
+use crate::{
+    BlockProducerConfig, SequencerConfig,
+    based::sequencer_state::{SequencerState, SequencerStatus},
+    sequencer::execution_cache::ExecutionCache,
+};
 
 use super::errors::BlockProducerError;
 
@@ -31,6 +36,7 @@ pub struct BlockProducerState {
     store: Store,
     blockchain: Arc<Blockchain>,
     execution_cache: Arc<ExecutionCache>,
+    sequencer_state: SequencerState,
     block_time_ms: u64,
     coinbase_address: Address,
     elasticity_multiplier: u64,
@@ -42,6 +48,7 @@ impl BlockProducerState {
         store: Store,
         blockchain: Arc<Blockchain>,
         execution_cache: Arc<ExecutionCache>,
+        sequencer_state: SequencerState,
     ) -> Self {
         let BlockProducerConfig {
             block_time_ms,
@@ -52,6 +59,7 @@ impl BlockProducerState {
             store,
             blockchain,
             execution_cache,
+            sequencer_state,
             block_time_ms: *block_time_ms,
             coinbase_address: *coinbase_address,
             elasticity_multiplier: *elasticity_multiplier,
@@ -77,9 +85,15 @@ impl BlockProducer {
         blockchain: Arc<Blockchain>,
         execution_cache: Arc<ExecutionCache>,
         cfg: SequencerConfig,
+        sequencer_state: SequencerState,
     ) -> Result<(), BlockProducerError> {
-        let state =
-            BlockProducerState::new(&cfg.block_producer, store, blockchain, execution_cache);
+        let state = BlockProducerState::new(
+            &cfg.block_producer,
+            store,
+            blockchain,
+            execution_cache,
+            sequencer_state,
+        );
         let mut block_producer = BlockProducer::start(state);
         block_producer
             .cast(InMessage::Produce)
@@ -116,9 +130,11 @@ impl GenServer for BlockProducer {
         state: &mut Self::State,
     ) -> CastResponse {
         // Right now we only have the Produce message, so we ignore the message
-        let _ = produce_block(state)
-            .await
-            .inspect_err(|e| error!("Block Producer Error: {e}"));
+        if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
+            let _ = produce_block(state)
+                .await
+                .inspect_err(|e| error!("Block Producer Error: {e}"));
+        }
         send_after(
             Duration::from_millis(state.block_time_ms),
             tx.clone(),

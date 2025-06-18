@@ -15,28 +15,28 @@ use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_levm::constants::{SYS_CALL_GAS_LIMIT, TX_BASE_COST};
 
-use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;
+use revm::db::states::bundle_state::BundleRetention;
 
-use revm::{
-    primitives::{BlobExcessGasAndPrice, BlockEnv, TxEnv, B256},
-    Evm,
-};
 use revm::{Database, DatabaseCommit};
+use revm::{
+    Evm,
+    primitives::{B256, BlobExcessGasAndPrice, BlockEnv, TxEnv},
+};
 use revm_inspectors::access_list::AccessListInspector;
 // Rename imported types for clarity
 use ethrex_common::{
-    types::{
-        requests::Requests, Block, BlockHeader, GenericTransaction, Receipt, Transaction, TxKind,
-        Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
-    },
     Address,
+    types::{
+        Block, BlockHeader, GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt,
+        Transaction, TxKind, Withdrawal, requests::Requests,
+    },
 };
 use revm_primitives::Bytes;
 use revm_primitives::{
-    ruint::Uint, AccessList as RevmAccessList, AccessListItem, Address as RevmAddress,
+    AccessList as RevmAccessList, AccessListItem, Address as RevmAddress,
     Authorization as RevmAuthorization, FixedBytes, SignedAuthorization, SpecId,
-    TxKind as RevmTxKind, U256 as RevmU256,
+    TxKind as RevmTxKind, U256 as RevmU256, ruint::Uint,
 };
 use std::cmp::min;
 
@@ -142,7 +142,7 @@ impl REVM {
             None => {
                 return Err(EvmError::Header(
                     "parent_beacon_block_root field is missing".to_string(),
-                ))
+                ));
             }
             Some(beacon_root) => beacon_root,
         };
@@ -211,11 +211,16 @@ impl REVM {
             } => Ok(output.into()),
             // EIP-7002 specifies that a failed system call invalidates the entire block.
             ExecutionResult::Halt { reason, gas_used } => {
-                let err_str = format!("Transaction HALT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
+                let err_str = format!(
+                    "Transaction HALT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}"
+                );
                 Err(EvmError::SystemContractCallFailed(err_str))
             }
             ExecutionResult::Revert { gas_used, output } => {
-                let err_str = format!("Transaction REVERT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
+                let err_str = format!(
+                    "Transaction REVERT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}",
+                    output
+                );
                 Err(EvmError::SystemContractCallFailed(err_str))
             }
         }
@@ -252,11 +257,16 @@ impl REVM {
             } => Ok(output.into()),
             // EIP-7251 specifies that a failed system call invalidates the entire block.
             ExecutionResult::Halt { reason, gas_used } => {
-                let err_str = format!("Transaction HALT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
+                let err_str = format!(
+                    "Transaction HALT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}"
+                );
                 Err(EvmError::SystemContractCallFailed(err_str))
             }
             ExecutionResult::Revert { gas_used, output } => {
-                let err_str = format!("Transaction REVERT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
+                let err_str = format!(
+                    "Transaction REVERT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}",
+                    output
+                );
                 Err(EvmError::SystemContractCallFailed(err_str))
             }
         }

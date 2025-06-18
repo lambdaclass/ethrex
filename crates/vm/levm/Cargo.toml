@@ -44,6 +44,7 @@ default = []
 c-kzg = ["ethrex-common/c-kzg"]
 ethereum_foundation_tests = []
 l2 = []
+debug = []
 
 [lints.rust]
 unsafe_code = "forbid"

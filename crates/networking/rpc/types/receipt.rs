@@ -1,11 +1,11 @@
 use ethrex_common::{
+    Address, Bloom, Bytes, H256,
     constants::GAS_PER_BLOB,
     serde_utils,
     types::{
-        bloom_from_logs, BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind,
-        TxType,
+        BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType,
+        bloom_from_logs,
     },
-    Address, Bloom, Bytes, H256,
 };
 use ethrex_vm::create_contract_address;
 
@@ -67,7 +67,7 @@ impl From<Receipt> for RpcReceiptInfo {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcLog {
     #[serde(flatten)]
@@ -102,7 +102,7 @@ impl RpcLog {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcLogInfo {
     pub address: Address,
@@ -205,8 +205,8 @@ impl RpcReceiptTxInfo {
 mod tests {
     use super::*;
     use ethrex_common::{
-        types::{Log, TxType},
         Bytes,
+        types::{Log, TxType},
     };
     use hex_literal::hex;
 

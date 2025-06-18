@@ -12,17 +12,19 @@ use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
-use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
-use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
+use ethrex_common::types::MempoolTransaction;
+use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
+use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
-    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
-    validate_prague_header_fields, validate_pre_cancun_header_fields, AccountUpdate, Block,
-    BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
+    AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
+    Receipt, Transaction, compute_receipts_root, validate_block_header,
+    validate_cancun_header_fields, validate_prague_header_fields,
+    validate_pre_cancun_header_fields,
 };
-use ethrex_common::{Address, TrieLogger, H256};
-use ethrex_storage::{error::StoreError, hash_address, hash_key, Store, UpdateBatch};
+use ethrex_common::{Address, H256, TrieLogger};
+use ethrex_metrics::metrics;
+use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
 use mempool::Mempool;
@@ -32,6 +34,9 @@ use std::sync::{Arc, Mutex};
 use std::{ops::Div, time::Instant};
 
 use vm::StoreVmDatabase;
+
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
@@ -378,10 +383,17 @@ impl Blockchain {
             let storage_fraction = (storage_time * 100_f64 / interval).round() as u64;
             let execution_time_per_gigagas = (execution_time / as_gigas).round() as u64;
             let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
-            let base_log =
-                format!(
+            metrics!(
+                let _ = METRICS_BLOCKS.set_block_number(block.header.number);
+                METRICS_BLOCKS.set_latest_gas_used(block.header.gas_used as f64);
+                METRICS_BLOCKS.set_latest_block_gas_limit(block.header.gas_limit as f64);
+                METRICS_BLOCKS.set_latest_gigagas(throughput);
+            );
+            let base_log = format!(
                 "[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {:.0} ms. #Txs: {}.",
-                throughput, interval, block.body.transactions.len()
+                throughput,
+                interval,
+                block.body.transactions.len()
             );
             let extra_log = if as_gigas > 0.0 {
                 format!(
@@ -480,6 +492,9 @@ impl Blockchain {
             .last()
             .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
 
+        let last_block_number = last_block.header.number;
+        let last_block_gas_limit = last_block.header.gas_limit;
+
         // Apply the account updates over all blocks and compute the new state root
         let account_updates_list = self
             .storage
@@ -507,16 +522,29 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?;
 
-        let elapsed_total = interval.elapsed().as_millis();
+        let elapsed_seconds = interval.elapsed().as_millis() / 1000;
         let mut throughput = 0.0;
-        if elapsed_total != 0 && total_gas_used != 0 {
+        if elapsed_seconds != 0 && total_gas_used != 0 {
             let as_gigas = (total_gas_used as f64).div(10_f64.powf(9_f64));
-            throughput = (as_gigas) / (elapsed_total as f64) * 1000_f64;
+            throughput = (as_gigas) / (elapsed_seconds as f64);
         }
 
+        metrics!(
+            let _ = METRICS_BLOCKS.set_block_number(last_block_number);
+            METRICS_BLOCKS.set_latest_block_gas_limit(last_block_gas_limit as f64);
+            // Set the latest gas used as the average gas used per block in the batch
+            METRICS_BLOCKS.set_latest_gas_used(total_gas_used as f64 / blocks_len as f64);
+            METRICS_BLOCKS.set_latest_gigagas(throughput);
+        );
+
         info!(
-            "[METRICS] Executed and stored: Range: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
-            blocks_len, transactions_count, total_gas_used, throughput
+            "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
+            blocks_len,
+            last_block_number,
+            last_block_gas_limit,
+            transactions_count,
+            total_gas_used,
+            throughput
         );
 
         Ok(())

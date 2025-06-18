@@ -1,4 +1,5 @@
 use crate::{
+    DEFAULT_L2_DATADIR,
     cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
         get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
@@ -6,13 +7,12 @@ use crate::{
     },
     l2::options::Options,
     networks::Network,
-    utils::{parse_private_key, set_datadir, store_node_config_file, NodeConfigFile},
-    DEFAULT_L2_DATADIR,
+    utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
 };
 use clap::Subcommand;
 use ethrex_common::{
-    types::{batch::Batch, bytes_from_blob, BlobsBundle, BlockHeader, BYTES_PER_BLOB},
     Address, U256,
+    types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
 };
 use ethrex_l2::SequencerConfig;
 use ethrex_l2_common::state_diff::StateDiff;
@@ -20,8 +20,8 @@ use ethrex_l2_sdk::call_contract;
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
-    clients::{beacon::BeaconClient, eth::BlockByNumber},
     EthClient,
+    clients::{beacon::BeaconClient, eth::BlockByNumber},
 };
 use ethrex_storage::{EngineType, Store, UpdateBatch};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
@@ -57,9 +57,7 @@ pub enum Command {
         #[arg(long = "force", required = false, action = clap::ArgAction::SetTrue)]
         force: bool,
     },
-    #[command(
-        about = "Launch a server that listens for Blobs submissions and saves them offline."
-    )]
+    #[command(about = "Launch a server that listens for Blobs submissions and saves them offline.")]
     BlobsSaver {
         #[arg(
             short = 'c',
@@ -455,7 +453,7 @@ impl Command {
 
                             // Store batch info in L2 storage
                             rollup_store
-                                .store_batch(batch)
+                                .seal_batch(batch)
                                 .await
                                 .expect("Error storing batch");
                         }

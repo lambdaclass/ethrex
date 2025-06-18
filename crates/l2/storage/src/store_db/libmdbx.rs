@@ -5,14 +5,15 @@ use std::{
 };
 
 use ethrex_common::{
-    types::{Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use libmdbx::{
+    DatabaseOptions, Mode, PageSize, RW, ReadWriteOptions,
     orm::{Database, Table, Transaction},
-    table, table_info, DatabaseOptions, Mode, PageSize, ReadWriteOptions, RW,
+    table, table_info,
 };
 
 use crate::{
