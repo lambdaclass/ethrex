@@ -2,7 +2,7 @@
 
 This document contains a detailed explanation of the changes needed to handle withdrawals and the withdrawal flow.
 
-First, we need to understand the generic 
+First, we need to understand the generic mechanism behind it:
 
 ## L1Message
 
@@ -10,9 +10,9 @@ To allow generic L2->L1 messages, a system contract is added which allows sendin
 
 ```
 struct L1Message {
-    tx: H256,
+    tx_hash: H256, // L2 transaction where it was included
     address: Address, // Who called L1Message.sol
-    data: bytes // Arbitrary data
+    data: bytes32 // payload
 }
 ```
 
