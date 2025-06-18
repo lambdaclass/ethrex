@@ -184,9 +184,12 @@ impl Store {
     // 4. Commit the transaction
     //
     // This function assumes that `new_canonical_blocks` is sorted by block number.
-    pub async fn reconstruct_snapshots_for_new_canonical_chain(&self) -> Result<(), StoreError> {
+    pub async fn reconstruct_snapshots_for_new_canonical_chain(
+        &self,
+        head: H256,
+    ) -> Result<(), StoreError> {
         self.engine.undo_writes_until_canonical().await?;
-        self.engine.replay_writes_until_head().await
+        self.engine.replay_writes_until_head(head).await
     }
 
     fn build_account_storage_logs<'a>(

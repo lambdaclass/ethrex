@@ -168,7 +168,7 @@ impl StoreEngine for Store {
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
         todo!()
     }
-    async fn replay_writes_until_head(&self) -> Result<(), StoreError> {
+    async fn replay_writes_until_head(&self, _head: H256) -> Result<(), StoreError> {
         todo!()
     }
 

@@ -27,7 +27,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError>;
-    async fn replay_writes_until_head(&self) -> Result<(), StoreError>;
+    async fn replay_writes_until_head(&self, head: H256) -> Result<(), StoreError>;
 
     async fn store_account_info_logs(
         &self,

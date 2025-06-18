@@ -113,7 +113,7 @@ pub async fn apply_fork_choice(
     store.set_canonical_block(head.number, head_hash).await?;
 
     store
-        .reconstruct_snapshots_for_new_canonical_chain()
+        .reconstruct_snapshots_for_new_canonical_chain(head_hash)
         .await?;
 
     if let Some(finalized) = finalized_res {

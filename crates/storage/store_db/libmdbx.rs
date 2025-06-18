@@ -535,7 +535,7 @@ impl StoreEngine for Store {
     }
     // NOTE: assumes current flat representation corresponds to a block
     // in the canonical chain.
-    async fn replay_writes_until_head(&self) -> Result<(), StoreError> {
+    async fn replay_writes_until_head(&self, head: H256) -> Result<(), StoreError> {
         let inner = || -> Result<_, _> {
             let tx = self.db.begin_readwrite()?;
             let current_snapshot_meta = tx
@@ -614,6 +614,9 @@ impl StoreEngine for Store {
                     }
 
                     found_storage_log = storage_log_cursor.next()?;
+                }
+                if head == key.1 {
+                    break;
                 }
             }
             tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, key)?;

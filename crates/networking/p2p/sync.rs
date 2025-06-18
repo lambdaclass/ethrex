@@ -457,6 +457,11 @@ impl Syncer {
                     .set_latest_valid_ancestor(failed_block_hash, last_valid_hash)
                     .await?;
 
+                // We also need to use the correct snapshot.
+                store
+                    .reconstruct_snapshots_for_new_canonical_chain(last_valid_hash)
+                    .await
+                    .map_err(SyncError::Store)?;
                 // TODO(#2127): Just marking the failing ancestor is enough for the the Missing Ancestors hive test,
                 // we want to look at a more robust solution in the future if needed.
             }
@@ -466,7 +471,7 @@ impl Syncer {
 
         // We also need to use the correct snapshot.
         store
-            .reconstruct_snapshots_for_new_canonical_chain()
+            .reconstruct_snapshots_for_new_canonical_chain(last_block.hash())
             .await
             .map_err(SyncError::Store)?;
 
