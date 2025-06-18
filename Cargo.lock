@@ -4109,6 +4109,7 @@ dependencies = [
  "libmdbx",
  "proptest",
  "rand 0.8.5",
+ "rayon",
  "serde",
  "serde_json",
  "sha3",
