@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750196019324,
+  "lastUpdate": 1750244470412,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16009,6 +16009,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.008381307978723404,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "azteca1998@users.noreply.github.com",
+            "name": "MrAzteca",
+            "username": "azteca1998"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e053c95bb6d3addf996f47a50abe80edf93cbb78",
+          "message": "fix(core): fix `Trie::verify_range` for proof of absences. (#3146)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-17T14:23:16Z",
+          "tree_id": "66b556e43e4e00d6df3414859960b48ee24cdd10",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e053c95bb6d3addf996f47a50abe80edf93cbb78"
+        },
+        "date": 1750244469998,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008444190246516613,
             "unit": "Mgas/s"
           }
         ]
