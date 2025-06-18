@@ -64,12 +64,14 @@ pub struct RLPxConnectionState(pub InnerState);
 pub struct Initiator {
     pub(crate) context: P2PContext,
     pub(crate) node: Node,
+    pub(crate) stream: Arc<TcpStream>,
 }
 
 #[derive(Clone)]
 pub struct Receiver {
     pub(crate) context: P2PContext,
     pub(crate) peer_addr: SocketAddr,
+    pub(crate) stream: Arc<TcpStream>,
 }
 
 #[derive(Clone)]
@@ -106,21 +108,24 @@ pub enum InnerState {
 }
 
 impl RLPxConnectionState {
-    pub fn new_as_receiver(context: P2PContext, peer_addr: SocketAddr) -> Self {
-        Self(InnerState::Receiver(Receiver { context, peer_addr }))
+    pub fn new_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) -> Self {
+        Self(InnerState::Receiver(Receiver {
+            context,
+            peer_addr,
+            stream: Arc::new(stream),
+        }))
     }
 
-    pub fn new_as_initiator(context: P2PContext, node: &Node) -> Self {
+    pub fn new_as_initiator(context: P2PContext, node: &Node, stream: TcpStream) -> Self {
         Self(InnerState::Initiator(Initiator {
             context,
             node: node.clone(),
+            stream: Arc::new(stream),
         }))
     }
 }
 
-pub enum CallMessage {
-    Init(TcpStream),
-}
+pub enum CallMessage {}
 
 pub enum CastMessage {
     PeerMessage(Message),
@@ -144,33 +149,30 @@ pub enum OutMessage {
 pub struct RLPxConnection {}
 
 impl RLPxConnection {
-    pub async fn spawn_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
-        let state = RLPxConnectionState::new_as_receiver(context, peer_addr);
-        let mut conn = RLPxConnection::start(state);
-        match conn.call(CallMessage::Init(stream)).await {
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => error!("Error starting RLPxConnection: {:?}", error),
-            Err(error) => error!("Unhandled error starting RLPxConnection: {:?}", error),
-        }
+    pub async fn spawn_as_receiver(
+        context: P2PContext,
+        peer_addr: SocketAddr,
+        stream: TcpStream,
+    ) -> Result<RLPxConnectionHandle, std::io::Error> {
+        let state = RLPxConnectionState::new_as_receiver(context, peer_addr, stream);
+        Ok(RLPxConnection::start(state))
     }
 
-    pub async fn spawn_as_initiator(context: P2PContext, node: &Node) {
+    pub async fn spawn_as_initiator(
+        context: P2PContext,
+        node: &Node,
+    ) -> Result<RLPxConnectionHandle, std::io::Error> {
         let addr = SocketAddr::new(node.ip, node.tcp_port);
         let stream = match tcp_stream(addr).await {
             Ok(result) => result,
             Err(error) => {
                 log_peer_debug(node, &format!("Error creating tcp connection {error}"));
                 context.table.lock().await.replace_peer(node.node_id());
-                return;
+                return Err(error);
             }
         };
-        let state = RLPxConnectionState::new_as_initiator(context, node);
-        let mut conn = RLPxConnection::start(state.clone());
-        match conn.call(CallMessage::Init(stream)).await {
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => error!("Error starting RLPxConnection: {:?}", error),
-            Err(error) => error!("Unhandled error starting RLPxConnection: {:?}", error),
-        }
+        let state = RLPxConnectionState::new_as_initiator(context, node, stream);
+        Ok(RLPxConnection::start(state.clone()))
     }
 }
 
@@ -185,18 +187,84 @@ impl GenServer for RLPxConnection {
         Self {}
     }
 
+    async fn init(
+        &mut self,
+        handle: &GenServerHandle<Self>,
+        mut state: Self::State,
+    ) -> Result<Self::State, Self::Error> {
+        let mut established_state = handshake::perform(state.0).await?;
+        log_peer_debug(&established_state.node, "Starting RLPx connection");
+        if let Err(reason) = post_handshake_checks(established_state.table.clone()).await {
+            connection_failed(
+                &mut established_state,
+                "Post handshake validations failed",
+                RLPxError::DisconnectSent(reason),
+            )
+            .await;
+            return Err(RLPxError::Disconnected());
+        }
+
+        if let Err(e) = exchange_hello_messages(&mut established_state).await {
+            connection_failed(&mut established_state, "Hello messages exchange failed", e).await;
+            return Err(RLPxError::Disconnected());
+        } else {
+            // Handshake OK: handle connection
+            // Create channels to communicate directly to the peer
+            let (peer_channels, sender) = PeerChannels::create(handle.clone());
+
+            // Updating the state to establish the backend channel
+            established_state.backend_channel = Some(sender);
+
+            // NOTE: if the peer came from the discovery server it will already be inserted in the table
+            // but that might not always be the case, so we try to add it to the table
+            // Note: we don't ping the node we let the validation service do its job
+            {
+                let mut table_lock = established_state.table.lock().await;
+                table_lock.insert_node_forced(established_state.node.clone());
+                table_lock.init_backend_communication(
+                    established_state.node.node_id(),
+                    peer_channels,
+                    established_state.capabilities.clone(),
+                    established_state.inbound,
+                );
+            }
+            init_peer_conn(&mut established_state).await?;
+            log_peer_debug(&established_state.node, "Peer connection initialized.");
+
+            // Send transactions transaction hashes from mempool at connection start
+            send_new_pooled_tx_hashes(&mut established_state).await?;
+
+            // TODO this should be replaced with spawned_concurrency::tasks::send_interval once it is properly implemented.
+            send_after(
+                TX_BROADCAST_INTERVAL,
+                handle.clone(),
+                CastMessage::SendNewPooledTxHashes,
+            );
+
+            // TODO this should be replaced with spawned_concurrency::tasks::send_interval once it is properly implemented.
+            send_after(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
+
+            spawn_listener(
+                handle.clone(),
+                &established_state.node,
+                &established_state.framed,
+            );
+
+            spawn_broadcast_listener(handle.clone(), &mut established_state);
+
+            // New state
+            state.0 = InnerState::Established(established_state);
+            Ok(state)
+        }
+    }
+
     async fn handle_call(
         &mut self,
-        message: Self::CallMsg,
-        handle: &RLPxConnectionHandle,
-        state: &mut Self::State,
+        _message: Self::CallMsg,
+        _handle: &RLPxConnectionHandle,
+        _state: &mut Self::State,
     ) -> CallResponse<Self::OutMsg> {
-        match message {
-            Self::CallMsg::Init(stream) => match init(state, handle, stream).await {
-                Ok(()) => CallResponse::Reply(Ok(OutMessage::Done)),
-                Err(e) => CallResponse::Reply(Err(e)),
-            },
-        }
+        CallResponse::Reply(Ok(OutMessage::Done))
     }
 
     async fn handle_cast(
@@ -243,7 +311,7 @@ impl GenServer for RLPxConnection {
                         &established_state.node,
                         &format!("Received broadcasted message: {msg}"),
                     );
-                    handle_broadcast(&mut established_state, (id, msg));
+                    let _ = handle_broadcast(&mut established_state, (id, msg)).await;
                 }
             }
             // Update the state
@@ -259,77 +327,6 @@ impl GenServer for RLPxConnection {
 
 async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, std::io::Error> {
     TcpSocket::new_v4()?.connect(addr).await
-}
-
-async fn init(
-    state: &mut RLPxConnectionState,
-    handle: &RLPxConnectionHandle,
-    stream: TcpStream,
-) -> Result<(), RLPxError> {
-    let mut established_state = handshake::perform(state, stream).await?;
-    log_peer_debug(&established_state.node, "Starting RLPx connection");
-    if let Err(reason) = post_handshake_checks(established_state.table.clone()).await {
-        connection_failed(
-            &mut established_state,
-            "Post handshake validations failed",
-            RLPxError::DisconnectSent(reason),
-        )
-        .await;
-        return Err(RLPxError::Disconnected());
-    }
-
-    if let Err(e) = exchange_hello_messages(&mut established_state).await {
-        connection_failed(&mut established_state, "Hello messages exchange failed", e).await;
-        return Err(RLPxError::Disconnected());
-    } else {
-        // Handshake OK: handle connection
-        // Create channels to communicate directly to the peer
-        let (peer_channels, sender) = PeerChannels::create(handle.clone());
-
-        // Updating the state to establish the backend channel
-        established_state.backend_channel = Some(sender);
-
-        // NOTE: if the peer came from the discovery server it will already be inserted in the table
-        // but that might not always be the case, so we try to add it to the table
-        // Note: we don't ping the node we let the validation service do its job
-        {
-            let mut table_lock = established_state.table.lock().await;
-            table_lock.insert_node_forced(established_state.node.clone());
-            table_lock.init_backend_communication(
-                established_state.node.node_id(),
-                peer_channels,
-                established_state.capabilities.clone(),
-                established_state.inbound,
-            );
-        }
-        init_peer_conn(&mut established_state).await?;
-        log_peer_debug(&established_state.node, "Peer connection initialized.");
-
-        // Send transactions transaction hashes from mempool at connection start
-        send_new_pooled_tx_hashes(&mut established_state).await?;
-
-        // TODO this should be replaced with spawned_concurrency::tasks::send_interval once it is properly implemented.
-        send_after(
-            TX_BROADCAST_INTERVAL,
-            handle.clone(),
-            CastMessage::SendNewPooledTxHashes,
-        );
-
-        // TODO this should be replaced with spawned_concurrency::tasks::send_interval once it is properly implemented.
-        send_after(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
-
-        spawn_listener(
-            handle.clone(),
-            &established_state.node,
-            &established_state.framed,
-        );
-
-        spawn_broadcast_listener(handle.clone(), &mut established_state);
-
-        // New state
-        state.0 = InnerState::Established(established_state);
-        Ok(())
-    }
 }
 
 async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxError> {

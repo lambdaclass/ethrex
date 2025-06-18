@@ -28,13 +28,15 @@ use rand::Rng;
 use sha3::{Digest, Keccak256};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    net::TcpStream,
     sync::Mutex,
 };
 use tokio_util::codec::Framed;
 use tracing::info;
 
-use super::{codec::RLPxCodec, server::RLPxConnectionState};
+use super::{
+    codec::RLPxCodec,
+    server::{Initiator, Receiver},
+};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
@@ -54,28 +56,30 @@ pub(crate) struct LocalState {
     pub(crate) init_message: Vec<u8>,
 }
 
-pub(crate) async fn perform(
-    state: &mut RLPxConnectionState,
-    mut stream: TcpStream,
-) -> Result<Established, RLPxError> {
-    match &state.0 {
-        InnerState::Initiator(initiator) => {
+pub(crate) async fn perform(state: InnerState) -> Result<Established, RLPxError> {
+    match state {
+        InnerState::Initiator(Initiator {
+            context,
+            node,
+            stream,
+        }) => {
             info!("Starting handshake as initiator!");
-            let context = &initiator.context;
-            let local_state =
-                send_auth(&context.signer, initiator.node.public_key, &mut stream).await?;
-            let remote_state =
-                receive_ack(&context.signer, initiator.node.public_key, &mut stream).await?;
+            let mut stream = match Arc::try_unwrap(stream) {
+                Ok(s) => s,
+                Err(_) => return Err(RLPxError::StateError("Cannot use the stream".to_string())),
+            };
+            let local_state = send_auth(&context.signer, node.public_key, &mut stream).await?;
+            let remote_state = receive_ack(&context.signer, node.public_key, &mut stream).await?;
             // Local node is initator
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
-            log_peer_debug(&initiator.node, "Completed handshake as initiator!");
+            log_peer_debug(&node, "Completed handshake as initiator!");
             Ok(Established {
                 signer: context.signer.clone(),
                 framed: Arc::new(Mutex::new(Framed::new(stream, codec))),
-                node: initiator.node.clone(),
+                node: node.clone(),
                 storage: context.storage.clone(),
                 blockchain: context.blockchain.clone(),
                 capabilities: vec![],
@@ -89,9 +93,16 @@ pub(crate) async fn perform(
                 inbound: false,
             })
         }
-        InnerState::Receiver(receiver) => {
+        InnerState::Receiver(Receiver {
+            context,
+            peer_addr,
+            stream,
+        }) => {
             info!("Starting handshake as receiver!");
-            let context = &receiver.context;
+            let mut stream = match Arc::try_unwrap(stream) {
+                Ok(s) => s,
+                Err(_) => return Err(RLPxError::StateError("Cannot use the stream".to_string())),
+            };
             let remote_state = receive_auth(&context.signer, &mut stream).await?;
             let local_state = send_ack(remote_state.public_key, &mut stream).await?;
             // Remote node is initiator
@@ -99,7 +110,6 @@ pub(crate) async fn perform(
             let hashed_nonces: [u8; 32] =
                 Keccak256::digest([local_state.nonce.0, remote_state.nonce.0].concat()).into();
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
-            let peer_addr = receiver.peer_addr;
             let node = Node::new(
                 peer_addr.ip(),
                 peer_addr.port(),
