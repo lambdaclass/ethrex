@@ -73,14 +73,6 @@ revm-comparison: compile-contracts ## 📊 Run benchmarks for both REVM and LEVM
 	$(call run_benchmark,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
 	$(call run_benchmark,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
 
-revm-comparison-ci: compile-contracts
-	$(MAKE) build-revm-comparison
-	$(call run_benchmark_ci,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
-	$(call run_benchmark_ci,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
-	$(call run_benchmark_ci,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
-	$(call run_benchmark_ci,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
-	$(call run_benchmark_ci,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
-
 build-revm-comparison:
 	cd bench/revm_comparison && \
 		CARGO_TARGET_DIR=../../target \
