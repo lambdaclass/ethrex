@@ -99,10 +99,6 @@ pub async fn apply_fork_choice(
     }
 
     // Finished all validations.
-    store
-        .reconstruct_snapshots_for_new_canonical_chain()
-        .await?;
-
     // Make all ancestors to head canonical.
     for (number, hash) in new_canonical_blocks {
         store.set_canonical_block(number, hash).await?;
@@ -115,6 +111,11 @@ pub async fn apply_fork_choice(
 
     // Make head canonical and label all special blocks correctly.
     store.set_canonical_block(head.number, head_hash).await?;
+
+    store
+        .reconstruct_snapshots_for_new_canonical_chain()
+        .await?;
+
     if let Some(finalized) = finalized_res {
         store
             .update_finalized_block_number(finalized.number)
