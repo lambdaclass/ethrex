@@ -1,8 +1,5 @@
 pub mod exec;
 
-#[cfg(feature = "pico")]
-pub mod pico;
-
 #[cfg(feature = "risc0")]
 pub mod risc0;
 

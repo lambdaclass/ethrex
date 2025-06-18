@@ -3,8 +3,8 @@
 use std::str::FromStr;
 
 use ethrex_common::{
-    types::{BlobSchedule, ChainConfig},
     H160,
+    types::{BlobSchedule, ChainConfig},
 };
 
 // Chain config for different forks as defined on https://ethereum.github.io/execution-spec-tests/v3.0.0/consuming_tests/common_types/#fork

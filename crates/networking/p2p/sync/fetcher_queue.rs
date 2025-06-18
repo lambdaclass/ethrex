@@ -5,7 +5,7 @@ use tokio::sync::mpsc::Receiver;
 
 use crate::peer_handler::PeerHandler;
 
-use super::{SyncError, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES};
+use super::{MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES, SyncError};
 
 /// Runs the queue process by reading incoming messages from the receiver, adding the requests to the queue, and then spawning parallel fetch tasks for all queued items
 /// This process will only end when an end signal in the form of an empty vector is read from the receiver

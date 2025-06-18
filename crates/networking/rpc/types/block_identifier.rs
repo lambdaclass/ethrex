@@ -1,7 +1,7 @@
 use std::{fmt::Display, str::FromStr};
 
 use ethrex_common::types::{BlockHash, BlockHeader, BlockNumber};
-use ethrex_storage::{error::StoreError, Store};
+use ethrex_storage::{Store, error::StoreError};
 use serde::Deserialize;
 use serde_json::Value;
 

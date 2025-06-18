@@ -3,11 +3,11 @@ use std::{
     time::Duration,
 };
 
-use ethrex_common::{tracing::CallTrace, types::Block, H256};
+use ethrex_common::{H256, tracing::CallTrace, types::Block};
 use ethrex_storage::Store;
 use ethrex_vm::{Evm, EvmError};
 
-use crate::{error::ChainError, vm::StoreVmDatabase, Blockchain};
+use crate::{Blockchain, error::ChainError, vm::StoreVmDatabase};
 
 impl Blockchain {
     /// Outputs the call trace for the given transaction

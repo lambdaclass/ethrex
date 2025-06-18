@@ -1,7 +1,7 @@
 use crate::{sequencer::errors::MetricsGathererError, CommitterConfig, EthConfig, SequencerConfig};
 use ::ethrex_storage_rollup::StoreRollup;
 use ethereum_types::Address;
-use ethrex_metrics::metrics_l2::{MetricsL2BlockType, MetricsL2OperationType, METRICS_L2};
+use ethrex_metrics::metrics_l2::{METRICS_L2, MetricsL2BlockType, MetricsL2OperationType};
 use ethrex_metrics::metrics_transactions::METRICS_TX;
 use ethrex_rpc::clients::eth::EthClient;
 use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};

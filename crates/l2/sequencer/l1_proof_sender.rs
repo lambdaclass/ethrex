@@ -1,35 +1,38 @@
+use std::collections::HashMap;
+
+use ethrex_common::{Address, U256};
+use ethrex_l2_sdk::calldata::{Value, encode_calldata};
+use ethrex_rpc::EthClient;
+use ethrex_storage_rollup::StoreRollup;
+use secp256k1::SecretKey;
+use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
+use spawned_rt::mpsc::Sender;
+use tracing::{debug, error, info};
+
 use super::{
     configs::AlignedConfig,
     utils::{get_latest_sent_batch, random_duration, send_verify_tx},
 };
 
 use crate::{
+    CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
+    based::sequencer_state::{SequencerState, SequencerStatus},
     sequencer::errors::ProofSenderError,
     utils::prover::{
         proving_systems::ProverType,
-        save_state::{batch_number_has_all_needed_proofs, read_proof, StateFileType},
+        save_state::{StateFileType, batch_number_has_all_needed_proofs, read_proof},
     },
-    CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use aligned_sdk::{
     common::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData},
     verification_layer::{estimate_fee, get_nonce_from_batcher, submit},
 };
-use ethrex_common::{Address, U256};
-use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_rpc::EthClient;
-use ethrex_storage_rollup::StoreRollup;
-use secp256k1::SecretKey;
-use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
-use spawned_rt::mpsc::Sender;
-use std::collections::HashMap;
-use tracing::{debug, error, info};
 
 // TODO: Remove this import once it's no longer required by the SDK.
 use ethers::signers::{Signer, Wallet};
 
 const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes32,bytes,uint256[8],bytes,bytes)";
+    "verifyBatch(uint256,bytes,bytes32,bytes,bytes,bytes,bytes,bytes)";
 
 #[derive(Clone)]
 pub struct L1ProofSenderState {
@@ -39,6 +42,7 @@ pub struct L1ProofSenderState {
     on_chain_proposer_address: Address,
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
+    sequencer_state: SequencerState,
     rollup_storage: StoreRollup,
     l1_chain_id: u64,
     network: Network,
@@ -51,6 +55,7 @@ impl L1ProofSenderState {
         cfg: &ProofCoordinatorConfig,
         committer_cfg: &CommitterConfig,
         eth_cfg: &EthConfig,
+        sequencer_state: SequencerState,
         aligned_cfg: &AlignedConfig,
         rollup_storage: StoreRollup,
         needed_proof_types: Vec<ProverType>,
@@ -70,6 +75,7 @@ impl L1ProofSenderState {
                 on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
                 needed_proof_types: vec![ProverType::Exec],
                 proof_send_interval_ms: cfg.proof_send_interval_ms,
+                sequencer_state,
                 rollup_storage,
                 l1_chain_id,
                 network: aligned_cfg.network.clone(),
@@ -85,6 +91,7 @@ impl L1ProofSenderState {
             on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             needed_proof_types,
             proof_send_interval_ms: cfg.proof_send_interval_ms,
+            sequencer_state,
             rollup_storage,
             l1_chain_id,
             network: aligned_cfg.network.clone(),
@@ -109,6 +116,7 @@ pub struct L1ProofSender;
 impl L1ProofSender {
     pub async fn spawn(
         cfg: SequencerConfig,
+        sequencer_state: SequencerState,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProofSenderError> {
@@ -116,6 +124,7 @@ impl L1ProofSender {
             &cfg.proof_coordinator,
             &cfg.l1_committer,
             &cfg.eth,
+            sequencer_state,
             &cfg.aligned,
             rollup_store,
             needed_proof_types,
@@ -156,9 +165,11 @@ impl GenServer for L1ProofSender {
         state: &mut Self::State,
     ) -> CastResponse {
         // Right now we only have the Send message, so we ignore the message
-        let _ = verify_and_send_proof(state)
-            .await
-            .inspect_err(|err| error!("L1 Proof Sender: {err}"));
+        if let SequencerStatus::Sequencing = state.sequencer_state.status().await {
+            let _ = verify_and_send_proof(state)
+                .await
+                .inspect_err(|err| error!("L1 Proof Sender: {err}"));
+        }
         let check_interval = random_duration(state.proof_send_interval_ms);
         send_after(check_interval, tx.clone(), Self::InMsg::Send);
         CastResponse::NoReply
@@ -301,10 +312,6 @@ pub async fn send_proof_to_contract(
         proofs
             .get(&ProverType::SP1)
             .unwrap_or(&ProverType::SP1.empty_calldata())
-            .as_slice(),
-        proofs
-            .get(&ProverType::Pico)
-            .unwrap_or(&ProverType::Pico.empty_calldata())
             .as_slice(),
         proofs
             .get(&ProverType::TDX)
