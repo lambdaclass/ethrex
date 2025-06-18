@@ -3,6 +3,7 @@ use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
 use crate::rlpx::eth::receipts::{self, Receipts, Receipts68, Receipts69};
+use crate::rlpx::eth::status::{self, Status68Message, Status69Message};
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::GetReceipts;
@@ -43,7 +44,7 @@ pub(crate) enum Message {
     Pong(PongMessage),
     // eth capability
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md
-    Status(StatusMessage),
+    Status(Box<dyn StatusMessage + Sync + Send>),
     GetBlockHeaders(GetBlockHeaders),
     BlockHeaders(BlockHeaders),
     Transactions(Transactions),
@@ -111,7 +112,7 @@ impl Message {
             Message::Pong(_) => PongMessage::CODE,
 
             // eth capability
-            Message::Status(_) => StatusMessage::CODE,
+            Message::Status(_) => status::CODE,
             Message::Transactions(_) => Transactions::CODE,
             Message::GetBlockHeaders(_) => GetBlockHeaders::CODE,
             Message::BlockHeaders(_) => BlockHeaders::CODE,
@@ -206,9 +207,9 @@ impl Message {
 
         if eth_msg_id < eth_capability.length() {
             return match eth_msg_id {
-                StatusMessage::CODE => match eth_capability.version {
-                    68 => Ok(Message::Status(StatusMessage::decode68(data)?)),
-                    69 => Ok(Message::Status(StatusMessage::decode(data)?)),
+                status::CODE => match eth_capability.version {
+                    68 => Ok(Message::Status(Box::new(Status68Message::decode(data)?))),
+                    69 => Ok(Message::Status(Box::new(Status69Message::decode(data)?))),
                     _ => Err(RLPDecodeError::IncompatibleProtocol),
                 },
                 Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
@@ -282,7 +283,7 @@ impl Message {
             Message::Status(msg) => {
                 if let Some(eth_capability) = eth_capability {
                     match eth_capability.version {
-                        68 => msg.encode68(buf),
+                        68 => msg.encode(buf),
                         69 => msg.encode(buf),
                         _ => Err(RLPEncodeError::IncompatibleProtocol),
                     }
