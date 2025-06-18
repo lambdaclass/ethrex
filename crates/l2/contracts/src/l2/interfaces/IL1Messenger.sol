@@ -9,7 +9,7 @@ interface IL1Messenger {
     /// @notice A withdrawal to L1 has initiated.
     /// @dev Event emitted when a withdrawal is initiated.
     /// @param senderOnL2 the caller on L2
-    /// @param data the data being sent
+    /// @param data the data being sent, usually a hash
     event L1Message(
         address indexed senderOnL2,
         bytes32 indexed data
