@@ -494,7 +494,14 @@ async fn initialize_contracts(
             .ok_or(DeployerError::FailedToGetStringFromPath)?,
     );
 
-    let sp1_vk = read_sp1_vk(opts)?;
+    let sp1_vk = std::fs::read(&opts.sp1_vk_path)
+    .unwrap_or_else(|_| {
+        warn!(
+            path = opts.sp1_vk_path,
+            "Failed to read SP1 verification key file, will use 0x00..00, this is expected in dev mode"
+        );
+        vec![0u8; 32]
+    }).into();
 
     let deployer_address = get_address_from_secret_key(&opts.private_key)?;
 
@@ -836,29 +843,6 @@ fn write_contract_addresses_to_env(
     )?;
     trace!(?env_file_path, "Contract addresses written to .env");
     Ok(())
-}
-
-fn read_sp1_vk(opts: &DeployerOptions) -> Result<Bytes, DeployerError> {
-    if opts.aligned {
-        return Ok(std::fs::read(&opts.sp1_vk_path)
-            .map_err(|e| DeployerError::InternalError(format!("failed to read sp1_vk: {e}")))?
-            .into());
-    };
-    let sp1_vk_string = read_to_string(&opts.sp1_vk_path).unwrap_or_else(|_| {
-        warn!(
-            path = opts.sp1_vk_path,
-            "Failed to read SP1 verification key file, will use 0x00..00, this is expected in dev mode"
-        );
-        "0x00".to_string()
-    });
-
-    Ok(hex::decode(sp1_vk_string.trim_start_matches("0x"))
-        .map_err(|err| {
-            DeployerError::DecodingError(format!(
-                "failed to parse sp1_vk ({sp1_vk_string}) from hex: {err}"
-            ))
-        })?
-        .into())
 }
 
 #[allow(clippy::unwrap_used)]
