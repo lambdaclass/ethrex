@@ -3,7 +3,7 @@ use crate::{
     api::StoreEngine,
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
-    store_db::libmdbx::{AccountAddress, BlockNumHash},
+    store_db::codec::{account_address::AccountAddress, block_num_hash::BlockNumHash},
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};

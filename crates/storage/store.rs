@@ -1,9 +1,9 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
+use crate::store_db::codec::{account_address::AccountAddress, block_num_hash::BlockNumHash};
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
-use crate::store_db::libmdbx::{AccountAddress, BlockNumHash};
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
 use bytes::Bytes;

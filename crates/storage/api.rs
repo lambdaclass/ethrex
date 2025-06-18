@@ -9,7 +9,7 @@ use ethrex_common::types::{
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
-use crate::store_db::libmdbx::{AccountAddress, BlockNumHash};
+use crate::store_db::codec::{account_address::AccountAddress, block_num_hash::BlockNumHash};
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 

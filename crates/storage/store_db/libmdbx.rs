@@ -1,3 +1,7 @@
+use super::codec::{
+    account_address::AccountAddress, account_info_log_entry::AccountInfoLogEntry,
+    account_storage_log_entry::AccountStorageLogEntry, block_num_hash::BlockNumHash,
+};
 use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
@@ -14,7 +18,6 @@ use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::Address;
-use ethrex_common::H160;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
     BlockNumber, ChainConfig, Index, Receipt, Transaction, payload::PayloadBundle,
@@ -32,9 +35,110 @@ use libmdbx::{
 };
 use serde_json;
 use std::fmt::{Debug, Formatter};
-use std::mem;
 use std::path::Path;
 use std::sync::Arc;
+
+table!(
+    /// The canonical block hash for each block number. It represents the canonical chain.
+    ( CanonicalBlockHashes ) BlockNumber => BlockHashRLP
+);
+
+table!(
+    /// Block hash to number table.
+    ( BlockNumbers ) BlockHashRLP => BlockNumber
+);
+
+table!(
+    /// Block headers table.
+    ( Headers ) BlockHashRLP => BlockHeaderRLP
+);
+table!(
+    /// Block bodies table.
+    ( Bodies ) BlockHashRLP => BlockBodyRLP
+);
+table!(
+    /// Account codes table.
+    ( AccountCodes ) AccountCodeHashRLP => AccountCodeRLP
+);
+
+// TODO: maybe the log tables could save 64 bytes per
+// entry by storing the address in the value instead
+dupsort!(
+    /// Account codes table.
+    ( AccountsStateWriteLog ) BlockNumHash => AccountInfoLogEntry
+);
+
+dupsort!(
+    /// Storage write log table.
+    ( AccountsStorageWriteLog ) BlockNumHash => AccountStorageLogEntry
+);
+
+dupsort!(
+    /// Receipts table.
+    ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+);
+
+dupsort!(
+    /// Table containing all storage trie's nodes
+    /// Each node is stored by hashed account address and node hash in order to keep different storage trie's nodes separate
+    ( StorageTriesNodes ) ([u8;32], [u8;33])[[u8;32]] => Vec<u8>
+);
+
+dupsort!(
+    /// Transaction locations table.
+    ( TransactionLocations ) TransactionHashRLP => Rlp<(BlockNumber, BlockHash, Index)>
+);
+
+table!(
+    /// Stores chain data, each value is unique and stored as its rlp encoding
+    /// See [ChainDataIndex] for available chain values
+    ( ChainData ) ChainDataIndex => Vec<u8>
+);
+
+table!(
+    /// Stores snap state, each value is unique and stored as its rlp encoding
+    /// See [SnapStateIndex] for available values
+    ( SnapState ) SnapStateIndex => Vec<u8>
+);
+
+// Trie storages
+
+table!(
+    /// state trie nodes
+    ( StateTrieNodes ) NodeHash => Vec<u8>
+);
+
+// Local Blocks
+
+table!(
+    /// payload id to payload table
+    ( Payloads ) u64 => PayloadBundleRLP
+);
+
+table!(
+    /// Stores blocks that are pending validation.
+    ( PendingBlocks ) BlockHashRLP => BlockRLP
+);
+
+table!(
+    /// State Snapshot used by an ongoing sync process
+    ( StateSnapShot ) AccountHashRLP => AccountStateRLP
+);
+
+dupsort!(
+    /// Storage Snapshot used by an ongoing sync process
+    ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
+);
+
+table!(
+    /// Storage trie paths in need of healing stored by hashed address
+    ( StorageHealPaths ) AccountHashRLP => TriePathsRLP
+);
+
+table!(
+    /// Stores invalid ancestors
+    ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
+);
 
 pub struct Store {
     db: Arc<Database>,
@@ -1577,220 +1681,6 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
     }
 }
 
-table!(
-    /// The canonical block hash for each block number. It represents the canonical chain.
-    ( CanonicalBlockHashes ) BlockNumber => BlockHashRLP
-);
-
-table!(
-    /// Block hash to number table.
-    ( BlockNumbers ) BlockHashRLP => BlockNumber
-);
-
-table!(
-    /// Block headers table.
-    ( Headers ) BlockHashRLP => BlockHeaderRLP
-);
-table!(
-    /// Block bodies table.
-    ( Bodies ) BlockHashRLP => BlockBodyRLP
-);
-table!(
-    /// Account codes table.
-    ( AccountCodes ) AccountCodeHashRLP => AccountCodeRLP
-);
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct BlockNumHash(pub BlockNumber, pub BlockHash);
-impl From<(BlockNumber, BlockHash)> for BlockNumHash {
-    fn from(value: (BlockNumber, BlockHash)) -> Self {
-        Self(value.0, value.1)
-    }
-}
-
-#[derive(Default)]
-pub struct AccountInfoLogEntry {
-    pub address: H160,
-    pub info: AccountInfo,
-    pub previous_info: AccountInfo,
-}
-
-const SIZE_OF_ACCOUNT_INFO_LOG_ENTRY: usize = mem::size_of::<AccountInfoLogEntry>();
-
-impl Encodable for AccountInfoLogEntry {
-    type Encoded = [u8; std::mem::size_of::<Self>()];
-    fn encode(self) -> Self::Encoded {
-        let mut encoded: Self::Encoded = std::array::from_fn(|_| 0);
-        encoded[0..20].copy_from_slice(&self.address.0);
-        encoded[20..52].copy_from_slice(&self.info.code_hash.0);
-        encoded[52..60].copy_from_slice(&self.info.nonce.to_be_bytes());
-        encoded[60..92].copy_from_slice(&self.info.balance.to_big_endian());
-        encoded[92..124].copy_from_slice(&self.previous_info.code_hash.0);
-        encoded[124..132].copy_from_slice(&self.previous_info.nonce.to_be_bytes());
-        encoded[132..164].copy_from_slice(&self.previous_info.balance.to_big_endian());
-        encoded
-    }
-}
-
-impl Decodable for AccountInfoLogEntry {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        if b.len() != SIZE_OF_ACCOUNT_INFO_LOG_ENTRY {
-            anyhow::bail!("Invalid length for AccountInfoLog");
-        }
-        let addr = H160::from_slice(&b[0..20]);
-        let info_code_hash = H256::from_slice(&b[20..52]);
-        let info_nonce = Decodable::decode(&b[52..60])?;
-        let info_balance = U256::from_big_endian(&b[60..92]);
-        let previous_info_code_hash = H256::from_slice(&b[92..124]);
-        let previous_info_nonce = Decodable::decode(&b[124..132])?;
-        let previous_info_balance = U256::from_big_endian(&b[132..164]);
-        Ok(Self {
-            address: addr,
-            info: AccountInfo {
-                code_hash: info_code_hash,
-                nonce: info_nonce,
-                balance: info_balance,
-            },
-            previous_info: AccountInfo {
-                code_hash: previous_info_code_hash,
-                nonce: previous_info_nonce,
-                balance: previous_info_balance,
-            },
-        })
-    }
-}
-
-// TODO: maybe the log tables could save 64 bytes per
-// entry by storing the address in the value instead
-dupsort!(
-    /// Account codes table.
-    ( AccountsStateWriteLog ) BlockNumHash => AccountInfoLogEntry
-);
-
-#[derive(Default)]
-pub struct AccountStorageLogEntry(pub H160, pub H256, pub U256, pub U256);
-
-// implemente Encode and Decode for StorageStateWriteLogVal
-impl Encodable for AccountStorageLogEntry {
-    type Encoded = [u8; 116];
-
-    fn encode(self) -> Self::Encoded {
-        let mut encoded = [0u8; 116];
-        encoded[0..20].copy_from_slice(&self.0.0);
-        encoded[20..52].copy_from_slice(&self.1.0);
-        encoded[52..84].copy_from_slice(&self.2.to_big_endian());
-        encoded[84..116].copy_from_slice(&self.3.to_big_endian());
-        encoded
-    }
-}
-
-impl Decodable for AccountStorageLogEntry {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        if b.len() < std::mem::size_of::<Self>() {
-            anyhow::bail!("Invalid length for StorageStateWriteLogVal");
-        }
-        let addr = H160::from_slice(&b[0..20]);
-        let slot = H256::from_slice(&b[20..52]);
-        let old_value = U256::from_big_endian(&b[52..84]);
-        let new_value = U256::from_big_endian(&b[84..116]);
-        Ok(Self(addr, slot, old_value, new_value))
-    }
-}
-
-dupsort!(
-    /// Storage write log table.
-    ( AccountsStorageWriteLog ) BlockNumHash => AccountStorageLogEntry
-);
-
-impl Encodable for BlockNumHash {
-    type Encoded = [u8; 40];
-
-    fn encode(self) -> Self::Encoded {
-        let mut encoded = [0u8; 40];
-        encoded[0..8].copy_from_slice(&self.0.to_be_bytes());
-        encoded[8..40].copy_from_slice(&self.1.0);
-        encoded
-    }
-}
-
-impl Decodable for BlockNumHash {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        if b.len() != 40 {
-            anyhow::bail!("Invalid length for (BlockNumber, BlockHash)");
-        }
-        let block_number = BlockNumber::from_be_bytes(b[0..8].try_into()?);
-        let block_hash = H256::from_slice(&b[8..40]);
-        Ok((block_number, block_hash).into())
-    }
-}
-
-dupsort!(
-    /// Receipts table.
-    ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
-);
-
-dupsort!(
-    /// Table containing all storage trie's nodes
-    /// Each node is stored by hashed account address and node hash in order to keep different storage trie's nodes separate
-    ( StorageTriesNodes ) ([u8;32], [u8;33])[[u8;32]] => Vec<u8>
-);
-
-dupsort!(
-    /// Transaction locations table.
-    ( TransactionLocations ) TransactionHashRLP => Rlp<(BlockNumber, BlockHash, Index)>
-);
-
-table!(
-    /// Stores chain data, each value is unique and stored as its rlp encoding
-    /// See [ChainDataIndex] for available chain values
-    ( ChainData ) ChainDataIndex => Vec<u8>
-);
-
-table!(
-    /// Stores snap state, each value is unique and stored as its rlp encoding
-    /// See [SnapStateIndex] for available values
-    ( SnapState ) SnapStateIndex => Vec<u8>
-);
-
-// Trie storages
-
-table!(
-    /// state trie nodes
-    ( StateTrieNodes ) NodeHash => Vec<u8>
-);
-
-// Local Blocks
-
-table!(
-    /// payload id to payload table
-    ( Payloads ) u64 => PayloadBundleRLP
-);
-
-table!(
-    /// Stores blocks that are pending validation.
-    ( PendingBlocks ) BlockHashRLP => BlockRLP
-);
-
-table!(
-    /// State Snapshot used by an ongoing sync process
-    ( StateSnapShot ) AccountHashRLP => AccountStateRLP
-);
-
-dupsort!(
-    /// Storage Snapshot used by an ongoing sync process
-    ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
-);
-
-table!(
-    /// Storage trie paths in need of healing stored by hashed address
-    ( StorageHealPaths ) AccountHashRLP => TriePathsRLP
-);
-
-table!(
-    /// Stores invalid ancestors
-    ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
-);
-
 pub struct FlatTablesBlockMetadataKey();
 impl Encodable for FlatTablesBlockMetadataKey {
     type Encoded = [u8; 0];
@@ -1825,16 +1715,7 @@ pub struct AccountStorageKeyBytes(pub [u8; 32]);
 pub struct AccountStorageValueBytes(pub [u8; 32]);
 
 #[derive(Clone, Default, PartialEq, Eq, Hash)]
-pub struct AccountAddress(pub H160);
-
-#[derive(Clone, Default, PartialEq, Eq, Hash)]
 pub struct EncodableAccountInfo(pub AccountInfo);
-
-impl From<H160> for AccountAddress {
-    fn from(value: H160) -> Self {
-        Self(value)
-    }
-}
 
 impl Encodable for AccountStorageKeyBytes {
     type Encoded = [u8; 32];
@@ -1861,20 +1742,6 @@ impl Encodable for AccountStorageValueBytes {
 impl Decodable for AccountStorageValueBytes {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
         Ok(AccountStorageValueBytes(b.try_into()?))
-    }
-}
-
-impl Encodable for AccountAddress {
-    type Encoded = [u8; 20];
-
-    fn encode(self) -> Self::Encoded {
-        self.0.0
-    }
-}
-
-impl Decodable for AccountAddress {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        Ok(AccountAddress(H160(b.try_into()?)))
     }
 }
 
