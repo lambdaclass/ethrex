@@ -54,7 +54,7 @@ pub enum GenesisError {
     Decode(#[from] serde_json::Error),
     #[error("Fork not supported. Only post-merge networks are supported.")]
     InvalidFork(),
-    #[error("Failed to open genesis.json file: {0}")]
+    #[error("Failed to open genesis file: {0}")]
     File(#[from] Error),
 }
 
