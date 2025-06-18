@@ -162,7 +162,7 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 	--deposit-rich \
 	--private-keys-file-path ../../test_data/private_keys_l1.txt \
 	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
-	--genesis-l2-path ../../test_data/genesis-l2.json \
+	--genesis-l2-path ../../test_data/genesis-l2.json
 ```
 
 You will see that some deposits fail, this is because not all the accounts are pre-funded from the genesis.
