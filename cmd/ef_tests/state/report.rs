@@ -329,7 +329,7 @@ impl Display for EFTestsReport {
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Shanghai))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Paris))?;
         writeln!(f)?;
-        writeln!(f, "Failed tests:")?;
+        writeln!(f, "Passed tests:")?;
         writeln!(f)?;
         writeln!(f, "{}", test_dir_summary_for_shell(&self.0))?;
         for report in self.0.iter() {
