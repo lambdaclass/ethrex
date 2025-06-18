@@ -327,22 +327,18 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     async fn setup_genesis_flat_account_storage(
         &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
         genesis_accounts: &[(Address, H256, U256)],
     ) -> Result<(), StoreError>;
     async fn setup_genesis_flat_account_info(
         &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
         genesis_accounts: &[(Address, u64, U256, H256, bool)],
     ) -> Result<(), StoreError>;
 
-    async fn update_flat_storage(
-        &self,
-        updates: &[(Address, H256, U256)],
-    ) -> Result<(), StoreError>;
-    async fn update_flat_account_info(
-        &self,
-        updates: &[(Address, u64, U256, H256, bool)],
-    ) -> Result<(), StoreError>;
-
+    fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError>;
     fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError>;
     fn get_current_account_info(&self, address: Address)
     -> Result<Option<AccountInfo>, StoreError>;

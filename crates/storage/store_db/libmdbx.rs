@@ -306,7 +306,7 @@ impl StoreEngine for Store {
                     }
                 }
             }
-            if let Some(block) = update_batch.blocks.last() {
+            if let Some(block) = update_batch.blocks.iter().max_by_key(|b| b.header.number) {
                 tx.upsert::<FlatTablesBlockMetadata>(
                     FlatTablesBlockMetadataKey {},
                     (block.header.number, block.header.hash()).into(),
@@ -514,7 +514,7 @@ impl StoreEngine for Store {
 
                 // Update the cursors
                 canonical_hash = canonical_cursor
-                    .prev()?
+                    .seek_exact(block_num - 1)?
                     .map(|(_, hash)| hash.to())
                     .transpose()?
                     .unwrap_or_default();
@@ -541,7 +541,7 @@ impl StoreEngine for Store {
             let current_snapshot_meta = tx
                 .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
                 .unwrap_or_default();
-            let canonical_cursor = tx.cursor::<CanonicalBlockHashes>()?;
+            let mut canonical_cursor = tx.cursor::<CanonicalBlockHashes>()?;
             let mut state_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
             let mut storage_log_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
             let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
@@ -549,7 +549,17 @@ impl StoreEngine for Store {
             let mut key = current_snapshot_meta;
             // TODO(PLT): query the current block for flat storage/accounts and
             // start applying from there
-            for key_value in canonical_cursor.walk(Some(current_snapshot_meta.0)) {
+            debug_assert_eq!(
+                canonical_cursor
+                    .seek_exact(current_snapshot_meta.0)
+                    .unwrap()
+                    .unwrap()
+                    .1
+                    .to()
+                    .unwrap(),
+                current_snapshot_meta.1
+            );
+            for key_value in canonical_cursor.walk(Some(current_snapshot_meta.0 + 1)) {
                 let (block_num, block_hash_rlp) = key_value?;
                 let block_hash = block_hash_rlp.to()?;
                 key = (block_num, block_hash).into();
@@ -1492,14 +1502,9 @@ impl StoreEngine for Store {
 
     async fn setup_genesis_flat_account_storage(
         &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
         genesis_accounts: &[(Address, H256, U256)],
-    ) -> Result<(), StoreError> {
-        self.update_flat_storage(genesis_accounts).await
-    }
-
-    async fn update_flat_storage(
-        &self,
-        updates: &[(Address, H256, U256)],
     ) -> Result<(), StoreError> {
         // tracing::info!("called update_flat_storage");
         let tx = self
@@ -1509,7 +1514,7 @@ impl StoreEngine for Store {
         let mut cursor = tx
             .cursor::<FlatAccountStorage>()
             .map_err(StoreError::LibmdbxError)?;
-        for (addr, slot, value) in updates.iter().cloned() {
+        for (addr, slot, value) in genesis_accounts.iter().cloned() {
             let key = (addr.into(), slot.into());
             if !value.is_zero() {
                 cursor
@@ -1523,21 +1528,20 @@ impl StoreEngine for Store {
                 cursor.delete_current().map_err(StoreError::LibmdbxError)?;
             }
         }
+        tx.upsert::<FlatTablesBlockMetadata>(
+            FlatTablesBlockMetadataKey {},
+            (genesis_block_number, genesis_block_hash).into(),
+        )
+        .map_err(StoreError::LibmdbxError);
         tx.commit().map_err(StoreError::LibmdbxError)
     }
 
     async fn setup_genesis_flat_account_info(
         &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
         genesis_accounts: &[(Address, u64, U256, H256, bool)],
     ) -> Result<(), StoreError> {
-        self.update_flat_account_info(genesis_accounts).await
-    }
-
-    async fn update_flat_account_info(
-        &self,
-        updates: &[(Address, u64, U256, H256, bool)],
-    ) -> Result<(), StoreError> {
-        // tracing::info!("called update_flat_account_info");
         let tx = self
             .db
             .begin_readwrite()
@@ -1545,7 +1549,7 @@ impl StoreEngine for Store {
         let mut cursor = tx
             .cursor::<FlatAccountInfo>()
             .map_err(StoreError::LibmdbxError)?;
-        for (addr, nonce, balance, code_hash, removed) in updates.iter().cloned() {
+        for (addr, nonce, balance, code_hash, removed) in genesis_accounts.iter().cloned() {
             let key = addr.into();
             if removed {
                 if cursor
@@ -1561,9 +1565,23 @@ impl StoreEngine for Store {
                     .map_err(StoreError::LibmdbxError)?;
             }
         }
+        tx.upsert::<FlatTablesBlockMetadata>(
+            FlatTablesBlockMetadataKey {},
+            (genesis_block_number, genesis_block_hash).into(),
+        )
+        .map_err(StoreError::LibmdbxError);
         tx.commit().map_err(StoreError::LibmdbxError)
     }
 
+    fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError> {
+        Ok(self
+            .db
+            .begin_read()
+            .map_err(StoreError::LibmdbxError)?
+            .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})
+            .map_err(StoreError::LibmdbxError)?
+            .map(|v| v.1))
+    }
     fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
         // tracing::info!("called get_current_storage");
         let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;

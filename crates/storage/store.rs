@@ -145,7 +145,13 @@ impl Store {
         let mut accounts_info_log = Vec::new();
         let mut previous_account_info = HashMap::<H160, AccountInfo>::new();
 
+        let mut current_block = None;
         for (block, account_updates) in account_updates_per_block {
+            debug_assert_eq!(
+                current_block.unwrap_or(block.header.number) + 1,
+                block.header.number
+            );
+            current_block = Some(block.header.number);
             let block_numhash: BlockNumHash = (block.header.number, block.header.hash()).into();
             for account_update in account_updates {
                 let Some(new_info) = &account_update.info else {
@@ -691,18 +697,8 @@ impl Store {
         self.engine.get_current_account_info(address)
     }
 
-    pub async fn update_flat_storage(
-        &self,
-        updates: &[(H160, H256, U256)],
-    ) -> Result<(), StoreError> {
-        self.engine.update_flat_storage(updates).await
-    }
-
-    pub async fn update_flat_account_info(
-        &self,
-        updates: &[(Address, u64, U256, H256, bool)],
-    ) -> Result<(), StoreError> {
-        self.engine.update_flat_account_info(updates).await
+    pub fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.engine.get_block_for_current_snapshot()
     }
 
     pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
@@ -735,7 +731,7 @@ impl Store {
                     .map(|(key, value)| (*addr, H256(key.to_big_endian()), *value))
             })
             .collect();
-        self.setup_genesis_flat_account_storage(&flat_storage)
+        self.setup_genesis_flat_account_storage(genesis_block_number, genesis_hash, &flat_storage)
             .await?;
         let flat_info: Vec<_> = genesis
             .alloc
@@ -751,7 +747,8 @@ impl Store {
                 )
             })
             .collect();
-        self.setup_genesis_flat_account_info(&flat_info).await?;
+        self.setup_genesis_flat_account_info(genesis_block_number, genesis_hash, &flat_info)
+            .await?;
         // TODO: Should we use this root instead of computing it before the block hash check?
         let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
