@@ -67,10 +67,9 @@ pub async fn apply_fork_choice(
     };
 
     let link_block_number = new_canonical_blocks
-.last()
+        .last()
         .map(|(number, _)| *number)
-        .unwrap_or(head.number,
-    };
+        .unwrap_or(head.number);
 
     // Check that finalized and safe blocks are part of the new canonical chain.
     if let Some(ref finalized) = finalized_res {
@@ -181,8 +180,8 @@ async fn find_link_with_canonical_chain(
 
         // Check that the parent exists.
         let Some(parent_header) = store.get_block_header_by_hash(parent_hash)? else {
-return Ok(None);
-                    };
+            return Ok(None);
+        };
 
         if is_canonical(store, block_number, parent_hash).await? {
             return Ok(Some(branch));
