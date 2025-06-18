@@ -376,7 +376,7 @@ pub async fn import_blocks(
         utils::read_chain_file(path)
     };
     let size = blocks.len();
-    for (i, block) in blocks.iter().enumerate() {
+    for block in blocks.iter() {
         let hash = block.hash();
         let number = block.header.number;
         info!("Adding block {number} with hash {hash:#x}.");
