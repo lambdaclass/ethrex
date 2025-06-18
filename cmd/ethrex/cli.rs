@@ -393,12 +393,6 @@ pub async fn import_blocks(
             continue;
         }
 
-        if i % 1000 == 0 {
-            let _ = apply_fork_choice(&store, hash, hash, hash)
-                .await
-                .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
-        }
-
         blockchain
             .add_block(block)
             .await

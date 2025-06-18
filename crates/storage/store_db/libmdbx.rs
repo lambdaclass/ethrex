@@ -139,6 +139,7 @@ impl StoreEngine for Store {
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
+            // FIXME: this should be dependent on the current snapshot being reachable from this chain
             let mut cursor = tx
                 .cursor::<FlatAccountInfo>()
                 .map_err(StoreError::LibmdbxError)?;
@@ -182,6 +183,13 @@ impl StoreEngine for Store {
                             .map_err(StoreError::LibmdbxError)?;
                     }
                 }
+            }
+            if let Some(block) = update_batch.blocks.last() {
+                tx.upsert::<FlatTablesBlockMetadata>(
+                    FlatTablesBlockMetadataKey {},
+                    (block.header.number, block.header.hash()).into(),
+                )
+                .map_err(StoreError::LibmdbxError)?;
             }
 
             // for each block in the update batch, we iterate over the account updates (by index)
@@ -268,8 +276,9 @@ impl StoreEngine for Store {
             let mut cursor = tx.cursor::<AccountsStateWriteLog>()?;
             for (blk, addr, old_info, new_info) in account_info_logs {
                 cursor.upsert(
-                    (blk, addr),
+                    blk,
                     AccountInfoLogEntry {
+                        address: addr.0,
                         info: new_info,
                         previous_info: old_info,
                     },
@@ -288,8 +297,8 @@ impl StoreEngine for Store {
             let mut cursor = tx.cursor::<AccountsStorageWriteLog>()?;
             for (blk, addr, slot, old_value, new_value) in account_storage_logs {
                 cursor.upsert(
-                    (blk, addr),
-                    AccountStorageLogEntry(slot, old_value, new_value),
+                    blk,
+                    AccountStorageLogEntry(addr.0, slot, old_value, new_value),
                 )?;
             }
             tx.commit()
@@ -297,178 +306,179 @@ impl StoreEngine for Store {
         inner().map_err(StoreError::LibmdbxError)
     }
 
-    fn get_canonical_blocks_since(
-        &self,
-        first_block_num: u64,
-    ) -> Result<Vec<(u64, H256)>, StoreError> {
-        let inner = || -> Result<_, _> {
-            let mut res = Vec::new();
-            let tx = self.db.begin_read()?;
-            let mut cursor = tx.cursor::<CanonicalBlockHashes>()?;
-            cursor.seek_exact(first_block_num)?;
-            while let Some((key, value)) = cursor.current()? {
-                res.push((key, value.to()?));
-                cursor.next()?;
-            }
-            Ok(res)
-        };
-        inner().map_err(StoreError::LibmdbxError)
-    }
-    async fn undo_writes_for_blocks(
-        &self,
-        invalidated_blocks: &[(u64, H256)],
-    ) -> Result<(), StoreError> {
+    async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
         let inner = || -> Result<_, _> {
             let tx = self.db.begin_readwrite()?;
+            let Some(old_snapshot_meta) =
+                tx.get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
+            else {
+                return Ok(()); // No snapshot to revert
+            };
+
+            let mut block_headers_cursor = tx.cursor::<Headers>()?;
+            let mut canonical_cursor = tx.cursor::<CanonicalBlockHashes>()?;
             let mut state_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
             let mut storage_log_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
             let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
             let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
-            for (block_num, block_hash) in invalidated_blocks.iter().rev() {
-                let key = (*block_num, *block_hash).into();
-                let mut found_state_log = state_log_cursor.seek_closest(key)?;
-                let mut found_storage_log = storage_log_cursor.seek_closest(key)?;
-                let (account_key, account_value) = state_log_cursor.current()?.unwrap_or_default();
-                let (storage_key, storage_value) =
-                    storage_log_cursor.current()?.unwrap_or_default();
+
+            let mut block_num = old_snapshot_meta.0;
+            let mut canonical_hash = canonical_cursor
+                .seek_exact(block_num)?
+                .map(|(_, hash)| hash.to())
+                .transpose()?
+                .unwrap_or_default();
+            let mut snapshot_hash = old_snapshot_meta.1;
+            let mut key = old_snapshot_meta;
+
+            while canonical_hash != snapshot_hash {
+                let mut found_state_log = state_log_cursor.seek_exact(key)?;
+                let mut found_storage_log = storage_log_cursor.seek_exact(key)?;
                 // loop over log_entries, take log_value and restore it in the flat tables
-                if account_key.0 == key {
-                    while let Some(((read_key_num_hash, read_key_address), log_entry)) =
-                        found_state_log
-                    {
-                        if read_key_num_hash != key {
-                            break;
-                        }
-
-                        let old_info = log_entry.previous_info;
-                        if !(old_info.balance.is_zero()
-                            && old_info.code_hash.is_zero()
-                            && old_info.nonce == 0)
-                        {
-                            flat_info_cursor
-                                .upsert(read_key_address, EncodableAccountInfo(old_info))
-                                .map_err(StoreError::LibmdbxError)?;
-                        } else if let Some(_current_info) = flat_info_cursor
-                            .seek_exact(read_key_address)
-                            .map_err(StoreError::LibmdbxError)?
-                        {
-                            flat_info_cursor
-                                .delete_current()
-                                .map_err(StoreError::LibmdbxError)?
-                        }
-
-                        found_state_log = state_log_cursor.next()?;
+                while let Some((read_key_num_hash, log_entry)) = found_state_log {
+                    if read_key_num_hash != key {
+                        break;
                     }
+                    let old_info = log_entry.previous_info;
+                    let addr = log_entry.address;
+                    if !(old_info.balance.is_zero()
+                        && old_info.code_hash.is_zero()
+                        && old_info.nonce == 0)
+                    {
+                        flat_info_cursor
+                            .upsert(addr.into(), EncodableAccountInfo(old_info))
+                            .map_err(StoreError::LibmdbxError)?;
+                    } else if let Some(_current_info) = flat_info_cursor
+                        .seek_exact(addr.into())
+                        .map_err(StoreError::LibmdbxError)?
+                    {
+                        flat_info_cursor
+                            .delete_current()
+                            .map_err(StoreError::LibmdbxError)?
+                    }
+
+                    found_state_log = state_log_cursor.next()?;
                 }
 
-                if storage_key.0 == key {
-                    while let Some(((read_key_num_hash, read_key_address), log_entry)) =
-                        found_storage_log
-                    {
-                        if read_key_num_hash != key {
-                            break;
-                        }
-
-                        let old_value = log_entry.1;
-                        let slot = log_entry.0;
-                        let storage_key = (read_key_address.into(), slot.into());
-                        if !old_value.is_zero() {
-                            flat_storage_cursor
-                                .upsert(storage_key, old_value.into())
-                                .map_err(StoreError::LibmdbxError)?;
-                        } else if let Some(_current_data) = flat_storage_cursor
-                            .seek_exact(storage_key)
-                            .map_err(StoreError::LibmdbxError)?
-                        {
-                            flat_storage_cursor
-                                .delete_current()
-                                .map_err(StoreError::LibmdbxError)?;
-                        }
-
-                        found_storage_log = storage_log_cursor.next()?;
+                while let Some((read_key_num_hash, log_entry)) = found_storage_log {
+                    if read_key_num_hash != key {
+                        break;
                     }
+                    let old_value = log_entry.2;
+                    let slot = log_entry.1;
+                    let addr = log_entry.0;
+                    let storage_key = (addr.into(), slot.into());
+                    if !old_value.is_zero() {
+                        flat_storage_cursor
+                            .upsert(storage_key, old_value.into())
+                            .map_err(StoreError::LibmdbxError)?;
+                    } else if let Some(_current_data) = flat_storage_cursor
+                        .seek_exact(storage_key)
+                        .map_err(StoreError::LibmdbxError)?
+                    {
+                        flat_storage_cursor
+                            .delete_current()
+                            .map_err(StoreError::LibmdbxError)?;
+                    }
+
+                    found_storage_log = storage_log_cursor.next()?;
                 }
+
+                // Update the cursors
+                canonical_hash = canonical_cursor
+                    .prev()?
+                    .map(|(_, hash)| hash.to())
+                    .transpose()?
+                    .unwrap_or_default();
+                snapshot_hash = block_headers_cursor
+                    .seek_exact(snapshot_hash.into())?
+                    .map(|(_, header)| header.to())
+                    .transpose()?
+                    .unwrap_or_default()
+                    .parent_hash;
+                block_num -= 1;
+                key = (block_num, snapshot_hash).into();
             }
+            tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, key)?;
             tx.commit()
         };
 
         inner().map_err(StoreError::LibmdbxError)
     }
-    async fn replay_writes_for_blocks(
-        &self,
-        new_canonical_blocks: &[(u64, H256)],
-    ) -> Result<(), StoreError> {
+    // NOTE: assumes current flat representation corresponds to a block
+    // in the canonical chain.
+    async fn replay_writes_until_head(&self) -> Result<(), StoreError> {
         let inner = || -> Result<_, _> {
             let tx = self.db.begin_readwrite()?;
+            let current_snapshot_meta = tx
+                .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
+                .unwrap_or_default();
+            let canonical_cursor = tx.cursor::<CanonicalBlockHashes>()?;
             let mut state_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
             let mut storage_log_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
             let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
             let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
-            for (block_num, block_hash) in new_canonical_blocks.iter() {
-                let key = (*block_num, *block_hash).into();
-                let mut found_state_log = state_log_cursor.seek_closest(key)?;
-                let mut found_storage_log = storage_log_cursor.seek_closest(key)?;
-                let (account_key, account_value) = state_log_cursor.current()?.unwrap_or_default();
-                let (storage_key, storage_value) =
-                    storage_log_cursor.current()?.unwrap_or_default();
+            let mut key = current_snapshot_meta;
+            // TODO(PLT): query the current block for flat storage/accounts and
+            // start applying from there
+            for key_value in canonical_cursor.walk(Some(current_snapshot_meta.0)) {
+                let (block_num, block_hash_rlp) = key_value?;
+                let block_hash = block_hash_rlp.to()?;
+                key = (block_num, block_hash).into();
+                let mut found_state_log = state_log_cursor.seek_exact(key)?;
+                let mut found_storage_log = storage_log_cursor.seek_exact(key)?;
                 // loop over log_entries, take log_value and restore it in the flat tables
-                if account_key.0 == key {
-                    while let Some(((read_key_num_hash, read_key_address), log_entry)) =
-                        found_state_log
-                    {
-                        if read_key_num_hash != key {
-                            break;
-                        }
-
-                        let new_info = log_entry.info;
-                        if !(new_info.balance.is_zero()
-                            && new_info.code_hash.is_zero()
-                            && new_info.nonce == 0)
-                        {
-                            flat_info_cursor
-                                .upsert(read_key_address, EncodableAccountInfo(new_info))
-                                .map_err(StoreError::LibmdbxError)?;
-                        } else if let Some(_current_info) = flat_info_cursor
-                            .seek_exact(read_key_address)
-                            .map_err(StoreError::LibmdbxError)?
-                        {
-                            flat_info_cursor
-                                .delete_current()
-                                .map_err(StoreError::LibmdbxError)?
-                        }
-
-                        found_state_log = state_log_cursor.next()?;
+                while let Some((read_key_num_hash, log_entry)) = found_state_log {
+                    if read_key_num_hash != key {
+                        break;
                     }
+
+                    let new_info = log_entry.info;
+                    if !(new_info.balance.is_zero()
+                        && new_info.code_hash.is_zero()
+                        && new_info.nonce == 0)
+                    {
+                        flat_info_cursor
+                            .upsert(log_entry.address.into(), EncodableAccountInfo(new_info))
+                            .map_err(StoreError::LibmdbxError)?;
+                    } else if let Some(_current_info) = flat_info_cursor
+                        .seek_exact(log_entry.address.into())
+                        .map_err(StoreError::LibmdbxError)?
+                    {
+                        flat_info_cursor
+                            .delete_current()
+                            .map_err(StoreError::LibmdbxError)?
+                    }
+
+                    found_state_log = state_log_cursor.next()?;
                 }
 
-                if storage_key.0 == key {
-                    while let Some(((read_key_num_hash, read_key_address), log_entry)) =
-                        found_storage_log
-                    {
-                        if read_key_num_hash != key {
-                            break;
-                        }
-
-                        let new_value = log_entry.2;
-                        let slot = log_entry.0;
-                        let storage_key = (read_key_address.into(), slot.into());
-                        if !new_value.is_zero() {
-                            flat_storage_cursor
-                                .upsert(storage_key, new_value.into())
-                                .map_err(StoreError::LibmdbxError)?;
-                        } else if let Some(_current_data) = flat_storage_cursor
-                            .seek_exact(storage_key)
-                            .map_err(StoreError::LibmdbxError)?
-                        {
-                            flat_storage_cursor
-                                .delete_current()
-                                .map_err(StoreError::LibmdbxError)?;
-                        }
-
-                        found_storage_log = storage_log_cursor.next()?;
+                while let Some((read_key_num_hash, log_entry)) = found_storage_log {
+                    if read_key_num_hash != key {
+                        break;
                     }
+
+                    let new_value = log_entry.3;
+                    let slot = log_entry.1;
+                    let addr = log_entry.0;
+                    let storage_key = (addr.into(), slot.into());
+                    if !new_value.is_zero() {
+                        flat_storage_cursor
+                            .upsert(storage_key, new_value.into())
+                            .map_err(StoreError::LibmdbxError)?;
+                    } else if let Some(_current_data) = flat_storage_cursor
+                        .seek_exact(storage_key)
+                        .map_err(StoreError::LibmdbxError)?
+                    {
+                        flat_storage_cursor
+                            .delete_current()
+                            .map_err(StoreError::LibmdbxError)?;
+                    }
+
+                    found_storage_log = storage_log_cursor.next()?;
                 }
             }
+            tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, key)?;
             tx.commit()
         };
 
@@ -1600,6 +1610,7 @@ impl From<(BlockNumber, BlockHash)> for BlockNumHash {
 
 #[derive(Default)]
 pub struct AccountInfoLogEntry {
+    pub address: H160,
     pub info: AccountInfo,
     pub previous_info: AccountInfo,
 }
@@ -1610,12 +1621,13 @@ impl Encodable for AccountInfoLogEntry {
     type Encoded = [u8; std::mem::size_of::<Self>()];
     fn encode(self) -> Self::Encoded {
         let mut encoded: Self::Encoded = std::array::from_fn(|_| 0);
-        encoded[0..32].copy_from_slice(&self.info.code_hash.0);
-        encoded[32..40].copy_from_slice(&self.info.nonce.to_be_bytes());
-        encoded[40..72].copy_from_slice(&self.info.balance.to_big_endian());
-        encoded[72..104].copy_from_slice(&self.previous_info.code_hash.0);
-        encoded[104..112].copy_from_slice(&self.previous_info.nonce.to_be_bytes());
-        encoded[112..144].copy_from_slice(&self.previous_info.balance.to_big_endian());
+        encoded[0..20].copy_from_slice(&self.address.0);
+        encoded[20..52].copy_from_slice(&self.info.code_hash.0);
+        encoded[52..60].copy_from_slice(&self.info.nonce.to_be_bytes());
+        encoded[60..92].copy_from_slice(&self.info.balance.to_big_endian());
+        encoded[92..124].copy_from_slice(&self.previous_info.code_hash.0);
+        encoded[124..132].copy_from_slice(&self.previous_info.nonce.to_be_bytes());
+        encoded[132..164].copy_from_slice(&self.previous_info.balance.to_big_endian());
         encoded
     }
 }
@@ -1625,13 +1637,15 @@ impl Decodable for AccountInfoLogEntry {
         if b.len() != SIZE_OF_ACCOUNT_INFO_LOG_ENTRY {
             anyhow::bail!("Invalid length for AccountInfoLog");
         }
-        let info_code_hash = H256::from_slice(&b[0..32]);
-        let info_nonce = Decodable::decode(&b[32..40])?;
-        let info_balance = U256::from_big_endian(&b[40..72]);
-        let previous_info_code_hash = H256::from_slice(&b[72..104]);
-        let previous_info_nonce = Decodable::decode(&b[104..112])?;
-        let previous_info_balance = U256::from_big_endian(&b[112..144]);
+        let addr = H160::from_slice(&b[0..20]);
+        let info_code_hash = H256::from_slice(&b[20..52]);
+        let info_nonce = Decodable::decode(&b[52..60])?;
+        let info_balance = U256::from_big_endian(&b[60..92]);
+        let previous_info_code_hash = H256::from_slice(&b[92..124]);
+        let previous_info_nonce = Decodable::decode(&b[124..132])?;
+        let previous_info_balance = U256::from_big_endian(&b[132..164]);
         Ok(Self {
+            address: addr,
             info: AccountInfo {
                 code_hash: info_code_hash,
                 nonce: info_nonce,
@@ -1650,21 +1664,22 @@ impl Decodable for AccountInfoLogEntry {
 // entry by storing the address in the value instead
 dupsort!(
     /// Account codes table.
-    ( AccountsStateWriteLog ) (BlockNumHash, AccountAddress)[BlockNumHash] => AccountInfoLogEntry
+    ( AccountsStateWriteLog ) BlockNumHash => AccountInfoLogEntry
 );
 
 #[derive(Default)]
-pub struct AccountStorageLogEntry(pub H256, pub U256, pub U256);
+pub struct AccountStorageLogEntry(pub H160, pub H256, pub U256, pub U256);
 
 // implemente Encode and Decode for StorageStateWriteLogVal
 impl Encodable for AccountStorageLogEntry {
-    type Encoded = [u8; 96];
+    type Encoded = [u8; 116];
 
     fn encode(self) -> Self::Encoded {
-        let mut encoded = [0u8; 96];
-        encoded[0..32].copy_from_slice(&self.0.0);
-        encoded[32..64].copy_from_slice(&self.1.to_big_endian());
-        encoded[64..96].copy_from_slice(&self.2.to_big_endian());
+        let mut encoded = [0u8; 116];
+        encoded[0..20].copy_from_slice(&self.0.0);
+        encoded[20..52].copy_from_slice(&self.1.0);
+        encoded[52..84].copy_from_slice(&self.2.to_big_endian());
+        encoded[84..116].copy_from_slice(&self.3.to_big_endian());
         encoded
     }
 }
@@ -1674,16 +1689,17 @@ impl Decodable for AccountStorageLogEntry {
         if b.len() < std::mem::size_of::<Self>() {
             anyhow::bail!("Invalid length for StorageStateWriteLogVal");
         }
-        let slot = H256::from_slice(&b[0..32]);
-        let old_value = U256::from_big_endian(&b[32..64]);
-        let new_value = U256::from_big_endian(&b[64..96]);
-        Ok(Self(slot, old_value, new_value))
+        let addr = H160::from_slice(&b[0..20]);
+        let slot = H256::from_slice(&b[20..52]);
+        let old_value = U256::from_big_endian(&b[52..84]);
+        let new_value = U256::from_big_endian(&b[84..116]);
+        Ok(Self(addr, slot, old_value, new_value))
     }
 }
 
 dupsort!(
     /// Storage write log table.
-    ( AccountsStorageWriteLog ) (BlockNumHash, AccountAddress)[BlockNumHash] => AccountStorageLogEntry
+    ( AccountsStorageWriteLog ) BlockNumHash => AccountStorageLogEntry
 );
 
 impl Encodable for BlockNumHash {
@@ -1775,6 +1791,22 @@ table!(
     ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
 );
 
+pub struct FlatTablesBlockMetadataKey();
+impl Encodable for FlatTablesBlockMetadataKey {
+    type Encoded = [u8; 0];
+    fn encode(self) -> Self::Encoded {
+        []
+    }
+}
+impl Decodable for FlatTablesBlockMetadataKey {
+    fn decode(_b: &[u8]) -> anyhow::Result<Self> {
+        Ok(FlatTablesBlockMetadataKey {})
+    }
+}
+table!(
+    /// Tracks the (BlockNumber, BlockHash, ParentHash) corresponding to the current FlatAccountStorage and FlatAccountInfo
+    ( FlatTablesBlockMetadata ) FlatTablesBlockMetadataKey => BlockNumHash
+);
 table!(
     /// Account storage as a flat mapping from (AccountAddress, Slot) to (Value)
     ( FlatAccountStorage ) (AccountAddress, AccountStorageKeyBytes) [AccountAddress] => AccountStorageValueBytes
@@ -1953,6 +1985,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(StorageSnapShot),
         table_info!(StorageHealPaths),
         table_info!(InvalidAncestors),
+        table_info!(FlatTablesBlockMetadata),
         table_info!(FlatAccountStorage),
         table_info!(FlatAccountInfo),
         table_info!(AccountsStorageWriteLog),

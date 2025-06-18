@@ -99,9 +99,8 @@ pub async fn apply_fork_choice(
     }
 
     // Finished all validations.
-    new_canonical_blocks.reverse();
     store
-        .reconstruct_snapshots_for_new_canonical_chain(&new_canonical_blocks)
+        .reconstruct_snapshots_for_new_canonical_chain()
         .await?;
 
     // Make all ancestors to head canonical.

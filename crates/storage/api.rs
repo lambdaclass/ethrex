@@ -1,15 +1,15 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
+use ethrex_common::Address;
+use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::types::{
     AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
     Receipt, Transaction, payload::PayloadBundle,
 };
-use ethrex_common::types::{AccountInfo, AccountUpdate};
-use ethrex_common::Address;
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
-use crate::store_db::libmdbx::{AccountAddress, BlockNumHash};
 use crate::UpdateBatch;
+use crate::store_db::libmdbx::{AccountAddress, BlockNumHash};
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
@@ -26,18 +26,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         account_updates: &[AccountUpdate],
     ) -> Result<(), StoreError>;
 
-    fn get_canonical_blocks_since(
-        &self,
-        first_block_num: u64,
-    ) -> Result<Vec<(u64, H256)>, StoreError>;
-    async fn undo_writes_for_blocks(
-        &self,
-        invalidated_blocks: &[(u64, H256)],
-    ) -> Result<(), StoreError>;
-    async fn replay_writes_for_blocks(
-        &self,
-        new_canonical_blocks: &[(u64, H256)],
-    ) -> Result<(), StoreError>;
+    async fn undo_writes_until_canonical(&self) -> Result<(), StoreError>;
+    async fn replay_writes_until_head(&self) -> Result<(), StoreError>;
 
     async fn store_account_info_logs(
         &self,
@@ -355,7 +345,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError>;
     fn get_current_account_info(&self, address: Address)
-        -> Result<Option<AccountInfo>, StoreError>;
+    -> Result<Option<AccountInfo>, StoreError>;
 
     /// Sets storage trie paths in need of healing, grouped by hashed address
     /// This will overwite previously stored paths for the received storages but will not remove other storage's paths

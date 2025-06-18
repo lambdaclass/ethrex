@@ -9,12 +9,12 @@ use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
+use ethrex_common::H160;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
     BlockNumber, ChainConfig, EMPTY_TRIE_HASH, ForkId, Genesis, GenesisAccount, Index, Receipt,
     Transaction, code_hash, payload::PayloadBundle,
 };
-use ethrex_common::H160;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
@@ -142,6 +142,7 @@ impl Store {
         let mut previous_account_info = HashMap::<H160, AccountInfo>::new();
 
         for (block, account_updates) in account_updates_per_block {
+            let block_numhash: BlockNumHash = (block.header.number, block.header.hash()).into();
             for account_update in account_updates {
                 let Some(new_info) = &account_update.info else {
                     continue;
@@ -157,7 +158,7 @@ impl Store {
                 // NOTE: this might also be useful as preparation for the snapshot
                 previous_account_info.insert(address.clone(), new_info.clone());
                 accounts_info_log.push((
-                    (block.header.number, block.hash()).into(),
+                    block_numhash.clone(),
                     address.into(),
                     old_info,
                     new_info.clone(),
@@ -176,20 +177,11 @@ impl Store {
     // 3. From the first block in the new canonical chain to the last, apply
     //    the log for those blocks
     // 4. Commit the transaction
-    pub async fn reconstruct_snapshots_for_new_canonical_chain(
-        &self,
-        new_canonical_blocks: &[(u64, H256)],
-    ) -> Result<(), StoreError> {
-        let Some((first_block_num, _)) = new_canonical_blocks.first() else {
-            return Ok(());
-        };
-        let invalidated_blocks = self.engine.get_canonical_blocks_since(*first_block_num)?;
-        self.engine
-            .undo_writes_for_blocks(&invalidated_blocks)
-            .await?;
-        self.engine
-            .replay_writes_for_blocks(new_canonical_blocks)
-            .await
+    //
+    // This function assumes that `new_canonical_blocks` is sorted by block number.
+    pub async fn reconstruct_snapshots_for_new_canonical_chain(&self) -> Result<(), StoreError> {
+        self.engine.undo_writes_until_canonical().await?;
+        self.engine.replay_writes_until_head().await
     }
 
     fn build_account_storage_logs<'a>(

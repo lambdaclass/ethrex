@@ -160,22 +160,10 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn get_canonical_blocks_since(
-        &self,
-        first_block_num: u64,
-    ) -> Result<Vec<(u64, H256)>, StoreError> {
+    async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
         todo!()
     }
-    async fn undo_writes_for_blocks(
-        &self,
-        invalidated_blocks: &[(u64, H256)],
-    ) -> Result<(), StoreError> {
-        todo!()
-    }
-    async fn replay_writes_for_blocks(
-        &self,
-        new_canonical_blocks: &[(u64, H256)],
-    ) -> Result<(), StoreError> {
+    async fn replay_writes_until_head(&self) -> Result<(), StoreError> {
         todo!()
     }
 
