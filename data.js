@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750270163881,
+  "lastUpdate": 1750276117274,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13375,6 +13375,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 186115511692,
             "range": "± 396852032",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "juanbono94@gmail.com",
+            "name": "Juan Bono",
+            "username": "juanbono"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "dcbeaf2c89f3004cf35f752b7f46c289fea5e6ba",
+          "message": "feat(l1, l2): insert code updates in batch (#3197)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nThis PRs makes sure we batch the insertions of new code into the DB. For\nthat, it adds a new field to the `UpdatesBatch` struct and modifies the\nrelevant functions.\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3193",
+          "timestamp": "2025-06-18T18:53:33Z",
+          "tree_id": "aa5d3335e4d7a7a930e104db0f717a4cb6af61c5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/dcbeaf2c89f3004cf35f752b7f46c289fea5e6ba"
+        },
+        "date": 1750276109008,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181659530017,
+            "range": "± 416758737",
             "unit": "ns/iter"
           }
         ]
