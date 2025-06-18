@@ -12,16 +12,16 @@ use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
     AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
-    Receipt, Transaction, compute_receipts_root, validate_block_header,
+    Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root, validate_block_header,
     validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
+use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
@@ -344,6 +344,7 @@ impl Blockchain {
         let new_state_root = apply_updates_list.state_trie_hash;
         let state_updates = apply_updates_list.state_updates;
         let accounts_updates = apply_updates_list.storage_updates;
+        let code_updates = apply_updates_list.code_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
@@ -353,6 +354,7 @@ impl Blockchain {
             storage_updates: accounts_updates,
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
+            code_updates,
         };
 
         self.storage
@@ -508,6 +510,7 @@ impl Blockchain {
         let new_state_root = account_updates_list.state_trie_hash;
         let state_updates = account_updates_list.state_updates;
         let accounts_updates = account_updates_list.storage_updates;
+        let code_updates = account_updates_list.code_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
@@ -517,6 +520,7 @@ impl Blockchain {
             storage_updates: accounts_updates,
             blocks,
             receipts: all_receipts,
+            code_updates,
         };
 
         self.storage
@@ -564,7 +568,7 @@ impl Blockchain {
         blobs_bundle.validate(&transaction)?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
-        let sender = transaction.sender();
+        let sender = transaction.sender()?;
 
         // Validate transaction
         self.validate_transaction(&transaction, sender).await?;
@@ -586,7 +590,7 @@ impl Blockchain {
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
-        let sender = transaction.sender();
+        let sender = transaction.sender()?;
         // Validate transaction
         self.validate_transaction(&transaction, sender).await?;
 
@@ -738,6 +742,39 @@ impl Blockchain {
     /// The node should accept incoming p2p transactions if this method returns true
     pub fn is_synced(&self) -> bool {
         self.is_synced.load(Ordering::Relaxed)
+    }
+
+    pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
+        let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
+            return Err(StoreError::Custom(format!(
+                "Hash {} not found in the mempool",
+                hash
+            )));
+        };
+        let result = match tx {
+            Transaction::LegacyTransaction(itx) => P2PTransaction::LegacyTransaction(itx),
+            Transaction::EIP2930Transaction(itx) => P2PTransaction::EIP2930Transaction(itx),
+            Transaction::EIP1559Transaction(itx) => P2PTransaction::EIP1559Transaction(itx),
+            Transaction::EIP4844Transaction(itx) => {
+                let Some(bundle) = self.mempool.get_blobs_bundle(*hash)? else {
+                    return Err(StoreError::Custom(format!(
+                        "Blob transaction present without its bundle: hash {}",
+                        hash
+                    )));
+                };
+
+                P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
+                    tx: itx,
+                    blobs_bundle: bundle,
+                })
+            }
+            Transaction::EIP7702Transaction(itx) => P2PTransaction::EIP7702Transaction(itx),
+            Transaction::PrivilegedL2Transaction(itx) => {
+                P2PTransaction::PrivilegedL2Transaction(itx)
+            }
+        };
+
+        Ok(result)
     }
 }
 
