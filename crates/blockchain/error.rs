@@ -90,6 +90,8 @@ pub enum MempoolError {
     InvalidPooledTxSize,
     #[error("Requested pooled transaction was not received")]
     RequestedPooledTxNotFound,
+    #[error("Transaction sender is invalid {0}")]
+    InvalidTxSender(#[from] secp256k1::Error),
 }
 
 #[derive(Debug)]

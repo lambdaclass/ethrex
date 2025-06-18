@@ -8,10 +8,13 @@ use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::{
-    AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, EMPTY_TRIE_HASH, ForkId, Genesis, GenesisAccount, Index, Receipt,
-    Transaction, code_hash, payload::PayloadBundle,
+use ethrex_common::{
+    constants::EMPTY_TRIE_HASH,
+    types::{
+        AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+        BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt, Transaction,
+        code_hash, payload::PayloadBundle,
+    },
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -1281,7 +1284,8 @@ mod tests {
     use ethereum_types::{H256, U256};
     use ethrex_common::{
         Bloom, H160,
-        types::{EMPTY_KECCACK_HASH, Transaction, TxType},
+        constants::EMPTY_KECCACK_HASH,
+        types::{Transaction, TxType},
     };
     use ethrex_rlp::decode::RLPDecode;
     use std::{fs, str::FromStr};

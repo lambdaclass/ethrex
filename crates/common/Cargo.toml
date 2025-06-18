@@ -38,3 +38,6 @@ c-kzg = ["dep:c-kzg"]
 
 [lib]
 path = "./common.rs"
+
+[lints.clippy] 
+unwrap_used = "deny"

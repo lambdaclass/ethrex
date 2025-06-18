@@ -222,14 +222,14 @@ impl RpcHandler for SponsoredTx {
                 tx.max_fee_per_gas = max_fee_per_gas;
                 tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
                 tx.nonce = nonce;
-                tx.sign_inplace(&context.sponsor_pk);
+                tx.sign_inplace(&context.sponsor_pk)?;
             }
             SendRawTransactionRequest::EIP1559(ref mut tx) => {
                 tx.gas_limit = gas_limit;
                 tx.max_fee_per_gas = max_fee_per_gas;
                 tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
                 tx.nonce = nonce;
-                tx.sign_inplace(&context.sponsor_pk);
+                tx.sign_inplace(&context.sponsor_pk)?;
             }
             _ => {
                 return Err(RpcErr::InvalidEthrexL2Message(

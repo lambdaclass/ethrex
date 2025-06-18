@@ -566,7 +566,7 @@ impl Blockchain {
         blobs_bundle.validate(&transaction)?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
-        let sender = transaction.sender();
+        let sender = transaction.sender()?;
 
         // Validate transaction
         self.validate_transaction(&transaction, sender).await?;
@@ -588,7 +588,7 @@ impl Blockchain {
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
-        let sender = transaction.sender();
+        let sender = transaction.sender()?;
         // Validate transaction
         self.validate_transaction(&transaction, sender).await?;
 

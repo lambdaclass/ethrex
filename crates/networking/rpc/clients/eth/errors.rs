@@ -50,6 +50,8 @@ pub enum EthClientError {
     InternalError(String),
     #[error("Parse Url Error. {0}")]
     ParseUrlError(String),
+    #[error("Failed to sign payload: {0}")]
+    FailedToSignPayload(String),
 }
 
 #[derive(Debug, thiserror::Error)]
