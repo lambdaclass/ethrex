@@ -76,7 +76,7 @@ impl Store {
             update_batch
                 .blocks
                 .iter()
-                .zip(account_updates.iter().map(|updates| *updates)),
+                .zip(account_updates.iter().copied()),
         )?;
         self.engine
             .store_account_info_logs(account_info_logs)
@@ -85,7 +85,7 @@ impl Store {
             update_batch
                 .blocks
                 .iter()
-                .zip(account_updates.iter().map(|updates| *updates)),
+                .zip(account_updates.iter().copied()),
         )?;
         self.engine
             .store_account_storage_logs(account_storage_logs)
@@ -147,16 +147,16 @@ impl Store {
                 let Some(new_info) = &account_update.info else {
                     continue;
                 };
-                let address = account_update.address.clone();
-                let old_info = match previous_account_info.get(&address).clone() {
+                let address = account_update.address;
+                let old_info = match previous_account_info.get(&address) {
                     Some(info) => info.clone(),
                     None => self
                         .engine
-                        .get_current_account_info(address.clone())?
+                        .get_current_account_info(address)?
                         .unwrap_or_default(),
                 };
                 // NOTE: this might also be useful as preparation for the snapshot
-                previous_account_info.insert(address.clone(), new_info.clone());
+                previous_account_info.insert(address, new_info.clone());
                 accounts_info_log.push((
                     block_numhash.clone(),
                     address.into(),
@@ -194,9 +194,9 @@ impl Store {
         for (block, account_updates) in account_updates_per_block {
             let block_numhash: BlockNumHash = (block.header.number, block.hash()).into();
             for account_update in account_updates {
-                let address = account_update.address.clone();
+                let address = account_update.address;
                 for (slot, new_value) in account_update.added_storage.iter() {
-                    let old_value = match previous_account_storage.get(&(address, *slot)).clone() {
+                    let old_value = match previous_account_storage.get(&(address, *slot)) {
                         Some(value) => *value,
                         None => self
                             .engine
@@ -206,7 +206,7 @@ impl Store {
                     // NOTE: this might also be useful as preparation for the snapshot
                     previous_account_storage.insert((address, *slot), *new_value);
                     accounts_storage_log.push((
-                        block_numhash.clone(),
+                        block_numhash,
                         address.into(),
                         *slot,
                         old_value,
