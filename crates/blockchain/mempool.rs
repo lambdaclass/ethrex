@@ -232,6 +232,17 @@ impl Mempool {
             .collect())
     }
 
+    /// Returns the status of the mempool, which is the number of transactions currently in
+    /// the pool. Until we add "queue" transactions.
+    pub fn status(&self) -> Result<usize, MempoolError> {
+        let pool_lock = self
+            .transaction_pool
+            .read()
+            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
+
+        Ok(pool_lock.len())
+    }
+
     pub fn contains_sender_nonce(
         &self,
         sender: Address,
