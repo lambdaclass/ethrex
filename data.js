@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750244470412,
+  "lastUpdate": 1750252671613,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16038,6 +16038,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.008444190246516613,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d6e2e1196a488b0f6bc3895f69fc7c5156d66498",
+          "message": "ci(core): fix lint pr title job (#3184)\n\n**Motivation**\nSometimes, there are PRs that are merged that do not satisfy the PR\ntitle conventions, but the job does't appear as failing. This aims",
+          "timestamp": "2025-06-17T14:32:35Z",
+          "tree_id": "06967e53560c8ee602ee7ddabc7c53901c7587e5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d6e2e1196a488b0f6bc3895f69fc7c5156d66498"
+        },
+        "date": 1750252670924,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008403658133333334,
             "unit": "Mgas/s"
           }
         ]
