@@ -1,6 +1,10 @@
 use super::codec::{
     account_address::AccountAddress, account_info_log_entry::AccountInfoLogEntry,
-    account_storage_log_entry::AccountStorageLogEntry, block_num_hash::BlockNumHash,
+    account_storage_key_bytes::AccountStorageKeyBytes,
+    account_storage_log_entry::AccountStorageLogEntry,
+    account_storage_value_bytes::AccountStorageValueBytes, block_num_hash::BlockNumHash,
+    encodable_account_info::EncodableAccountInfo,
+    flat_tables_block_metadata_key::FlatTablesBlockMetadataKey,
 };
 use crate::UpdateBatch;
 use crate::api::StoreEngine;
@@ -38,6 +42,7 @@ use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
 
+// Define tables
 table!(
     /// The canonical block hash for each block number. It represents the canonical chain.
     ( CanonicalBlockHashes ) BlockNumber => BlockHashRLP
@@ -1581,8 +1586,6 @@ impl Debug for Store {
     }
 }
 
-// Define tables
-
 /// For `dupsort` tables, multiple values can be stored under the same key.
 /// To maintain an explicit order, each value is assigned an `index`.
 /// This is useful when storing large byte sequences that exceed the maximum size limit,
@@ -1691,118 +1694,6 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
 
         let decoded = T::decode(&value).map_err(StoreError::RLPDecode)?;
         Ok(Some(decoded))
-    }
-}
-
-pub struct FlatTablesBlockMetadataKey();
-impl Encodable for FlatTablesBlockMetadataKey {
-    type Encoded = [u8; 0];
-    fn encode(self) -> Self::Encoded {
-        []
-    }
-}
-impl Decodable for FlatTablesBlockMetadataKey {
-    fn decode(_b: &[u8]) -> anyhow::Result<Self> {
-        Ok(FlatTablesBlockMetadataKey {})
-    }
-}
-
-// Storage values are stored as bytes instead of using their rlp encoding
-// As they are stored in a dupsort table, they need to have a fixed size, and encoding them doesn't preserve their size
-#[derive(Clone)]
-pub struct AccountStorageKeyBytes(pub [u8; 32]);
-
-#[derive(Clone)]
-pub struct AccountStorageValueBytes(pub [u8; 32]);
-
-#[derive(Clone, Default, PartialEq, Eq, Hash)]
-pub struct EncodableAccountInfo(pub AccountInfo);
-
-impl Encodable for AccountStorageKeyBytes {
-    type Encoded = [u8; 32];
-
-    fn encode(self) -> Self::Encoded {
-        self.0
-    }
-}
-
-impl Decodable for AccountStorageKeyBytes {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        Ok(AccountStorageKeyBytes(b.try_into()?))
-    }
-}
-
-impl Encodable for AccountStorageValueBytes {
-    type Encoded = [u8; 32];
-
-    fn encode(self) -> Self::Encoded {
-        self.0
-    }
-}
-
-impl Decodable for AccountStorageValueBytes {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        Ok(AccountStorageValueBytes(b.try_into()?))
-    }
-}
-
-impl Encodable for EncodableAccountInfo {
-    type Encoded = [u8; 72];
-    fn encode(self) -> Self::Encoded {
-        let mut encoded = [0u8; 72];
-        encoded[0..32].copy_from_slice(&self.0.code_hash.to_fixed_bytes());
-        encoded[32..64].copy_from_slice(&self.0.balance.to_big_endian());
-        encoded[64..72].copy_from_slice(&self.0.nonce.to_be_bytes());
-        encoded
-    }
-}
-
-impl Decodable for EncodableAccountInfo {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        if b.len() < 72 {
-            anyhow::bail!("too few bytes");
-        }
-        let mut nonce_bytes = [0u8; 8];
-        nonce_bytes.copy_from_slice(&b[64..72]);
-        Ok(Self(AccountInfo {
-            code_hash: H256::from_slice(&b[0..32]),
-            balance: U256::from_big_endian(&b[32..64]),
-            nonce: u64::from_be_bytes(nonce_bytes),
-        }))
-    }
-}
-
-impl From<(H256, U256, u64)> for EncodableAccountInfo {
-    fn from(value: (H256, U256, u64)) -> Self {
-        Self(AccountInfo {
-            code_hash: value.0,
-            balance: value.1,
-            nonce: value.2,
-        })
-    }
-}
-
-impl From<H256> for AccountStorageKeyBytes {
-    fn from(value: H256) -> Self {
-        AccountStorageKeyBytes(value.0)
-    }
-}
-
-impl From<U256> for AccountStorageValueBytes {
-    fn from(value: U256) -> Self {
-        AccountStorageValueBytes(value.to_big_endian())
-    }
-}
-
-impl From<AccountStorageKeyBytes> for H256 {
-    fn from(value: AccountStorageKeyBytes) -> Self {
-        H256(value.0)
-    }
-}
-
-impl From<AccountStorageValueBytes> for U256 {
-    fn from(value: AccountStorageValueBytes) -> Self {
-        U256::from_big_endian(&value.0)
     }
 }
 
