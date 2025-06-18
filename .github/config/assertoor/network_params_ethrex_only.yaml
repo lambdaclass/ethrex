@@ -20,8 +20,8 @@ spamoor_params:
   spammers:
     - scenario: erctx
       config:
-        count: 1000
-        throughput: 500
+        count: 1200
+        throughput: 900
 
 
 # assertoor_params:
