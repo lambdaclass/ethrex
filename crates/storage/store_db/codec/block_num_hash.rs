@@ -1,5 +1,5 @@
-use ethereum_types::H256;
 use ethrex_common::types::{BlockHash, BlockNumber};
+#[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -11,6 +11,7 @@ impl From<(BlockNumber, BlockHash)> for BlockNumHash {
     }
 }
 
+#[cfg(feature = "libmdbx")]
 impl Encodable for BlockNumHash {
     type Encoded = [u8; 40];
 
@@ -22,13 +23,14 @@ impl Encodable for BlockNumHash {
     }
 }
 
+#[cfg(feature = "libmdbx")]
 impl Decodable for BlockNumHash {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
         if b.len() != 40 {
             anyhow::bail!("Invalid length for (BlockNumber, BlockHash)");
         }
         let block_number = BlockNumber::from_be_bytes(b[0..8].try_into()?);
-        let block_hash = H256::from_slice(&b[8..40]);
+        let block_hash = ethereum_types::H256::from_slice(&b[8..40]);
         Ok((block_number, block_hash).into())
     }
 }

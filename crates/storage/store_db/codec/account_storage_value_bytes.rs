@@ -1,9 +1,11 @@
 use ethereum_types::U256;
+#[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
 #[derive(Clone)]
 pub struct AccountStorageValueBytes(pub [u8; 32]);
 
+#[cfg(feature = "libmdbx")]
 impl Encodable for AccountStorageValueBytes {
     type Encoded = [u8; 32];
 
@@ -12,6 +14,7 @@ impl Encodable for AccountStorageValueBytes {
     }
 }
 
+#[cfg(feature = "libmdbx")]
 impl Decodable for AccountStorageValueBytes {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
         Ok(AccountStorageValueBytes(b.try_into()?))

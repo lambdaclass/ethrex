@@ -1,4 +1,5 @@
 use ethrex_common::H160;
+#[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
 #[derive(Clone, Default, PartialEq, Eq, Hash)]
@@ -10,6 +11,7 @@ impl From<H160> for AccountAddress {
     }
 }
 
+#[cfg(feature = "libmdbx")]
 impl Encodable for AccountAddress {
     type Encoded = [u8; 20];
 
@@ -18,6 +20,7 @@ impl Encodable for AccountAddress {
     }
 }
 
+#[cfg(feature = "libmdbx")]
 impl Decodable for AccountAddress {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
         Ok(AccountAddress(H160(b.try_into()?)))

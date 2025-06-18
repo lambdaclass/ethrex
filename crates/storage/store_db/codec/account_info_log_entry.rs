@@ -1,6 +1,6 @@
-use ethereum_types::{H256, U256};
 use ethrex_common::H160;
 use ethrex_common::types::AccountInfo;
+#[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
 #[derive(Default)]
@@ -12,6 +12,7 @@ pub struct AccountInfoLogEntry {
 
 const SIZE_OF_ACCOUNT_INFO_LOG_ENTRY: usize = std::mem::size_of::<AccountInfoLogEntry>();
 
+#[cfg(feature = "libmdbx")]
 impl Encodable for AccountInfoLogEntry {
     type Encoded = [u8; std::mem::size_of::<Self>()];
     fn encode(self) -> Self::Encoded {
@@ -27,18 +28,19 @@ impl Encodable for AccountInfoLogEntry {
     }
 }
 
+#[cfg(feature = "libmdbx")]
 impl Decodable for AccountInfoLogEntry {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
         if b.len() != SIZE_OF_ACCOUNT_INFO_LOG_ENTRY {
             anyhow::bail!("Invalid length for AccountInfoLog");
         }
         let addr = H160::from_slice(&b[0..20]);
-        let info_code_hash = H256::from_slice(&b[20..52]);
+        let info_code_hash = ethereum_types::H256::from_slice(&b[20..52]);
         let info_nonce = Decodable::decode(&b[52..60])?;
-        let info_balance = U256::from_big_endian(&b[60..92]);
-        let previous_info_code_hash = H256::from_slice(&b[92..124]);
+        let info_balance = ethereum_types::U256::from_big_endian(&b[60..92]);
+        let previous_info_code_hash = ethereum_types::H256::from_slice(&b[92..124]);
         let previous_info_nonce = Decodable::decode(&b[124..132])?;
-        let previous_info_balance = U256::from_big_endian(&b[132..164]);
+        let previous_info_balance = ethereum_types::U256::from_big_endian(&b[132..164]);
         Ok(Self {
             address: addr,
             info: AccountInfo {

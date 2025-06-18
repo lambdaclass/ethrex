@@ -1,11 +1,13 @@
 use ethereum_types::{H256, U256};
 use ethrex_common::H160;
+#[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
 #[derive(Default)]
 pub struct AccountStorageLogEntry(pub H160, pub H256, pub U256, pub U256);
 
 // implemente Encode and Decode for StorageStateWriteLogVal
+#[cfg(feature = "libmdbx")]
 impl Encodable for AccountStorageLogEntry {
     type Encoded = [u8; 116];
 
@@ -19,6 +21,7 @@ impl Encodable for AccountStorageLogEntry {
     }
 }
 
+#[cfg(feature = "libmdbx")]
 impl Decodable for AccountStorageLogEntry {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
         if b.len() < std::mem::size_of::<Self>() {

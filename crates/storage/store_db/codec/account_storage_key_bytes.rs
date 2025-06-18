@@ -1,4 +1,5 @@
 use ethereum_types::H256;
+#[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
 // Storage values are stored as bytes instead of using their rlp encoding
@@ -6,6 +7,7 @@ use libmdbx::orm::{Decodable, Encodable};
 #[derive(Clone)]
 pub struct AccountStorageKeyBytes(pub [u8; 32]);
 
+#[cfg(feature = "libmdbx")]
 impl Encodable for AccountStorageKeyBytes {
     type Encoded = [u8; 32];
 
@@ -14,6 +16,7 @@ impl Encodable for AccountStorageKeyBytes {
     }
 }
 
+#[cfg(feature = "libmdbx")]
 impl Decodable for AccountStorageKeyBytes {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
         Ok(AccountStorageKeyBytes(b.try_into()?))

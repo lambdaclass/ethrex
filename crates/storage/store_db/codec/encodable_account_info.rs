@@ -1,10 +1,12 @@
 use ethereum_types::{H256, U256};
 use ethrex_common::types::AccountInfo;
+#[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
 #[derive(Clone, Default, PartialEq, Eq, Hash)]
 pub struct EncodableAccountInfo(pub AccountInfo);
 
+#[cfg(feature = "libmdbx")]
 impl Encodable for EncodableAccountInfo {
     type Encoded = [u8; 72];
     fn encode(self) -> Self::Encoded {
@@ -16,6 +18,7 @@ impl Encodable for EncodableAccountInfo {
     }
 }
 
+#[cfg(feature = "libmdbx")]
 impl Decodable for EncodableAccountInfo {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
         if b.len() < 72 {
