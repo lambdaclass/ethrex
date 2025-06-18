@@ -89,6 +89,7 @@ revm-comparison-ci: compile-contracts
 
 build-revm-comparison:
 	cd bench/revm_comparison && \
+		RUSTFLAGS="-C target-cpu=native" \
 		CARGO_TARGET_DIR=../../target \
 		cargo build --release --bin benchmark
 
