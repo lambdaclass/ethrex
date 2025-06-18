@@ -272,11 +272,16 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
 }
 
 pub fn merkle_proof(data: Vec<H256>, mut index: usize) -> Option<Vec<H256>> {
+    if index >= data.len() {
+        return None;
+    }
     use keccak_hash::keccak;
 
     let mut proof = vec![];
     let mut current = data.clone();
-    while current.len() > 1 {
+    let mut first = true;
+    while current.len() > 1 || first {
+        first = false;
         proof.push(*current.get(index ^ 1).or(current.get(index))?);
         index /= 2;
         current = current
