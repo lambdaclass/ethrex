@@ -76,7 +76,6 @@ init-l1-levm: ## 🚀 Initializes an L1 Lambda ethrex Client with LEVM
     --http.port ${L1_PORT} \
     --http.addr ${L1_RPC_ADDRESS} \
     --authrpc.port ${L1_AUTH_PORT} \
-	--evm levm \
 	--dev \
     --datadir ${ethrex_L1_DEV_LIBMDBX}
 
@@ -139,7 +138,6 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--http.addr ${L2_RPC_ADDRESS} \
 	--metrics \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
-	--evm levm \
 	--datadir ${ethrex_L2_DEV_LIBMDBX} \
 	--l1.bridge-address ${DEFAULT_BRIDGE_ADDRESS} \
 	--l1.on-chain-proposer-address ${DEFAULT_ON_CHAIN_PROPOSER_ADDRESS} \
