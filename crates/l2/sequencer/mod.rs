@@ -126,7 +126,7 @@ pub async fn start_l2(
     });
 
     #[cfg(feature = "metrics")]
-    let _ = MetricsGatherer::spawn(&cfg, rollup_store, l2_url)
+    let _ = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
         .await
         .inspect_err(|err| {
             error!("Error starting Block Producer: {err}");
@@ -134,7 +134,7 @@ pub async fn start_l2(
 
     let mut task_set: JoinSet<Result<(), errors::SequencerError>> = JoinSet::new();
     if needed_proof_types.contains(&ProverType::Aligned) {
-        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(cfg));
+        task_set.spawn(l1_proof_verifier::start_l1_proof_verifier(cfg.clone()));
     }
     if cfg.based.based {
         let _ = StateUpdater::spawn(
@@ -148,17 +148,11 @@ pub async fn start_l2(
             error!("Error starting State Updater: {err}");
         });
 
-        let _ = BlockFetcher::spawn(
-            &cfg,
-            store.clone(),
-            rollup_store.clone(),
-            blockchain.clone(),
-            shared_state.clone(),
-        )
-        .await
-        .inspect_err(|err| {
-            error!("Error starting Block Fetcher: {err}");
-        });
+        let _ = BlockFetcher::spawn(&cfg, store, rollup_store, blockchain, shared_state)
+            .await
+            .inspect_err(|err| {
+                error!("Error starting Block Fetcher: {err}");
+            });
     }
 
     while let Some(res) = task_set.join_next().await {

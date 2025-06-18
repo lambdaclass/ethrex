@@ -1,10 +1,10 @@
-use crate::{sequencer::errors::MetricsGathererError, CommitterConfig, EthConfig, SequencerConfig};
+use crate::{CommitterConfig, EthConfig, SequencerConfig, sequencer::errors::MetricsGathererError};
 use ::ethrex_storage_rollup::StoreRollup;
 use ethereum_types::Address;
 use ethrex_metrics::metrics_l2::{METRICS_L2, MetricsL2BlockType, MetricsL2OperationType};
 use ethrex_metrics::metrics_transactions::METRICS_TX;
 use ethrex_rpc::clients::eth::EthClient;
-use spawned_concurrency::{send_after, CallResponse, CastResponse, GenServer, GenServerInMsg};
+use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
 use spawned_rt::mpsc::Sender;
 use std::time::Duration;
 use tokio::time::sleep;
