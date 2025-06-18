@@ -30,7 +30,7 @@ use std::fs;
 #[tokio::test]
 async fn test_state_reconstruct() {
     let pks_path = std::env::var("PRIVATE_KEYS_PATH")
-        .unwrap_or("../../../test_data/fixtures/keys/private_keys_l1.txt".to_string());
+        .unwrap_or("../../test_data/fixtures/keys/private_keys_l1.txt".to_string());
     let pks = fs::read_to_string(&pks_path).unwrap();
     let private_keys: Vec<String> = pks
         .lines()

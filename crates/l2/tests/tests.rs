@@ -66,7 +66,7 @@ const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
 
 const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 
-const DEFAULT_PRIVATE_KEYS_FILE_PATH: &str = "../../../test_data/fixtures/keys/private_keys_l1.txt";
+const DEFAULT_PRIVATE_KEYS_FILE_PATH: &str = "../../test_data/fixtures/keys/private_keys_l1.txt";
 
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
