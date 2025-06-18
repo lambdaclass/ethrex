@@ -19,7 +19,6 @@
   - [General overview](./l2/overview.md)
     - [State diffs](./l2/state_diffs.md)
     - [Withdrawals](./l2/withdrawals.md)
-  - [Based roadmap (draft)](./l2/roadmap.md)
   - [Smart contracts](./l2/contracts.md)
     - [OnChainOperator]()
     - [CommonBridge]()
@@ -29,6 +28,7 @@
     - [Prover](./l2/prover.md)
     - [Aligned mode](./l2/aligned_mode.md)
     - [TDX execution module](./l2/tdx.md)
+  - [Based roadmap (draft)](./l2/roadmap.md)
 
 - [Developers](./developers/README.md)
   - [Quickstart](./developers/quickstart.md)
