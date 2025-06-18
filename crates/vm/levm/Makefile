@@ -65,11 +65,8 @@ compile-contracts:
 	--bin compile \
 	--manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
 
-revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
+revm-comparison: compile-contracts ## 📊 Run benchmarks for both REVM and LEVM
 	$(MAKE) build-revm-comparison
-	$(call run_benchmark,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
-	$(call run_benchmark,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
-	$(call run_benchmark,FactorialRecursive,REPETITIONS,BENCH_FACT_REC_ITERATIONS)
 	$(call run_benchmark,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
 	$(call run_benchmark,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
 	$(call run_benchmark,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
@@ -78,9 +75,6 @@ revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and facto
 
 revm-comparison-ci: compile-contracts
 	$(MAKE) build-revm-comparison
-	$(call run_benchmark_ci,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
-	$(call run_benchmark_ci,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
-	$(call run_benchmark_ci,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
 	$(call run_benchmark_ci,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
 	$(call run_benchmark_ci,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
 	$(call run_benchmark_ci,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
