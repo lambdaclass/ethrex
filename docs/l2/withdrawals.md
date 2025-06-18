@@ -24,6 +24,8 @@ On L1:
 3. The bridge asserts the proof is valid.
 4. The bridge sends the locked funds specified in the `L1Message` to the user.
 
+<!-- TODO: add diagram -->
+
 ## ERC20 withdrawals through the native bridge
 
 This section explains step by step how native ERC20 withdrawals work.
@@ -46,3 +48,5 @@ On L1:
 2. The user submits a withdrawal proof when calling `claimWithdrawalERC20` on the L1 `CommonBridge`.
 3. The bridge asserts the proof is valid and that the locked tokens mapping contains enough balance for the L1 and L2 token pair to cover the transfer.
 4. The bridge transfers the locked tokens specified in the `L1Message` to the user and discounts the transferred amount from the L1 and L2 token pair in the mapping.
+
+<!-- TODO: add diagram -->
