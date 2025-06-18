@@ -353,6 +353,7 @@ impl Command {
                                 storage_updates: accounts_updates,
                                 blocks: vec![],
                                 receipts: vec![],
+                                code_updates: vec![],
                             };
 
                             store.store_block_updates(pseudo_update_batch).await.expect("Error storing trie updates");

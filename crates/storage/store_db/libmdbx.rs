@@ -137,6 +137,12 @@ impl StoreEngine for Store {
                     .map_err(StoreError::LibmdbxError)?;
             }
 
+            // store code updates
+            for (hashed_address, code) in update_batch.code_updates {
+                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
             for (hashed_address, nodes) in update_batch.storage_updates {
                 for (node_hash, node_data) in nodes {
                     let key_1: [u8; 32] = hashed_address.into();
