@@ -37,7 +37,7 @@ jobs:
         if: ${{ github.ref == 'refs/heads/main' }}
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: book
+          publish_dir: book/html
           destination_dir: .     # root of gh-pages
           keep_files: true       # do not erase flamegraphs/ or benchmarks/
           cname: docs.ethrex.xyz # always commit the CNAME file
