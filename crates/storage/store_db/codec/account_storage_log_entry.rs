@@ -3,16 +3,18 @@ use ethrex_common::H160;
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 
+const SIZE_OF_ACCOUNT_STORAGE_LOG_ENTRY: usize = 116;
+
 #[derive(Default)]
 pub struct AccountStorageLogEntry(pub H160, pub H256, pub U256, pub U256);
 
 // implemente Encode and Decode for StorageStateWriteLogVal
 #[cfg(feature = "libmdbx")]
 impl Encodable for AccountStorageLogEntry {
-    type Encoded = [u8; 116];
+    type Encoded = [u8; SIZE_OF_ACCOUNT_STORAGE_LOG_ENTRY];
 
     fn encode(self) -> Self::Encoded {
-        let mut encoded = [0u8; 116];
+        let mut encoded: Self::Encoded = std::array::from_fn(|_| 0);
         encoded[0..20].copy_from_slice(&self.0.0);
         encoded[20..52].copy_from_slice(&self.1.0);
         encoded[52..84].copy_from_slice(&self.2.to_big_endian());
@@ -24,8 +26,12 @@ impl Encodable for AccountStorageLogEntry {
 #[cfg(feature = "libmdbx")]
 impl Decodable for AccountStorageLogEntry {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        if b.len() < std::mem::size_of::<Self>() {
-            anyhow::bail!("Invalid length for StorageStateWriteLogVal");
+        if b.len() < SIZE_OF_ACCOUNT_STORAGE_LOG_ENTRY {
+            anyhow::bail!(
+                "Invalid length for StorageStateWriteLogEntry: {} (expected {})",
+                b.len(),
+                116
+            );
         }
         let addr = H160::from_slice(&b[0..20]);
         let slot = H256::from_slice(&b[20..52]);
