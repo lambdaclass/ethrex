@@ -390,9 +390,10 @@ impl Blockchain {
                 METRICS_BLOCKS.set_latest_gigagas(throughput);
             );
             let base_log = format!(
-                "[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {:.0} ms. #Txs: {}.",
+                "[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {:.0} ms. Gas Used: {}% #Txs: {}.",
                 throughput,
                 interval,
+                block.header.gas_used / block.header.gas_limit,
                 block.body.transactions.len()
             );
             let extra_log = if as_gigas > 0.0 {
