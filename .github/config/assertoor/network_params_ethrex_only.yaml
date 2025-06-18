@@ -6,10 +6,16 @@ participants:
     ]
     el_image: ethrex-latest
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v7.0.0-beta.0
+    cl_image: sigp/lighthouse:v7.0.1
     ethereum_metrics_exporter_enabled: true
     validator_count: 32
     count: 3
+  - el_type: reth
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.0.1
+    ethereum_metrics_exporter_enabled: true
+    validator_count: 96
+    count: 1
 
 network_params:
   # The address of the staking contract address on the Eth1 chain
