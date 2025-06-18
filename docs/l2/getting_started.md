@@ -21,9 +21,6 @@ The program that deploys our L2 contracts outputs the addresses in a `.env` file
 Apart from these, each component accepts multiple configuration options, which can be configured either in the `.env`, or with CLI flags.
 More information is available in [the documentation for each component](./components.md).
 
-## Other guides
+## Guides
 
-We have a collection of guides for usual user operations.
-
-- [Moving your assets from L1 to L2 through the native bridge](./guides/depositing.md)
-- [Moving your assets to L1 from L2 through the native bridge](./guides/withdrawing.md)
+For more information on how to perform certain operations, go to [Guides](./guides/README.md).
