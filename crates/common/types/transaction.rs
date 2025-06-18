@@ -1311,7 +1311,7 @@ impl Transaction {
     }
 }
 
-fn recover_address(
+pub fn recover_address(
     signature_r: &U256,
     signature_s: &U256,
     signature_y_parity: bool,
@@ -1506,6 +1506,29 @@ mod canonic_encoding {
             let mut buf = Vec::new();
             self.encode_canonical(&mut buf);
             buf
+        }
+
+        pub fn compute_hash(&self) -> H256 {
+            match self {
+                P2PTransaction::LegacyTransaction(t) => {
+                    Transaction::LegacyTransaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP2930Transaction(t) => {
+                    Transaction::EIP2930Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP1559Transaction(t) => {
+                    Transaction::EIP1559Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP4844TransactionWithBlobs(t) => {
+                    Transaction::EIP4844Transaction(t.tx.clone()).compute_hash()
+                }
+                P2PTransaction::EIP7702Transaction(t) => {
+                    Transaction::EIP7702Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::PrivilegedL2Transaction(t) => {
+                    Transaction::PrivilegedL2Transaction(t.clone()).compute_hash()
+                }
+            }
         }
     }
 }

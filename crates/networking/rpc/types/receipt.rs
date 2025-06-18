@@ -69,7 +69,7 @@ impl From<Receipt> for RpcReceiptInfo {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcLog {
     #[serde(flatten)]
@@ -104,7 +104,7 @@ impl RpcLog {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcLogInfo {
     pub address: Address,
