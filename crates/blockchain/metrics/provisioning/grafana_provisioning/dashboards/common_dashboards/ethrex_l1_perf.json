@@ -933,7 +933,10 @@
         "type": "datasource"
       },
       {
-        "current": {},
+        "current": {
+          "text": "el-1-ethrex-lighthouse",
+          "value": "el-1-ethrex-lighthouse"
+        },
         "definition": "label_values(up, job)",
         "description": "",
         "label": "job",
