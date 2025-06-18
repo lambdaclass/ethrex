@@ -135,7 +135,7 @@ impl GenServer for L1Watcher {
 }
 
 async fn watch(state: &mut L1WatcherState) {
-    let Ok(logs) = get_logs(state)
+    let Ok(logs) = get_deposit_logs(state)
         .await
         .inspect_err(|err| error!("L1 Watcher Error: {err}"))
     else {
@@ -144,13 +144,13 @@ async fn watch(state: &mut L1WatcherState) {
 
     // We may not have a deposit nor a withdrawal, that means no events -> no logs.
     if !logs.is_empty() {
-        let _ = process_logs(state, logs)
+        let _ = process_deposit_logs(state, logs)
             .await
             .inspect_err(|err| error!("L1 Watcher Error: {}", err));
     };
 }
 
-pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1WatcherError> {
+pub async fn get_deposit_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1WatcherError> {
     if state.last_block_fetched.is_zero() {
         state.last_block_fetched = state
             .eth_client
@@ -221,7 +221,7 @@ pub async fn get_logs(state: &mut L1WatcherState) -> Result<Vec<RpcLog>, L1Watch
     Ok(logs)
 }
 
-pub async fn process_logs(
+pub async fn process_deposit_logs(
     state: &L1WatcherState,
     logs: Vec<RpcLog>,
 ) -> Result<Vec<H256>, L1WatcherError> {
