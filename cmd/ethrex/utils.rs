@@ -86,9 +86,9 @@ pub fn read_genesis_file(genesis_file_path: &Path) -> Genesis {
     decode::genesis_file(genesis_file).expect("Failed to decode genesis file")
 }
 
-pub fn parse_evm_engine(s: &str) -> eyre::Result<EvmEngine> {
-    EvmEngine::try_from(s.to_owned()).map_err(|e| eyre::eyre!("{e}"))
-}
+// pub fn parse_evm_engine(s: &str) -> eyre::Result<EvmEngine> {
+//     EvmEngine::try_from(s.to_owned()).map_err(|e| eyre::eyre!("{e}"))
+// }
 
 pub fn parse_sync_mode(s: &str) -> eyre::Result<SyncMode> {
     match s {

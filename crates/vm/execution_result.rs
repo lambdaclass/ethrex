@@ -2,8 +2,8 @@ use bytes::Bytes;
 use ethrex_common::Address;
 use ethrex_common::{H256, types::Log};
 use ethrex_levm::errors::{ExecutionReport as LevmExecutionReport, TxResult};
-use revm::primitives::ExecutionResult as RevmExecutionResult;
-use revm::primitives::result::Output as RevmOutput;
+// use revm::primitives::ExecutionResult as RevmExecutionResult;
+// use revm::primitives::result::Output as RevmOutput;
 
 #[derive(Debug)]
 pub enum ExecutionResult {
@@ -56,46 +56,46 @@ impl ExecutionResult {
     }
 }
 
-impl From<RevmExecutionResult> for ExecutionResult {
-    fn from(val: RevmExecutionResult) -> Self {
-        match val {
-            RevmExecutionResult::Success {
-                reason: _,
-                gas_used,
-                gas_refunded,
-                logs,
-                output,
-            } => ExecutionResult::Success {
-                gas_used,
-                gas_refunded,
-                logs: logs
-                    .into_iter()
-                    .map(|log| Log {
-                        address: Address::from_slice(log.address.0.as_ref()),
-                        topics: log
-                            .topics()
-                            .iter()
-                            .map(|v| H256::from_slice(v.as_slice()))
-                            .collect(),
-                        data: log.data.data.0,
-                    })
-                    .collect(),
-                output: match output {
-                    RevmOutput::Call(bytes) => bytes.0,
-                    RevmOutput::Create(bytes, _addr) => bytes.0,
-                },
-            },
-            RevmExecutionResult::Revert { gas_used, output } => ExecutionResult::Revert {
-                gas_used,
-                output: output.0,
-            },
-            RevmExecutionResult::Halt { reason, gas_used } => ExecutionResult::Halt {
-                reason: format!("{:?}", reason),
-                gas_used,
-            },
-        }
-    }
-}
+// impl From<RevmExecutionResult> for ExecutionResult {
+//     fn from(val: RevmExecutionResult) -> Self {
+//         match val {
+//             RevmExecutionResult::Success {
+//                 reason: _,
+//                 gas_used,
+//                 gas_refunded,
+//                 logs,
+//                 output,
+//             } => ExecutionResult::Success {
+//                 gas_used,
+//                 gas_refunded,
+//                 logs: logs
+//                     .into_iter()
+//                     .map(|log| Log {
+//                         address: Address::from_slice(log.address.0.as_ref()),
+//                         topics: log
+//                             .topics()
+//                             .iter()
+//                             .map(|v| H256::from_slice(v.as_slice()))
+//                             .collect(),
+//                         data: log.data.data.0,
+//                     })
+//                     .collect(),
+//                 output: match output {
+//                     RevmOutput::Call(bytes) => bytes.0,
+//                     RevmOutput::Create(bytes, _addr) => bytes.0,
+//                 },
+//             },
+//             RevmExecutionResult::Revert { gas_used, output } => ExecutionResult::Revert {
+//                 gas_used,
+//                 output: output.0,
+//             },
+//             RevmExecutionResult::Halt { reason, gas_used } => ExecutionResult::Halt {
+//                 reason: format!("{:?}", reason),
+//                 gas_used,
+//             },
+//         }
+//     }
+// }
 impl From<LevmExecutionReport> for ExecutionResult {
     fn from(val: LevmExecutionReport) -> Self {
         match val.result {

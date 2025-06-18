@@ -63,7 +63,7 @@ async fn main() -> eyre::Result<()> {
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let blockchain = init_blockchain(opts.evm, store.clone());
+    let blockchain = init_blockchain(ethrex_vm::EvmEngine::LEVM, store.clone());
 
     let signer = get_signer(&data_dir);
 

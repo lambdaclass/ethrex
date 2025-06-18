@@ -10,23 +10,23 @@ use ethrex_levm::db::{CacheDB, gen_db::GeneralizedDatabase};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{
     DynVmDatabase,
-    backends::revm::db::{EvmState, evm_state},
+    // backends::revm::db::{EvmState, evm_state},
 };
 
-/// Loads initial state, used for REVM as it contains EvmState.
-pub async fn load_initial_state(test: &EFTest) -> (EvmState, H256, Store) {
-    let genesis = Genesis::from(test);
-
-    let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
-    storage.add_initial_state(genesis.clone()).await.unwrap();
-
-    let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
-        storage.clone(),
-        genesis.get_block().hash(),
-    ));
-
-    (evm_state(vm_db), genesis.get_block().hash(), storage)
-}
+// /// Loads initial state, used for REVM as it contains EvmState.
+// pub async fn load_initial_state(test: &EFTest) -> (EvmState, H256, Store) {
+//     let genesis = Genesis::from(test);
+//
+//     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+//     storage.add_initial_state(genesis.clone()).await.unwrap();
+//
+//     let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
+//         storage.clone(),
+//         genesis.get_block().hash(),
+//     ));
+//
+//     (evm_state(vm_db), genesis.get_block().hash(), storage)
+// }
 
 /// Loads initial state, function for LEVM as it does not require EvmState
 pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {

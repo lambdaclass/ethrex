@@ -7,7 +7,7 @@ use ethrex_common::{
 use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
 use ethrex_vm::EvmError;
 use itertools::Itertools;
-use revm::primitives::{EVMError as RevmError, ExecutionResult as RevmExecutionResult};
+// use revm::primitives::{EVMError as RevmError, ExecutionResult as RevmExecutionResult};
 use serde::{Deserialize, Serialize};
 use spinoff::{Color, Spinner, spinners::Dots};
 use std::{
@@ -350,79 +350,79 @@ impl Display for EFTestsReport {
                         failed_vector.0, failed_vector.1, failed_vector.2
                     )?;
                     writeln!(f, "\t\t\tError: {error}")?;
-                    if let Some(re_run_report) = &report.re_run_report {
-                        if let Some(execution_report) =
-                            re_run_report.execution_report.get(&(*failed_vector, *fork))
-                        {
-                            if let Some((levm_result, revm_result)) =
-                                &execution_report.execution_result_mismatch
-                            {
-                                writeln!(
-                                    f,
-                                    "\t\t\tExecution result mismatch: LEVM: {levm_result:?}, REVM: {revm_result:?}",
-                                )?;
-                            }
-                            if let Some((levm_gas_used, revm_gas_used)) =
-                                &execution_report.gas_used_mismatch
-                            {
-                                writeln!(
-                                    f,
-                                    "\t\t\tGas used mismatch: LEVM: {levm_gas_used}, REVM: {revm_gas_used} (diff: {})",
-                                    levm_gas_used.abs_diff(*revm_gas_used)
-                                )?;
-                            }
-                            if let Some((levm_gas_refunded, revm_gas_refunded)) =
-                                &execution_report.gas_refunded_mismatch
-                            {
-                                writeln!(
-                                    f,
-                                    "\t\t\tGas refunded mismatch: LEVM: {levm_gas_refunded}, REVM: {revm_gas_refunded} (diff: {})",
-                                    levm_gas_refunded.abs_diff(*revm_gas_refunded)
-                                )?;
-                            }
-                            if let Some((levm_logs, revm_logs)) = &execution_report.logs_mismatch {
-                                writeln!(f, "\t\t\tLogs mismatch:")?;
-                                writeln!(f, "\t\t\t\tLevm Logs: ")?;
-                                let levm_log_report = levm_logs.iter().map(|log| format!(
-                                            "\t\t\t\t Log {{ address: {:#x}, topic: {:?}, data: {:#x} }} \n",
-                                            log.address, log.topics, log.data
-                                        ))
-                                        .fold(String::new(), |acc, arg| acc + arg.as_str());
-                                writeln!(f, "{}", levm_log_report)?;
-                                writeln!(f, "\t\t\t\tRevm Logs: ")?;
-                                let revm_log_report = revm_logs
-                                    .iter()
-                                    .map(|log| format!("\t\t\t\t {:?} \n", log))
-                                    .fold(String::new(), |acc, arg| acc + arg.as_str());
-                                writeln!(f, "{}", revm_log_report)?;
-                            }
-                            if let Some((levm_result, revm_error)) =
-                                &execution_report.re_runner_error
-                            {
-                                writeln!(
-                                    f,
-                                    "\t\t\tRe-run error: LEVM: {levm_result:?}, REVM: {revm_error}",
-                                )?;
-                            }
-                        }
+                    // if let Some(re_run_report) = &report.re_run_report {
+                    //     if let Some(execution_report) =
+                    //         re_run_report.execution_report.get(&(*failed_vector, *fork))
+                    //     {
+                    //         if let Some((levm_result, revm_result)) =
+                    //             &execution_report.execution_result_mismatch
+                    //         {
+                    //             writeln!(
+                    //                 f,
+                    //                 "\t\t\tExecution result mismatch: LEVM: {levm_result:?}, REVM: {revm_result:?}",
+                    //             )?;
+                    //         }
+                    //         if let Some((levm_gas_used, revm_gas_used)) =
+                    //             &execution_report.gas_used_mismatch
+                    //         {
+                    //             writeln!(
+                    //                 f,
+                    //                 "\t\t\tGas used mismatch: LEVM: {levm_gas_used}, REVM: {revm_gas_used} (diff: {})",
+                    //                 levm_gas_used.abs_diff(*revm_gas_used)
+                    //             )?;
+                    //         }
+                    //         if let Some((levm_gas_refunded, revm_gas_refunded)) =
+                    //             &execution_report.gas_refunded_mismatch
+                    //         {
+                    //             writeln!(
+                    //                 f,
+                    //                 "\t\t\tGas refunded mismatch: LEVM: {levm_gas_refunded}, REVM: {revm_gas_refunded} (diff: {})",
+                    //                 levm_gas_refunded.abs_diff(*revm_gas_refunded)
+                    //             )?;
+                    //         }
+                    //         if let Some((levm_logs, revm_logs)) = &execution_report.logs_mismatch {
+                    //             writeln!(f, "\t\t\tLogs mismatch:")?;
+                    //             writeln!(f, "\t\t\t\tLevm Logs: ")?;
+                    //             let levm_log_report = levm_logs.iter().map(|log| format!(
+                    //                         "\t\t\t\t Log {{ address: {:#x}, topic: {:?}, data: {:#x} }} \n",
+                    //                         log.address, log.topics, log.data
+                    //                     ))
+                    //                     .fold(String::new(), |acc, arg| acc + arg.as_str());
+                    //             writeln!(f, "{}", levm_log_report)?;
+                    //             writeln!(f, "\t\t\t\tRevm Logs: ")?;
+                    //             let revm_log_report = revm_logs
+                    //                 .iter()
+                    //                 .map(|log| format!("\t\t\t\t {:?} \n", log))
+                    //                 .fold(String::new(), |acc, arg| acc + arg.as_str());
+                    //             writeln!(f, "{}", revm_log_report)?;
+                    //         }
+                    //         if let Some((levm_result, revm_error)) =
+                    //             &execution_report.re_runner_error
+                    //         {
+                    //             writeln!(
+                    //                 f,
+                    //                 "\t\t\tRe-run error: LEVM: {levm_result:?}, REVM: {revm_error}",
+                    //             )?;
+                    //         }
+                    //     }
 
-                        if let Some(account_update) = re_run_report
-                            .account_updates_report
-                            .get(&(*failed_vector, *fork))
-                        {
-                            writeln!(f, "\t\t\t{}", &account_update.to_string())?;
-                        } else {
-                            writeln!(
-                                f,
-                                "\t\t\tNo account updates report found. Account update reports are only generated for tests that failed at the post-state validation stage."
-                            )?;
-                        }
-                    } else {
-                        writeln!(
-                            f,
-                            "\t\t\tNo re-run report found. Re-run reports are only generated for tests that failed at the post-state validation stage."
-                        )?;
-                    }
+                    //     if let Some(account_update) = re_run_report
+                    //         .account_updates_report
+                    //         .get(&(*failed_vector, *fork))
+                    //     {
+                    //         writeln!(f, "\t\t\t{}", &account_update.to_string())?;
+                    //     } else {
+                    //         writeln!(
+                    //             f,
+                    //             "\t\t\tNo account updates report found. Account update reports are only generated for tests that failed at the post-state validation stage."
+                    //         )?;
+                    //     }
+                    // } else {
+                    //     writeln!(
+                    //         f,
+                    //         "\t\t\tNo re-run report found. Re-run reports are only generated for tests that failed at the post-state validation stage."
+                    //     )?;
+                    // }
                     writeln!(f)?;
                 }
             }
@@ -436,7 +436,7 @@ pub struct EFTestReport {
     pub name: String,
     pub dir: String,
     pub test_hash: H256,
-    pub re_run_report: Option<TestReRunReport>,
+    // pub re_run_report: Option<TestReRunReport>,
     pub fork_results: HashMap<Fork, EFTestReportForkResult>,
 }
 
@@ -452,14 +452,14 @@ impl EFTestReport {
             name,
             dir,
             test_hash,
-            re_run_report: None,
+            // re_run_report: None,
             fork_results: HashMap::new(),
         }
     }
 
-    pub fn register_re_run_report(&mut self, re_run_report: TestReRunReport) {
-        self.re_run_report = Some(re_run_report);
-    }
+    // pub fn register_re_run_report(&mut self, re_run_report: TestReRunReport) {
+    //     self.re_run_report = Some(re_run_report);
+    // }
 
     pub fn register_fork_result(
         &mut self,
@@ -776,127 +776,128 @@ impl fmt::Display for ComparisonReport {
     }
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct TestReRunExecutionReport {
-    pub execution_result_mismatch: Option<(TxResult, RevmExecutionResult)>,
-    pub gas_used_mismatch: Option<(u64, u64)>,
-    pub gas_refunded_mismatch: Option<(u64, u64)>,
-    pub logs_mismatch: Option<(Vec<ethrex_common::types::Log>, Vec<revm::primitives::Log>)>,
-    pub re_runner_error: Option<(TxResult, String)>,
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct TestReRunReport {
-    pub execution_report: HashMap<(TestVector, Fork), TestReRunExecutionReport>,
-    pub account_updates_report: HashMap<(TestVector, Fork), ComparisonReport>,
-}
-
-impl TestReRunReport {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn register_execution_result_mismatch(
-        &mut self,
-        vector: TestVector,
-        levm_result: TxResult,
-        revm_result: RevmExecutionResult,
-        fork: Fork,
-    ) {
-        let value = Some((levm_result, revm_result));
-        self.execution_report
-            .entry((vector, fork))
-            .and_modify(|report| {
-                report.execution_result_mismatch = value.clone();
-            })
-            .or_insert(TestReRunExecutionReport {
-                execution_result_mismatch: value,
-                ..Default::default()
-            });
-    }
-
-    pub fn register_gas_used_mismatch(
-        &mut self,
-        vector: TestVector,
-        levm_gas_used: u64,
-        revm_gas_used: u64,
-        fork: Fork,
-    ) {
-        let value = Some((levm_gas_used, revm_gas_used));
-        self.execution_report
-            .entry((vector, fork))
-            .and_modify(|report| {
-                report.gas_used_mismatch = value;
-            })
-            .or_insert(TestReRunExecutionReport {
-                gas_used_mismatch: value,
-                ..Default::default()
-            });
-    }
-
-    pub fn register_gas_refunded_mismatch(
-        &mut self,
-        vector: TestVector,
-        levm_gas_refunded: u64,
-        revm_gas_refunded: u64,
-        fork: Fork,
-    ) {
-        let value = Some((levm_gas_refunded, revm_gas_refunded));
-        self.execution_report
-            .entry((vector, fork))
-            .and_modify(|report| {
-                report.gas_refunded_mismatch = value;
-            })
-            .or_insert(TestReRunExecutionReport {
-                gas_refunded_mismatch: value,
-                ..Default::default()
-            });
-    }
-
-    pub fn register_logs_mismatch(
-        &mut self,
-        vector: TestVector,
-        levm_logs: Vec<ethrex_common::types::Log>,
-        revm_logs: Vec<revm::primitives::Log>,
-        fork: Fork,
-    ) {
-        let value = Some((levm_logs, revm_logs));
-        self.execution_report
-            .entry((vector, fork))
-            .and_modify(|report| {
-                report.logs_mismatch = value.clone();
-            })
-            .or_insert(TestReRunExecutionReport {
-                logs_mismatch: value,
-                ..Default::default()
-            });
-    }
-
-    pub fn register_account_updates_report(
-        &mut self,
-        vector: TestVector,
-        report: ComparisonReport,
-        fork: Fork,
-    ) {
-        self.account_updates_report.insert((vector, fork), report);
-    }
-
-    pub fn register_re_run_failure(
-        &mut self,
-        vector: TestVector,
-        levm_result: TxResult,
-        revm_error: RevmError<EvmError>,
-        fork: Fork,
-    ) {
-        let value = Some((levm_result, revm_error.to_string()));
-        self.execution_report
-            .entry((vector, fork))
-            .and_modify(|report| {
-                report.re_runner_error = value.clone();
-            })
-            .or_insert(TestReRunExecutionReport {
-                re_runner_error: value,
-                ..Default::default()
-            });
-    }
-}
+// #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+// pub struct TestReRunExecutionReport {
+//     pub execution_result_mismatch: Option<(TxResult, RevmExecutionResult)>,
+//     pub gas_used_mismatch: Option<(u64, u64)>,
+//     pub gas_refunded_mismatch: Option<(u64, u64)>,
+//     pub logs_mismatch: Option<(Vec<ethrex_common::types::Log>, Vec<revm::primitives::Log>)>,
+//     pub re_runner_error: Option<(TxResult, String)>,
+// }
+//
+// #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+// pub struct TestReRunReport {
+//     pub execution_report: HashMap<(TestVector, Fork), TestReRunExecutionReport>,
+//     pub account_updates_report: HashMap<(TestVector, Fork), ComparisonReport>,
+// }
+//
+// impl TestReRunReport {
+//     pub fn new() -> Self {
+//         Self::default()
+//     }
+//
+//     pub fn register_execution_result_mismatch(
+//         &mut self,
+//         vector: TestVector,
+//         levm_result: TxResult,
+//         revm_result: RevmExecutionResult,
+//         fork: Fork,
+//     ) {
+//         let value = Some((levm_result, revm_result));
+//         self.execution_report
+//             .entry((vector, fork))
+//             .and_modify(|report| {
+//                 report.execution_result_mismatch = value.clone();
+//             })
+//             .or_insert(TestReRunExecutionReport {
+//                 execution_result_mismatch: value,
+//                 ..Default::default()
+//             });
+//     }
+//
+//     pub fn register_gas_used_mismatch(
+//         &mut self,
+//         vector: TestVector,
+//         levm_gas_used: u64,
+//         revm_gas_used: u64,
+//         fork: Fork,
+//     ) {
+//         let value = Some((levm_gas_used, revm_gas_used));
+//         self.execution_report
+//             .entry((vector, fork))
+//             .and_modify(|report| {
+//                 report.gas_used_mismatch = value;
+//             })
+//             .or_insert(TestReRunExecutionReport {
+//                 gas_used_mismatch: value,
+//                 ..Default::default()
+//             });
+//     }
+//
+//     pub fn register_gas_refunded_mismatch(
+//         &mut self,
+//         vector: TestVector,
+//         levm_gas_refunded: u64,
+//         revm_gas_refunded: u64,
+//         fork: Fork,
+//     ) {
+//         let value = Some((levm_gas_refunded, revm_gas_refunded));
+//         self.execution_report
+//             .entry((vector, fork))
+//             .and_modify(|report| {
+//                 report.gas_refunded_mismatch = value;
+//             })
+//             .or_insert(TestReRunExecutionReport {
+//                 gas_refunded_mismatch: value,
+//                 ..Default::default()
+//             });
+//     }
+//
+//     pub fn register_logs_mismatch(
+//         &mut self,
+//         vector: TestVector,
+//         levm_logs: Vec<ethrex_common::types::Log>,
+//         revm_logs: Vec<revm::primitives::Log>,
+//         fork: Fork,
+//     ) {
+//         let value = Some((levm_logs, revm_logs));
+//         self.execution_report
+//             .entry((vector, fork))
+//             .and_modify(|report| {
+//                 report.logs_mismatch = value.clone();
+//             })
+//             .or_insert(TestReRunExecutionReport {
+//                 logs_mismatch: value,
+//                 ..Default::default()
+//             });
+//     }
+//
+//     pub fn register_account_updates_report(
+//         &mut self,
+//         vector: TestVector,
+//         report: ComparisonReport,
+//         fork: Fork,
+//     ) {
+//         self.account_updates_report.insert((vector, fork), report);
+//     }
+//
+//     pub fn register_re_run_failure(
+//         &mut self,
+//         vector: TestVector,
+//         levm_result: TxResult,
+//         revm_error: RevmError<EvmError>,
+//         fork: Fork,
+//     ) {
+//         let value = Some((levm_result, revm_error.to_string()));
+//         self.execution_report
+//             .entry((vector, fork))
+//             .and_modify(|report| {
+//                 report.re_runner_error = value.clone();
+//             })
+//             .or_insert(TestReRunExecutionReport {
+//                 re_runner_error: value,
+//                 ..Default::default()
+//             });
+//     }
+// }
+//

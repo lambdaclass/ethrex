@@ -162,21 +162,21 @@ pub fn parse_ef_test_dir(
         }
 
         // We only want to include tests that have post states from the specified forks in EFTestsRunnerOptions.
-        if let Some(forks) = &opts.forks {
-            for test in tests.0.iter_mut() {
-                let test_forks_numbers: Vec<u8> = forks.iter().map(|fork| *fork as u8).collect();
+        // if let Some(forks) = &opts.forks {
+        //     for test in tests.0.iter_mut() {
+        //         let test_forks_numbers: Vec<u8> = forks.iter().map(|fork| *fork as u8).collect();
 
-                test.post.forks = test
-                    .post
-                    .forks
-                    .iter()
-                    .filter(|a| test_forks_numbers.contains(&(*a.0 as u8)))
-                    .map(|(k, v)| (*k, v.clone()))
-                    .collect();
-            }
+        //         test.post.forks = test
+        //             .post
+        //             .forks
+        //             .iter()
+        //             .filter(|a| test_forks_numbers.contains(&(*a.0 as u8)))
+        //             .map(|(k, v)| (*k, v.clone()))
+        //             .collect();
+        //     }
 
-            tests.0.retain(|test| !test.post.forks.is_empty());
-        }
+        //     tests.0.retain(|test| !test.post.forks.is_empty());
+        // }
 
         directory_tests.extend(tests.0);
     }

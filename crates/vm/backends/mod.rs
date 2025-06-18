@@ -1,11 +1,10 @@
 pub mod levm;
-pub mod revm;
+// pub mod revm;
 
-use self::revm::db::evm_state;
+// use self::revm::db::evm_state;
 use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
-use crate::helpers::{SpecId, fork_to_spec_id, spec_id};
 use ethrex_common::Address;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
@@ -16,8 +15,9 @@ pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::db::{CacheDB, Database as LevmDatabase};
 use levm::LEVM;
-use revm::REVM;
-use revm::db::EvmState;
+// #[cfg(feature = "revm")]
+// use revm::REVM;
+// use revm::db::EvmState;
 use std::fmt;
 use std::sync::Arc;
 
@@ -25,14 +25,14 @@ use std::sync::Arc;
 pub enum EvmEngine {
     #[default]
     LEVM,
-    REVM,
+    // REVM,
 }
 
 impl fmt::Display for EvmEngine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             EvmEngine::LEVM => write!(f, "levm"),
-            EvmEngine::REVM => write!(f, "revm"),
+            // EvmEngine::REVM => write!(f, "revm"),
         }
     }
 }
@@ -43,7 +43,7 @@ impl TryFrom<String> for EvmEngine {
 
     fn try_from(s: String) -> Result<Self, Self::Error> {
         match s.to_lowercase().as_str() {
-            "revm" => Ok(EvmEngine::REVM),
+            // "revm" => Ok(EvmEngine::REVM),
             "levm" => Ok(EvmEngine::LEVM),
             _ => Err(EvmError::InvalidEVM(s)),
         }
@@ -53,14 +53,20 @@ impl TryFrom<String> for EvmEngine {
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum Evm {
-    REVM { state: EvmState },
-    LEVM { db: GeneralizedDatabase },
+    // #[cfg(feature = "revm")]
+    // REVM {
+    //     state: EvmState,
+    // },
+    LEVM {
+        db: GeneralizedDatabase,
+    },
 }
 
 impl std::fmt::Debug for Evm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Evm::REVM { .. } => write!(f, "REVM"),
+            // #[cfg(feature = "revm")]
+            // Evm::REVM { .. } => write!(f, "REVM"),
             Evm::LEVM { .. } => {
                 write!(f, "LEVM")
             }
@@ -74,9 +80,10 @@ impl Evm {
         let wrapped_db: DynVmDatabase = Box::new(db);
 
         match engine {
-            EvmEngine::REVM => Evm::REVM {
-                state: evm_state(wrapped_db),
-            },
+            // #[cfg(feature = "revm")]
+            // EvmEngine::REVM => Evm::REVM {
+            //     state: evm_state(wrapped_db),
+            // },
             EvmEngine::LEVM => Evm::LEVM {
                 db: GeneralizedDatabase::new(Arc::new(wrapped_db), CacheDB::new()),
             },
@@ -91,7 +98,8 @@ impl Evm {
 
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         match self {
-            Evm::REVM { state } => REVM::execute_block(block, state),
+            // #[cfg(feature = "revm")]
+            // Evm::REVM { state } => REVM::execute_block(block, state),
             Evm::LEVM { db } => LEVM::execute_block(block, db),
         }
     }
@@ -107,27 +115,28 @@ impl Evm {
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
         match self {
-            Evm::REVM { state } => {
-                let chain_config = state.chain_config()?;
-                let execution_result = REVM::execute_tx(
-                    tx,
-                    block_header,
-                    state,
-                    spec_id(&chain_config, block_header.timestamp),
-                    sender,
-                )?;
-
-                *remaining_gas = remaining_gas.saturating_sub(execution_result.gas_used());
-
-                let receipt = Receipt::new(
-                    tx.tx_type(),
-                    execution_result.is_success(),
-                    block_header.gas_limit - *remaining_gas,
-                    execution_result.logs(),
-                );
-
-                Ok((receipt, execution_result.gas_used()))
-            }
+            // #[cfg(feature = "revm")]
+            // Evm::REVM { state } => {
+            //     let chain_config = state.chain_config()?;
+            //     let execution_result = REVM::execute_tx(
+            //         tx,
+            //         block_header,
+            //         state,
+            //         spec_id(&chain_config, block_header.timestamp),
+            //         sender,
+            //     )?;
+            //
+            //     *remaining_gas = remaining_gas.saturating_sub(execution_result.gas_used());
+            //
+            //     let receipt = Receipt::new(
+            //         tx.tx_type(),
+            //         execution_result.is_success(),
+            //         block_header.gas_limit - *remaining_gas,
+            //         execution_result.logs(),
+            //     );
+            //
+            //     Ok((receipt, execution_result.gas_used()))
+            // }
             Evm::LEVM { db } => {
                 let execution_report = LEVM::execute_tx(tx, sender, block_header, db)?;
 
@@ -147,9 +156,10 @@ impl Evm {
 
     pub fn undo_last_tx(&mut self) -> Result<(), EvmError> {
         match self {
-            Evm::REVM { .. } => Err(EvmError::InvalidEVM(
-                "Undoing transaction not supported in REVM".to_string(),
-            )),
+            // #[cfg(feature = "revm")]
+            // Evm::REVM { .. } => Err(EvmError::InvalidEVM(
+            //     "Undoing transaction not supported in REVM".to_string(),
+            // )),
             Evm::LEVM { db } => LEVM::undo_last_tx(db),
         }
     }
@@ -159,19 +169,20 @@ impl Evm {
     /// This function is used to run/apply all the system contracts to the state.
     pub fn apply_system_calls(&mut self, block_header: &BlockHeader) -> Result<(), EvmError> {
         match self {
-            Evm::REVM { state } => {
-                let chain_config = state.chain_config()?;
-                let spec_id = spec_id(&chain_config, block_header.timestamp);
-                if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
-                    REVM::beacon_root_contract_call(block_header, state)?;
-                }
-
-                if spec_id >= SpecId::PRAGUE {
-                    REVM::process_block_hash_history(block_header, state)?;
-                }
-
-                Ok(())
-            }
+            // #[cfg(feature = "revm")]
+            // Evm::REVM { state } => {
+            //     let chain_config = state.chain_config()?;
+            //     let spec_id = spec_id(&chain_config, block_header.timestamp);
+            //     if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
+            //         REVM::beacon_root_contract_call(block_header, state)?;
+            //     }
+            //
+            //     if spec_id >= SpecId::PRAGUE {
+            //         REVM::process_block_hash_history(block_header, state)?;
+            //     }
+            //
+            //     Ok(())
+            // }
             Evm::LEVM { db } => {
                 let chain_config = db.store.get_chain_config()?;
                 let fork = chain_config.fork(block_header.timestamp);
@@ -199,7 +210,8 @@ impl Evm {
     /// They may have the same name, but they serve for different purposes.
     pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, EvmError> {
         match self {
-            Evm::REVM { state } => Ok(REVM::get_state_transitions(state)),
+            // #[cfg(feature = "revm")]
+            // Evm::REVM { state } => Ok(REVM::get_state_transitions(state)),
             Evm::LEVM { db } => LEVM::get_state_transitions(db),
         }
     }
@@ -208,7 +220,8 @@ impl Evm {
     /// Applies the withdrawals to the state or the block_chache if using [LEVM].
     pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), EvmError> {
         match self {
-            Evm::REVM { state } => REVM::process_withdrawals(state, withdrawals),
+            // #[cfg(feature = "revm")]
+            // Evm::REVM { state } => REVM::process_withdrawals(state, withdrawals),
             Evm::LEVM { db } => LEVM::process_withdrawals(db, withdrawals),
         }
     }
@@ -219,8 +232,10 @@ impl Evm {
         header: &BlockHeader,
     ) -> Result<Vec<Requests>, EvmError> {
         match self {
+            // #[cfg(feature = "revm")]
+            // Evm::REVM { state } => revm::extract_all_requests(receipts, state, header),
             Evm::LEVM { db } => levm::extract_all_requests_levm(receipts, db, header),
-            Evm::REVM { state } => revm::extract_all_requests(receipts, state, header),
+            // Evm::REVM { state } => revm::extract_all_requests(receipts, state, header),
         }
     }
 
@@ -231,10 +246,11 @@ impl Evm {
         fork: Fork,
     ) -> Result<ExecutionResult, EvmError> {
         match self {
-            Evm::REVM { state } => {
-                let spec_id = fork_to_spec_id(fork);
-                self::revm::helpers::simulate_tx_from_generic(tx, header, state, spec_id)
-            }
+            // #[cfg(feature = "revm")]
+            // Evm::REVM { state } => {
+            //     let spec_id = fork_to_spec_id(fork);
+            //     self::revm::helpers::simulate_tx_from_generic(tx, header, state, spec_id)
+            // }
             Evm::LEVM { db } => LEVM::simulate_tx_from_generic(tx, header, db),
         }
     }
@@ -246,10 +262,11 @@ impl Evm {
         fork: Fork,
     ) -> Result<(u64, AccessList, Option<String>), EvmError> {
         let result = match self {
-            Evm::REVM { state } => {
-                let spec_id = fork_to_spec_id(fork);
-                self::revm::helpers::create_access_list(tx, header, state, spec_id)?
-            }
+            // #[cfg(feature = "revm")]
+            // Evm::REVM { state } => {
+            //     let spec_id = fork_to_spec_id(fork);
+            //     self::revm::helpers::create_access_list(tx, header, state, spec_id)?
+            // }
 
             Evm::LEVM { db } => LEVM::create_access_list(tx.clone(), header, db)?,
         };

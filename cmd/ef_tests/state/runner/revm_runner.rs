@@ -1,3 +1,4 @@
+/*
 use crate::{
     report::{ComparisonReport, EFTestReport, EFTestReportForkResult, TestReRunReport, TestVector},
     runner::{EFTestRunnerError, InternalError, levm_runner::post_state_root},
@@ -596,3 +597,4 @@ pub async fn _ensure_post_state_revm(
     };
     Ok(())
 }
+*/

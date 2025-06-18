@@ -19,7 +19,8 @@ use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{EvmEngine, EvmError};
 use zkvm_interface::io::ProgramInput;
 
-pub fn parse_and_execute(path: &Path, evm: EvmEngine, skipped_tests: Option<&[&str]>) {
+pub fn parse_and_execute(path: &Path, _evm: EvmEngine, skipped_tests: Option<&[&str]>) {
+    let evm = EvmEngine::LEVM;
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_test_file(path);
 
@@ -107,8 +108,7 @@ fn exception_is_expected(
             ChainError::EvmError(EvmError::Transaction(error_msg)),
         ) = (exception, returned_error)
         {
-            return match_alternative_revm_exception_msg(expected_error_msg, error_msg)
-                || (expected_error_msg.to_lowercase() == error_msg.to_lowercase());
+            return expected_error_msg.to_lowercase() == error_msg.to_lowercase();
         }
         matches!(
             (exception, &returned_error),
@@ -157,37 +157,37 @@ fn exception_is_expected(
     })
 }
 
-fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> bool {
-    matches!(
-        (msg, expected_msg.as_str()),
-        (
-            "reject transactions from senders with deployed code",
-            "Sender account shouldn't be a contract"
-        ) | (
-            "call gas cost exceeds the gas limit",
-            "Intrinsic gas too low"
-        ) | ("gas floor exceeds the gas limit", "Intrinsic gas too low")
-            | ("empty blobs", "Type 3 transaction without blobs")
-            | (
-                "blob versioned hashes not supported",
-                "Type 3 transactions are not supported before the Cancun fork"
-            )
-            | ("blob version not supported", "Invalid blob versioned hash")
-            | (
-                "gas price is less than basefee",
-                "Insufficient max fee per gas"
-            )
-            | (
-                "blob gas price is greater than max fee per blob gas",
-                "Insufficient max fee per blob gas"
-            )
-            | (
-                "priority fee is greater than max fee",
-                "Priority fee is greater than max fee per gas"
-            )
-            | ("create initcode size limit", "Initcode size exceeded")
-    ) || (msg.starts_with("lack of funds") && expected_msg == "Insufficient account funds")
-}
+// fn match_alternative_revm_exception_msg(expected_msg: &String, msg: &str) -> bool {
+//     matches!(
+//         (msg, expected_msg.as_str()),
+//         (
+//             "reject transactions from senders with deployed code",
+//             "Sender account shouldn't be a contract"
+//         ) | (
+//             "call gas cost exceeds the gas limit",
+//             "Intrinsic gas too low"
+//         ) | ("gas floor exceeds the gas limit", "Intrinsic gas too low")
+//             | ("empty blobs", "Type 3 transaction without blobs")
+//             | (
+//                 "blob versioned hashes not supported",
+//                 "Type 3 transactions are not supported before the Cancun fork"
+//             )
+//             | ("blob version not supported", "Invalid blob versioned hash")
+//             | (
+//                 "gas price is less than basefee",
+//                 "Insufficient max fee per gas"
+//             )
+//             | (
+//                 "blob gas price is greater than max fee per blob gas",
+//                 "Insufficient max fee per blob gas"
+//             )
+//             | (
+//                 "priority fee is greater than max fee",
+//                 "Priority fee is greater than max fee per gas"
+//             )
+//             | ("create initcode size limit", "Initcode size exceeded")
+//     ) || (msg.starts_with("lack of funds") && expected_msg == "Insufficient account funds")
+// }
 /// Tests the rlp decoding of a block
 fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
     // NOTE: There is a test which validates that an EIP-7702 transaction is not allowed to

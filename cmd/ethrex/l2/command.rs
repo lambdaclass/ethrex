@@ -85,9 +85,9 @@ impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
             Command::Init { opts } => {
-                if opts.node_opts.evm == EvmEngine::REVM {
-                    panic!("L2 Doesn't support REVM, use LEVM instead.");
-                }
+                // if opts.node_opts.evm == EvmEngine::REVM {
+                //     panic!("L2 Doesn't support REVM, use LEVM instead.");
+                // }
 
                 let data_dir = set_datadir(&opts.node_opts.datadir);
                 let rollup_store_dir = data_dir.clone() + "/rollup_store";
@@ -98,7 +98,7 @@ impl Command {
                 let store = init_store(&data_dir, genesis).await;
                 let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-                let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
+                let blockchain = init_blockchain(EvmEngine::LEVM, store.clone());
 
                 let signer = get_signer(&data_dir);
 

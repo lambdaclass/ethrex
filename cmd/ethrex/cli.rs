@@ -100,15 +100,15 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub dev: bool,
-    #[arg(
-        long = "evm",
-        default_value_t = EvmEngine::default(),
-        value_name = "EVM_BACKEND",
-        help = "Has to be `levm` or `revm`",
-        value_parser = utils::parse_evm_engine,
-        help_heading = "Node options",
-        env = "ETHREX_EVM")]
-    pub evm: EvmEngine,
+    // #[arg(
+    //     long = "evm",
+    //     default_value_t = EvmEngine::default(),
+    //     value_name = "EVM_BACKEND",
+    //     help = "Has to be `levm` or `revm`",
+    //     value_parser = utils::parse_evm_engine,
+    //     help_heading = "Node options",
+    //     env = "ETHREX_EVM")]
+    // pub evm: EvmEngine,
     #[arg(
         long = "log.level",
         default_value_t = Level::INFO,
@@ -215,7 +215,7 @@ impl Default for Options {
             metrics_port: Default::default(),
             metrics_enabled: Default::default(),
             dev: Default::default(),
-            evm: Default::default(),
+            //evm: Default::default(),
             force: false,
         }
     }
@@ -304,7 +304,7 @@ impl Subcommand {
                 }
 
                 let network = &opts.network;
-                import_blocks(&path, &opts.datadir, network.get_genesis(), opts.evm).await?;
+                import_blocks(&path, &opts.datadir, network.get_genesis(), EvmEngine::LEVM).await?;
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &opts.datadir, first, last).await

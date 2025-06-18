@@ -265,11 +265,11 @@ fn get_account_diffs_in_tx(
 ) -> Result<HashMap<Address, AccountStateDiff>, BlockProducerError> {
     let mut modified_accounts = HashMap::new();
     match &context.vm {
-        Evm::REVM { .. } => {
-            return Err(BlockProducerError::EvmError(EvmError::InvalidEVM(
-                "REVM not supported for L2".to_string(),
-            )));
-        }
+       // Evm::REVM { .. } => {
+       //     return Err(BlockProducerError::EvmError(EvmError::InvalidEVM(
+       //         "REVM not supported for L2".to_string(),
+       //     )));
+       // }
         Evm::LEVM { db } => {
             let transaction_backup = db.get_tx_backup().map_err(|e| {
                 BlockProducerError::FailedToGetDataFrom(format!("TransactionBackup: {e}"))

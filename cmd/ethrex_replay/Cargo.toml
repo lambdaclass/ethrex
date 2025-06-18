@@ -31,20 +31,20 @@ reqwest = { version = "0.12.9", features = [
 ], default-features = false }
 clap.workspace = true
 
-revm = { version = "19.0.0", features = [
-  "serde",
-  "std",
-  "serde-json",
-  "optional_no_base_fee",
-  "optional_block_gas_limit",
-], default-features = false }
+# revm = { version = "19.0.0", features = [
+#   "serde",
+#   "std",
+#   "serde-json",
+#   "optional_no_base_fee",
+#   "optional_block_gas_limit",
+# ], default-features = false }
 
 # These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
-revm-inspectors = { version = "0.15.0" }
+#revm-inspectors = { version = "0.15.0" }
 derive_more = { version = "1.0.0", features = ["full"] }
-revm-primitives = { version = "15.2.0", features = [
-  "std",
-], default-features = false }
+# revm-primitives = { version = "15.2.0", features = [
+#   "std",
+# ], default-features = false }
 futures-util = "0.3.31"
 tokio-utils = "0.1.2"
 again = "0.1.2"
