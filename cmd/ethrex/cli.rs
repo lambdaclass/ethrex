@@ -20,7 +20,6 @@ use crate::{
     networks::{Network, PublicNetwork},
     utils::{self, get_client_version, set_datadir},
 };
-use ethrex_blockchain::fork_choice::apply_fork_choice;
 
 #[cfg(feature = "l2")]
 use crate::l2;
