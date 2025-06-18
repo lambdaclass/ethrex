@@ -10,6 +10,7 @@ There are currently three different load tests you can run:
 
 ```sh
 make load-test
+make load-test-erc20
 make load-test-fibonacci
 make load-test-io
 ```
@@ -43,7 +44,7 @@ To analyze performance during load tests (both `ethrex` and `reth`) you can use 
 For `ethrex`, you can run the server with:
 
 ```sh
-sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev  --  --network test_data/genesis-l2.json --http.port 1729 --dev
+sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --bin ethrex --features dev --root -- --network test_data/genesis-l2.json --http.port 1729 --dev
 ```
 
 For `reth`:

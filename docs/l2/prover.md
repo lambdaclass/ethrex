@@ -110,29 +110,30 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
    1. `cd ethrex/crates/l2`
    2. Create a `.env` file with the following content:
 
-   ```env
-   // Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
-   ETHREX_DEPLOYER_L1_PRIVATE_KEY=<private_key>
-   // Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
-   ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY=<private_key>
-   // Should be the same as ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
-   ETHREX_COMMITTER_L1_PRIVATE_KEY=<private_key>
-   // Should be different from ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
-   ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=<private_key>
-   // Used to handle TCP communication with other servers from any network interface.
-   ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS=0.0.0.0
-   // Set to true to randomize the salt.
-   ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
-   // Check if the contract is deployed in your preferred network or set to `true` to deploy it.
-   ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true
-   // Check the if the contract is present on your preferred network.
-   ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>
-   // It can be deployed. Check the if the contract is present on your preferred network.
-   ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=<address>
-   // Set to any L1 endpoint.
-   ETHREX_ETH_RPC_URL=<url>
-   ```
-   4. `source .env`
+      ```env
+      // Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
+      ETHREX_DEPLOYER_L1_PRIVATE_KEY=<private_key>
+      // Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
+      ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY=<private_key>
+      // Should be the same as ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
+      ETHREX_COMMITTER_L1_PRIVATE_KEY=<private_key>
+      // Should be different from ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
+      ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=<private_key>
+      // Used to handle TCP communication with other servers from any network interface.
+      ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS=0.0.0.0
+      // Set to true to randomize the salt.
+      ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
+      // Check if the contract is deployed in your preferred network or set to `true` to deploy it.
+      ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true
+      // Check the if the contract is present on your preferred network.
+      ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>
+      // It can be deployed. Check the if the contract is present on your preferred network.
+      ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=<address>
+      // Set to any L1 endpoint.
+      ETHREX_ETH_RPC_URL=<url>
+      ```
+
+   3. `source .env`
 
 > [!NOTE]
 > Make sure to have funds, if you want to perform a quick test `0.2[ether]` on each account should be enough.

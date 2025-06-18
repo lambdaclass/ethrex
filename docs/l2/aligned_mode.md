@@ -55,9 +55,9 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2
     --http.addr <L2_RPC_ADDRESS> \
     --evm levm \
     --datadir <ethrex_L2_DEV_LIBMDBX> \
-    --bridge-address <BRIDGE_ADDRESS> \
-    --on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
-    --proof-coordinator-listen-ip <PROOF_COORDINATOR_ADDRESS> \
+    --l1.bridge-address <BRIDGE_ADDRESS> \
+    --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
+    --proof-coordinator.addr <PROOF_COORDINATOR_ADDRESS> \
     --aligned \
     --aligned-verifier-interval-ms <ETHREX_ALIGNED_VERIFIER_INTERVAL_MS> \
     --beacon_url <ETHREX_ALIGNED_BEACON_CLIENT_URL> \ 
