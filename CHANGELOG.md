@@ -43,7 +43,7 @@
 #### 2025-04-03
 
 - Fix a bug where RLP encoding was being done twice: [#2353](https://github.com/lambdaclass/ethrex/pull/2353), check
-  the report under perf_report for more information.
+  the report under `docs/perf_reports` for more information.
 
 #### 2025-04-01
 

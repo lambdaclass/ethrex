@@ -30,4 +30,8 @@
 
 - [CLI reference]()
 - [Troubleshooting]()
-- [Resources]()
+
+# Other resources
+
+- [Performance reports](./perf_reports/README.md)
+  - [2025-04-03](./perf_reports/2025-04-03.md)
