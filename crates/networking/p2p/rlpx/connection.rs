@@ -35,7 +35,7 @@ use crate::{
     },
     types::Node,
 };
-use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
+use ethrex_blockchain::{error::ChainError, fork_choice::apply_fork_choice, Blockchain};
 use ethrex_common::{
     Address, H256, H512,
     types::{Block, MempoolTransaction, Transaction},
@@ -69,7 +69,6 @@ use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 use tracing::debug;
 use tracing::info;
-
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const PERIODIC_BLOCK_BROADCAST_INTERVAL: std::time::Duration =
@@ -244,10 +243,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     inbound,
                 );
             }
-            if let Err(e) = self.connection_loop(sender, receiver).await {
-                self.connection_failed("Error during RLPx connection", e, table)
-                    .await;
-            }
         }
     }
 
@@ -283,6 +278,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             RLPxError::DisconnectReceived(DisconnectReason::AlreadyConnected)
             | RLPxError::DisconnectSent(DisconnectReason::AlreadyConnected) => {
                 log_peer_debug(&self.node, "Peer already connected, don't replace it");
+            }
+            RLPxError::BlockchainError(chain_err) => {
+                log_peer_error(&self.node, &format!("Got chain err, peer will not be discarded: {chain_err}"));
             }
             _ => {
                 let remote_public_key = self.node.public_key;
@@ -952,10 +950,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
                 .await
                 .map_err(|e| {
-                    RLPxError::BadRequest(format!(
-                        "Error adding new block {} with hash {:?}, error: {e}",
-                        block.header.number,
-                        block.hash()
+                    RLPxError::BlockchainError(ChainError::Custom(
+                        format!(
+                            "Error adding new block {} with hash {:?}, error: {e}",
+                            block.header.number,
+                            block.hash()
+                        )
                     ))
                 })?;
             info!(
