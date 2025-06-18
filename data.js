@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750266370083,
+  "lastUpdate": 1750268831651,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16185,6 +16185,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.008399178571428571,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "89949621+ricomateo@users.noreply.github.com",
+            "name": "Mateo Rico",
+            "username": "ricomateo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5669bfd963f333e53823de07d660fce46b7fe0dc",
+          "message": "chore(l2): rename `ProverServerError` to `ProofCoordinatorError` (#3190)\n\n**Motivation**\n\nThe `ProofCoordinator` error type is currently named\n`ProverServerError`, however it should be named `ProofCoordinatorError`\nfor consistency.\n\n**Description**\n\nRenames the `ProverServerError` type to `ProofCoordinatorError`.",
+          "timestamp": "2025-06-17T18:32:47Z",
+          "tree_id": "22bf8e3e30d4945a2936f759072582ebb3d7168d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5669bfd963f333e53823de07d660fce46b7fe0dc"
+        },
+        "date": 1750268831222,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.00837685220627326,
             "unit": "Mgas/s"
           }
         ]
