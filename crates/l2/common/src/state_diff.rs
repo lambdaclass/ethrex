@@ -231,7 +231,7 @@ impl StateDiff {
 
             l1messages.push(L1Message {
                 from,
-                data,
+                data_hash: data,
                 tx_hash: tx,
             });
         }

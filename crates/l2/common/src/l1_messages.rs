@@ -21,7 +21,7 @@ pub struct L1Message {
     /// Address that called the L1Messanger
     pub from: Address,
     /// Hash of the data given to the L1Messanger
-    pub data: H256,
+    pub data_hash: H256,
     /// L2 Transaction the message was included in, for ease of usage
     pub tx_hash: H256,
 }
@@ -31,7 +31,7 @@ impl L1Message {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&self.tx_hash.0);
         bytes.extend_from_slice(&self.from.to_fixed_bytes());
-        bytes.extend_from_slice(&self.data.0);
+        bytes.extend_from_slice(&self.data_hash.0);
         bytes
     }
 }
@@ -74,7 +74,7 @@ pub fn get_block_l1_messages(txs: &[Transaction], receipts: &[Receipt]) -> Vec<L
                 .flat_map(|log| -> Option<L1Message> {
                     Some(L1Message {
                         from: Address::from_slice(&log.topics.get(1)?.0[12..32]),
-                        data: *log.topics.get(2)?,
+                        data_hash: *log.topics.get(2)?,
                         tx_hash: tx.compute_hash(),
                     })
                 })
