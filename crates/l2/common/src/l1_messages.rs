@@ -18,12 +18,12 @@ pub const L1MESSENGER_ADDRESS: Address = H160([
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 /// Represents a message from the L2 to the L1
 pub struct L1Message {
+    /// L2 Transaction the message was included in, for ease of usage
+    pub tx_hash: H256,
     /// Address that called the L1Messanger
     pub from: Address,
     /// Hash of the data given to the L1Messenger
     pub data_hash: H256,
-    /// L2 Transaction the message was included in, for ease of usage
-    pub tx_hash: H256,
 }
 
 impl L1Message {
