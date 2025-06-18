@@ -21,7 +21,7 @@ let
       outputHashes = {
         "bls12_381-0.8.0" = "sha256-8/pXRA7hVAPeMKCZ+PRPfQfxqstw5Ob4MJNp85pv5WQ=";
         "spawned-concurrency-0.1.0" = "sha256-/RO23J4c1fNVpF6ZgHdVPp3C2mgpg+dCwLjg0JcZ0YI=";
-        "aligned-sdk-0.1.0" = "sha256-EF4/oNFub5Z5hzxSCbfsYyf+af+0yoH1ObF1Itmw8oc=";
+        "aligned-sdk-0.16.1" = "sha256-yflE8FX2G0DiazHJcOR/a3RVDMcg6xXZSgXgyfeDe+M=";
         "lambdaworks-crypto-0.12.0" = "sha256-4vgW/O85zVLhhFrcZUwcPjavy/rRWB8LGTabAkPNrDw=";
       };
     };
