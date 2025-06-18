@@ -84,7 +84,7 @@ During each auction period, a configurable number of tickets are auctioned off. 
 
 To ensure L2 liveness in this decentralized protocol, Sequencers must participate in a peer-to-peer (P2P) network. The diagram below illustrates this process:
 
-![Diagram showing the end-to-end flow of a transaction in the ethrex L2 P2P layer](./l2_p2p_diagram.png)
+![Diagram showing the end-to-end flow of a transaction in the ethrex L2 P2P layer](./img/l2_p2p_diagram.png)
 
 1. A User: sends a transaction to the network.
 2. Any node: Gossips in the P2P a received transaction. So every transaction lives in a public distributed mempool

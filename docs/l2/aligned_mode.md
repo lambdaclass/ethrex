@@ -3,6 +3,7 @@
 This document explains how to run an Ethrex L2 node in **Aligned mode** and highlights the key differences in component behavior compared to the default mode.
 
 ## How to Run
+
 > [!IMPORTANT]  
 > For this guide we assumed that there is an L1 running with all Aligned environment set.
 
@@ -22,16 +23,16 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
     --aligned.aggregator-address <ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS> \
     --bridge-owner <ADDRESS> \
-	--on-chain-proposer-owner <ADDRESS> \
-	--private-keys-file-path <PRIVATE_KEYS_FILE_PATH> \
-	--sequencer-registry-owner <ADDRESS>
+    --on-chain-proposer-owner <ADDRESS> \
+    --private-keys-file-path <PRIVATE_KEYS_FILE_PATH> \
+    --sequencer-registry-owner <ADDRESS>
 ```
 
 > [!NOTE]
 > In this step we are initiallizing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers.  
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 
-### 2. Deposit funds to the `AlignedBatchePaymentService` contract from the proof sender:
+### 2. Deposit funds to the `AlignedBatchePaymentService` contract from the proof sender
 
 ```bash
 aligned \
@@ -56,8 +57,8 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2
 	--http.addr <L2_RPC_ADDRESS> \
 	--evm levm \
 	--datadir <ethrex_L2_DEV_LIBMDBX> \
-	--bridge-address <BRIDGE_ADDRESS> \
-	--on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
+	--l1.bridge-address <BRIDGE_ADDRESS> \
+	--l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
 	--eth.rpc-url <L1_RPC_URL> \
 	--block-producer.coinbase-address <BLOCK_PRODUCER_COINBASE_ADDRESS> \
 	--committer.l1-private-key <COMMITTER_PRIVATE_KEY> \
@@ -70,6 +71,7 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2
     --fee-estimate <ETHREX_ALIGNED_FEE_ESTIMATE> \
     --aligned-sp1-elf-path <ETHREX_ALIGNED_SP1_ELF_PATH>
 ```
+
 Aligned params explanation:
 
 - `--aligned`: Enables aligned mode, enforcing all required parameters.
