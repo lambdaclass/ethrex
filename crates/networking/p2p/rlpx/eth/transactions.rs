@@ -4,8 +4,8 @@ use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::P2PTransaction;
-use ethrex_common::types::WrappedEIP4844Transaction;
 use ethrex_common::{H256, types::Transaction};
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -65,11 +65,11 @@ impl RLPxMessage for Transactions {
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x08
 // Broadcast message
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct NewPooledTransactionHashes {
     transaction_types: Bytes,
     transaction_sizes: Vec<usize>,
-    transaction_hashes: Vec<H256>,
+    pub(crate) transaction_hashes: Vec<H256>,
 }
 
 impl NewPooledTransactionHashes {
@@ -165,8 +165,8 @@ impl RLPxMessage for NewPooledTransactionHashes {
 pub(crate) struct GetPooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
-    id: u64,
-    transaction_hashes: Vec<H256>,
+    pub(crate) id: u64,
+    pub(crate) transaction_hashes: Vec<H256>,
 }
 
 impl GetPooledTransactions {
@@ -182,53 +182,18 @@ impl GetPooledTransactions {
         let txs = self
             .transaction_hashes
             .iter()
-            .map(|hash| Self::get_p2p_transaction(hash, blockchain))
+            .map(|hash| blockchain.get_p2p_transaction_by_hash(hash))
             // Return an error in case anything failed.
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             // As per the spec, Nones are perfectly acceptable, for example if a transaction was
             // taken out of the mempool due to payload building after being advertised.
-            .flatten()
             .collect();
 
         Ok(PooledTransactions {
             id: self.id,
             pooled_transactions: txs,
         })
-    }
-
-    /// Gets a p2p transaction given a hash.
-    fn get_p2p_transaction(
-        hash: &H256,
-        blockchain: &Blockchain,
-    ) -> Result<Option<P2PTransaction>, StoreError> {
-        let Some(tx) = blockchain.mempool.get_transaction_by_hash(*hash)? else {
-            return Ok(None);
-        };
-        let result = match tx {
-            Transaction::LegacyTransaction(itx) => P2PTransaction::LegacyTransaction(itx),
-            Transaction::EIP2930Transaction(itx) => P2PTransaction::EIP2930Transaction(itx),
-            Transaction::EIP1559Transaction(itx) => P2PTransaction::EIP1559Transaction(itx),
-            Transaction::EIP4844Transaction(itx) => {
-                let Some(bundle) = blockchain.mempool.get_blobs_bundle(*hash)? else {
-                    return Err(StoreError::Custom(format!(
-                        "Blob transaction present without its bundle: hash {}",
-                        hash
-                    )));
-                };
-
-                P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
-                    tx: itx,
-                    blobs_bundle: bundle,
-                })
-            }
-            Transaction::EIP7702Transaction(itx) => P2PTransaction::EIP7702Transaction(itx),
-            Transaction::PrivilegedL2Transaction(itx) => {
-                P2PTransaction::PrivilegedL2Transaction(itx)
-            }
-        };
-
-        Ok(Some(result))
     }
 }
 
@@ -261,7 +226,7 @@ impl RLPxMessage for GetPooledTransactions {
 pub(crate) struct PooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
-    id: u64,
+    pub(crate) id: u64,
     pooled_transactions: Vec<P2PTransaction>,
 }
 
@@ -271,6 +236,37 @@ impl PooledTransactions {
             pooled_transactions,
             id,
         }
+    }
+
+    /// validates if the received TXs match the request
+    pub async fn validate_requested(
+        &self,
+        requested: &NewPooledTransactionHashes,
+    ) -> Result<(), MempoolError> {
+        for tx in &self.pooled_transactions {
+            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
+                itx.blobs_bundle.validate(&itx.tx)?;
+            }
+            let tx_hash = tx.compute_hash();
+            let Some(pos) = requested
+                .transaction_hashes
+                .iter()
+                .position(|&hash| hash == tx_hash)
+            else {
+                return Err(MempoolError::RequestedPooledTxNotFound);
+            };
+
+            let expected_type = requested.transaction_types[pos];
+            let expected_size = requested.transaction_sizes[pos];
+            if tx.tx_type() as u8 != expected_type {
+                return Err(MempoolError::InvalidPooledTxType(expected_type));
+            }
+            // remove the code from the encoding (-4)
+            if tx.encode_to_vec().len() - 4 != expected_size {
+                return Err(MempoolError::InvalidPooledTxSize);
+            }
+        }
+        Ok(())
     }
 
     /// Saves every incoming pooled transaction to the mempool.
