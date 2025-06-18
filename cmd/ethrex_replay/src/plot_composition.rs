@@ -68,7 +68,7 @@ fn categorize_selector(sel: [u8; 4]) -> String {
         "3ccfd60b" => "withdraw",
         "30c48952" => "swap&bridge", // swapAndStartBridgeTokensViaMayan
         "13d79a0b" => "swap",        // settle
-        "0x60806040" => "contract creation",
+        "60806040" => "contract creation",
         _ => &selector,
     }
     .to_string()
