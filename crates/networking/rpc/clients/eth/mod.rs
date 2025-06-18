@@ -436,7 +436,7 @@ impl EthClient {
 
             data.as_object_mut()
                 .ok_or_else(|| {
-                    EthClientError::Custom("Failed to mut data in estimate_gas".to_owned())
+                    EthClientError::Custom("Failed to mutate data in estimate_gas".to_owned())
                 })?
                 .insert(
                     "blobVersionedHashes".to_owned(),

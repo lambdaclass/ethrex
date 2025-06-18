@@ -60,8 +60,8 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2
 	--on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
 	--eth.rpc-url <L1_RPC_URL> \
 	--block-producer.coinbase-address <BLOCK_PRODUCER_COINBASE_ADDRESS> \
-	--committer.l1-private-key <COMMITTER_PRIVATE_KEY>
-	--proof-coordinator.l1-private-key <PROOF_COORDINATOR_PRIVATE_KEY>
+	--committer.l1-private-key <COMMITTER_PRIVATE_KEY> \
+	--proof-coordinator.l1-private-key <PROOF_COORDINATOR_PRIVATE_KEY> \
 	--proof-coordinator.addr <PROOF_COORDINATOR_ADDRESS> \
 	--aligned \
     --aligned-verifier-interval-ms <ETHREX_ALIGNED_VERIFIER_INTERVAL_MS> \
@@ -110,7 +110,7 @@ prefunded_accounts: '{
 +   "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b": { "balance": "100000000000000ETH" },
      }'
 ```
-You can also low the seconds per slot in `aligned_layer/network_params.rs`:
+You can also decrease the seconds per slot in `aligned_layer/network_params.rs`:
 ```
 # Number of seconds per slot on the Beacon chain
   seconds_per_slot: 4
