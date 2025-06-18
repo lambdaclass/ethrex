@@ -734,6 +734,41 @@ mod test {
     }
 
     #[test]
+    fn get_update_a() {
+        let mut trie = Trie::new_temp();
+        trie.insert(vec![16], vec![0]).unwrap();
+        trie.update(vec![16], |prev| {
+            assert_eq!(prev, Some(vec![0]));
+
+            Some(vec![1])
+        })
+        .unwrap();
+
+        let item = trie.get(&vec![16]).unwrap();
+        assert_eq!(item, Some(vec![1]));
+
+        trie.update(vec![17], |prev| {
+            assert_eq!(prev, None);
+
+            Some(vec![1])
+        })
+        .unwrap();
+
+        let item = trie.get(&vec![17]).unwrap();
+        assert_eq!(item, Some(vec![1]));
+
+        trie.update(vec![18], |prev| {
+            assert_eq!(prev, None);
+
+            None
+        })
+        .unwrap();
+
+        let item = trie.get(&vec![18]).unwrap();
+        assert_eq!(item, None);
+    }
+
+    #[test]
     fn compute_hash_a() {
         let mut trie = Trie::new_temp();
         trie.insert(b"do".to_vec(), b"verb".to_vec()).unwrap();
