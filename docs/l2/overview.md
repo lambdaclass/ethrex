@@ -1,4 +1,4 @@
-# High Level Docs
+# General overview of the ethrex L2 stack
 
 This document aims to explain how the Lambda ethrex L2 and all its moving parts work.
 
@@ -61,7 +61,7 @@ Going a bit further, instead of posting the entire transaction, we could just po
 
 This is called `state diffs`. Instead of publishing entire transactions for data availability, we only publish whatever state they modified. This is enough for anyone to reconstruct the entire state of the network.
 
-Detailed documentation on the state diffs spec [here](./state_diffs.md).
+Detailed documentation on [the state diffs spec](./state_diffs.md).
 
 ### How do we prevent the sequencer from publishing the wrong state diffs?
 
@@ -115,7 +115,7 @@ TODO
 
 ### Withdrawals
 
-Detailed specs [here](./withdrawals.md).
+The mechanism for withdrawing funds from L2 back to L1 is explained in detail in ["Withdrawals"](./withdrawals.md).
 
 TODO: Explain it a high level maybe?
 
@@ -160,7 +160,6 @@ The contract will then:
 - Compute the proof public input from the new and previous batch commitments (both are already stored in the contract).
 - Pass the proof and public inputs to the verifier and assert the proof passes.
 - If the proof passes, finalize the L2 state, setting the latest batch as the given one and allowing any withdrawals for that batch to occur.
-
 
 ## What the sequencer cannot do
 

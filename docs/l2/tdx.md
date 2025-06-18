@@ -1,5 +1,7 @@
 # TDX execution module
 
+This document has documentation related to proving ethrex blocks using TDX.
+
 ## Usage
 
 > [!NOTE]
