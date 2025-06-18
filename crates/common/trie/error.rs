@@ -13,6 +13,6 @@ pub enum TrieError {
     LockError,
     #[error("Database error: {0}")]
     DbError(anyhow::Error),
-     #[error("Update error: {0}")]
-    UpdateError(anyhow::Error)
+    #[error("Update error: {0}")]
+    UpdateError(anyhow::Error),
 }
