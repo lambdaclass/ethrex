@@ -630,18 +630,30 @@ impl Store {
 
     pub async fn setup_genesis_flat_account_storage(
         &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
         genesis_accounts: &[(H160, H256, U256)],
     ) -> Result<(), StoreError> {
         self.engine
-            .setup_genesis_flat_account_storage(genesis_accounts)
+            .setup_genesis_flat_account_storage(
+                genesis_block_number,
+                genesis_block_hash,
+                genesis_accounts,
+            )
             .await
     }
     pub async fn setup_genesis_flat_account_info(
         &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
         genesis_accounts: &[(H160, u64, U256, H256, bool)],
     ) -> Result<(), StoreError> {
         self.engine
-            .setup_genesis_flat_account_info(genesis_accounts)
+            .setup_genesis_flat_account_info(
+                genesis_block_number,
+                genesis_block_hash,
+                genesis_accounts,
+            )
             .await
     }
 

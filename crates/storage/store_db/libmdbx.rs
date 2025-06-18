@@ -1532,7 +1532,7 @@ impl StoreEngine for Store {
             FlatTablesBlockMetadataKey {},
             (genesis_block_number, genesis_block_hash).into(),
         )
-        .map_err(StoreError::LibmdbxError);
+        .map_err(StoreError::LibmdbxError)?;
         tx.commit().map_err(StoreError::LibmdbxError)
     }
 
@@ -1569,7 +1569,7 @@ impl StoreEngine for Store {
             FlatTablesBlockMetadataKey {},
             (genesis_block_number, genesis_block_hash).into(),
         )
-        .map_err(StoreError::LibmdbxError);
+        .map_err(StoreError::LibmdbxError)?;
         tx.commit().map_err(StoreError::LibmdbxError)
     }
 
