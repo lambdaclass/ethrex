@@ -11,11 +11,12 @@ use ethrex_levm::{
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
 use std::hint::black_box;
+use std::u64;
 use std::{collections::HashMap, sync::Arc};
 
 // Use a constant byte array to define the Address at compile time.
-const SENDER_ADDRESS: u64 = 0x100;
-const CONTRACT_ADDRESS: u64 = 0x42;
+pub const SENDER_ADDRESS: u64 = 0x100;
+pub const CONTRACT_ADDRESS: u64 = 0x42;
 
 pub fn run_with_levm(contract_code: &str, runs: u64, calldata: &str) {
     let bytecode = Bytes::from(hex::decode(contract_code).unwrap());
@@ -43,7 +44,7 @@ pub fn run_with_levm(contract_code: &str, runs: u64, calldata: &str) {
 
 // Auxiliary functions for initializing the Database and the VM with the appropriate values.
 
-fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
+pub fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
     // The store type for this bench shouldn't matter as all operations use the LEVM cache
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, H256::zero()));
@@ -78,3 +79,6 @@ fn init_vm(db: &mut GeneralizedDatabase, nonce: u64, calldata: Bytes) -> VM {
     });
     VM::new(env, db, &tx, LevmCallTracer::disabled())
 }
+
+// run <bytecode> <calldata>
+// run contract.sol 0x...
