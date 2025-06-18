@@ -439,6 +439,12 @@ impl Syncer {
             .await
             .map_err(SyncError::Store)?;
 
+        // We also need to use the correct snapshot.
+        store
+            .reconstruct_snapshots_for_new_canonical_chain()
+            .await
+            .map_err(SyncError::Store)?;
+
         // Executing blocks is a CPU heavy operation
         // Spawn a blocking task to not block the tokio runtime
         let res = {

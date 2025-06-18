@@ -404,6 +404,11 @@ pub async fn import_blocks(
         .await
         .inspect_err(|error| warn!("Failed to apply fork choice: {}", error));
 
+    _ = store
+        .reconstruct_snapshots_for_new_canonical_chain()
+        .await
+        .inspect_err(|error| warn!("Failed to reconstruct snapshot: {}", error));
+
     // Make head canonical and label all special blocks correctly.
     if let Some(block) = blocks.last() {
         store
