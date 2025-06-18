@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
@@ -9,6 +11,8 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
+
+pub const RECEIPTS_CODE: u8 = 0x10;
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getreceipts-0x0f
 #[derive(Debug)]
@@ -23,6 +27,15 @@ impl GetReceipts {
     pub fn new(id: u64, block_hashes: Vec<BlockHash>) -> Self {
         Self { block_hashes, id }
     }
+}
+
+pub trait Receipts: Debug {
+    fn id(&self) -> u64;
+    fn receipts(&self) -> Vec<Vec<Receipt>>;
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError>;
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError>
+    where
+        Self: Sized;
 }
 
 impl RLPxMessage for GetReceipts {
@@ -51,17 +64,27 @@ impl RLPxMessage for GetReceipts {
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#receipts-0x10
 #[derive(Debug)]
-pub(crate) struct Receipts {
+pub(crate) struct Receipts68 {
     pub id: u64,
     pub receipts: Vec<Vec<Receipt>>,
 }
 
-impl Receipts {
+impl Receipts68 {
     pub fn new(id: u64, receipts: Vec<Vec<Receipt>>) -> Self {
         Self { id, receipts }
     }
+}
 
-    pub fn encode68(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+impl Receipts for Receipts68 {
+    fn id(&self) -> u64 {
+        self.id
+    }
+
+    fn receipts(&self) -> Vec<Vec<Receipt>> {
+        self.receipts.clone()
+    }
+
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         let mut receipts_with_bloom = vec![];
         for r in &self.receipts {
@@ -77,7 +100,7 @@ impl Receipts {
         Ok(())
     }
 
-    pub fn decode68(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
@@ -93,8 +116,26 @@ impl Receipts {
     }
 }
 
-impl RLPxMessage for Receipts {
-    const CODE: u8 = 0x10;
+#[derive(Debug)]
+pub(crate) struct Receipts69 {
+    pub id: u64,
+    pub receipts: Vec<Vec<Receipt>>,
+}
+
+impl Receipts69 {
+    pub fn new(id: u64, receipts: Vec<Vec<Receipt>>) -> Self {
+        Self { id, receipts }
+    }
+}
+
+impl Receipts for Receipts69 {
+    fn id(&self) -> u64 {
+        self.id
+    }
+
+    fn receipts(&self) -> Vec<Vec<Receipt>> {
+        self.receipts.clone()
+    }
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
@@ -121,7 +162,7 @@ impl RLPxMessage for Receipts {
 #[cfg(test)]
 mod tests {
     use crate::rlpx::{
-        eth::receipts::{GetReceipts, Receipts},
+        eth::receipts::{GetReceipts, Receipts, Receipts68, Receipts69},
         message::RLPxMessage,
     };
     use ethrex_common::types::{BlockHash, Receipt};
@@ -157,14 +198,28 @@ mod tests {
     }
 
     #[test]
-    fn receipts_empty_message() {
+    fn receipts68_empty_message() {
         let receipts = vec![];
-        let receipts = Receipts::new(1, receipts);
+        let receipts = Receipts68::new(1, receipts);
 
         let mut buf = Vec::new();
         receipts.encode(&mut buf).unwrap();
 
-        let decoded = Receipts::decode(&buf).unwrap();
+        let decoded = Receipts68::decode(&buf).unwrap();
+
+        assert_eq!(decoded.id, 1);
+        assert_eq!(decoded.receipts, Vec::<Vec<Receipt>>::new());
+    }
+
+    #[test]
+    fn receipts69_empty_message() {
+        let receipts = vec![];
+        let receipts = Receipts69::new(1, receipts);
+
+        let mut buf = Vec::new();
+        receipts.encode(&mut buf).unwrap();
+
+        let decoded = Receipts69::decode(&buf).unwrap();
 
         assert_eq!(decoded.id, 1);
         assert_eq!(decoded.receipts, Vec::<Vec<Receipt>>::new());

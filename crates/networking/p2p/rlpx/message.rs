@@ -2,8 +2,10 @@ use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
+use crate::rlpx::eth::receipts::{self, Receipts, Receipts68, Receipts69};
+
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
-use super::eth::receipts::{GetReceipts, Receipts};
+use super::eth::receipts::GetReceipts;
 use super::eth::status::StatusMessage;
 use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
@@ -51,7 +53,7 @@ pub(crate) enum Message {
     GetPooledTransactions(GetPooledTransactions),
     PooledTransactions(PooledTransactions),
     GetReceipts(GetReceipts),
-    Receipts(Receipts),
+    Receipts(Box<dyn Receipts + Sync + Send>),
     BlockRangeUpdate(BlockRangeUpdate),
     // snap capability
     // https://github.com/ethereum/devp2p/blob/master/caps/snap.md
@@ -119,7 +121,7 @@ impl Message {
             Message::GetPooledTransactions(_) => GetPooledTransactions::CODE,
             Message::PooledTransactions(_) => PooledTransactions::CODE,
             Message::GetReceipts(_) => GetReceipts::CODE,
-            Message::Receipts(_) => Receipts::CODE,
+            Message::Receipts(_) => receipts::RECEIPTS_CODE,
             Message::BlockRangeUpdate(_) => BlockRangeUpdate::CODE,
 
             // snap capability
@@ -226,9 +228,9 @@ impl Message {
                     PooledTransactions::decode(data)?,
                 )),
                 GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
-                Receipts::CODE => match eth_capability.version {
-                    68 => Ok(Message::Receipts(Receipts::decode68(data)?)),
-                    69 => Ok(Message::Receipts(Receipts::decode(data)?)),
+                receipts::RECEIPTS_CODE => match eth_capability.version {
+                    68 => Ok(Message::Receipts(Box::new(Receipts68::decode(data)?))),
+                    69 => Ok(Message::Receipts(Box::new(Receipts69::decode(data)?))),
                     _ => Err(RLPDecodeError::IncompatibleProtocol),
                 },
                 BlockRangeUpdate::CODE => match eth_capability.version {
@@ -302,7 +304,7 @@ impl Message {
                     .as_ref()
                     .ok_or(RLPEncodeError::IncompatibleProtocol)?;
                 match eth_capability.version {
-                    68 => msg.encode68(buf),
+                    68 => msg.encode(buf),
                     69 => msg.encode(buf),
                     _ => Err(RLPEncodeError::IncompatibleProtocol),
                 }

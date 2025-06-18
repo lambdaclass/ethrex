@@ -5,7 +5,7 @@ use crate::{
         eth::{
             backend,
             blocks::{BlockBodies, BlockHeaders},
-            receipts::{GetReceipts, Receipts},
+            receipts::{GetReceipts, Receipts68, Receipts69},
             status::StatusMessage,
             transactions::{GetPooledTransactions, Transactions},
         },
@@ -548,8 +548,21 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 for hash in block_hashes.iter() {
                     receipts.push(self.storage.get_receipts_for_block(hash)?);
                 }
-                let response = Receipts::new(id, receipts);
-                self.send(Message::Receipts(response)).await?;
+                if let Some(eth_capability) = self.negotiated_eth_capability.as_ref() {
+                    match eth_capability.version {
+                        68 => {
+                            let response =
+                                Message::Receipts(Box::new(Receipts68::new(id, receipts)));
+                            self.send(response).await?;
+                        }
+                        69 => {
+                            let response =
+                                Message::Receipts(Box::new(Receipts69::new(id, receipts)));
+                            self.send(response).await?
+                        }
+                        _ => {}
+                    };
+                }
             }
             Message::BlockRangeUpdate(update) => {
                 if update.earliest_block > update.lastest_block {
