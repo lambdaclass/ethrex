@@ -15,7 +15,7 @@ use ethrex_common::types::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
+use ethrex_trie::{Nibbles, NodeHash, Trie, TrieError, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
@@ -390,10 +390,13 @@ impl Store {
 
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let mut storage_trie = self.engine.open_storage_trie(
-                        H256::from_slice(&hashed_address),
-                        account_state.storage_root,
-                    )?;
+                    let mut storage_trie = self
+                        .engine
+                        .open_storage_trie(
+                            H256::from_slice(&hashed_address),
+                            account_state.storage_root,
+                        )
+                        .map_err(|e| TrieError::UpdateError(e.into()))?;
                     for (storage_key, storage_value) in &update.added_storage {
                         let hashed_key = hash_key(storage_key);
                         if storage_value.is_zero() {
