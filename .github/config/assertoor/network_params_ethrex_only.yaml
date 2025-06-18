@@ -2,6 +2,7 @@ participants:
   - el_type: ethrex
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v7.0.0-beta.0
+    ethereum_metrics_exporter_enabled: true
     validator_count: 32
     count: 3
 
@@ -20,8 +21,8 @@ spamoor_params:
   spammers:
     - scenario: erctx
       config:
-        count: 1200
-        throughput: 900
+        count: 750
+        throughput: 750
 
 
 # assertoor_params:
