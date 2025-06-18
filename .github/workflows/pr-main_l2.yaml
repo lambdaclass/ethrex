@@ -46,6 +46,23 @@ jobs:
       - name: Run cargo fmt
         run: |
           cargo fmt --all -- --check
+    
+    test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@1.87.0
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: |
+          FEATURES=l2 make test
 
   integration-test:
     name: Integration Test - ${{ matrix.name }}
