@@ -13,7 +13,7 @@ use ethrex_common::{
     types::{Block, BlockHeader},
 };
 #[cfg(feature = "l2")]
-use ethrex_l2_common::l1messages::L1Message;
+use ethrex_l2_common::l1_messages::L1Message;
 use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDBError};
 use std::collections::HashMap;
 
@@ -25,7 +25,7 @@ use ethrex_common::types::{
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
     deposits::{DepositError, compute_deposit_logs_hash, get_block_deposits},
-    l1messages::{L1MessagingError, compute_merkle_root, get_block_messages},
+    l1_messages::{L1MessagingError, compute_merkle_root, get_block_l1_messages},
     state_diff::{StateDiff, StateDiffError, prepare_state_diff},
 };
 #[cfg(feature = "l2")]
@@ -335,7 +335,7 @@ fn get_batch_l1messages_and_deposits(
     for (block, receipts) in blocks.iter().zip(receipts) {
         let txs = &block.body.transactions;
         deposits.extend(get_block_deposits(txs));
-        l1messages.extend(get_block_messages(txs, receipts));
+        l1messages.extend(get_block_l1_messages(txs, receipts));
     }
 
     Ok((l1messages, deposits))
@@ -346,9 +346,9 @@ fn compute_l1messages_and_deposits_digests(
     l1messages: &[L1Message],
     deposits: &[PrivilegedL2Transaction],
 ) -> Result<(H256, H256), StatelessExecutionError> {
-    use ethrex_l2_common::l1messages::get_l1message_hash;
+    use ethrex_l2_common::l1_messages::get_l1_message_hash;
 
-    let message_hashes: Vec<_> = l1messages.iter().map(get_l1message_hash).collect();
+    let message_hashes: Vec<_> = l1messages.iter().map(get_l1_message_hash).collect();
     let deposit_hashes: Vec<_> = deposits
         .iter()
         .map(PrivilegedL2Transaction::get_deposit_hash)

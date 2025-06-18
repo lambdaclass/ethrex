@@ -445,7 +445,7 @@ pub async fn map_mempool_requests(
 
 #[cfg(feature = "l2")]
 pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-    use crate::l2::l1message::GetL1MessageProof;
+    use crate::l2::l1_message::GetL1MessageProof;
 
     match req.method.as_str() {
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,

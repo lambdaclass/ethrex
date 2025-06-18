@@ -8,7 +8,7 @@ use crate::{
     utils::{RpcErr, merkle_proof},
 };
 
-use ethrex_l2_common::l1messages::get_block_message_hashes;
+use ethrex_l2_common::l1_messages::get_block_l1_message_hashes;
 
 pub struct GetL1MessageProof {
     pub transaction_hash: H256,
@@ -57,7 +57,7 @@ impl RpcHandler for GetL1MessageProof {
         };
 
         // Gets the message hashes from the transaction
-        let tx_message_hashes = get_block_message_hashes(&[tx], &[tx_receipt])
+        let tx_message_hashes = get_block_l1_message_hashes(&[tx], &[tx_receipt])
             .map_err(|e| RpcErr::Internal(e.to_string()))?;
 
         // Gets the batch number for the block

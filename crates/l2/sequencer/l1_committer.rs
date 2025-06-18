@@ -15,7 +15,7 @@ use ethrex_common::{
 };
 use ethrex_l2_common::{
     deposits::{compute_deposit_logs_hash, get_block_deposits},
-    l1messages::{compute_merkle_root, get_block_messages, get_l1message_hash},
+    l1_messages::{compute_merkle_root, get_block_l1_messages, get_l1_message_hash},
     state_diff::{StateDiff, prepare_state_diff},
 };
 use ethrex_l2_sdk::calldata::{Value, encode_calldata};
@@ -331,7 +331,7 @@ async fn prepare_batch_from_block(
                 .unwrap_or(0)
         );
         // Get block messages and deposits
-        let messages = get_block_messages(&txs, &receipts);
+        let messages = get_block_l1_messages(&txs, &receipts);
         let deposits = get_block_deposits(&txs);
 
         // Get block account updates.
@@ -437,7 +437,7 @@ async fn prepare_batch_from_block(
 
     let deposit_logs_hash = compute_deposit_logs_hash(deposit_logs_hashes)?;
     for msg in &acc_messages {
-        message_hashes.push(get_l1message_hash(msg));
+        message_hashes.push(get_l1_message_hash(msg));
     }
     Ok((
         blobs_bundle,

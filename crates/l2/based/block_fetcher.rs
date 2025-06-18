@@ -9,7 +9,7 @@ use ethrex_common::{
 };
 use ethrex_l2_common::{
     deposits::compute_deposit_logs_hash,
-    l1messages::{L1Message, get_block_messages, get_l1message_hash},
+    l1_messages::{L1Message, get_block_l1_messages, get_l1_message_hash},
     state_diff::prepare_state_diff,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -409,7 +409,7 @@ async fn get_batch_message_hashes(
         let block_messages = extract_block_messages(state, block.header.number).await?;
 
         for msg in &block_messages {
-            message_hashes.push(get_l1message_hash(msg));
+            message_hashes.push(get_l1_message_hash(msg));
         }
     }
 
@@ -444,7 +444,7 @@ async fn extract_block_messages(
         txs.push(tx.clone());
         receipts.push(receipt);
     }
-    Ok(get_block_messages(&txs, &receipts))
+    Ok(get_block_l1_messages(&txs, &receipts))
 }
 
 async fn get_batch(

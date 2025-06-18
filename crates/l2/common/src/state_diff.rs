@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use lazy_static::lazy_static;
 
-use crate::{deposits::DepositLog, l1messages::L1Message};
+use crate::{deposits::DepositLog, l1_messages::L1Message};
 
 lazy_static! {
     /// The serialized length of a default l1message log
@@ -82,7 +82,7 @@ pub struct StateDiff {
     pub version: u8,
     pub last_header: BlockHeader,
     pub modified_accounts: BTreeMap<Address, AccountStateDiff>,
-    pub l1messages: Vec<L1Message>,
+    pub l1_messages: Vec<L1Message>,
     pub deposit_logs: Vec<DepositLog>,
 }
 
@@ -126,7 +126,7 @@ impl Default for StateDiff {
             version: 1,
             last_header: BlockHeader::default(),
             modified_accounts: BTreeMap::new(),
-            l1messages: Vec::new(),
+            l1_messages: Vec::new(),
             deposit_logs: Vec::new(),
         }
     }
@@ -170,9 +170,9 @@ impl StateDiff {
             encoded.extend(account_encoded);
         }
 
-        let message_len: u16 = self.l1messages.len().try_into()?;
+        let message_len: u16 = self.l1_messages.len().try_into()?;
         encoded.extend(message_len.to_be_bytes());
-        for message in self.l1messages.iter() {
+        for message in self.l1_messages.iter() {
             let message_encoded = message.encode();
             encoded.extend(message_encoded);
         }
@@ -229,7 +229,11 @@ impl StateDiff {
             let from = decoder.get_address()?;
             let data = decoder.get_h256()?;
 
-            l1messages.push(L1Message { from, data, tx });
+            l1messages.push(L1Message {
+                from,
+                data,
+                tx_hash: tx,
+            });
         }
 
         let deposit_logs_len = decoder.get_u16()?;
@@ -250,7 +254,7 @@ impl StateDiff {
             version,
             last_header,
             modified_accounts,
-            l1messages,
+            l1_messages: l1messages,
             deposit_logs,
         })
     }
@@ -592,7 +596,7 @@ pub fn prepare_state_diff(
         modified_accounts,
         version: StateDiff::default().version,
         last_header,
-        l1messages: l1messages.to_vec(),
+        l1_messages: l1messages.to_vec(),
         deposit_logs: deposits
             .iter()
             .map(|tx| DepositLog {

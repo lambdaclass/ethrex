@@ -14,7 +14,7 @@ use ethrex_common::{
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
 };
 use ethrex_l2::SequencerConfig;
-use ethrex_l2_common::l1messages::get_l1message_hash;
+use ethrex_l2_common::l1_messages::get_l1_message_hash;
 use ethrex_l2_common::state_diff::StateDiff;
 use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
@@ -362,9 +362,9 @@ impl Command {
 
                             // Get withdrawal hashes
                             let message_hashes = state_diff
-                                .l1messages
+                                .l1_messages
                                 .iter()
-                                .map(get_l1message_hash)
+                                .map(get_l1_message_hash)
                                 .collect();
 
                             // Get the first block of the batch

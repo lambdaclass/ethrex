@@ -10,7 +10,7 @@ use ethrex_common::{
     Address,
     types::{Block, Receipt, SAFE_BYTES_PER_BLOB, Transaction},
 };
-use ethrex_l2_common::l1messages::get_block_messages;
+use ethrex_l2_common::l1_messages::get_block_l1_messages;
 use ethrex_l2_common::state_diff::{
     AccountStateDiff, BLOCK_HEADER_LEN, DEPOSITS_LOG_LEN, L1MESSAGE_LOG_LEN,
     SIMPLE_TX_STATE_DIFF_SIZE, StateDiffError,
@@ -417,7 +417,7 @@ fn calculate_tx_diff_size(
         tx_state_diff_size += deposits_log_len;
     }
     tx_state_diff_size +=
-        get_block_messages(&[Transaction::from(head_tx.clone())], &[receipt.clone()]).len()
+        get_block_l1_messages(&[Transaction::from(head_tx.clone())], &[receipt.clone()]).len()
             * messages_log_len;
 
     Ok((tx_state_diff_size, new_accounts_diff_size))

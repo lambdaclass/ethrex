@@ -93,7 +93,7 @@ impl MetricsGatherer {
                     operations_metrics[2],
                 );
                 METRICS_L2.set_operation_by_type(MetricsL2OperationType::Deposits, deposits)?;
-                METRICS_L2.set_operation_by_type(MetricsL2OperationType::Messages, messages)?;
+                METRICS_L2.set_operation_by_type(MetricsL2OperationType::L1Messages, messages)?;
                 METRICS_TX.set_tx_count(transactions)?;
             }
 
