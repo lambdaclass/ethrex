@@ -1,3 +1,8 @@
+use super::{
+    eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
+    p2p::DisconnectReason,
+    utils::log_peer_warn,
+};
 #[cfg(feature = "l2")]
 use crate::rlpx::based::BatchSealedMessage;
 #[cfg(feature = "l2")]
@@ -46,7 +51,10 @@ use secp256k1::Message as SignedMessage;
 #[cfg(feature = "l2")]
 use secp256k1::SecretKey as SigningKeySecp256k1;
 use std::collections::BTreeMap;
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{
@@ -61,12 +69,6 @@ use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 use tracing::debug;
 use tracing::info;
-
-use super::{
-    eth::{transactions::NewPooledTransactionHashes, update::BlockRangeUpdate},
-    p2p::DisconnectReason,
-    utils::log_peer_warn,
-};
 
 const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
@@ -119,6 +121,7 @@ pub(crate) struct RLPxConnection<S> {
     blocks_on_queue: BTreeMap<u64, Block>,
     #[cfg(feature = "l2")]
     latest_batch_sent: u64,
+    requested_pooled_txs: HashMap<u64, NewPooledTransactionHashes>,
     client_version: String,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
@@ -173,6 +176,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             blocks_on_queue: BTreeMap::new(),
             #[cfg(feature = "l2")]
             latest_batch_sent: 0,
+            requested_pooled_txs: HashMap::new(),
             client_version,
             connection_broadcast_send: connection_broadcast,
             #[cfg(feature = "l2")]
@@ -759,12 +763,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::NewPooledTransactionHashes(new_pooled_transaction_hashes)
                 if peer_supports_eth =>
             {
-                //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
                 let hashes =
                     new_pooled_transaction_hashes.get_transactions_to_request(&self.blockchain)?;
 
-                //TODO(#1416): Evaluate keeping track of the request-id.
-                let request = GetPooledTransactions::new(random(), hashes);
+                let request_id = random();
+                self.requested_pooled_txs
+                    .insert(request_id, new_pooled_transaction_hashes);
+
+                let request = GetPooledTransactions::new(request_id, hashes);
                 self.send(Message::GetPooledTransactions(request)).await?;
             }
             Message::GetPooledTransactions(msg) => {
@@ -773,6 +779,21 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
                 if self.blockchain.is_synced() {
+                    if let Some(requested) = self.requested_pooled_txs.get(&msg.id) {
+                        if let Err(error) = msg.validate_requested(requested).await {
+                            log_peer_warn(
+                                &self.node,
+                                &format!("disconnected from peer. Reason: {}", error),
+                            );
+                            self.send_disconnect_message(Some(DisconnectReason::SubprotocolError))
+                                .await;
+                            return Err(RLPxError::DisconnectSent(
+                                DisconnectReason::SubprotocolError,
+                            ));
+                        } else {
+                            self.requested_pooled_txs.remove(&msg.id);
+                        }
+                    }
                     msg.handle(&self.node, &self.blockchain).await?;
                 }
             }

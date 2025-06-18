@@ -15,7 +15,7 @@ renderers = ["html", "linkcheck"]
 
 [output.html]
 git-repository-url = "https://github.com/lambdaclass/ethrex"
-# make sections collapsible, and start with the first section uncollapsed
+# make sections collapsible, and start with everything collapsed
 fold = { enable = true, level = 0 }
 
 # Broken-link checker
