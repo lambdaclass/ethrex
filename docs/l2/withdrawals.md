@@ -12,7 +12,7 @@ On L2:
 2. The bridge calls `sendMessageToL1(bytes32 data)` on the `L1Messenger` contract, with `data` being:
 
     ```solidity
-    bytes32 data = keccak256(abi.encodePacked(_receiverOnL1, msg.value))
+    bytes32 data = keccak256(abi.encodePacked(ETH_ADDRESS, ETH_ADDRESS, _receiverOnL1, msg.value))
     ```
 
 3. `L1Messenger` emits an `L1Message` event, with the address of the L2 bridge contract and `data` as topics.
