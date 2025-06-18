@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Layer 2 - Ethrex</title>
+        <title>2025-04-03 - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon.svg">
-        <link rel="shortcut icon" href="favicon.png">
-        <link rel="stylesheet" href="css/variables.css">
-        <link rel="stylesheet" href="css/general.css">
-        <link rel="stylesheet" href="css/chrome.css">
-        <link rel="stylesheet" href="css/print.css" media="print">
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="fonts/fonts.css">
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "";
+            const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc.js"></script>
+        <script src="../toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -102,7 +102,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -137,7 +137,7 @@
                     <h1 class="menu-title">Ethrex</h1>
 
                     <div class="right-buttons">
-                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
@@ -236,32 +236,72 @@
 }
 
 </style>
-<h1 id="ethrex-l2-documentation"><a class="header" href="#ethrex-l2-documentation">Ethrex L2 documentation</a></h1>
-<p>For general documentation, see:</p>
+<h1 id="eliminating-redundant-rlp-encoding-in-trie-pr-2353"><a class="header" href="#eliminating-redundant-rlp-encoding-in-trie-pr-2353">Eliminating redundant RLP encoding in trie (PR #2353)</a></h1>
+<h2 id="summary"><a class="header" href="#summary">Summary</a></h2>
+<p>This PR addresses a performance bottleneck in our Merkle-Patricia Trie implementation caused by redundant RLP (Recursive Length Prefix) encoding operations. By refactoring the encoding logic to avoid double-encoding, we achieved <strong>1.5x–2x faster trie insertions</strong> for workloads of 1k and 10k nodes.</p>
+<h2 id="context"><a class="header" href="#context">Context</a></h2>
+<p>The trie structure is critical for Ethereum state management, and its performance directly impacts node synchronization and block processing times. RLP encoding is used extensively to serialize trie nodes for hashing and storage. Profiling revealed that a significant portion of insertion time was spent on unnecessary RLP re-encoding.</p>
+<h2 id="tools--methodology"><a class="header" href="#tools--methodology">Tools &amp; Methodology</a></h2>
+<h3 id="profiling-tools"><a class="header" href="#profiling-tools">Profiling Tools</a></h3>
+<ol>
+<li><strong><a href="https://github.com/mstange/samply">Samply</a></strong>:
 <ul>
-<li><a href="./getting_started.html">Getting started</a> contains guides on setting up and interacting with an ethrex L2 stack.</li>
-<li><a href="./overview.html">General overview</a> for a high-level view of the ethrex L2 stack.</li>
-<li><a href="./contracts.html">Smart contracts</a> has information on L1 and L2 smart contracts.</li>
-<li><a href="./components.html">Components</a> for more detailed documentation on each off-chain component.</li>
-<li><a href="./roadmap.html">Based roadmap (draft)</a> contains ethrex's roadmap for becoming based.</li>
+<li>Sampled CPU usage during trie insertions, identifying RLP encoding as a hotspot (15% of runtime).</li>
+<li>Generated <a href="https://share.firefox.dev/43z7r8V">flamegraph</a> showing <code>encode_to_vec</code> taking a considerable amount of time.</li>
 </ul>
-<p>For how to install our dependencies, go to their official documentation:</p>
+</li>
+<li><strong>Cargo Bench</strong>:
 <ul>
-<li><a href="https://www.rust-lang.org/tools/install">Rust</a></li>
-<li><a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">Solc 0.29</a></li>
-<li><a href="https://docs.docker.com/engine/install/">Docker</a></li>
+<li>Provided reproducible benchmarks for trie insertions (1k/10k nodes).</li>
 </ul>
-<h2 id="developer-documentation"><a class="header" href="#developer-documentation">Developer documentation</a></h2>
-<p>Documentation useful for ethrex development can be found in the <a href="../developers">"Developers"</a> section.</p>
+</li>
+</ol>
+<h3 id="benchmark-setup"><a class="header" href="#benchmark-setup">Benchmark Setup</a></h3>
+<ul>
+<li>
+<p><strong>Code Location</strong>: Benchmarks are defined in <code>crates/common/trie/benches/trie_bench.rs</code>.</p>
+</li>
+<li>
+<p><strong>How to Run</strong>:</p>
+<pre><code class="language-bash"># Navigate to the trie crate
+cd crates/common/trie
+
+# Run benchmarks (includes warmup and simple statistics with cargo-bench)
+make bench
+</code></pre>
+</li>
+</ul>
+<h3 id="hardware"><a class="header" href="#hardware">Hardware</a></h3>
+<ul>
+<li><strong>Apple M3 Max</strong>: 14-core CPU, 36GB RAM, 1TB SSD.</li>
+</ul>
+<h2 id="benchmark-results"><a class="header" href="#benchmark-results">Benchmark Results</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Workload</th><th>Baseline (ms)</th><th>After PR #2353 (ms)</th></tr></thead><tbody>
+<tr><td>Insert 1k Nodes</td><td>9.96 – 10.02</td><td>5.78 – 5.82</td></tr>
+<tr><td>Insert 10k Nodes</td><td>111.2 – 111.6</td><td>67.6 – 68.6</td></tr>
+</tbody></table>
+</div>
+<h2 id="technical-breakdown"><a class="header" href="#technical-breakdown">Technical Breakdown</a></h2>
+<h3 id="issue-redundant-rlp-encoding"><a class="header" href="#issue-redundant-rlp-encoding">Issue: Redundant RLP Encoding</a></h3>
+<p>The original code calculated the length of an RLP-encoded sequence by:</p>
+<ol>
+<li>Encoding the entire structure to a temporary buffer.</li>
+<li>Measuring the buffer's length.</li>
+<li>Re-encoding the structure with the length prefix.</li>
+</ol>
+<p>This resulted in <strong>two full encoding passes</strong> for each time we needed to RLP-encode a structure.</p>
+<h3 id="fix-single-pass-encoding"><a class="header" href="#fix-single-pass-encoding">Fix: Single-Pass Encoding</a></h3>
+<p>We replaced the double-encoding logic with a single pass, and then
+appending the length as the size of the encoded buffer (number of bytes).</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-
-                            <a rel="next prefetch" href="l2/getting_started.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                                <i class="fa fa-angle-right"></i>
+                            <a rel="prev" href="../perf_reports/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
                             </a>
+
 
                         <div style="clear: both"></div>
                     </nav>
@@ -269,10 +309,10 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-
-                    <a rel="next prefetch" href="l2/getting_started.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                        <i class="fa fa-angle-right"></i>
+                    <a rel="prev" href="../perf_reports/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
                     </a>
+
             </nav>
 
         </div>
@@ -285,13 +325,13 @@
         </script>
 
 
-        <script src="elasticlunr.min.js"></script>
-        <script src="mark.min.js"></script>
-        <script src="searcher.js"></script>
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
 
-        <script src="clipboard.min.js"></script>
-        <script src="highlight.js"></script>
-        <script src="book.js"></script>
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
 

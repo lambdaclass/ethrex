@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Layer 2 - Ethrex</title>
+        <title>Withdrawals - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon.svg">
-        <link rel="shortcut icon" href="favicon.png">
-        <link rel="stylesheet" href="css/variables.css">
-        <link rel="stylesheet" href="css/general.css">
-        <link rel="stylesheet" href="css/chrome.css">
-        <link rel="stylesheet" href="css/print.css" media="print">
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
-        <link rel="stylesheet" href="fonts/fonts.css">
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="highlight-css" href="highlight.css">
-        <link rel="stylesheet" id="tomorrow-night-css" href="tomorrow-night.css">
-        <link rel="stylesheet" id="ayu-highlight-css" href="ayu-highlight.css">
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "";
+            const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc.js"></script>
+        <script src="../toc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -102,7 +102,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
             </noscript>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -137,7 +137,7 @@
                     <h1 class="menu-title">Ethrex</h1>
 
                     <div class="right-buttons">
-                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
@@ -236,30 +236,47 @@
 }
 
 </style>
-<h1 id="ethrex-l2-documentation"><a class="header" href="#ethrex-l2-documentation">Ethrex L2 documentation</a></h1>
-<p>For general documentation, see:</p>
+<h1 id="withdrawals"><a class="header" href="#withdrawals">Withdrawals</a></h1>
+<p>This document contains a detailed explanation of the changes needed to handle withdrawals and the withdrawal flow.</p>
+<p>A new <code>Withdraw</code> type of transaction on L2 is introduced, where users send a certain amount of <code>eth</code> (or the native token in a custom token setup) with it. This money is then burned on the L2 and the operator sends a <code>WithdrawLog</code> to L1, so the user can then send a transaction to claim the withdrawal associated to that log and receive their funds from the Common bridge.</p>
+<p>In more detail, the full changes/additions are:</p>
 <ul>
-<li><a href="./getting_started.html">Getting started</a> contains guides on setting up and interacting with an ethrex L2 stack.</li>
-<li><a href="./overview.html">General overview</a> for a high-level view of the ethrex L2 stack.</li>
-<li><a href="./contracts.html">Smart contracts</a> has information on L1 and L2 smart contracts.</li>
-<li><a href="./components.html">Components</a> for more detailed documentation on each off-chain component.</li>
-<li><a href="./roadmap.html">Based roadmap (draft)</a> contains ethrex's roadmap for becoming based.</li>
-</ul>
-<p>For how to install our dependencies, go to their official documentation:</p>
+<li>A <code>Withdraw</code> transaction type is introduced, comprised of the regular fields in an EIP-1559 transaction.</li>
+<li>On every block, each <code>Withdraw</code> transaction will burn (i.e. deduct from the sender) the value attached to it.</li>
+<li>The sequencer will then collect all <code>Withdraw</code> transactions from the blocks included in the batch, will generate a <code>WithdrawLog</code> for each, will build a merkle tree from them and calculate the corresponding root, which we call <code>WithdrawLogsRoot</code>. The <code>WithdrawLog</code> contains the following fields:
 <ul>
-<li><a href="https://www.rust-lang.org/tools/install">Rust</a></li>
-<li><a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">Solc 0.29</a></li>
-<li><a href="https://docs.docker.com/engine/install/">Docker</a></li>
+<li><code>to</code>: the address in L1 that is allowed to claim the funds (this is decided by the user as part of a withdraw transaction). This comes from the regular <code>to</code> field on the Withdraw transaction (i.e. we are reusing that field with a slightly different meaning; what it means here is "the address that can claim the funds on L1").</li>
+<li><code>amount</code>: the amount of money withdrawn (i.e. the <code>msg.value</code> of the transaction).</li>
+<li><code>tx_hash</code>: the transaction hash in the L2 block it was included in. This will be important for claiming the withdrawal as it will require a merkle proof to be provided along with the index on the tree.</li>
 </ul>
-<h2 id="developer-documentation"><a class="header" href="#developer-documentation">Developer documentation</a></h2>
-<p>Documentation useful for ethrex development can be found in the <a href="../developers">"Developers"</a> section.</p>
+</li>
+<li>As part of the L1 <code>commit</code> transaction, the sequencer will send the list of all <code>WithdrawLog</code>s on the EIP 4844 blob (i.e. as a section of the state diffs) and the <code>WithdrawLogsRoot</code> as calldata as part of the public input to the proof. The contract will then:
+<ul>
+<li>Verify that the withdraw logs passed on the blob are the correct ones (this is done as part of the proof of equivalence protocol explained below).</li>
+<li>Store the <code>WithdrawLogsRoot</code> on a mapping <code>(batchNumber -&gt; LogsRoot)</code></li>
+</ul>
+</li>
+<li>For users to complete their withdraw process and receive funds on the L1, they need to call a <code>claimWithdraw(l2WithdrawalTxHash, claimedAmount, withdrawalBatchNumber, withdrawalLogIndex)</code> function on the common bridge, where <code>merkleProof</code> is an inclusion proof of the withdraw log to the root of the merkle tree the contract has stored. The contract will then do the following:
+<ul>
+<li>Check that the <code>batchNumber</code> corresponds to a committed and verified batch.</li>
+<li>Check that this withdrawal has not been already claimed.</li>
+<li>Retrieve the <code>withdrawLogsRoot</code> from the given <code>batchNumber</code>.</li>
+<li>Verify the merkle proof given by the user, passing the proof, the root, and the <code>tx_hash</code>.</li>
+<li>If any check above failed, revert. If all checks passed, send the appropriate funds to the user, then set the <code>withdrawLog</code> as claimed.</li>
+<li>After the withdrawal is sent, we mark it as claimed so it cannot be claimed twice.</li>
+</ul>
+</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../l2/state_diffs.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
 
-                            <a rel="next prefetch" href="l2/getting_started.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../l2/contracts.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -269,8 +286,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../l2/state_diffs.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
 
-                    <a rel="next prefetch" href="l2/getting_started.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../l2/contracts.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
@@ -285,13 +305,13 @@
         </script>
 
 
-        <script src="elasticlunr.min.js"></script>
-        <script src="mark.min.js"></script>
-        <script src="searcher.js"></script>
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
 
-        <script src="clipboard.min.js"></script>
-        <script src="highlight.js"></script>
-        <script src="book.js"></script>
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
 
         <!-- Custom JS scripts -->
 
