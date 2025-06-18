@@ -3,13 +3,13 @@ use std::fmt::Debug;
 use crate::api::StoreEngineRollup;
 use crate::error::RollupStoreError;
 use ethrex_common::{
-    types::{Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 
 use libsql::{
-    params::{IntoParams, Params},
     Builder, Connection, Row, Rows, Value,
+    params::{IntoParams, Params},
 };
 
 pub struct SQLStore {

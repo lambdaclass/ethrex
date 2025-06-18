@@ -1,41 +1,41 @@
 use std::{
-    cmp::{max, Ordering},
+    cmp::{Ordering, max},
     collections::HashMap,
     ops::Div,
     time::Instant,
 };
 
 use ethrex_common::{
+    Address, Bloom, Bytes, H256, U256,
     constants::GAS_PER_BLOB,
     types::{
-        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
-        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
-        requests::{compute_requests_hash, EncodedRequests},
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
-        DEFAULT_REQUESTS_HASH,
+        ChainConfig, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, MempoolTransaction, Receipt,
+        Transaction, Withdrawal, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
+        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
+        compute_withdrawals_root,
+        requests::{EncodedRequests, compute_requests_hash},
     },
-    Address, Bloom, Bytes, H256, U256,
 };
 
 use ethrex_vm::{Evm, EvmEngine, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, Store};
+use ethrex_storage::{Store, error::StoreError};
 
 use sha3::{Digest, Keccak256};
 
 use ethrex_metrics::metrics;
 
 #[cfg(feature = "metrics")]
-use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
+use ethrex_metrics::metrics_transactions::{METRICS_TX, MetricsTxStatus, MetricsTxType};
 
 use crate::{
+    Blockchain,
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
     vm::StoreVmDatabase,
-    Blockchain,
 };
 
 use thiserror::Error;
@@ -297,8 +297,8 @@ impl Blockchain {
             if interval != 0 {
                 let throughput = (as_gigas) / (interval as f64) * 1000_f64;
                 tracing::info!(
-                "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
-            );
+                    "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
+                );
             }
         }
 
@@ -313,10 +313,7 @@ impl Blockchain {
             .withdrawals
             .as_ref()
             .unwrap_or(&binding);
-        context
-            .vm
-            .process_withdrawals(withdrawals)
-            .map_err(EvmError::from)
+        context.vm.process_withdrawals(withdrawals)
     }
 
     // This function applies system level operations:
@@ -529,11 +526,15 @@ impl Blockchain {
     ) -> Result<(), ChainError> {
         let account_updates = context.vm.get_state_transitions()?;
 
-        context.payload.header.state_root = context
-            .store
-            .apply_account_updates(context.parent_hash(), &account_updates)
+        let ret_acount_updates_list = self
+            .storage
+            .apply_account_updates_batch(context.parent_hash(), &account_updates)
             .await?
-            .unwrap_or_default();
+            .ok_or(ChainError::ParentStateNotFound)?;
+
+        let state_root = ret_acount_updates_list.state_trie_hash;
+
+        context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =
             compute_transactions_root(&context.payload.body.transactions);
         context.payload.header.receipts_root = compute_receipts_root(&context.receipts);

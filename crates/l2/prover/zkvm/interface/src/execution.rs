@@ -1,41 +1,49 @@
-use crate::{
-    io::{ProgramInput, ProgramOutput},
-    trie::{update_tries, verify_db},
-};
+use crate::io::{ProgramInput, ProgramOutput};
 use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::types::{AccountUpdate, Block, BlockHeader, Proof, Receipt, Transaction};
-use ethrex_common::{Address, H256};
-use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDB, ProverDBError};
+use ethrex_blockchain::{
+    validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
+};
+use ethrex_common::Address;
+use ethrex_common::types::AccountUpdate;
+use ethrex_common::types::{
+    block_execution_witness::ExecutionWitnessError, block_execution_witness::ExecutionWitnessResult,
+};
+use ethrex_common::{
+    H256,
+    types::{Block, BlockHeader},
+};
+use ethrex_vm::{Evm, EvmEngine, EvmError, ProverDBError};
 use std::collections::HashMap;
 
 #[cfg(feature = "l2")]
 use ethrex_common::types::{
-    blob_from_bytes, kzg_commitment_to_versioned_hash, BlobsBundleError, Commitment,
-    PrivilegedL2Transaction,
+    BlobsBundleError, Commitment, PrivilegedL2Transaction, Proof, Receipt, Transaction,
+    blob_from_bytes, kzg_commitment_to_versioned_hash,
 };
 #[cfg(feature = "l2")]
 use ethrex_l2_common::{
-    deposits::{compute_deposit_logs_hash, get_block_deposits, DepositError},
-    state_diff::{prepare_state_diff, StateDiff, StateDiffError},
+    deposits::{DepositError, compute_deposit_logs_hash, get_block_deposits},
+    state_diff::{StateDiff, StateDiffError, prepare_state_diff},
     withdrawals::{
-        compute_withdrawals_merkle_root, get_block_withdrawals, get_withdrawal_hash,
-        WithdrawalError,
+        WithdrawalError, compute_withdrawals_merkle_root, get_block_withdrawals,
+        get_withdrawal_hash,
     },
 };
 #[cfg(feature = "l2")]
-use kzg_rs::{get_kzg_settings, Blob, Bytes48, KzgProof};
+use kzg_rs::{Blob, Bytes48, KzgProof, get_kzg_settings};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StatelessExecutionError {
     #[error("ProverDB error: {0}")]
     ProverDBError(#[from] ProverDBError),
-    #[error("Trie error: {0}")]
-    TrieError(crate::trie::Error),
     #[error("Block validation error: {0}")]
     BlockValidationError(ChainError),
     #[error("Gas validation error: {0}")]
     GasValidationError(ChainError),
+    #[error("Withdrawals validation error: {0}")]
+    RequestsRootValidationError(ChainError),
+    #[error("Receipts validation error: {0}")]
+    ReceiptsRootValidationError(ChainError),
     #[error("EVM error: {0}")]
     EvmError(EvmError),
     #[cfg(feature = "l2")]
@@ -61,14 +69,16 @@ pub enum StatelessExecutionError {
     InvalidStateDiff,
     #[error("Batch has no blocks")]
     EmptyBatchError,
-    #[error("Invalid database")]
-    InvalidDatabase,
+    #[error("Execution witness error: {0}")]
+    ExecutionWitness(#[from] ExecutionWitnessError),
     #[error("Invalid initial state trie")]
     InvalidInitialStateTrie,
     #[error("Invalid final state trie")]
     InvalidFinalStateTrie,
     #[error("Missing deposit hash")]
     MissingDepositHash,
+    #[error("Failed to apply account updates {0}")]
+    ApplyAccountUpdates(String),
     #[error("No block headers required, should at least require parent header")]
     NoHeadersRequired,
     #[error("Unreachable code reached: {0}")]
@@ -115,7 +125,8 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Stateless
 
 pub fn stateless_validation_l1(
     blocks: &[Block],
-    db: &mut ProverDB,
+    db: &mut ExecutionWitnessResult,
+
     elasticity_multiplier: u64,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
     let StatelessResult {
@@ -140,12 +151,12 @@ pub fn stateless_validation_l1(
 #[cfg(feature = "l2")]
 pub fn stateless_validation_l2(
     blocks: &[Block],
-    db: &mut ProverDB,
+    db: &mut ExecutionWitnessResult,
     elasticity_multiplier: u64,
     blob_commitment: Commitment,
     blob_proof: Proof,
 ) -> Result<ProgramOutput, StatelessExecutionError> {
-    let initial_db = db.clone();
+    let mut initial_db = db.clone();
 
     let StatelessResult {
         receipts,
@@ -165,6 +176,9 @@ pub fn stateless_validation_l2(
 
     // Check state diffs are valid
     let blob_versioned_hash = if !validium {
+        initial_db
+            .rebuild_tries()
+            .map_err(|_| StatelessExecutionError::InvalidInitialStateTrie)?;
         let state_diff = prepare_state_diff(
             last_block_header,
             &initial_db,
@@ -198,18 +212,29 @@ struct StatelessResult {
 
 fn execute_stateless(
     blocks: &[Block],
-    db: &mut ProverDB,
+    db: &mut ExecutionWitnessResult,
     elasticity_multiplier: u64,
 ) -> Result<StatelessResult, StatelessExecutionError> {
+    db.rebuild_tries()
+        .map_err(StatelessExecutionError::ExecutionWitness)?;
+
     // Validate block hashes, except parent block hash (latest block hash)
-    if let Some(invalid_block_header) = db.get_first_invalid_block_hash()? {
+    if let Ok(Some(invalid_block_header)) = db.get_first_invalid_block_hash() {
         return Err(StatelessExecutionError::InvalidBlockHash(
             invalid_block_header,
         ));
     }
 
     // Validate parent block header
-    let parent_block_header = db.get_last_block_header()?;
+    let parent_block_header = db
+        .get_block_parent_header(
+            blocks
+                .first()
+                .ok_or(StatelessExecutionError::EmptyBatchError)?
+                .header
+                .number,
+        )
+        .map_err(StatelessExecutionError::ExecutionWitness)?;
     let first_block_header = &blocks
         .first()
         .ok_or(StatelessExecutionError::EmptyBatchError)?
@@ -218,19 +243,14 @@ fn execute_stateless(
         return Err(StatelessExecutionError::InvalidParentBlockHeader);
     }
 
-    // Tries used for validating initial state root
-    let (mut state_trie, mut storage_tries) = db
-        .get_tries()
-        .map_err(StatelessExecutionError::ProverDBError)?;
-
     // Validate the initial state
-    let initial_state_hash = state_trie.hash_no_commit();
+    let initial_state_hash = db
+        .state_trie_root()
+        .map_err(StatelessExecutionError::ExecutionWitness)?;
+
     if initial_state_hash != parent_block_header.state_root {
         return Err(StatelessExecutionError::InvalidInitialStateTrie);
     }
-    if !verify_db(db, &state_trie, &storage_tries).map_err(StatelessExecutionError::TrieError)? {
-        return Err(StatelessExecutionError::InvalidDatabase);
-    };
 
     // Execute blocks
     let mut parent_block_header = parent_block_header;
@@ -257,7 +277,8 @@ fn execute_stateless(
             .map_err(StatelessExecutionError::EvmError)?;
 
         // Update db for the next block
-        db.apply_account_updates(&account_updates);
+        db.apply_account_updates(&account_updates)
+            .map_err(StatelessExecutionError::ExecutionWitness)?;
 
         // Update acc_account_updates
         for account in account_updates {
@@ -271,25 +292,29 @@ fn execute_stateless(
 
         validate_gas_used(&receipts, &block.header)
             .map_err(StatelessExecutionError::GasValidationError)?;
+        validate_receipts_root(&block.header, &receipts)
+            .map_err(StatelessExecutionError::ReceiptsRootValidationError)?;
+        // validate_requests_hash doesn't do anything for l2 blocks as this verifies l1 requests (withdrawals, deposits and consolidations)
+        validate_requests_hash(&block.header, &db.chain_config, &result.requests)
+            .map_err(StatelessExecutionError::RequestsRootValidationError)?;
         parent_block_header = &block.header;
         acc_receipts.push(receipts);
     }
-
-    // Update state trie
-    let update_list: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
-    update_tries(&mut state_trie, &mut storage_tries, &update_list)
-        .map_err(StatelessExecutionError::TrieError)?;
 
     // Calculate final state root hash and check
     let last_block = blocks
         .last()
         .ok_or(StatelessExecutionError::EmptyBatchError)?;
     let last_block_state_root = last_block.header.state_root;
+
     let last_block_hash = last_block.header.hash();
-    let final_state_hash = state_trie.hash_no_commit();
+    let final_state_hash = db
+        .state_trie_root()
+        .map_err(StatelessExecutionError::ExecutionWitness)?;
     if final_state_hash != last_block_state_root {
         return Err(StatelessExecutionError::InvalidFinalStateTrie);
     }
+
     Ok(StatelessResult {
         receipts: acc_receipts,
         initial_state_hash,

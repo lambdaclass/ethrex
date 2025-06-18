@@ -1,27 +1,30 @@
-use crate::sequencer::errors::ProverServerError;
+use crate::sequencer::errors::ProofCoordinatorError;
 use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_latest_sent_batch;
-use crate::utils::prover::db::to_prover_db;
 use crate::utils::prover::proving_systems::{BatchProof, ProverType};
 use crate::utils::prover::save_state::{
-    batch_number_has_state_file, write_state, StateFileType, StateType,
+    StateFileType, StateType, batch_number_has_state_file, write_state,
 };
 use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use bytes::Bytes;
-use ethrex_common::types::{BlobsBundle, Block};
-use ethrex_common::Address;
+use ethrex_blockchain::Blockchain;
+use ethrex_common::types::BlobsBundle;
+use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
+use ethrex_common::{
+    Address,
+    types::{Block, blobs_bundle},
+};
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::ProverDB;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer};
-use std::net::SocketAddr;
-use std::{fmt::Debug, net::IpAddr};
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -30,14 +33,11 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-#[cfg(feature = "l2")]
-use ethrex_common::types::blobs_bundle;
-
 #[serde_as]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
-    pub db: ProverDB,
+    pub db: ExecutionWitnessResult,
     pub elasticity_multiplier: u64,
     #[cfg(feature = "l2")]
     #[serde_as(as = "[_; 48]")]
@@ -148,6 +148,7 @@ pub struct ProofCoordinatorState {
     rollup_store: StoreRollup,
     rpc_url: String,
     l1_private_key: SecretKey,
+    blockchain: Arc<Blockchain>,
     validium: bool,
     needed_proof_types: Vec<ProverType>,
 }
@@ -161,8 +162,9 @@ impl ProofCoordinatorState {
         proposer_config: &BlockProducerConfig,
         store: Store,
         rollup_store: StoreRollup,
+        blockchain: Arc<Blockchain>,
         needed_proof_types: Vec<ProverType>,
-    ) -> Result<Self, ProverServerError> {
+    ) -> Result<Self, ProofCoordinatorError> {
         let eth_client = EthClient::new_with_config(
             eth_config.rpc_url.iter().map(AsRef::as_ref).collect(),
             eth_config.max_number_of_retries,
@@ -177,7 +179,7 @@ impl ProofCoordinatorState {
         let rpc_url = eth_config
             .rpc_url
             .first()
-            .ok_or(ProverServerError::Custom(
+            .ok_or(ProofCoordinatorError::Custom(
                 "no rpc urls present!".to_string(),
             ))?
             .to_string();
@@ -192,6 +194,7 @@ impl ProofCoordinatorState {
             rollup_store,
             rpc_url,
             l1_private_key: config.l1_private_key,
+            blockchain,
             validium: config.validium,
             needed_proof_types,
         })
@@ -214,8 +217,9 @@ impl ProofCoordinator {
         store: Store,
         rollup_store: StoreRollup,
         cfg: SequencerConfig,
+        blockchain: Arc<Blockchain>,
         needed_proof_types: Vec<ProverType>,
-    ) -> Result<(), ProverServerError> {
+    ) -> Result<(), ProofCoordinatorError> {
         let state = ProofCoordinatorState::new(
             &cfg.proof_coordinator,
             &cfg.l1_committer,
@@ -223,6 +227,7 @@ impl ProofCoordinator {
             &cfg.block_producer,
             store,
             rollup_store,
+            blockchain,
             needed_proof_types,
         )
         .await?;
@@ -239,7 +244,7 @@ impl GenServer for ProofCoordinator {
     type InMsg = ProofCordInMessage;
     type OutMsg = ProofCordOutMessage;
     type State = ProofCoordinatorState;
-    type Error = ProverServerError;
+    type Error = ProofCoordinatorError;
 
     fn new() -> Self {
         Self {}
@@ -336,7 +341,7 @@ impl GenServer for ConnectionHandler {
     type InMsg = ConnInMessage;
     type OutMsg = ConnOutMessage;
     type State = ProofCoordinatorState;
-    type Error = ProverServerError;
+    type Error = ProofCoordinatorError;
 
     fn new() -> Self {
         Self {}
@@ -379,7 +384,7 @@ impl GenServer for ConnectionHandler {
 async fn handle_connection(
     state: &ProofCoordinatorState,
     mut stream: TcpStream,
-) -> Result<(), ProverServerError> {
+) -> Result<(), ProofCoordinatorError> {
     let mut buffer = Vec::new();
     stream.read_to_end(&mut buffer).await?;
 
@@ -421,7 +426,7 @@ async fn handle_connection(
 async fn handle_request(
     state: &ProofCoordinatorState,
     stream: &mut TcpStream,
-) -> Result<(), ProverServerError> {
+) -> Result<(), ProofCoordinatorError> {
     info!("BatchRequest received");
 
     let batch_to_verify = 1 + get_latest_sent_batch(
@@ -431,7 +436,7 @@ async fn handle_request(
         state.on_chain_proposer_address,
     )
     .await
-    .map_err(|err| ProverServerError::InternalError(err.to_string()))?;
+    .map_err(|err| ProofCoordinatorError::InternalError(err.to_string()))?;
 
     let response = if !state.rollup_store.contains_batch(&batch_to_verify).await? {
         let response = ProofData::empty_batch_response();
@@ -448,7 +453,7 @@ async fn handle_request(
     stream
         .write_all(&buffer)
         .await
-        .map_err(ProverServerError::ConnectionError)
+        .map_err(ProofCoordinatorError::ConnectionError)
         .map(|_| info!("BatchResponse sent for batch number: {batch_to_verify}"))
 }
 
@@ -456,7 +461,7 @@ async fn handle_submit(
     stream: &mut TcpStream,
     batch_number: u64,
     batch_proof: BatchProof,
-) -> Result<(), ProverServerError> {
+) -> Result<(), ProofCoordinatorError> {
     info!("ProofSubmit received for batch number: {batch_number}");
 
     // Check if we have the proof for that ProverType
@@ -475,7 +480,7 @@ async fn handle_submit(
     stream
         .write_all(&buffer)
         .await
-        .map_err(ProverServerError::ConnectionError)
+        .map_err(ProofCoordinatorError::ConnectionError)
         .map(|_| info!("ProofSubmit ACK sent"))
 }
 
@@ -484,7 +489,7 @@ async fn handle_setup(
     stream: &mut TcpStream,
     prover_type: ProverType,
     payload: Bytes,
-) -> Result<(), ProverServerError> {
+) -> Result<(), ProofCoordinatorError> {
     info!("ProverSetup received for {prover_type}");
 
     match prover_type {
@@ -496,7 +501,7 @@ async fn handle_setup(
                 &hex::encode(&payload),
             )
             .await
-            .map_err(|e| ProverServerError::Custom(format!("Could not setup TDX key {e}")))?;
+            .map_err(|e| ProofCoordinatorError::Custom(format!("Could not setup TDX key {e}")))?;
             register_tdx_key(
                 &state.eth_client,
                 &state.l1_private_key,
@@ -516,29 +521,32 @@ async fn handle_setup(
     stream
         .write_all(&buffer)
         .await
-        .map_err(ProverServerError::ConnectionError)
+        .map_err(ProofCoordinatorError::ConnectionError)
         .map(|_| info!("ProverSetupACK sent"))
 }
 
 async fn create_prover_input(
     state: &ProofCoordinatorState,
     batch_number: u64,
-) -> Result<ProverInputData, ProverServerError> {
+) -> Result<ProverInputData, ProofCoordinatorError> {
     // Get blocks in batch
     let Some(block_numbers) = state
         .rollup_store
         .get_block_numbers_by_batch(batch_number)
         .await?
     else {
-        return Err(ProverServerError::ItemNotFoundInStore(format!(
+        return Err(ProofCoordinatorError::ItemNotFoundInStore(format!(
             "Batch number {batch_number} not found in store"
         )));
     };
 
     let blocks = fetch_blocks(state, block_numbers).await?;
 
-    // Create prover_db
-    let db = to_prover_db(&state.store.clone(), &blocks).await?;
+    let witness = state
+        .blockchain
+        .generate_witness_for_blocks(&blocks)
+        .await
+        .map_err(ProofCoordinatorError::from)?;
 
     // Get blobs bundle cached by the L1 Committer (blob, commitment, proof)
     let (blob_commitment, blob_proof) = if state.validium {
@@ -548,7 +556,7 @@ async fn create_prover_input(
             .rollup_store
             .get_blobs_by_batch(batch_number)
             .await?
-            .ok_or(ProverServerError::MissingBlob(batch_number))?;
+            .ok_or(ProofCoordinatorError::MissingBlob(batch_number))?;
         let BlobsBundle {
             mut commitments,
             mut proofs,
@@ -556,14 +564,14 @@ async fn create_prover_input(
         } = BlobsBundle::create_from_blobs(&blob)?;
         match (commitments.pop(), proofs.pop()) {
             (Some(commitment), Some(proof)) => (commitment, proof),
-            _ => return Err(ProverServerError::MissingBlob(batch_number)),
+            _ => return Err(ProofCoordinatorError::MissingBlob(batch_number)),
         }
     };
 
     debug!("Created prover input for batch {batch_number}");
 
     Ok(ProverInputData {
-        db,
+        db: witness,
         blocks,
         elasticity_multiplier: state.elasticity_multiplier,
         #[cfg(feature = "l2")]
@@ -576,18 +584,18 @@ async fn create_prover_input(
 async fn fetch_blocks(
     state: &ProofCoordinatorState,
     block_numbers: Vec<u64>,
-) -> Result<Vec<Block>, ProverServerError> {
+) -> Result<Vec<Block>, ProofCoordinatorError> {
     let mut blocks = vec![];
     for block_number in block_numbers {
         let header = state
             .store
             .get_block_header(block_number)?
-            .ok_or(ProverServerError::StorageDataIsNone)?;
+            .ok_or(ProofCoordinatorError::StorageDataIsNone)?;
         let body = state
             .store
             .get_block_body(block_number)
             .await?
-            .ok_or(ProverServerError::StorageDataIsNone)?;
+            .ok_or(ProofCoordinatorError::StorageDataIsNone)?;
         blocks.push(Block::new(header, body));
     }
     Ok(blocks)

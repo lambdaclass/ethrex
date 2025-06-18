@@ -6,13 +6,14 @@ use std::{
 
 use crate::error::RollupStoreError;
 use ethrex_common::{
-    types::{Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 use ethrex_rlp::encode::RLPEncode;
 use libmdbx::{
+    DatabaseOptions, Mode, PageSize, ReadWriteOptions,
     orm::{Database, Table},
-    table, table_info, DatabaseOptions, Mode, PageSize, ReadWriteOptions,
+    table, table_info,
 };
 
 use crate::{

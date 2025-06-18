@@ -3,8 +3,8 @@
 use std::fmt::Debug;
 
 use ethrex_common::{
-    types::{Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 
 use crate::error::RollupStoreError;
@@ -100,5 +100,5 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, RollupStoreError>;
 
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64)
-        -> Result<(), RollupStoreError>;
+    -> Result<(), RollupStoreError>;
 }

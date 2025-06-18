@@ -142,26 +142,6 @@ pub struct DeployerOptions {
         help = "Path to the contracts directory. The default is the current directory."
     )]
     pub contracts_path: PathBuf,
-    #[arg(
-        long = "pico.verifier-address",
-        value_name = "ADDRESS",
-        env = "ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER",
-        required_if_eq("pico_deploy_verifier", "false"),
-        help_heading = "Deployer options",
-        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
-    )]
-    pub pico_verifier_address: Option<Address>,
-    #[arg(
-        long = "pico.deploy-verifier",
-        default_value = "false",
-        value_name = "BOOLEAN",
-        env = "ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER",
-        action = ArgAction::SetTrue,
-        required_unless_present = "pico_verifier_address",
-        help_heading = "Deployer options",
-        help = "If set to true, it will deploy the contract and override the address above with the deployed one."
-    )]
-    pub pico_deploy_verifier: bool,
     // TODO: This should work side by side with a risc0_deploy_verifier flag.
     #[arg(
         long = "risc0.verifier-address",
@@ -274,6 +254,25 @@ pub struct DeployerOptions {
         help = "Path to the SP1 verification key. This is used for proof verification."
     )]
     pub sp1_vk_path: String,
+    #[arg(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS",
+        action = ArgAction::SetTrue,
+        help_heading = "Deployer options",
+        help = "If set to true, it will deploy the SequencerRegistry contract and a modified OnChainProposer contract."
+    )]
+    pub deploy_based_contracts: bool,
+    #[arg(
+        long,
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER",
+        required_if_eq("deploy_based_contracts", "true"),
+        help_heading = "Deployer options",
+        help = "Address of the owner of the SequencerRegistry contract, who can upgrade the contract."
+    )]
+    pub sequencer_registry_owner: Option<Address>,
 }
 
 impl Default for DeployerOptions {
@@ -312,11 +311,6 @@ impl Default for DeployerOptions {
                 0xd9, 0x0e, 0x50, 0x03, 0x64, 0x25,
             ]),
             contracts_path: PathBuf::from("."),
-            pico_verifier_address: Some(H160([
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
-            ])),
-            pico_deploy_verifier: false,
             risc0_verifier_address: Some(H160([
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
@@ -352,6 +346,8 @@ impl Default for DeployerOptions {
                 "{}/../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
                 env!("CARGO_MANIFEST_DIR")
             ),
+            deploy_based_contracts: false,
+            sequencer_registry_owner: None,
         }
     }
 }

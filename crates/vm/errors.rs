@@ -1,11 +1,11 @@
 use std::fmt::Display;
 
 use ethereum_types::{H160, H256};
-use ethrex_common::{types::BlockHash, Address};
-use ethrex_levm::{db::error::DatabaseError as LevmDatabaseError, errors::VMError};
+use ethrex_common::{Address, types::BlockHash};
+use ethrex_levm::errors::{DatabaseError as LevmDatabaseError, InternalError, VMError};
 use ethrex_trie::TrieError;
 use revm::primitives::{
-    result::EVMError as RevmError, Address as RevmAddress, B256 as RevmB256, U256 as RevmU256,
+    Address as RevmAddress, B256 as RevmB256, U256 as RevmU256, result::EVMError as RevmError,
 };
 use thiserror::Error;
 
@@ -125,5 +125,14 @@ impl From<VMError> for EvmError {
 impl From<LevmDatabaseError> for EvmError {
     fn from(value: LevmDatabaseError) -> Self {
         EvmError::DB(value.to_string())
+    }
+}
+
+impl From<InternalError> for EvmError {
+    fn from(value: InternalError) -> Self {
+        match value {
+            InternalError::Database(err) => err.into(),
+            other => EvmError::Custom(other.to_string()),
+        }
     }
 }

@@ -10,8 +10,8 @@ use crate::store_db::redb::RedBStoreRollup;
 #[cfg(feature = "sql")]
 use crate::store_db::sql::SQLStore;
 use ethrex_common::{
-    types::{batch::Batch, Blob, BlobsBundle, BlockNumber},
     H256,
+    types::{Blob, BlobsBundle, BlockNumber, batch::Batch},
 };
 use tracing::info;
 
@@ -66,7 +66,7 @@ impl Store {
 
     pub async fn init(&self) -> Result<(), RollupStoreError> {
         // Stores batch 0 with block 0
-        self.store_batch(Batch {
+        self.seal_batch(Batch {
             number: 0,
             first_block: 0,
             last_block: 0,
@@ -247,7 +247,7 @@ impl Store {
         }))
     }
 
-    pub async fn store_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
+    pub async fn seal_batch(&self, batch: Batch) -> Result<(), RollupStoreError> {
         let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
 
         for block_number in blocks.iter() {

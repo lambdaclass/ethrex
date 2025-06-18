@@ -1,3 +1,5 @@
+use crate::based::block_fetcher::BlockFetcherError;
+use crate::based::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use crate::utils::prover::errors::SaveStateError;
 use crate::utils::prover::proving_systems::ProverType;
@@ -8,8 +10,8 @@ use ethrex_l2_common::deposits::DepositError;
 use ethrex_l2_common::state_diff::StateDiffError;
 use ethrex_l2_common::withdrawals::WithdrawalError;
 use ethrex_l2_sdk::merkle_tree::MerkleError;
-use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
+use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::RollupStoreError;
 use ethrex_vm::{EvmError, ProverDBError};
@@ -20,8 +22,8 @@ use tokio::task::JoinError;
 pub enum SequencerError {
     #[error("Failed to start L1Watcher: {0}")]
     L1WatcherError(#[from] L1WatcherError),
-    #[error("Failed to start ProverServer: {0}")]
-    ProverServerError(#[from] ProverServerError),
+    #[error("Failed to start ProofCoordinator: {0}")]
+    ProofCoordinatorError(#[from] ProofCoordinatorError),
     #[error("Failed to start BlockProducer: {0}")]
     BlockProducerError(#[from] BlockProducerError),
     #[error("Failed to start Committer: {0}")]
@@ -34,6 +36,10 @@ pub enum SequencerError {
     MetricsGathererError(#[from] MetricsGathererError),
     #[error("Sequencer error: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("Failed to start StateUpdater: {0}")]
+    StateUpdaterError(#[from] StateUpdaterError),
+    #[error("Failed to start BlockFetcher: {0}")]
+    BlockFetcherError(#[from] BlockFetcherError),
     #[error("Failed to access Store: {0}")]
     FailedAccessingStore(#[from] StoreError),
     #[error("Failed to access RollupStore: {0}")]
@@ -63,46 +69,48 @@ pub enum L1WatcherError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ProverServerError {
-    #[error("ProverServer connection failed: {0}")]
+pub enum ProofCoordinatorError {
+    #[error("ProofCoordinator connection failed: {0}")]
     ConnectionError(#[from] std::io::Error),
-    #[error("ProverServer failed because of an EthClient error: {0}")]
+    #[error("ProofCoordinator failed because of an EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
-    #[error("ProverServer failed to send transaction: {0}")]
+    #[error("ProofCoordinator failed to send transaction: {0}")]
     FailedToVerifyProofOnChain(String),
-    #[error("ProverServer failed to access Store: {0}")]
+    #[error("ProofCoordinator failed to access Store: {0}")]
     FailedAccessingStore(#[from] StoreError),
     #[error("ProverServer failed to access RollupStore: {0}")]
     FailedAccessingRollupStore(#[from] RollupStoreError),
-    #[error("ProverServer failed to retrieve block from storaga, data is None.")]
+    #[error("ProofCoordinator failed to retrieve block from storaga, data is None.")]
     StorageDataIsNone,
-    #[error("ProverServer failed to create ProverInputs: {0}")]
+    #[error("ProofCoordinator failed to create ProverInputs: {0}")]
     FailedToCreateProverInputs(#[from] EvmError),
-    #[error("ProverServer JoinError: {0}")]
+    #[error("ProofCoordinator failed to create ExecutionWitness: {0}")]
+    FailedToCreateExecutionWitness(#[from] ChainError),
+    #[error("ProofCoordinator JoinError: {0}")]
     JoinError(#[from] JoinError),
-    #[error("ProverServer failed: {0}")]
+    #[error("ProofCoordinator failed: {0}")]
     Custom(String),
-    #[error("ProverServer failed to write to TcpStream: {0}")]
+    #[error("ProofCoordinator failed to write to TcpStream: {0}")]
     WriteError(String),
-    #[error("ProverServer failed to get data from Store: {0}")]
+    #[error("ProofCoordinator failed to get data from Store: {0}")]
     ItemNotFoundInStore(String),
-    #[error("ProverServer encountered a SaveStateError: {0}")]
+    #[error("ProofCoordinator encountered a SaveStateError: {0}")]
     SaveStateError(#[from] SaveStateError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Unexpected Error: {0}")]
     InternalError(String),
-    #[error("ProverServer failed when (de)serializing JSON: {0}")]
+    #[error("ProofCoordinator failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
-    #[error("ProverServer encountered a StateDiffError")]
+    #[error("ProofCoordinator encountered a StateDiffError")]
     StateDiffError(#[from] StateDiffError),
-    #[error("ProverServer encountered a ExecutionCacheError")]
+    #[error("ProofCoordinator encountered a ExecutionCacheError")]
     ExecutionCacheError(#[from] ExecutionCacheError),
-    #[error("ProverServer encountered a BlobsBundleError: {0}")]
+    #[error("ProofCoordinator encountered a BlobsBundleError: {0}")]
     BlobsBundleError(#[from] ethrex_common::types::BlobsBundleError),
     #[error("Failed to execute command: {0}")]
     ComandError(std::io::Error),
-    #[error("ProverServer failed failed because of a ProverDB error: {0}")]
+    #[error("ProofCoordinator failed failed because of a ProverDB error: {0}")]
     ProverDBError(#[from] ProverDBError),
     #[error("Missing blob for batch {0}")]
     MissingBlob(u64),
@@ -188,6 +196,8 @@ pub enum BlockProducerError {
     FailedToEncodeAccountStateDiff(#[from] StateDiffError),
     #[error("Failed to get data from: {0}")]
     FailedToGetDataFrom(String),
+    #[error("Spawned GenServer Error")]
+    GenServerError(GenServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -246,7 +256,9 @@ pub enum BlobEstimationError {
     OverflowError,
     #[error("Failed to calculate blob gas due to invalid parameters")]
     CalculationError,
-    #[error("Blob gas estimation resulted in an infinite or undefined value. Outside valid or expected ranges")]
+    #[error(
+        "Blob gas estimation resulted in an infinite or undefined value. Outside valid or expected ranges"
+    )]
     NonFiniteResult,
     #[error("{0}")]
     FakeExponentialError(#[from] FakeExponentialError),

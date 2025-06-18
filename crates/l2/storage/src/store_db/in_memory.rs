@@ -6,8 +6,8 @@ use std::{
 
 use crate::error::RollupStoreError;
 use ethrex_common::{
-    types::{Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 
 use crate::api::StoreEngineRollup;

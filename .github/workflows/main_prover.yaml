@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@1.82.0
+        uses: dtolnay/rust-toolchain@1.87.0
 
       - name: Set up Rust cache
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -34,7 +34,7 @@ jobs:
         run: |
           . "$HOME/.cargo/env"
           curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 4.1.7
+          ~/.sp1/bin/sp1up --version 5.0.0
 
       - name: Set up Docker Buildx
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -45,17 +45,6 @@ jobs:
       - name: Clean .env
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: rm -rf crates/l2/.env
-
-      - name: Bake docker images
-        # if: ${{ always() && github.event_name == 'merge_group' }}
-        uses: docker/bake-action@v6
-        with:
-          workdir: "crates/l2"
-          files: "crates/l2/docker-compose-l2.yaml"
-          load: true
-          set: |
-            *.cache-to=type=gha,mode=max
-            *.cache-from=type=gha
 
       - name: Build prover
         # if: ${{ always() && github.event_name == 'merge_group' }}

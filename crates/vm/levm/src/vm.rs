@@ -1,21 +1,22 @@
 use crate::{
+    TransientStorage,
     call_frame::CallFrame,
     db::gen_db::GeneralizedDatabase,
+    debug::DebugMode,
     environment::Environment,
     errors::{ExecutionReport, OpcodeResult, VMError},
     hooks::{
         backup_hook::BackupHook,
-        hook::{get_hooks, Hook},
+        hook::{Hook, get_hooks},
     },
     precompiles::execute_precompile,
     tracing::LevmCallTracer,
-    TransientStorage,
 };
 use bytes::Bytes;
 use ethrex_common::{
+    Address, H256, U256,
     tracing::CallType,
     types::{Transaction, TxKind},
-    Address, H256, U256,
 };
 use std::{
     cell::RefCell,
@@ -29,8 +30,8 @@ pub type Storage = HashMap<U256, H256>;
 /// Information that changes during transaction execution
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
-    pub touched_accounts: HashSet<Address>,
-    pub touched_storage_slots: HashMap<Address, BTreeSet<H256>>,
+    pub accessed_addresses: HashSet<Address>,
+    pub accessed_storage_slots: HashMap<Address, BTreeSet<H256>>,
     pub created_accounts: HashSet<Address>,
     pub refunded_gas: u64,
     pub transient_storage: TransientStorage,
@@ -48,6 +49,8 @@ pub struct VM<'a> {
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
     /// When enabled, it "logs" relevant information during execution
     pub tracer: LevmCallTracer,
+    /// Mode for printing some useful stuff, only used in development!
+    pub debug_mode: DebugMode,
 }
 
 impl<'a> VM<'a> {
@@ -70,6 +73,7 @@ impl<'a> VM<'a> {
             substate_backups: vec![],
             storage_original_values: HashMap::new(),
             tracer,
+            debug_mode: DebugMode::disabled(),
         }
     }
 
@@ -114,6 +118,12 @@ impl<'a> VM<'a> {
             self.env.gas_limit,
             self.tx.data(),
         );
+
+        #[cfg(feature = "debug")]
+        {
+            // Enable debug mode for printing in Solidity contracts.
+            self.debug_mode.enabled = true;
+        }
 
         Ok(())
     }
