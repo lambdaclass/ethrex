@@ -753,6 +753,26 @@ impl StoreEngine for Store {
             .insert(bad_block, latest_valid);
         Ok(())
     }
+
+    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError> {
+        todo!()
+    }
+
+    fn get_storage_snapshot(
+        &self,
+        account_hash: H256,
+        storage_hash_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        todo!()
+    }
+
+    async fn get_snapshot_block_hash(&self) -> Result<Option<H256>, StoreError> {
+        todo!()
+    }
+
+    async fn set_snapshot_block_hash(&self, block: BlockHash) -> Result<(), StoreError> {
+        todo!()
+    }
 }
 
 impl Debug for Store {

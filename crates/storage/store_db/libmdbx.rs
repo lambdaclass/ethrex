@@ -1079,6 +1079,33 @@ impl StoreEngine for Store {
         self.write::<InvalidAncestors>(bad_block.into(), latest_valid.into())
             .await
     }
+
+    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError> {
+        Ok(self
+            .read_sync::<AccountStateSnapshot>(H256Key(account_hash))
+            .map(|o| o.map(|a| a.to()))?
+            .transpose()?)
+    }
+
+    fn get_storage_snapshot(
+        &self,
+        account_hash: H256,
+        storage_hash_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        Ok(self
+            .read_sync::<AccountStorageSnapshot>(H256TupleKey((account_hash, storage_hash_key)))
+            .map(|o| o.map(|a| U256::from_big_endian(&a)))?)
+    }
+
+    async fn get_snapshot_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.read::<SnapshotBlockHash>(0u64)
+            .await
+            .map(|o| o.map(|a| H256::from_slice(&a)))
+    }
+
+    async fn set_snapshot_block_hash(&self, block: BlockHash) -> Result<(), StoreError> {
+        self.write::<SnapshotBlockHash>(0u64, block.0).await
+    }
 }
 
 impl Debug for Store {
@@ -1290,6 +1317,63 @@ table!(
     ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
 );
 
+table!(
+    /// Account state snapshot for direct key value retrieval.
+    ( AccountStateSnapshot ) H256Key => AccountStateRLP
+);
+
+table!(
+    /// Accoount storage snapshot for direct key value retrieval.
+    ///
+    /// The value is a U256
+    ( AccountStorageSnapshot ) H256TupleKey => [u8; 32]
+);
+
+table!(
+    /// The block hash the snapshot is at.
+    ///
+    /// The only index/key usable is 0.
+    ( SnapshotBlockHash ) u64 => [u8; 32]
+);
+
+// We don't need RLP encoding for hash based keys, we can use the fixed size inner bytes.
+pub struct H256Key(pub H256);
+
+impl Encodable for H256Key {
+    type Encoded = [u8; 32];
+
+    fn encode(self) -> Self::Encoded {
+        self.0.0
+    }
+}
+
+impl Decodable for H256Key {
+    fn decode(b: &[u8]) -> anyhow::Result<Self> {
+        Ok(Self(H256::from_slice(b)))
+    }
+}
+
+pub struct H256TupleKey(pub (H256, H256));
+
+impl Encodable for H256TupleKey {
+    type Encoded = [u8; 64];
+
+    fn encode(self) -> Self::Encoded {
+        [self.0.0.0, self.0.1.0]
+            .concat()
+            .try_into()
+            .expect("should have correct size")
+    }
+}
+
+impl Decodable for H256TupleKey {
+    fn decode(b: &[u8]) -> anyhow::Result<Self> {
+        let first: [u8; 32] = b[..32].try_into().expect("should have correct size");
+        let second: [u8; 32] = b[32..].try_into().expect("should have correct size");
+        Ok(Self((H256::from_slice(&first), H256::from_slice(&second))))
+    }
+}
+
 // Storage values are stored as bytes instead of using their rlp encoding
 // As they are stored in a dupsort table, they need to have a fixed size, and encoding them doesn't preserve their size
 pub struct AccountStorageKeyBytes(pub [u8; 32]);
@@ -1394,6 +1478,9 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(StorageSnapShot),
         table_info!(StorageHealPaths),
         table_info!(InvalidAncestors),
+        table_info!(AccountStateSnapshot),
+        table_info!(AccountStorageSnapshot),
+        table_info!(SnapshotBlockHash),
     ]
     .into_iter()
     .collect();

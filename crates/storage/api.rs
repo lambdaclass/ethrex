@@ -415,4 +415,27 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError>;
+
+    /// Get the account state for the given account hash.
+    ///
+    /// Care must be taken to ensure the current snapshot block is valid for the result to be valid.
+    ///
+    /// See [`get_snapshot_block_hash`] and [`set_snapshot_block_hash`].
+    fn get_account_snapshot(&self, account_hash: H256) -> Result<Option<AccountState>, StoreError>;
+
+    /// Get the storage for the given account and storage key hash.
+    ///
+    /// Care must be taken to ensure the current snapshot block is valid for the result to be valid.
+    ///
+    /// See [`get_snapshot_block_hash`] and [`set_snapshot_block_hash`].
+    fn get_storage_snapshot(
+        &self,
+        account_hash: H256,
+        storage_hash_key: H256,
+    ) -> Result<Option<U256>, StoreError>;
+
+    /// Gets the block hash the snapshot state is at.
+    async fn get_snapshot_block_hash(&self) -> Result<Option<BlockHash>, StoreError>;
+
+    async fn set_snapshot_block_hash(&self, block: BlockHash) -> Result<(), StoreError>;
 }
