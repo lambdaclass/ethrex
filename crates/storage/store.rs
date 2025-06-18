@@ -157,12 +157,7 @@ impl Store {
                 };
                 // NOTE: this might also be useful as preparation for the snapshot
                 previous_account_info.insert(address, new_info.clone());
-                accounts_info_log.push((
-                    block_numhash.clone(),
-                    address.into(),
-                    old_info,
-                    new_info.clone(),
-                ));
+                accounts_info_log.push((block_numhash, address.into(), old_info, new_info.clone()));
             }
         }
         Ok(accounts_info_log)
