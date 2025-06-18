@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-06-18
+
+- Trie in place update [3201](https://github.com/lambdaclass/ethrex/pull/3201)
+
 ### 2025-05-27
 
 - Improved the performance of shift instructions. [2933](https://github.com/lambdaclass/ethrex/pull/2933)
