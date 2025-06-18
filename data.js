@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750268831651,
+  "lastUpdate": 1750270163881,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -13345,6 +13345,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182252901436,
             "range": "± 570168225",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7cc8a3d79e87d41c87cc1985c7401267cf523407",
+          "message": "docs(core): move perf reports to mdbook (#3212)\n\n**Motivation**\n\nThe `perf_reports` dir was occupying space in the root dir, even if it\nwasn't being used much.\n\n**Description**\n\nI moved the performance reports under `docs/` and adding a new section\n\"Performance reports\" under \"Other resources\":\n\n<img width=\"285\" alt=\"table of contents with the new section\"\nsrc=\"https://github.com/user-attachments/assets/89235dfa-36b8-47a0-b5bc-5729769370f4\"\n/>\n\nI also cleaned up the document, reducing by one level all headers in the\ndoc and removing unnecessary whitespace.",
+          "timestamp": "2025-06-18T17:13:26Z",
+          "tree_id": "03f759c2a70a4dc7d1aaf8fae4abb406bf5aba02",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7cc8a3d79e87d41c87cc1985c7401267cf523407"
+        },
+        "date": 1750270155234,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 186115511692,
+            "range": "± 396852032",
             "unit": "ns/iter"
           }
         ]
