@@ -1,11 +1,11 @@
 use crate::{
-    errors::{OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     memory::{self, calculate_memory_size},
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{types::Log, H256};
+use ethrex_common::{H256, types::Log};
 
 // Logging Operations (5)
 // Opcodes: LOG0 ... LOG4
@@ -15,7 +15,7 @@ impl<'a> VM<'a> {
     pub fn op_log(&mut self, number_of_topics: u8) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         if current_call_frame.is_static {
-            return Err(VMError::OpcodeNotAllowedInStaticContext);
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
         let offset = current_call_frame.stack.pop()?;
@@ -23,7 +23,7 @@ impl<'a> VM<'a> {
             .stack
             .pop()?
             .try_into()
-            .map_err(|_| VMError::VeryLargeNumber)?;
+            .map_err(|_| ExceptionalHalt::VeryLargeNumber)?;
         let mut topics = Vec::new();
         for _ in 0..number_of_topics {
             let topic = current_call_frame.stack.pop()?;
@@ -46,7 +46,10 @@ impl<'a> VM<'a> {
                 memory::load_range(&mut current_call_frame.memory, offset, size)?.to_vec(),
             ),
         };
-        current_call_frame.logs.push(log);
+
+        self.tracer.log(&log)?;
+
+        self.current_call_frame_mut()?.logs.push(log);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

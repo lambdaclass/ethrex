@@ -8,14 +8,17 @@ use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::{
-    code_hash, payload::PayloadBundle, AccountInfo, AccountState, AccountUpdate, Block, BlockBody,
-    BlockHash, BlockHeader, BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index,
-    Receipt, Transaction, EMPTY_TRIE_HASH,
+use ethrex_common::{
+    constants::EMPTY_TRIE_HASH,
+    types::{
+        AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+        BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt, Transaction,
+        code_hash, payload::PayloadBundle,
+    },
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
@@ -23,9 +26,11 @@ use std::sync::Arc;
 use tracing::info;
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
-// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
-// This will always be the amount yielded by snapshot reads unless there are less elements left
+/// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
+/// This will always be the amount yielded by snapshot reads unless there are less elements left
 pub const MAX_SNAPSHOT_READS: usize = 100;
+/// Panic message shown when the Store is initialized with a genesis that differs from the one already stored
+pub const GENESIS_DIFF_PANIC_MESSAGE: &str = "Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2";
 
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -42,7 +47,33 @@ pub enum EngineType {
     RedB,
 }
 
+pub struct UpdateBatch {
+    /// Nodes to be added to the state trie
+    pub account_updates: Vec<TrieNode>,
+    /// Storage tries updated and their new nodes
+    pub storage_updates: Vec<(H256, Vec<TrieNode>)>,
+    /// Blocks to be added
+    pub blocks: Vec<Block>,
+    /// Receipts added per block
+    pub receipts: Vec<(H256, Vec<Receipt>)>,
+    /// Code updates
+    pub code_updates: Vec<(H256, Bytes)>,
+}
+
+type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
+
+pub struct AccountUpdatesList {
+    pub state_trie_hash: H256,
+    pub state_updates: Vec<(NodeHash, Vec<u8>)>,
+    pub storage_updates: StorageUpdates,
+    pub code_updates: Vec<(H256, Bytes)>,
+}
+
 impl Store {
+    pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        self.engine.apply_updates(update_batch).await
+    }
+
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting storage engine ({engine_type:?})");
         let store = match engine_type {
@@ -313,26 +344,89 @@ impl Store {
 
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
-    pub async fn apply_account_updates(
+    pub async fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
-    ) -> Result<Option<H256>, StoreError> {
+    ) -> Result<Option<AccountUpdatesList>, StoreError> {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
 
-        let mut state_trie = self
-            .apply_account_updates_from_trie(state_trie, account_updates)
-            .await?;
-        Ok(Some(state_trie.hash()?))
+        Ok(Some(
+            self.apply_account_updates_from_trie_batch(state_trie, account_updates)
+                .await?,
+        ))
     }
 
-    pub async fn apply_account_updates_from_trie(
+    pub async fn apply_account_updates_from_trie_batch(
+        &self,
+        mut state_trie: Trie,
+        account_updates: impl IntoIterator<Item = &AccountUpdate>,
+    ) -> Result<AccountUpdatesList, StoreError> {
+        let mut ret_storage_updates = Vec::new();
+        let mut code_updates = Vec::new();
+        for update in account_updates {
+            let hashed_address = hash_address(&update.address);
+            if update.removed {
+                // Remove account from trie
+                state_trie.remove(hashed_address)?;
+                continue;
+            }
+            // Add or update AccountState in the trie
+            // Fetch current state or create a new state to be inserted
+            let mut account_state = match state_trie.get(&hashed_address)? {
+                Some(encoded_state) => AccountState::decode(&encoded_state)?,
+                None => AccountState::default(),
+            };
+            if let Some(info) = &update.info {
+                account_state.nonce = info.nonce;
+                account_state.balance = info.balance;
+                account_state.code_hash = info.code_hash;
+                // Store updated code in DB
+                if let Some(code) = &update.code {
+                    code_updates.push((info.code_hash, code.clone()));
+                }
+            }
+            // Store the added storage in the account's storage trie and compute its new root
+            if !update.added_storage.is_empty() {
+                let mut storage_trie = self.engine.open_storage_trie(
+                    H256::from_slice(&hashed_address),
+                    account_state.storage_root,
+                )?;
+                for (storage_key, storage_value) in &update.added_storage {
+                    let hashed_key = hash_key(storage_key);
+                    if storage_value.is_zero() {
+                        storage_trie.remove(hashed_key)?;
+                    } else {
+                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                    }
+                }
+                let (storage_hash, storage_updates) =
+                    storage_trie.collect_changes_since_last_hash();
+                account_state.storage_root = storage_hash;
+                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+            }
+            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+        }
+        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+
+        Ok(AccountUpdatesList {
+            state_trie_hash,
+            state_updates,
+            storage_updates: ret_storage_updates,
+            code_updates,
+        })
+    }
+
+    /// Performs the same actions as apply_account_updates_from_trie
+    ///  but also returns the used storage tries with witness recorded
+    pub async fn apply_account_updates_from_trie_with_witness(
         &self,
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
-    ) -> Result<Trie, StoreError> {
+        mut storage_tries: HashMap<Address, (TrieWitness, Trie)>,
+    ) -> Result<(Trie, HashMap<Address, (TrieWitness, Trie)>), StoreError> {
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
             if update.removed {
@@ -356,10 +450,17 @@ impl Store {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let mut storage_trie = self.engine.open_storage_trie(
-                        H256::from_slice(&hashed_address),
-                        account_state.storage_root,
-                    )?;
+                    let (_witness, storage_trie) = match storage_tries.entry(update.address) {
+                        std::collections::hash_map::Entry::Occupied(value) => value.into_mut(),
+                        std::collections::hash_map::Entry::Vacant(vacant) => {
+                            let trie = self.engine.open_storage_trie(
+                                H256::from_slice(&hashed_address),
+                                account_state.storage_root,
+                            )?;
+                            vacant.insert(TrieLogger::open_trie(trie))
+                        }
+                    };
+
                     for (storage_key, storage_value) in &update.added_storage {
                         let hashed_key = hash_key(storage_key);
                         if storage_value.is_zero() {
@@ -368,13 +469,13 @@ impl Store {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
                     }
-                    account_state.storage_root = storage_trie.hash()?;
+                    account_state.storage_root = storage_trie.hash_no_commit();
                 }
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
             }
         }
 
-        Ok(state_trie)
+        Ok((state_trie, storage_tries))
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
@@ -428,13 +529,6 @@ impl Store {
         self.engine.add_receipts(block_hash, receipts).await
     }
 
-    pub async fn add_receipts_for_blocks(
-        &self,
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-    ) -> Result<(), StoreError> {
-        self.engine.add_receipts_for_blocks(receipts).await
-    }
-
     pub async fn get_receipt(
         &self,
         block_number: BlockNumber,
@@ -469,7 +563,7 @@ impl Store {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
             } else {
-                panic!("Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2");
+                panic!("{GENESIS_DIFF_PANIC_MESSAGE}");
             }
         }
         // Store genesis accounts
@@ -1189,11 +1283,12 @@ mod tests {
     use bytes::Bytes;
     use ethereum_types::{H256, U256};
     use ethrex_common::{
-        types::{Transaction, TxType, EMPTY_KECCACK_HASH},
         Bloom, H160,
+        constants::EMPTY_KECCACK_HASH,
+        types::{Transaction, TxType},
     };
     use ethrex_rlp::decode::RLPDecode;
-    use std::{fs, panic, str::FromStr};
+    use std::{fs, str::FromStr};
 
     use super::*;
 
@@ -1262,11 +1357,16 @@ mod tests {
             .add_initial_state(genesis_kurtosis)
             .await
             .expect("second genesis with same block");
-        panic::catch_unwind(move || {
-            let rt = tokio::runtime::Runtime::new().expect("runtime creation failed");
-            let _ = rt.block_on(store.add_initial_state(genesis_hive));
-        })
-        .expect_err("genesis with a different block should panic");
+        // The task panic will still be shown via stderr, but rest assured that it will also be caught and read by the test assertion
+        let add_initial_state_handle =
+            tokio::task::spawn(async move { store.add_initial_state(genesis_hive).await });
+        let panic = add_initial_state_handle.await.unwrap_err().into_panic();
+        assert_eq!(
+            panic
+                .downcast_ref::<String>()
+                .expect("Failed to downcast panic message"),
+            &GENESIS_DIFF_PANIC_MESSAGE
+        );
     }
 
     fn remove_test_dbs(path: &str) {

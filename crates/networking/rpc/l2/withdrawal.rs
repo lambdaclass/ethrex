@@ -5,7 +5,7 @@ use tracing::info;
 use crate::{
     clients::eth::WithdrawalProof,
     rpc::{RpcApiContext, RpcHandler},
-    utils::{get_withdrawal_hash, merkle_proof, RpcErr},
+    utils::{RpcErr, get_withdrawal_hash, merkle_proof},
 };
 
 pub struct GetWithdrawalProof {

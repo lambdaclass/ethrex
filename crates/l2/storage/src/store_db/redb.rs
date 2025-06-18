@@ -1,8 +1,8 @@
 use std::{panic::RefUnwindSafe, sync::Arc};
 
 use ethrex_common::{
-    types::{Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
@@ -31,6 +31,8 @@ const STATE_ROOTS: TableDefinition<u64, Rlp<H256>> = TableDefinition::new("State
 
 const DEPOSIT_LOGS_HASHES: TableDefinition<u64, Rlp<H256>> =
     TableDefinition::new("DepositLogsHashes");
+
+const LAST_SENT_BATCH_PROOF: TableDefinition<u64, u64> = TableDefinition::new("LastSentBatchProof");
 
 #[derive(Debug)]
 pub struct RedBStoreRollup {
@@ -63,7 +65,7 @@ impl RedBStoreRollup {
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let write_txn = db.begin_write()?;
+            let write_txn = db.begin_write().map_err(Box::new)?;
             write_txn.open_table(table)?.insert(key, value)?;
             write_txn.commit()?;
 
@@ -87,7 +89,7 @@ impl RedBStoreRollup {
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let read_txn = db.begin_read()?;
+            let read_txn = db.begin_read().map_err(Box::new)?;
             let table = read_txn.open_table(table)?;
             let result = table.get(key)?;
             Ok(result)
@@ -100,7 +102,7 @@ impl RedBStoreRollup {
 pub fn init_db() -> Result<Database, StoreError> {
     let db = Database::create("ethrex_l2.redb")?;
 
-    let table_creation_txn = db.begin_write()?;
+    let table_creation_txn = db.begin_write().map_err(Box::new)?;
 
     table_creation_txn.open_table(BATCHES_BY_BLOCK_NUMBER_TABLE)?;
     table_creation_txn.open_table(WITHDRAWALS_BY_BATCH)?;
@@ -108,6 +110,8 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_table(BLOB_BUNDLES)?;
     table_creation_txn.open_table(STATE_ROOTS)?;
     table_creation_txn.open_table(DEPOSIT_LOGS_HASHES)?;
+    table_creation_txn.open_table(BLOCK_NUMBERS_BY_BATCH)?;
+    table_creation_txn.open_table(LAST_SENT_BATCH_PROOF)?;
     table_creation_txn.commit()?;
 
     Ok(db)
@@ -283,5 +287,17 @@ impl StoreEngineRollup for RedBStoreRollup {
             ]),
             _ => Ok([0, 0, 0]),
         }
+    }
+
+    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
+        Ok(self
+            .read(LAST_SENT_BATCH_PROOF, 0)
+            .await?
+            .map(|b| b.value())
+            .unwrap_or(0))
+    }
+
+    async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.write(LAST_SENT_BATCH_PROOF, 0, batch_number).await
     }
 }

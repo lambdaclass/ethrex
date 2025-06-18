@@ -5,8 +5,8 @@ use std::{
 };
 
 use ethrex_common::{
-    types::{Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 use ethrex_storage::error::StoreError;
 
@@ -29,6 +29,8 @@ struct StoreInner {
     state_roots: HashMap<u64, H256>,
     /// Map of batch number to blob
     blobs: HashMap<u64, Vec<Blob>>,
+    /// Lastest sent batch proof
+    lastest_sent_batch_proof: u64,
     /// Metrics for transaction, deposits and withdrawals count
     operations_counts: [u64; 3],
 }
@@ -187,6 +189,15 @@ impl StoreEngineRollup for Store {
 
     async fn get_operations_count(&self) -> Result<[u64; 3], StoreError> {
         Ok(self.inner()?.operations_counts)
+    }
+
+    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
+        Ok(self.inner()?.lastest_sent_batch_proof)
+    }
+
+    async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.inner()?.lastest_sent_batch_proof = batch_number;
+        Ok(())
     }
 }
 

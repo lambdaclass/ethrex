@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, BloomInput, H256};
 use ethrex_rlp::{
-    decode::{get_rlp_bytes_item_payload, is_encoded_as_bytes, RLPDecode},
+    decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
     encode::RLPEncode,
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
@@ -179,7 +179,7 @@ impl ReceiptWithBloom {
                     ty => {
                         return Err(RLPDecodeError::Custom(format!(
                             "Invalid transaction type: {ty}"
-                        )))
+                        )));
                     }
                 };
                 (tx_type, &rlp[1..])
@@ -239,7 +239,7 @@ impl RLPDecode for ReceiptWithBloom {
                 ty => {
                     return Err(RLPDecodeError::Custom(format!(
                         "Invalid transaction type: {ty}"
-                    )))
+                    )));
                 }
             };
             (tx_type, &payload[1..])

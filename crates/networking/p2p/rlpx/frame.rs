@@ -7,8 +7,8 @@ use super::{
     utils::ecdh_xchng,
 };
 use aes::{
-    cipher::{BlockEncrypt as _, KeyInit as _, KeyIvInit, StreamCipher as _},
     Aes256Enc,
+    cipher::{BlockEncrypt as _, KeyInit as _, KeyIvInit, StreamCipher as _},
 };
 use bytes::{Buf, BytesMut};
 use ethrex_common::{H128, H256};
@@ -37,9 +37,14 @@ impl RLPxCodec {
         local_state: &LocalState,
         remote_state: &RemoteState,
         hashed_nonces: [u8; 32],
-    ) -> Self {
-        let ephemeral_key_secret =
-            ecdh_xchng(&local_state.ephemeral_key, &remote_state.ephemeral_key);
+    ) -> Result<Self, RLPxError> {
+        let ephemeral_key_secret = ecdh_xchng(
+            &local_state.ephemeral_key,
+            &remote_state.ephemeral_key,
+        )
+        .map_err(|error| {
+            RLPxError::CryptographyError(format!("Invalid generated ephemeral key secret: {error}"))
+        })?;
 
         // shared-secret = keccak256(ephemeral-key || keccak256(nonce || initiator-nonce))
         let shared_secret =
@@ -62,7 +67,7 @@ impl RLPxCodec {
 
         let ingress_aes = <Aes256Ctr64BE as KeyIvInit>::new(&aes_key.0.into(), &[0; 16].into());
         let egress_aes = ingress_aes.clone();
-        Self {
+        Ok(Self {
             mac_key,
             ingress_mac,
             egress_mac,
@@ -71,7 +76,7 @@ impl RLPxCodec {
             p2p_protocol: None,
             eth_protocol: None,
             snap_protocol: None,
-        }
+        })
     }
 
     pub fn set_p2p_protocol(&mut self, cap: &Capability) -> Result<(), RLPxError> {
@@ -253,10 +258,7 @@ impl Decoder for RLPxCodec {
                 if buf.is_empty() {
                     Ok(None)
                 } else {
-                    Err(
-                        std::io::Error::new(std::io::ErrorKind::Other, "bytes remaining on stream")
-                            .into(),
-                    )
+                    Err(std::io::Error::other("bytes remaining on stream").into())
                 }
             }
         }

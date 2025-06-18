@@ -1,16 +1,15 @@
 use ethrex_common::{H256, U256};
 use k256::{
-    elliptic_curve::{bigint::Encoding, Curve},
     Secp256k1,
+    elliptic_curve::{Curve, bigint::Encoding},
 };
 use std::sync::LazyLock;
 
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
 pub const WORD_SIZE_IN_BYTES_U64: u64 = 32;
 
-pub const SUCCESS_FOR_CALL: U256 = U256::one();
-pub const REVERT_FOR_CALL: U256 = U256::zero();
-pub const CREATE_DEPLOYMENT_FAIL: U256 = U256::zero();
+pub const SUCCESS: U256 = U256::one();
+pub const FAIL: U256 = U256::zero();
 pub const WORD_SIZE: usize = 32;
 
 pub const STACK_LIMIT: usize = 1024;
@@ -25,7 +24,7 @@ pub const MEMORY_EXPANSION_QUOTIENT: usize = 512;
 // Dedicated gas limit for system calls according to EIPs 2935, 4788, 7002 and 7251
 pub const SYS_CALL_GAS_LIMIT: u64 = 30000000;
 
-// Transaction costs in gas (in wei)
+// Transaction costs in gas
 pub const TX_BASE_COST: u64 = 21000;
 
 pub const MAX_CODE_SIZE: usize = 0x6000;

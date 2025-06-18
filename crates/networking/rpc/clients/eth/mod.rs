@@ -16,18 +16,18 @@ use errors::{
 };
 use eth_sender::Overrides;
 use ethrex_common::{
+    Address, H160, H256, U256,
     types::{
         BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
         PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction,
     },
-    Address, H160, H256, U256,
 };
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
 use reqwest::{Client, Url};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{ops::Div, str::FromStr};
 use tracing::warn;
 
@@ -84,11 +84,11 @@ impl From<u64> for BlockByNumber {
         BlockByNumber::Number(value)
     }
 }
-const MAX_NUMBER_OF_RETRIES: u64 = 10;
-const BACKOFF_FACTOR: u64 = 2;
+pub const MAX_NUMBER_OF_RETRIES: u64 = 10;
+pub const BACKOFF_FACTOR: u64 = 2;
 // Give at least 8 blocks before trying to bump gas.
-const MIN_RETRY_DELAY: u64 = 96;
-const MAX_RETRY_DELAY: u64 = 1800;
+pub const MIN_RETRY_DELAY: u64 = 96;
+pub const MAX_RETRY_DELAY: u64 = 1800;
 
 const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 
@@ -226,7 +226,9 @@ impl EthClient {
         tx: &EIP1559Transaction,
         private_key: &SecretKey,
     ) -> Result<H256, EthClientError> {
-        let signed_tx = tx.sign(private_key);
+        let signed_tx = tx
+            .sign(private_key)
+            .map_err(|error| EthClientError::FailedToSignPayload(error.to_string()))?;
 
         let mut encoded_tx = signed_tx.encode_to_vec();
         encoded_tx.insert(0, TxType::EIP1559.into());
@@ -240,7 +242,10 @@ impl EthClient {
         private_key: &SecretKey,
     ) -> Result<H256, EthClientError> {
         let mut wrapped_tx = wrapped_tx.clone();
-        wrapped_tx.tx.sign_inplace(private_key);
+        wrapped_tx
+            .tx
+            .sign_inplace(private_key)
+            .map_err(|error| EthClientError::FailedToSignPayload(error.to_string()))?;
 
         let mut encoded_tx = wrapped_tx.encode_to_vec();
         encoded_tx.insert(0, TxType::EIP4844.into());
@@ -284,15 +289,30 @@ impl EthClient {
 
         'outer: while number_of_retries < self.max_number_of_retries {
             if let Some(max_fee_per_gas) = self.maximum_allowed_max_fee_per_gas {
-                let tx_max_fee = match wrapped_tx {
-                    WrappedTransaction::EIP4844(tx) => &mut tx.tx.max_fee_per_gas,
-                    WrappedTransaction::EIP1559(tx) => &mut tx.max_fee_per_gas,
-                    WrappedTransaction::L2(tx) => &mut tx.max_fee_per_gas,
+                let (tx_max_fee, tx_max_priority_fee) = match wrapped_tx {
+                    WrappedTransaction::EIP4844(tx) => (
+                        &mut tx.tx.max_fee_per_gas,
+                        &mut tx.tx.max_priority_fee_per_gas,
+                    ),
+                    WrappedTransaction::EIP1559(tx) => {
+                        (&mut tx.max_fee_per_gas, &mut tx.max_priority_fee_per_gas)
+                    }
+                    WrappedTransaction::L2(tx) => {
+                        (&mut tx.max_fee_per_gas, &mut tx.max_priority_fee_per_gas)
+                    }
                 };
 
                 if *tx_max_fee > max_fee_per_gas {
                     *tx_max_fee = max_fee_per_gas;
-                    warn!("max_fee_per_gas exceeds the allowed limit, adjusting it to {max_fee_per_gas}");
+
+                    // Ensure that max_priority_fee_per_gas does not exceed max_fee_per_gas
+                    if *tx_max_priority_fee > *tx_max_fee {
+                        *tx_max_priority_fee = *tx_max_fee;
+                    }
+
+                    warn!(
+                        "max_fee_per_gas exceeds the allowed limit, adjusting it to {max_fee_per_gas}"
+                    );
                 }
             }
 
@@ -312,7 +332,10 @@ impl EthClient {
                 .await?;
 
             if number_of_retries > 0 {
-                warn!("Resending Transaction after bumping gas, attempts [{number_of_retries}/{}]\nTxHash: {tx_hash:#x}", self.max_number_of_retries);
+                warn!(
+                    "Resending Transaction after bumping gas, attempts [{number_of_retries}/{}]\nTxHash: {tx_hash:#x}",
+                    self.max_number_of_retries
+                );
             }
 
             let mut receipt = self.get_transaction_receipt(tx_hash).await?;
@@ -395,11 +418,17 @@ impl EthClient {
             TxKind::Call(addr) => Some(format!("{addr:#x}")),
             TxKind::Create => None,
         };
+        let blob_versioned_hashes_str: Vec<_> = transaction
+            .blob_versioned_hashes
+            .into_iter()
+            .map(|hash| format!("{hash:#x}"))
+            .collect();
         let mut data = json!({
             "to": to,
             "input": format!("0x{:#x}", transaction.input),
             "from": format!("{:#x}", transaction.from),
             "value": format!("{:#x}", transaction.value),
+            "blobVersionedHashes": blob_versioned_hashes_str
         });
 
         // Add the nonce just if present, otherwise the RPC will use the latest nonce
@@ -1211,8 +1240,7 @@ impl EthClient {
             return Ok(gas_fee);
         }
         self.get_gas_price()
-            .await
-            .map_err(EthClientError::from)?
+            .await?
             .try_into()
             .map_err(|_| EthClientError::Custom("Failed to get gas for fee".to_owned()))
     }
@@ -1290,7 +1318,7 @@ pub struct GetTransactionByHashTransaction {
     pub to: Address,
     #[serde(default)]
     pub value: U256,
-    #[serde(default)]
+    #[serde(default, with = "ethrex_common::serde_utils::vec_u8", alias = "input")]
     pub data: Vec<u8>,
     #[serde(default)]
     pub access_list: Vec<(Address, Vec<H256>)>,

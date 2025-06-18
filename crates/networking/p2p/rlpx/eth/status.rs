@@ -4,8 +4,8 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
-use ethrex_common::types::{BlockHash, ForkId};
 use ethrex_common::U256;
+use ethrex_common::types::{BlockHash, ForkId};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},

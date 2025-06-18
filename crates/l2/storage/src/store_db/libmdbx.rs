@@ -5,14 +5,15 @@ use std::{
 };
 
 use ethrex_common::{
-    types::{Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use libmdbx::{
+    DatabaseOptions, Mode, PageSize, ReadWriteOptions,
     orm::{Database, Table},
-    table, table_info, DatabaseOptions, Mode, PageSize, ReadWriteOptions,
+    table, table_info,
 };
 
 use crate::{
@@ -72,6 +73,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
         table_info!(BlobsBundles),
         table_info!(StateRoots),
         table_info!(DepositLogsHash),
+        table_info!(LastSentBatchProof),
     ]
     .into_iter()
     .collect();
@@ -259,6 +261,16 @@ impl StoreEngineRollup for Store {
             _ => Ok([0, 0, 0]),
         }
     }
+
+    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
+        self.read::<LastSentBatchProof>(0)
+            .await
+            .map(|v| v.unwrap_or(0))
+    }
+
+    async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.write::<LastSentBatchProof>(0, batch_number).await
+    }
 }
 
 table!(
@@ -294,4 +306,9 @@ table!(
 table!(
     /// Deposit logs hash by batch number
     ( DepositLogsHash ) u64 => Rlp<H256>
+);
+
+table!(
+    /// Last sent batch proof
+    ( LastSentBatchProof ) u64 => u64
 );

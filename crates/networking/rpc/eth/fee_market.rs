@@ -2,8 +2,8 @@ use ethrex_blockchain::payload::calc_gas_limit;
 use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
-        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, Block,
-        BlockHeader, Transaction, ELASTICITY_MULTIPLIER,
+        Block, BlockHeader, ELASTICITY_MULTIPLIER, Transaction, calc_excess_blob_gas,
+        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
     },
 };
 use serde::Serialize;
@@ -13,7 +13,7 @@ use tracing::info;
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
     types::block_identifier::BlockIdentifier,
-    utils::{parse_json_hex, RpcErr},
+    utils::{RpcErr, parse_json_hex},
 };
 use ethrex_storage::Store;
 
@@ -64,9 +64,9 @@ impl RpcHandler for FeeHistoryRequest {
         let rp: Vec<f32> = serde_json::from_value(params[2].clone())?;
         // NOTE: This check is offspec
         if rp.len() > MAX_PERCENTILE_ARRAY_LEN {
-            return Err(RpcErr::BadParams(
-                format!("Wrong size reward_percentiles parameter, must be {MAX_PERCENTILE_ARRAY_LEN} at max"),
-            ));
+            return Err(RpcErr::BadParams(format!(
+                "Wrong size reward_percentiles parameter, must be {MAX_PERCENTILE_ARRAY_LEN} at max"
+            )));
         }
         // Restric them to be monotnically increasing and in the range [0.0; 100.0]
         let mut ok = rp.iter().all(|a| *a >= 0.0 && *a <= 100.0);

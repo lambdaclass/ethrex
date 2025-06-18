@@ -1,29 +1,21 @@
-use std::str::FromStr;
-
 use bytes::Bytes;
 use ethereum_types::Address;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use k256::sha2::Sha256;
 use keccak_hash::H256;
-use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use sha3::Digest;
 use tracing::error;
 
-use crate::serde_utils;
-
 use super::{Bytes48, Receipt};
+use crate::constants::DEPOSIT_TOPIC;
+use crate::serde_utils;
 
 pub type Bytes32 = [u8; 32];
 pub type Bytes96 = [u8; 96];
 const DEPOSIT_TYPE: u8 = 0x00;
 const WITHDRAWAL_TYPE: u8 = 0x01;
 const CONSOLIDATION_TYPE: u8 = 0x02;
-
-lazy_static! {
-    static ref DEPOSIT_TOPIC: H256 =
-        H256::from_str("649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5").unwrap();
-}
 
 #[derive(Clone, Debug)]
 pub struct EncodedRequests(pub Bytes);
@@ -193,24 +185,24 @@ impl Deposit {
         for (i, (expected_offset, expected_size)) in
             OFFSETS.into_iter().zip(SIZES.into_iter()).enumerate()
         {
-            let offset = fixed_bytes::<OFFSET_LEN>(data, i * OFFSET_LEN);
-            let size = fixed_bytes::<SIZE_LEN>(data, expected_offset);
+            let offset = fixed_bytes::<OFFSET_LEN>(data, i * OFFSET_LEN)?;
+            let size = fixed_bytes::<SIZE_LEN>(data, expected_offset)?;
             if !is_eq(offset, expected_offset) || !is_eq(size, expected_size) {
                 return None;
             }
         }
 
         // Extract Data
-        let pub_key: Bytes48 = fixed_bytes::<PUB_KEY_SIZE>(data, PUB_KEY_OFFSET + SIZE_LEN);
+        let pub_key: Bytes48 = fixed_bytes::<PUB_KEY_SIZE>(data, PUB_KEY_OFFSET + SIZE_LEN)?;
         let withdrawal_credentials: Bytes32 = fixed_bytes::<WITHDRAWAL_CREDENTIALS_SIZE>(
             data,
             WITHDRAWAL_CREDENTIALS_OFFSET + SIZE_LEN,
-        );
+        )?;
         let amount: u64 =
-            u64::from_le_bytes(fixed_bytes::<AMOUNT_SIZE>(data, AMOUNT_OFFSET + SIZE_LEN));
-        let signature: Bytes96 = fixed_bytes::<SIGNATURE_SIZE>(data, SIGNATURE_OFFSET + SIZE_LEN);
+            u64::from_le_bytes(fixed_bytes::<AMOUNT_SIZE>(data, AMOUNT_OFFSET + SIZE_LEN)?);
+        let signature: Bytes96 = fixed_bytes::<SIGNATURE_SIZE>(data, SIGNATURE_OFFSET + SIZE_LEN)?;
         let index: u64 =
-            u64::from_le_bytes(fixed_bytes::<INDEX_SIZE>(data, INDEX_OFFSET + SIZE_LEN));
+            u64::from_le_bytes(fixed_bytes::<INDEX_SIZE>(data, INDEX_OFFSET + SIZE_LEN)?);
 
         Some(Deposit {
             pub_key,
@@ -239,11 +231,8 @@ impl Deposit {
     }
 }
 
-fn fixed_bytes<const N: usize>(data: &[u8], offset: usize) -> [u8; N] {
-    data.get(offset..offset + N)
-        .expect("Couldn't convert to fixed bytes")
-        .try_into()
-        .expect("Couldn't convert to fixed bytes")
+fn fixed_bytes<const N: usize>(data: &[u8], offset: usize) -> Option<[u8; N]> {
+    data.get(offset..offset + N)?.try_into().ok()
 }
 
 // See https://github.com/ethereum/EIPs/blob/2a6b6965e64787815f7fffb9a4c27660d9683846/EIPS/eip-7685.md?plain=1#L62.

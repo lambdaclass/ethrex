@@ -1,4 +1,4 @@
-use super::{requests::EncodedRequests, BlobsBundle, Block};
+use super::{BlobsBundle, Block, requests::EncodedRequests};
 use ethereum_types::U256;
 use ethrex_rlp::{
     decode::RLPDecode,

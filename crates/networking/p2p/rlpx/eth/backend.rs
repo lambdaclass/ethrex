@@ -66,8 +66,8 @@ mod tests {
     use crate::rlpx::eth::status::StatusMessage;
     use crate::rlpx::p2p::Capability;
     use ethrex_common::{
-        types::{ForkId, Genesis},
         H256, U256,
+        types::{ForkId, Genesis},
     };
     use ethrex_storage::{EngineType, Store};
     use std::{fs::File, io::BufReader};

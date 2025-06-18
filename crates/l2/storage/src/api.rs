@@ -3,8 +3,8 @@
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use ethrex_common::{
-    types::{Blob, BlockNumber},
     H256,
+    types::{Blob, BlockNumber},
 };
 use ethrex_storage::error::StoreError;
 
@@ -95,4 +95,8 @@ pub trait StoreEngineRollup: Debug + Send + Sync + RefUnwindSafe {
 
     /// Returns whether the batch with the given number is present.
     async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError>;
+
+    async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError>;
+
+    async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError>;
 }

@@ -1,15 +1,17 @@
 use ethrex_common::{
+    Address, Bloom, Bytes, H256,
     constants::GAS_PER_BLOB,
     serde_utils,
     types::{
-        bloom_from_logs, BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind,
-        TxType,
+        BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType,
+        bloom_from_logs,
     },
-    Address, Bloom, Bytes, H256,
 };
 use ethrex_vm::create_contract_address;
 
 use serde::{Deserialize, Serialize};
+
+use crate::utils::RpcErr;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RpcReceipt {
@@ -67,7 +69,7 @@ impl From<Receipt> for RpcReceiptInfo {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcLog {
     #[serde(flatten)]
@@ -102,7 +104,7 @@ impl RpcLog {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcLogInfo {
     pub address: Address,
@@ -170,9 +172,9 @@ impl RpcReceiptTxInfo {
         index: u64,
         gas_used: u64,
         block_blob_gas_price: u64,
-    ) -> Self {
+    ) -> Result<Self, RpcErr> {
         let nonce = transaction.nonce();
-        let from = transaction.sender();
+        let from = transaction.sender()?;
         let transaction_hash = transaction.compute_hash();
         let effective_gas_price = transaction.gas_price();
         let transaction_index = index;
@@ -187,7 +189,7 @@ impl RpcReceiptTxInfo {
             TxKind::Create => (Some(create_contract_address(from, nonce)), None),
             TxKind::Call(addr) => (None, Some(addr)),
         };
-        Self {
+        Ok(Self {
             transaction_hash,
             transaction_index,
             from,
@@ -197,7 +199,7 @@ impl RpcReceiptTxInfo {
             effective_gas_price,
             blob_gas_price,
             blob_gas_used,
-        }
+        })
     }
 }
 
@@ -205,8 +207,8 @@ impl RpcReceiptTxInfo {
 mod tests {
     use super::*;
     use ethrex_common::{
-        types::{Log, TxType},
         Bytes,
+        types::{Log, TxType},
     };
     use hex_literal::hex;
 
