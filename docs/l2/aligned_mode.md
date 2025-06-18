@@ -165,7 +165,12 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 	--genesis-l2-path ../../test_data/genesis-l2.json
 ```
 
-You will see that some deposits fail, this is because not all the accounts are pre-funded from the genesis.
+You will see that some deposits fail with the following error:
+```
+2025-06-18T19:19:24.066126Z  WARN ethrex_l2_l1_deployer: Failed to make deposits: Deployer EthClient error: eth_estimateGas request error: execution reverted: CommonBridge: amount to deposit is zero: CommonBridge: amount to deposit is zero
+```
+
+This is because not all the accounts are pre-funded from the genesis.
 
 2. Send some funds to the Aligned batcher payment service contract from the proof sender:
 ```
@@ -180,26 +185,7 @@ cargo run deposit-to-batcher \
 
 ```
 cd ethrex/crates/l2
-cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- \
-	l2 init \
-		--watcher.block-delay 0 \
-		--network ../../test_data/genesis-l2.json \
-		--http.port 1729 \
-		--http.addr 0.0.0.0 \
-		--evm levm \
-		--datadir dev_ethrex_l2 \
-		--l1.bridge-address <BRIDGE_ADDRESS> \
-		--l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> \
-		--eth.rpc-url http://localhost:8545 \
-		--block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
-		--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
-		--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-		--proof-coordinator.addr 127.0.0.1 \
-		--aligned \
-       	--aligned.beacon-url http://127.0.0.1:58801 \
-       	--aligned-network devnet \
-       	--aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf \
-       	--aligned-sp1-vk-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
+ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- l2 init --watcher.block-delay 0 --network ../../test_data/genesis-l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address 0x3b4b5b9a7a5bd24997ff04f1c8a81b3005c32519 --l1.on-chain-proposer-address 0xe2276576e0d4f40be8463a360dcff5eef863244a --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
 ```
 
 > [!IMPORTANT]  
