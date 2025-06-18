@@ -1,4 +1,4 @@
-# Withdrawal specs
+# Withdrawals
 
 This document contains a detailed explanation of the changes needed to handle withdrawals and the withdrawal flow.
 
@@ -34,8 +34,8 @@ To do this, they compute a merkle proof for the included batch and call the L1 b
 
 This contract then:
 - Verifies that the batch is validated
-- Ensure the withdrawal wasn't already claimed
-- Compute the expected leaf
-- Validate that the proof leads from the leaf to the root of the message tree
-- Give the funds to the user
-- Mark the withdrawl as claimed
+- Ensures the withdrawal wasn't already claimed
+- Computes the expected leaf
+- Validates that the proof leads from the leaf to the root of the message tree
+- Gives the funds to the user
+- Marks the withdrawl as claimed
