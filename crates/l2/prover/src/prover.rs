@@ -52,7 +52,7 @@ impl Prover {
             // Generate the Proof
             let Ok(batch_proof) = prove(prover_data.input, self.aligned_mode)
                 .and_then(|output| to_batch_proof(output, self.aligned_mode))
-                .inspect_err(|e| error!(e))
+                .inspect_err(|e| error!("{}", e.to_string()))
             else {
                 continue;
             };
