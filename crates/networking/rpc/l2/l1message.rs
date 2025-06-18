@@ -81,14 +81,10 @@ impl RpcHandler for GetL1MessageProof {
         };
 
         let mut proofs = vec![];
-        for message_hash in tx_message_hashes {
-            // Gets the index of the message in the batch
-            let Some(index) = batch_message_hashes
-                .iter()
-                .position(|hash| *hash == message_hash)
-            else {
-                return Ok(Value::Null);
-            };
+        for (index, message_hash) in batch_message_hashes.iter().enumerate() {
+            if !tx_message_hashes.contains(message_hash) {
+                continue;
+            }
 
             // Calculates the merkle proof of the batch
             let Some(path) = merkle_proof(batch_message_hashes.clone(), index) else {
@@ -98,7 +94,7 @@ impl RpcHandler for GetL1MessageProof {
             let proof = L1MessageProof {
                 batch_number,
                 index,
-                message_hash,
+                message_hash: *message_hash,
                 merkle_proof: path,
             };
             proofs.push(proof);
