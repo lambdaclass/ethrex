@@ -1351,6 +1351,14 @@ impl StoreEngine for RedBStore {
     async fn set_snapshot_block_hash(&self, block: BlockHash) -> Result<(), StoreError> {
         todo!()
     }
+
+    async fn add_snapshot_data(
+        &self,
+        accounts: Vec<(H256, AccountState)>,
+        storages: Vec<((H256, H256), U256)>,
+    ) -> Result<(), StoreError> {
+        todo!()
+    }
 }
 
 impl redb::Value for ChainDataIndex {

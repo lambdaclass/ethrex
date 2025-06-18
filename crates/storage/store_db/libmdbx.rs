@@ -133,8 +133,13 @@ impl StoreEngine for Store {
 
             // store account updates
             for (node_hash, node_data) in update_batch.account_updates {
-                tx.upsert::<StateTrieNodes>(node_hash, node_data)
+                tx.upsert::<StateTrieNodes>(node_hash, node_data.clone())
                     .map_err(StoreError::LibmdbxError)?;
+                tx.upsert::<AccountStateSnapshot>(
+                    H256Key(H256::from_slice(node_hash.as_ref())),
+                    Rlp::<AccountState>::from_bytes(node_data),
+                )
+                .map_err(StoreError::LibmdbxError)?;
             }
 
             for (hashed_address, nodes) in update_batch.storage_updates {
@@ -142,11 +147,20 @@ impl StoreEngine for Store {
                     let key_1: [u8; 32] = hashed_address.into();
                     let key_2 = node_hash_to_fixed_size(node_hash);
 
-                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data)
+                    tx.upsert::<StorageTriesNodes>((key_1, key_2), node_data.clone())
                         .map_err(StoreError::LibmdbxError)?;
+
+                    tx.upsert::<AccountStorageSnapshot>(
+                        H256TupleKey((hashed_address, H256::from_slice(node_hash.as_ref()))),
+                        <[u8; 32]>::try_from(node_data).expect("should parse"),
+                    )
+                    .map_err(StoreError::LibmdbxError)?;
                 }
             }
-            for block in update_batch.blocks {
+
+            let total_blocks = update_batch.blocks.len();
+
+            for (i, block) in update_batch.blocks.into_iter().enumerate() {
                 // store block
                 let number = block.header.number;
                 let hash = block.hash();
@@ -173,6 +187,11 @@ impl StoreEngine for Store {
 
                 tx.upsert::<BlockNumbers>(hash.into(), number)
                     .map_err(StoreError::LibmdbxError)?;
+
+                if i == (total_blocks - 1) {
+                    tx.upsert::<SnapshotBlockHash>(0u64, hash.into())
+                        .map_err(StoreError::LibmdbxError)?;
+                }
             }
             for (block_hash, receipts) in update_batch.receipts {
                 // store receipts
@@ -1092,9 +1111,8 @@ impl StoreEngine for Store {
         account_hash: H256,
         storage_hash_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        Ok(self
-            .read_sync::<AccountStorageSnapshot>(H256TupleKey((account_hash, storage_hash_key)))
-            .map(|o| o.map(|a| U256::from_big_endian(&a)))?)
+        self.read_sync::<AccountStorageSnapshot>(H256TupleKey((account_hash, storage_hash_key)))
+            .map(|o| o.map(|a| U256::from_big_endian(&a)))
     }
 
     async fn get_snapshot_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
@@ -1105,6 +1123,38 @@ impl StoreEngine for Store {
 
     async fn set_snapshot_block_hash(&self, block: BlockHash) -> Result<(), StoreError> {
         self.write::<SnapshotBlockHash>(0u64, block.0).await
+    }
+
+    async fn add_snapshot_data(
+        &self,
+        accounts: Vec<(H256, AccountState)>,
+        storages: Vec<((H256, H256), U256)>,
+    ) -> Result<(), StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+
+            // store account updates
+            for (node_hash, node_data) in accounts {
+                tx.upsert::<AccountStateSnapshot>(
+                    H256Key(H256::from_slice(node_hash.as_ref())),
+                    Rlp::<AccountState>::from_bytes(node_data.encode_to_vec()),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+            }
+
+            for ((hashed_address, storage_hash), value) in storages {
+                tx.upsert::<AccountStorageSnapshot>(
+                    H256TupleKey((hashed_address, storage_hash)),
+                    value.to_big_endian(),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+            }
+
+            tx.commit().map_err(StoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 }
 

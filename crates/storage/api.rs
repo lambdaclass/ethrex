@@ -14,7 +14,9 @@ use ethrex_trie::{Nibbles, Trie};
 // (i.e. dyn StoreEngine)
 #[async_trait::async_trait]
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
-    /// Store changes in a batch from a vec of blocks
+    /// Store changes in a batch from a vec of blocks.
+    ///
+    /// Note: Also updates the snapshot data and sets the snapshot block hash to the last block passed.
     async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
 
     /// Add a batch of blocks in a single transaction.
@@ -438,4 +440,13 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn get_snapshot_block_hash(&self) -> Result<Option<BlockHash>, StoreError>;
 
     async fn set_snapshot_block_hash(&self, block: BlockHash) -> Result<(), StoreError>;
+
+    /// Add the given accounts and storages to the current snapshot data.
+    ///
+    /// Mainly used to insert the genesis data.
+    async fn add_snapshot_data(
+        &self,
+        accounts: Vec<(H256, AccountState)>,
+        storages: Vec<((H256, H256), U256)>,
+    ) -> Result<(), StoreError>;
 }

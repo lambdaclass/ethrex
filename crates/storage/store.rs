@@ -19,8 +19,9 @@ use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
-use std::sync::Arc;
-use tracing::info;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
+use tracing::{info, warn};
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
 /// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
@@ -32,6 +33,8 @@ pub const GENESIS_DIFF_PANIC_MESSAGE: &str = "Tried to run genesis twice with di
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
+    /// Keeps track whether the snapshot is valid. A snapshot currently becomes invalid if a reorg is detected.
+    is_snapshot_valid: Arc<AtomicBool>,
 }
 
 #[allow(dead_code)]
@@ -65,7 +68,32 @@ pub struct AccountUpdatesList {
 
 impl Store {
     pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        self.engine.apply_updates(update_batch).await
+        let last_block = update_batch
+            .blocks
+            .last()
+            .map(|x| (x.hash(), x.header.parent_hash));
+        self.engine.apply_updates(update_batch).await?;
+
+        if self.is_snapshot_valid.load(Ordering::Acquire) {
+            // Check if a reorg happened.
+            if let Some((last_block_hash, last_block_parent_hash)) = last_block {
+                let current_block_hash = self.engine.get_snapshot_block_hash().await?;
+
+                if let Some(current_block_hash) = current_block_hash {
+                    if current_block_hash == last_block_parent_hash {
+                        self.engine.set_snapshot_block_hash(last_block_hash).await?;
+                    } else {
+                        info!("Reorg detected, disabling snapshots.");
+                        self.is_snapshot_valid.store(false, Ordering::Release);
+                    }
+                } else {
+                    // No snapshot block hash was stored. Abort snapshots
+                    self.is_snapshot_valid.store(false, Ordering::Release);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
@@ -74,13 +102,16 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(_path)?),
+                is_snapshot_valid: AtomicBool::new(true).into(),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
+                is_snapshot_valid: AtomicBool::new(true).into(),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
+                is_snapshot_valid: AtomicBool::new(true).into(),
             },
         };
         info!("Started store engine");
@@ -98,6 +129,11 @@ impl Store {
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
         let store = Self::new(store_path, engine_type)?;
+        store
+            .engine
+            .set_snapshot_block_hash(genesis.get_block().hash())
+            .await?;
+        store.is_snapshot_valid.store(true, Ordering::Release);
         store.add_initial_state(genesis).await?;
         Ok(store)
     }
@@ -476,8 +512,13 @@ impl Store {
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
         let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH)?;
+
+        let mut snapshot_accounts = Vec::new();
+        let mut snapshot_storages = Vec::new();
+
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
+            let hashed_address_fixed = hash_address_fixed(&address);
             // Store account code (as this won't be stored in the trie)
             let code_hash = code_hash(&account.code);
             self.add_account_code(code_hash, account.code).await?;
@@ -487,8 +528,11 @@ impl Store {
                 .open_storage_trie(H256::from_slice(&hashed_address), *EMPTY_TRIE_HASH)?;
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
+                    let hashed_storage_key = H256(storage_key.to_big_endian());
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                    snapshot_storages
+                        .push(((hashed_address_fixed, hashed_storage_key), storage_value));
                 }
             }
             let storage_root = storage_trie.hash()?;
@@ -500,7 +544,14 @@ impl Store {
                 code_hash,
             };
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            snapshot_accounts.push((hashed_address_fixed, account_state));
         }
+
+        // Add genesis to snapshot state
+        self.engine
+            .add_snapshot_data(snapshot_accounts, snapshot_storages)
+            .await?;
+
         genesis_state_trie.hash().map_err(StoreError::Trie)
     }
 
