@@ -192,7 +192,7 @@ impl Store {
     {
         match value {
             Some(v) => flat_storage_cursor
-                .upsert(key, v.into())
+                .upsert(key, v)
                 .map_err(StoreError::LibmdbxError),
             None => {
                 if let Some(_current_data) = flat_storage_cursor
