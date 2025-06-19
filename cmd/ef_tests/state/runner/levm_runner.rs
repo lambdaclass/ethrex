@@ -5,7 +5,7 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_common::{
-    BigEndianHash, H256, U256,
+    H256, U256,
     types::{
         AccountUpdate, EIP1559Transaction, EIP7702Transaction, Fork, Transaction, TxKind,
         tx_fields::*,
@@ -13,7 +13,7 @@ use ethrex_common::{
 };
 use ethrex_levm::{
     EVMConfig, Environment,
-    db::{cache, gen_db::GeneralizedDatabase},
+    db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
     tracing::LevmCallTracer,
     vm::VM,
@@ -431,14 +431,4 @@ pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -
         .unwrap()
         .unwrap();
     ret_account_updates_batch.state_trie_hash
-}
-
-fn ensure_reverted_state_condition(
-    condition: bool,
-    error_reason: String,
-) -> Result<(), EFTestRunnerError> {
-    if !condition {
-        return Err(EFTestRunnerError::FailedToRevertLEVMState(error_reason));
-    }
-    Ok(())
 }
