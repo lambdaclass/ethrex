@@ -182,6 +182,15 @@ impl Store {
     }
 
     // Helper method to write into a libmdbx table in batch
+    async fn replace_value<T: Table>(
+        &self,
+        txn: libmdbx::orm::Transaction<'_, libmdbx::RW>,
+        key_values: Vec<(T::Key, T::Value)>,
+    ) -> Result<(), StoreError> {
+        todo!();
+    }
+
+    // Helper method to write into a libmdbx table in batch
     async fn write_batch<T: Table>(
         &self,
         key_values: Vec<(T::Key, T::Value)>,

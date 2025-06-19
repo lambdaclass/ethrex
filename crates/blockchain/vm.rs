@@ -42,37 +42,33 @@ impl StoreVmDatabase {
 
 impl VmDatabase for StoreVmDatabase {
     fn get_account_info(&self, address: Address) -> Result<Option<AccountInfo>, EvmError> {
-        if Some(self.block_hash)
-            == self
-                .store
-                .get_block_for_current_snapshot()
-                .map_err(|e| EvmError::DB(e.to_string()))?
-        {
-            self.store
-                .get_current_account_info(address)
-                .map_err(|e| EvmError::DB(e.to_string()))
+        let block_for_current_snapshot = self
+            .store
+            .get_block_for_current_snapshot()
+            .map_err(|e| EvmError::DB(e.to_string()))?;
+
+        if Some(self.block_hash) == block_for_current_snapshot {
+            self.store.get_current_account_info(address)
         } else {
             self.store
                 .get_account_info_by_hash(self.block_hash, address)
-                .map_err(|e| EvmError::DB(e.to_string()))
         }
+        .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        if Some(self.block_hash)
-            == self
-                .store
-                .get_block_for_current_snapshot()
-                .map_err(|e| EvmError::DB(e.to_string()))?
-        {
-            self.store
-                .get_current_storage(address, key)
-                .map_err(|e| EvmError::DB(e.to_string()))
+        let block_for_current_snapshot = self
+            .store
+            .get_block_for_current_snapshot()
+            .map_err(|e| EvmError::DB(e.to_string()))?;
+
+        if Some(self.block_hash) == block_for_current_snapshot {
+            self.store.get_current_storage(address, key)
         } else {
             self.store
                 .get_storage_at_hash(self.block_hash, address, key)
-                .map_err(|e| EvmError::DB(e.to_string()))
         }
+        .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {

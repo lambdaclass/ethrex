@@ -145,13 +145,7 @@ impl Store {
         let mut accounts_info_log = Vec::new();
         let mut previous_account_info = HashMap::<H160, AccountInfo>::new();
 
-        let mut current_block = None;
         for (block, account_updates) in account_updates_per_block {
-            debug_assert_eq!(
-                current_block.unwrap_or(block.header.number) + 1,
-                block.header.number
-            );
-            current_block = Some(block.header.number);
             let block_numhash: BlockNumHash = (block.header.number, block.header.hash()).into();
             for account_update in account_updates {
                 let Some(new_info) = &account_update.info else {

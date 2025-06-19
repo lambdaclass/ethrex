@@ -1,10 +1,9 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::Address;
-use ethrex_common::types::{AccountInfo, AccountUpdate};
 use ethrex_common::types::{
-    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    Receipt, Transaction, payload::PayloadBundle,
+    AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+    BlockNumber, ChainConfig, Index, Receipt, Transaction, payload::PayloadBundle,
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
@@ -27,12 +26,14 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError>;
+
     async fn replay_writes_until_head(&self, head: H256) -> Result<(), StoreError>;
 
     async fn store_account_info_logs(
         &self,
         account_info_logs: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
     ) -> Result<(), StoreError>;
+
     async fn store_account_storage_logs(
         &self,
         account_storage_logs: Vec<(BlockNumHash, AccountAddress, H256, U256, U256)>,
@@ -331,6 +332,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         genesis_block_hash: H256,
         genesis_accounts: &[(Address, H256, U256)],
     ) -> Result<(), StoreError>;
+
     async fn setup_genesis_flat_account_info(
         &self,
         genesis_block_number: u64,
@@ -339,7 +341,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError>;
+
     fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError>;
+
     fn get_current_account_info(&self, address: Address)
     -> Result<Option<AccountInfo>, StoreError>;
 

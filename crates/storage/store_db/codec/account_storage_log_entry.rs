@@ -26,11 +26,10 @@ impl Encodable for AccountStorageLogEntry {
 #[cfg(feature = "libmdbx")]
 impl Decodable for AccountStorageLogEntry {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        if b.len() < SIZE_OF_ACCOUNT_STORAGE_LOG_ENTRY {
+        let len = b.len();
+        if len < SIZE_OF_ACCOUNT_STORAGE_LOG_ENTRY {
             anyhow::bail!(
-                "Invalid length for StorageStateWriteLogEntry: {} (expected {})",
-                b.len(),
-                116
+                "Invalid length for StorageStateWriteLogEntry: {len} (expected {SIZE_OF_ACCOUNT_STORAGE_LOG_ENTRY})"
             );
         }
         let addr = H160::from_slice(&b[0..20]);
