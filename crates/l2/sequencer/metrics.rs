@@ -7,7 +7,6 @@ use ethrex_rpc::clients::eth::EthClient;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerInMsg, send_after};
 use spawned_rt::mpsc::Sender;
 use std::time::Duration;
-use tokio::time::sleep;
 use tracing::{debug, error};
 
 #[derive(Clone)]
@@ -159,4 +158,6 @@ async fn gather_metrics(state: &mut MetricsGathererState) -> Result<(), MetricsG
     );
 
     debug!("L2 Metrics Gathered");
+
+    Ok(())
 }
