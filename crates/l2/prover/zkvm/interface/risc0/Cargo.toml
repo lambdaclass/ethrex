@@ -7,6 +7,7 @@ edition = "2024"
 
 [dependencies]
 risc0-zkvm = { version = "2.1.0", default-features = false, features = ["std"] }
+risc0-zkvm-platform = { version = "2.0.2", default-features = false, features = ["sys-getenv"] }
 zkvm_interface = { path = "../", default-features = false, features = ["c-kzg"]}
 
 ethrex-common = { path = "../../../../../common", default-features = false }

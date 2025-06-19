@@ -2,6 +2,7 @@ use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType, Batch
 use ethrex_l2_sdk::calldata::Value;
 use risc0_zkp::verify::VerificationError;
 use risc0_zkvm::{
+    serde::Error as Risc0SerdeError,
     default_executor, default_prover, ExecutorEnv, InnerReceipt, ProverOpts, Receipt
 };
 use tracing::info;
@@ -16,6 +17,8 @@ pub enum Error {
     EncodeNonGroth16Seal,
     #[error("verification failed: {0}")]
     VerificationFailed(#[from] VerificationError),
+    #[error("decode failed: {0}")]
+    Risc0SerdeError(#[from] Risc0SerdeError),
     #[error("zkvm dynamic error: {0}")]
     ZkvmDyn(#[from] anyhow::Error)
 }
@@ -66,7 +69,7 @@ pub fn to_batch_proof(
 fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Error> {
     let seal = encode_seal(&receipt)?;
     let image_id = ZKVM_RISC0_PROGRAM_ID;
-    let journal = receipt.journal.bytes;
+    let journal: Vec<u8> = receipt.journal.decode()?;
 
     // convert image_id into bytes
     let image_id = {
@@ -79,7 +82,7 @@ fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Error> {
 
     // bytes calldata seal,
     // bytes32 imageId,
-    // bytes32 journal
+    // bytes journal
     let calldata = vec![
         Value::Bytes(seal.into()),
         Value::FixedBytes(image_id.into()),
