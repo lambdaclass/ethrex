@@ -18,8 +18,10 @@ use redb::TypeName;
 use std::any::type_name;
 
 // Account types
+#[cfg(feature = "redb")]
 pub type AccountCodeHashRLP = Rlp<H256>;
 pub type AccountCodeRLP = Rlp<Bytes>;
+#[cfg(feature = "redb")]
 pub type AccountHashRLP = Rlp<H256>;
 pub type AccountStateRLP = Rlp<AccountState>;
 pub type TriePathsRLP = Rlp<Vec<Nibbles>>;
@@ -35,6 +37,7 @@ pub type BlockRLP = Rlp<Block>;
 pub type ReceiptRLP = Rlp<Receipt>;
 
 // Transaction types
+#[cfg(feature = "redb")]
 pub type TransactionHashRLP = Rlp<H256>;
 
 // Payload type

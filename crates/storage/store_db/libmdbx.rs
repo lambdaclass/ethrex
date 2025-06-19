@@ -2,9 +2,8 @@ use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
-    AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
-    BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP,
-    TriePathsRLP, TupleRLP,
+    AccountCodeRLP, AccountStateRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, BlockRLP,
+    PayloadBundleRLP, Rlp, TriePathsRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
@@ -117,10 +116,9 @@ impl Store {
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        self.read_sync::<CanonicalBlockHashes>(number)?
-            .map(|block_hash| block_hash.to())
-            .transpose()
-            .map_err(StoreError::from)
+        Ok(self
+            .read_sync::<CanonicalBlockHashes>(number)?
+            .map(|block_hash| block_hash.0))
     }
 }
 
@@ -139,7 +137,7 @@ impl StoreEngine for Store {
 
             // store code updates
             for (hashed_address, code) in update_batch.code_updates {
-                tx.upsert::<AccountCodes>(hashed_address.into(), code.into())
+                tx.upsert::<AccountCodes>(WrappedH256(hashed_address), code.into())
                     .map_err(StoreError::LibmdbxError)?;
             }
 
@@ -629,9 +627,7 @@ impl StoreEngine for Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read::<CanonicalBlockHashes>(number)
             .await
-            .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
-            .transpose()
-            .map_err(StoreError::from)
+            .map(|o| o.map(|hash| hash.0))
     }
 
     fn get_canonical_block_hash_sync(
@@ -639,9 +635,7 @@ impl StoreEngine for Store {
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read_sync::<CanonicalBlockHashes>(number)
-            .map(|o| o.map(|hash_rlp| hash_rlp.to()))?
-            .transpose()
-            .map_err(StoreError::from)
+            .map(|o| o.map(|hash| hash.0))
     }
 
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
@@ -858,7 +852,7 @@ impl StoreEngine for Store {
         let mut res = Vec::new();
         let mut cursor_it = cursor.walk(None);
         while let Some(Ok((hash, paths))) = cursor_it.next() {
-            res.push((hash.to()?, paths.to()?));
+            res.push((hash.0, paths.to()?));
         }
 
         res = res.into_iter().take(limit).collect::<Vec<_>>();
@@ -1037,8 +1031,8 @@ impl StoreEngine for Store {
         let iter = cursor
             .walk(Some(start.into()))
             .map_while(|res| {
-                res.ok().map(|(hash, acc)| match (hash.to(), acc.to()) {
-                    (Ok(hash), Ok(acc)) => Some((hash, acc)),
+                res.ok().map(|(hash, acc)| match acc.to() {
+                    Ok(acc) => Some((hash.0, acc)),
                     _ => None,
                 })
             })
@@ -1206,27 +1200,32 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
     }
 }
 
+// Account types
+pub type TransactionHashKey = WrappedH256;
+pub type AccountHashKey = WrappedH256;
+pub type BlockHashKey = WrappedH256;
+
 table!(
     /// The canonical block hash for each block number. It represents the canonical chain.
-    ( CanonicalBlockHashes ) BlockNumber => BlockHashRLP
+    ( CanonicalBlockHashes ) BlockNumber => WrappedH256
 );
 
 table!(
     /// Block hash to number table.
-    ( BlockNumbers ) BlockHashRLP => BlockNumber
+    ( BlockNumbers ) BlockHashKey => BlockNumber
 );
 
 table!(
     /// Block headers table.
-    ( Headers ) BlockHashRLP => BlockHeaderRLP
+    ( Headers ) BlockHashKey => BlockHeaderRLP
 );
 table!(
     /// Block bodies table.
-    ( Bodies ) BlockHashRLP => BlockBodyRLP
+    ( Bodies ) BlockHashKey => BlockBodyRLP
 );
 table!(
     /// Account codes table.
-    ( AccountCodes ) AccountCodeHashRLP => AccountCodeRLP
+    ( AccountCodes ) AccountHashKey => AccountCodeRLP
 );
 
 dupsort!(
@@ -1242,7 +1241,7 @@ dupsort!(
 
 dupsort!(
     /// Transaction locations table.
-    ( TransactionLocations ) TransactionHashRLP => Rlp<(BlockNumber, BlockHash, Index)>
+    ( TransactionLocations ) TransactionHashKey => Rlp<(BlockNumber, BlockHash, Index)>
 );
 
 table!(
@@ -1273,28 +1272,52 @@ table!(
 
 table!(
     /// Stores blocks that are pending validation.
-    ( PendingBlocks ) BlockHashRLP => BlockRLP
+    ( PendingBlocks ) BlockHashKey => BlockRLP
 );
 
 table!(
     /// State Snapshot used by an ongoing sync process
-    ( StateSnapShot ) AccountHashRLP => AccountStateRLP
+    ( StateSnapShot ) AccountHashKey => AccountStateRLP
 );
 
 dupsort!(
     /// Storage Snapshot used by an ongoing sync process
-    ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
+    ( StorageSnapShot ) AccountHashKey => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
 );
 
 table!(
     /// Storage trie paths in need of healing stored by hashed address
-    ( StorageHealPaths ) AccountHashRLP => TriePathsRLP
+    ( StorageHealPaths ) AccountHashKey => TriePathsRLP
 );
 
 table!(
     /// Stores invalid ancestors
-    ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
+    ( InvalidAncestors ) BlockHashKey => BlockHashRLP
 );
+
+/// Wrapper for a H256 used as a key
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WrappedH256(H256);
+
+impl Encodable for WrappedH256 {
+    type Encoded = [u8; 32];
+
+    fn encode(self) -> Self::Encoded {
+        self.0.0
+    }
+}
+
+impl Decodable for WrappedH256 {
+    fn decode(b: &[u8]) -> anyhow::Result<Self> {
+        Ok(WrappedH256(H256(b.try_into()?)))
+    }
+}
+
+impl From<H256> for WrappedH256 {
+    fn from(value: H256) -> Self {
+        Self(value)
+    }
+}
 
 // Storage values are stored as bytes instead of using their rlp encoding
 // As they are stored in a dupsort table, they need to have a fixed size, and encoding them doesn't preserve their size
