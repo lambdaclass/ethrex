@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750314522258,
+  "lastUpdate": 1750338682961,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16333,6 +16333,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.008435149357601713,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f72399e5d22655ba882cf4fabfcb4b0010cbb58d",
+          "message": "fix(l2): update sp1 verifier contract version (#3194)\n\n**Motivation**\n\nThe contract was set for an old version of SP1. This PR bumps it to\n5.0.0.\n\nAlso modified the git clone function to update existing (local) cloned\nrepos",
+          "timestamp": "2025-06-18T15:45:28Z",
+          "tree_id": "81272f7d70a21d4e13f8d757352580603040a839",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f72399e5d22655ba882cf4fabfcb4b0010cbb58d"
+        },
+        "date": 1750338682527,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008310579641350211,
             "unit": "Mgas/s"
           }
         ]
