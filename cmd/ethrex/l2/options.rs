@@ -152,7 +152,6 @@ impl From<SequencerOptions> for SequencerConfig {
                 ),
                 fee_estimate: opts.aligned_opts.fee_estimate,
                 aligned_sp1_elf_path: opts.aligned_opts.aligned_sp1_elf_path.unwrap_or_default(),
-                aligned_sp1_vk_path: opts.aligned_opts.aligned_sp1_vk_path.unwrap_or_default(),
             },
         }
     }
@@ -482,15 +481,6 @@ pub struct AlignedOptions {
         help = "Path to the SP1 elf. This is used for proof verification."
     )]
     pub aligned_sp1_elf_path: Option<String>,
-    #[arg(
-        long,
-        value_name = "ETHREX_ALIGNED_SP1_VK_PATH",
-        required_if_eq("aligned", "true"),
-        env = "ETHREX_ALIGNED_SP1_VK_PATH",
-        help_heading = "Aligned options",
-        help = "Path to the SP1 vk. This is used for proof verification."
-    )]
-    pub aligned_sp1_vk_path: Option<String>,
 }
 
 impl Default for AlignedOptions {
@@ -503,10 +493,6 @@ impl Default for AlignedOptions {
             fee_estimate: "instant".to_string(),
             aligned_sp1_elf_path: Some(format!(
                 "{}/../../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf",
-                env!("CARGO_MANIFEST_DIR")
-            )),
-            aligned_sp1_vk_path: Some(format!(
-                "{}/../../prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
                 env!("CARGO_MANIFEST_DIR")
             )),
         }

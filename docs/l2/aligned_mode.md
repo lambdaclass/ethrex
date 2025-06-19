@@ -84,8 +84,7 @@ cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2
     --beacon_url <ETHREX_ALIGNED_BEACON_CLIENT_URL> \ 
     --aligned-network <ETHREX_ALIGNED_NETWORK> \
     --fee-estimate <ETHREX_ALIGNED_FEE_ESTIMATE> \
-    --aligned-sp1-elf-path <ETHREX_ALIGNED_SP1_ELF_PATH> \
-    --aligned-sp1-vk-path <ETHREX_ALIGNED_SP1_VK_PATH>
+    --aligned-sp1-elf-path <ETHREX_ALIGNED_SP1_ELF_PATH>
 ```
 
 Aligned params explanation:
@@ -94,7 +93,6 @@ Aligned params explanation:
 - `ETHREX_ALIGNED_VERIFIER_INTERVAL_MS`: Interval in millisecs, that the `proof_verifier` will sleep between each proof aggregation check.
 - `ETHREX_ALIGNED_BEACON_CLIENT_URL`: URL of the beacon client used by the Aligned SDK to verify proof aggregations.
 - `ETHREX_ALIGNED_SP1_ELF_PATH`: Path to the SP1 ELF program. This is the same file used for SP1 verification outside of Aligned mode.
-- `ETHREX_ALIGNED_SP1_VK_PATH`: Path to the SP1 Verification Key.
 - `ETHREX_ALIGNED_NETWORK` and `ETHREX_ALIGNED_FEE_ESTIMATE`: Parameters used by the [Aligned SDK](https://docs.alignedlayer.com/guides/1.2_sdk_api_reference).
 
 ### 4. Running the Prover
@@ -185,7 +183,7 @@ cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.
 	--deposit-rich \
 	--private-keys-file-path ../../test_data/private_keys_l1.txt \
 	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
-	--genesis-l2-path ../../test_data/genesis-l2.json \
+	--genesis-l2-path ../../test_data/genesis-l2.json
 ```
 
 You will see that some deposits fail with the following error:
@@ -208,8 +206,7 @@ cargo run deposit-to-batcher \
 
 ```
 cd ethrex/crates/l2
-ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- l2 init --watcher.block-delay 0 --network ../../test_data/genesis-l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf --aligned-sp1-vk-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
-```
+ETHREX_PROOF_COORDINATOR_DEV_MODE=false cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- l2 init --watcher.block-delay 0 --network ../../test_data/genesis-l2.json --http.port 1729 --http.addr 0.0.0.0 --evm levm --datadir dev_ethrex_l2 --l1.bridge-address <BRIDGE_ADDRESS> --l1.on-chain-proposer-address <ON_CHAIN_PROPOSER_ADDRESS> --eth.rpc-url http://localhost:8545 --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d --proof-coordinator.addr 127.0.0.1 --aligned --aligned.beacon-url http://127.0.0.1:58801 --aligned-network devnet --aligned-sp1-elf-path prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf
 
 > [!IMPORTANT]  
 > Set `BRIDGE_ADDRESS` and `ON_CHAIN_PROPOSER_ADDRESS` with the values printed in step 1.

@@ -56,19 +56,10 @@ impl L1ProofVerifier {
         aligned_cfg: &AlignedConfig,
     ) -> Result<Self, ProofVerifierError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
-        let sp1_vk_file: [u8; 32] = std::fs::read(aligned_cfg.aligned_sp1_vk_path.clone())
-            .unwrap()
-            .try_into()
-            .unwrap();
 
         let sp1_vk = eth_client
             .get_sp1_vk(committer_cfg.on_chain_proposer_address)
             .await?;
-
-        assert_eq!(
-            sp1_vk, sp1_vk_file,
-            "SP1 verification key does not match the one on-chain"
-        );
 
         Ok(Self {
             eth_client,
