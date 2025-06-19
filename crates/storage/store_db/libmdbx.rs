@@ -182,12 +182,32 @@ impl Store {
     }
 
     // Helper method to write into a libmdbx table in batch
-    fn replace_value<T: Table>(
+    fn replace_value_or_delete<T: Table>(
         &self,
-        txn: libmdbx::orm::Transaction<'_, libmdbx::RW>,
-        key_values: Vec<(T::Key, T::Value)>,
-    ) -> Result<(), StoreError> {
-        todo!();
+        flat_storage_cursor: &mut libmdbx::orm::Cursor<'_, libmdbx::RW, T>,
+        key: T::Key,
+        value: Option<T::Value>,
+    ) -> Result<(), StoreError>
+    where
+        <T as libmdbx::orm::Table>::Key: libmdbx::orm::Decodable,
+    {
+        match value {
+            Some(v) => flat_storage_cursor
+                .upsert(key, v.into())
+                .map_err(StoreError::LibmdbxError),
+            None => {
+                if let Some(_current_data) = flat_storage_cursor
+                    .seek_exact(key)
+                    .map_err(StoreError::LibmdbxError)?
+                {
+                    flat_storage_cursor
+                        .delete_current()
+                        .map_err(StoreError::LibmdbxError)
+                } else {
+                    Ok(())
+                }
+            }
+        }
     }
 
     // Helper method to write into a libmdbx table in batch
@@ -510,18 +530,8 @@ impl StoreEngine for Store {
                     let slot = log_entry.1;
                     let addr = log_entry.0;
                     let storage_key = (addr.into(), slot.into());
-                    if !old_value.is_zero() {
-                        flat_storage_cursor
-                            .upsert(storage_key, old_value.into())
-                            .map_err(StoreError::LibmdbxError)?;
-                    } else if let Some(_current_data) = flat_storage_cursor
-                        .seek_exact(storage_key)
-                        .map_err(StoreError::LibmdbxError)?
-                    {
-                        flat_storage_cursor
-                            .delete_current()
-                            .map_err(StoreError::LibmdbxError)?;
-                    }
+                    let value_aux = (!old_value.is_zero()).then_some(old_value.into());
+                    self.replace_value_or_delete(&mut flat_storage_cursor, storage_key, value_aux)?;
 
                     found_storage_log = storage_log_cursor.next()?;
                 }
@@ -577,18 +587,10 @@ impl StoreEngine for Store {
                     }
 
                     let new_info = log_entry.info;
-                    if new_info != AccountInfo::default() {
-                        flat_info_cursor
-                            .upsert(log_entry.address.into(), EncodableAccountInfo(new_info))
-                            .map_err(StoreError::LibmdbxError)?;
-                    } else if let Some(_current_info) = flat_info_cursor
-                        .seek_exact(log_entry.address.into())
-                        .map_err(StoreError::LibmdbxError)?
-                    {
-                        flat_info_cursor
-                            .delete_current()
-                            .map_err(StoreError::LibmdbxError)?
-                    }
+                    let key = log_entry.address.into();
+                    let value_aux = (new_info != AccountInfo::default())
+                        .then_some(EncodableAccountInfo(new_info));
+                    self.replace_value_or_delete(&mut flat_info_cursor, key, value_aux)?;
 
                     found_state_log = state_log_cursor.next()?;
                 }
