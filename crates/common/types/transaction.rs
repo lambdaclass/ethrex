@@ -2363,6 +2363,72 @@ mod serde_impl {
             }
         }
     }
+
+    impl From<LegacyTransaction> for GenericTransaction {
+        fn from(value: LegacyTransaction) -> Self {
+            Self {
+                r#type: TxType::Legacy,
+                nonce: Some(value.nonce),
+                to: value.to,
+                from: Address::default(),
+                gas: Some(value.gas),
+                value: value.value,
+                gas_price: value.gas_price,
+                max_priority_fee_per_gas: None,
+                max_fee_per_gas: None,
+                max_fee_per_blob_gas: None,
+                access_list: vec![],
+                authorization_list: None,
+                blob_versioned_hashes: vec![],
+                blobs: vec![],
+                chain_id: None,
+                input: value.data,
+            }
+        }
+    }
+
+    impl From<EIP2930Transaction> for GenericTransaction {
+        fn from(value: EIP2930Transaction) -> Self {
+            Self {
+                r#type: TxType::EIP2930,
+                nonce: Some(value.nonce),
+                to: value.to,
+                from: Address::default(),
+                gas: Some(value.gas_limit),
+                value: value.value,
+                gas_price: value.gas_price,
+                max_priority_fee_per_gas: None,
+                max_fee_per_gas: None,
+                max_fee_per_blob_gas: None,
+                access_list: value
+                    .access_list
+                    .into_iter()
+                    .map(|(address, storage_keys)| AccessListEntry {
+                        address,
+                        storage_keys,
+                    })
+                    .collect(),
+                authorization_list: None,
+                blob_versioned_hashes: vec![],
+                blobs: vec![],
+                chain_id: Some(value.chain_id),
+                input: value.data,
+            }
+        }
+    }
+
+    impl From<Transaction> for GenericTransaction {
+        fn from(value: Transaction) -> Self {
+            match value {
+                Transaction::LegacyTransaction(tx) => tx.into(),
+                Transaction::EIP2930Transaction(tx) => tx.into(),
+                Transaction::EIP1559Transaction(tx) => tx.into(),
+                Transaction::EIP4844Transaction(tx) => tx.into(),
+                Transaction::EIP7702Transaction(tx) => tx.into(),
+                Transaction::PrivilegedL2Transaction(tx) => tx.into(),
+            }
+        }
+    }
 }
 
 mod mempool {
@@ -2899,5 +2965,73 @@ mod tests {
 
         assert_eq!(deserialized_tx, privileged_l2);
         Ok(())
+    }
+
+    #[test]
+    fn test_legacy_transaction_into_generic() {
+        let legacy_tx = LegacyTransaction {
+            nonce: 1,
+            gas_price: 20_000_000_000,
+            gas: 21000,
+            to: TxKind::Call(
+                Address::from_str("0x742d35Cc6634C0532925a3b844Bc454e4438f44e").unwrap(),
+            ),
+            value: U256::from(1_000_000_000_000_000_000u64),
+            data: Bytes::default(),
+            v: U256::from(27),
+            r: U256::from(1),
+            s: U256::from(1),
+        };
+
+        let generic_tx: GenericTransaction = legacy_tx.into();
+        assert_eq!(generic_tx.r#type, TxType::Legacy);
+        assert_eq!(generic_tx.nonce, Some(1));
+        assert_eq!(generic_tx.gas_price, 20_000_000_000);
+        assert_eq!(generic_tx.gas, Some(21000));
+        assert_eq!(generic_tx.max_priority_fee_per_gas, None);
+        assert_eq!(generic_tx.max_fee_per_gas, None);
+        assert_eq!(generic_tx.access_list.len(), 0);
+        assert_eq!(generic_tx.chain_id, None);
+    }
+
+    #[test]
+    fn test_eip2930_transaction_into_generic() {
+        let access_list = vec![(
+            Address::from_str("0x742d35Cc6634C0532925a3b844Bc454e4438f44e").unwrap(),
+            vec![
+                H256::from_str(
+                    "0x1234567890123456789012345678901234567890123456789012345678901234",
+                )
+                .unwrap(),
+            ],
+        )];
+
+        let eip2930_tx = EIP2930Transaction {
+            chain_id: 1,
+            nonce: 1,
+            gas_price: 20_000_000_000,
+            gas_limit: 21000,
+            to: TxKind::Call(
+                Address::from_str("0x742d35Cc6634C0532925a3b844Bc454e4438f44e").unwrap(),
+            ),
+            value: U256::from(1_000_000_000_000_000_000u64),
+            data: Bytes::default(),
+            access_list: access_list.clone(),
+            signature_y_parity: false,
+            signature_r: U256::from(1),
+            signature_s: U256::from(1),
+        };
+
+        let generic_tx: GenericTransaction = eip2930_tx.into();
+        assert_eq!(generic_tx.r#type, TxType::EIP2930);
+        assert_eq!(generic_tx.nonce, Some(1));
+        assert_eq!(generic_tx.gas_price, 20_000_000_000);
+        assert_eq!(generic_tx.gas, Some(21000));
+        assert_eq!(generic_tx.max_priority_fee_per_gas, None);
+        assert_eq!(generic_tx.max_fee_per_gas, None);
+        assert_eq!(generic_tx.chain_id, Some(1));
+        assert_eq!(generic_tx.access_list.len(), 1);
+        assert_eq!(generic_tx.access_list[0].address, access_list[0].0);
+        assert_eq!(generic_tx.access_list[0].storage_keys, access_list[0].1);
     }
 }
