@@ -265,12 +265,12 @@ impl Trie {
                 )
             })
             .collect::<HashMap<_, _>>();
-        let nodes = storage
-            .iter()
-            .map(|(node_hash, nodes)| (*node_hash, (*nodes).clone()))
-            .collect::<HashMap<_, _>>();
-        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
         let Some(root) = root else {
+            let nodes = storage
+                .iter()
+                .map(|(node_hash, nodes)| (*node_hash, (*nodes).clone()))
+                .collect::<HashMap<_, _>>();
+            let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
             return Ok(Trie::new(in_memory_trie));
         };
 
@@ -278,28 +278,30 @@ impl Trie {
             Ok(match Node::decode_raw(node)? {
                 Node::Branch(mut node) => {
                     for choice in &mut node.choices {
-                        let NodeRef::Hash(hash) = *choice else {
-                            unreachable!()
-                        };
-
-                        if !hash.is_zero() {
-                            *choice = match storage.remove(&hash) {
-                                Some(rlp) => inner(storage, rlp)?.into(),
-                                None => NodeRef::Hash(hash),
-                            };
+                        if choice.is_valid() {
+                            *choice = match choice.compute_hash() {
+                                NodeHash::Hashed(hash) => match storage.remove(&hash) {
+                                    Some(rlp) => inner(storage, rlp)?.into(),
+                                    None => NodeRef::Hash(hash),
+                                },
+                                NodeHash::Inline((data, len)) => {
+                                    inner(storage, &data[..len as usize].to_vec())?.into()
+                                }
+                            }
                         }
                     }
 
                     (*node).into()
                 }
                 Node::Extension(mut node) => {
-                    let NodeRef::Hash(hash) = node.child else {
-                        unreachable!()
-                    };
-
-                    node.child = match storage.remove(&hash) {
-                        Some(rlp) => inner(storage, rlp)?.into(),
-                        None => NodeRef::Hash(hash),
+                    node.child = match node.child.compute_hash() {
+                        NodeHash::Hashed(hash) => match storage.remove(&hash) {
+                            Some(rlp) => inner(storage, rlp)?.into(),
+                            None => NodeRef::Hash(hash),
+                        },
+                        NodeHash::Inline((data, len)) => {
+                            inner(storage, &data[..len as usize].to_vec())?.into()
+                        }
                     };
 
                     node.into()
@@ -309,6 +311,13 @@ impl Trie {
         }
 
         let root = inner(&mut storage, root)?.into();
+
+        let nodes = storage
+            .iter()
+            .map(|(node_hash, nodes)| (*node_hash, (*nodes).clone()))
+            .collect::<HashMap<_, _>>();
+        let in_memory_trie = Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(nodes))));
+
         let mut trie = Trie::new(in_memory_trie);
         trie.root = root;
 
