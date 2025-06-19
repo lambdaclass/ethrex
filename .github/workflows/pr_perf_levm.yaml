@@ -41,7 +41,7 @@ jobs:
       - name: Run PR benchmarks
         run: |
           cd crates/vm/levm
-          make revm-comparison
+          make revm-comparison-ci
           {
             echo "#### Benchmark Results: Factorial";
             cat Factorial.md || echo "No results";
@@ -97,7 +97,7 @@ jobs:
       - name: Run main benchmarks
         run: |
           cd crates/vm/levm
-          make revm-comparison
+          make revm-comparison-ci
           {
             echo "#### Benchmark Results: Factorial";
             cat Factorial.md || echo "No results";

@@ -76,6 +76,17 @@ revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and facto
 	$(call run_benchmark,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
 	$(call run_benchmark,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
 
+revm-comparison-ci: compile-contracts
+	$(MAKE) build-revm-comparison
+	$(call run_benchmark_ci,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
+	$(call run_benchmark_ci,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_benchmark_ci,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
+	$(call run_benchmark_ci,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
+	$(call run_benchmark_ci,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
+	$(call run_benchmark_ci,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
+	$(call run_benchmark_ci,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
+	$(call run_benchmark_ci,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
+
 flamegraph-levm-benchmark:
 	$(MAKE) flamegraph-levm-bench-generic name=Fibonacci repetitions=$(REPETITIONS) iterations=$(BENCH_FIB_ITERATIONS)
 	$(MAKE) flamegraph-levm-bench-generic name=Factorial repetitions=$(REPETITIONS) iterations=$(BENCH_FACT_ITERATIONS)
