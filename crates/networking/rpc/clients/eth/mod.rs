@@ -1,6 +1,7 @@
 use std::fmt;
 
 use crate::{
+    clients::eth::errors::UninstallFilterError,
     types::{
         block::RpcBlock,
         receipt::{RpcLog, RpcReceipt},
@@ -1258,6 +1259,25 @@ impl EthClient {
         }
 
         self.get_fee_from_override_or_get_gas_price(None).await
+    }
+
+    pub async fn uninstall_filter(&self, filter_id: u64) -> Result<bool, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "eth_uninstallFilter".to_string(),
+            params: Some(vec![json!(format!("{filter_id:#x}"))]),
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+                .map_err(UninstallFilterError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(UninstallFilterError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 

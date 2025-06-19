@@ -52,6 +52,8 @@ pub enum EthClientError {
     ParseUrlError(String),
     #[error("Failed to sign payload: {0}")]
     FailedToSignPayload(String),
+    #[error("Uninstall filter error: {0}")]
+    UninstallFilterError(#[from] UninstallFilterError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -240,4 +242,14 @@ pub enum GetMaxPriorityFeeError {
     RPCError(String),
     #[error("{0}")]
     ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum UninstallFilterError {
+    #[error("{0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
 }
