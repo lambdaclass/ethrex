@@ -165,7 +165,7 @@ mod tests {
         eth::receipts::{GetReceipts, Receipts, Receipts68, Receipts69},
         message::RLPxMessage,
     };
-    use ethrex_common::types::{BlockHash, Receipt};
+    use ethrex_common::types::{BlockHash, Receipt, TxType};
 
     #[test]
     fn get_receipts_empty_message() {
@@ -212,6 +212,24 @@ mod tests {
     }
 
     #[test]
+    fn receipts68_not_empty_message() {
+        let receipts = vec![vec![
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210001, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210002, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210003, vec![]),
+        ]];
+        let id = 255;
+        let receipts68 = Receipts68::new(id, receipts.clone());
+
+        let mut buf = Vec::new();
+        receipts68.encode(&mut buf).unwrap();
+        let receipts68_decoded = Receipts68::decode(&buf).unwrap();
+        assert_eq!(receipts68_decoded.id, id);
+        assert_eq!(receipts68_decoded.receipts, receipts);
+    }
+
+    #[test]
     fn receipts69_empty_message() {
         let receipts = vec![];
         let receipts = Receipts69::new(1, receipts);
@@ -223,5 +241,23 @@ mod tests {
 
         assert_eq!(decoded.id, 1);
         assert_eq!(decoded.receipts, Vec::<Vec<Receipt>>::new());
+    }
+
+    #[test]
+    fn receipts69_not_empty_message() {
+        let receipts = vec![vec![
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
+        ]];
+        let id = 255;
+        let receipts69 = Receipts69::new(id, receipts.clone());
+
+        let mut buf = Vec::new();
+        receipts69.encode(&mut buf).unwrap();
+        let receipts69_decoded = Receipts69::decode(&buf).unwrap();
+        assert_eq!(receipts69_decoded.id, id);
+        assert_eq!(receipts69_decoded.receipts, receipts);
     }
 }
