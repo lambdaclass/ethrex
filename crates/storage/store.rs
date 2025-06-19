@@ -373,6 +373,14 @@ impl Store {
                 state_trie.remove(hashed_address)?;
                 continue;
             }
+
+            if let Some(info) = &update.info {
+                // Store updated code in DB
+                if let Some(code) = &update.code {
+                    code_updates.push((info.code_hash, code.clone()));
+                }
+            }
+
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
             state_trie.update(hashed_address.clone(), |encoded_state| {
@@ -385,10 +393,6 @@ impl Store {
                     account_state.nonce = info.nonce;
                     account_state.balance = info.balance;
                     account_state.code_hash = info.code_hash;
-                    // Store updated code in DB
-                    if let Some(code) = &update.code {
-                        code_updates.push((info.code_hash, code.clone()));
-                    }
                 }
 
                 // Store the added storage in the account's storage trie and compute its new root

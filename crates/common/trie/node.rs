@@ -114,20 +114,20 @@ impl PartialEq for NodeRef {
     }
 }
 
-pub enum InsertAction {
+pub enum InsertAction<'func> {
     Value(ValueRLP),
     Hash(NodeHash),
     /// Input = previous value if exists, returns the new value.
-    Update(Box<dyn FnOnce(Option<ValueRLP>) -> Result<ValueRLP, TrieError>>)
+    Update(Box<dyn FnOnce(Option<ValueRLP>) -> Result<ValueRLP, TrieError> + 'func>)
 }
 
-impl From<ValueRLP> for InsertAction {
+impl From<ValueRLP> for InsertAction<'_> {
     fn from(value: ValueRLP) -> Self {
         Self::Value(value)
     }
 }
 
-impl From<NodeHash> for InsertAction {
+impl From<NodeHash> for InsertAction<'_> {
     fn from(value: NodeHash) -> Self {
         Self::Hash(value)
     }
@@ -176,11 +176,11 @@ impl Node {
     }
 
     /// Inserts a value into the subtrie originating from this node and returns the new root of the subtrie
-    pub fn insert(
+    pub fn insert<'func>(
         self,
         db: &dyn TrieDB,
         path: Nibbles,
-        value: impl Into<InsertAction>,
+        value: impl Into<InsertAction<'func>>,
     ) -> Result<Node, TrieError> {
         match self {
             Node::Branch(n) => n.insert(db, path, value.into()),

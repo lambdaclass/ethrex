@@ -125,9 +125,9 @@ impl Trie {
     /// Update an RLP-encoded value into the trie.
     ///
     /// If on_get returns None, no insert will be done.
-    pub fn update<F>(&mut self, path: PathRLP, on_update: F) -> Result<(), TrieError>
+    pub fn update<'func, F>(&mut self, path: PathRLP, on_update: F) -> Result<(), TrieError>
     where
-        F: FnOnce(Option<ValueRLP>) -> Result<ValueRLP, TrieError> + 'static,
+        F: FnOnce(Option<ValueRLP>) -> Result<ValueRLP, TrieError> + 'func,
     {
         let path = Nibbles::from_bytes(&path);
 
