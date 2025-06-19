@@ -826,6 +826,43 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     }
                 }
             }
+            Message::GetBatchSealed(_req) if peer_supports_based => {
+                #[cfg(feature = "l2")]
+                {
+                    let Some(batch) = self.store_rollup.get_batch(_req.batch_number).await? else {
+                        return Err(RLPxError::InternalError(
+                            "CHANGE ERROR: Batch not found".to_string(),
+                        ));
+                    };
+                    let Some(signature) = self
+                        .store_rollup
+                        .get_signature_by_batch(_req.batch_number)
+                        .await?
+                    else {
+                        return Err(RLPxError::InternalError(
+                            "CHANGE ERROR: Signature not found".to_string(),
+                        ));
+                    };
+                    let sig: [u8; 64] = signature[..64].try_into().map_err(|_| {
+                        RLPxError::InternalError(
+                            "CHANGE ERROR: Invalid signature length".to_string(),
+                        )
+                    })?;
+                    let recovery_id: [u8; 4] = signature[64..68].try_into().map_err(|_| {
+                        RLPxError::InternalError(
+                            "CHANGE ERROR: Invalid recovery ID length".to_string(),
+                        )
+                    })?;
+                    // Send the batch sealed message
+                    sender
+                        .send(Message::BatchSealed(BatchSealedMessage {
+                            batch,
+                            signature: sig,
+                            recovery_id,
+                        }))
+                        .await?;
+                }
+            }
 
             // Send response messages to the backend
             message @ Message::AccountRange(_)

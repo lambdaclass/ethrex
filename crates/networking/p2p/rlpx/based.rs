@@ -133,3 +133,30 @@ pub fn get_hash_batch_sealed(batch: &Batch) -> [u8; 32] {
     hash.copy_from_slice(&next_batch_hash);
     hash
 }
+
+#[derive(Debug, Clone)]
+pub struct GetBatchSealedMessage {
+    pub batch_number: u64,
+}
+
+impl RLPxMessage for GetBatchSealedMessage {
+    const CODE: u8 = 0x2;
+
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.batch_number)
+            .finish();
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (batch_number, decoder) = decoder.decode_field("batch_number")?;
+        decoder.finish()?;
+        Ok(GetBatchSealedMessage { batch_number })
+    }
+}

@@ -174,7 +174,45 @@ impl PeerHandler {
     }
 
     #[cfg(feature = "l2")]
-    pub async fn request_batch(&self, _batch_number: u64) -> Option<Batch> {
+    pub async fn request_batch(&self, batch_number: u64) -> Option<Batch> {
+        use crate::rlpx::{based::GetBatchSealedMessage, p2p::SUPPORTED_BASED_CAPABILITIES};
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            let request = RLPxMessage::GetBatchSealed(GetBatchSealedMessage { batch_number });
+            let (peer_id, peer_channel) = self
+                .get_peer_channel_with_retry(
+                    &[SUPPORTED_ETH_CAPABILITIES, [SUPPORTED_BASED_CAPABILITIES]].concat(),
+                )
+                .await?;
+            let mut receiver = peer_channel.receiver.lock().await;
+            if let Err(err) = peer_channel.sender.send(request).await {
+                debug!("Failed to send message to peer: {err}");
+                self.record_peer_failure(peer_id).await;
+                return None;
+            }
+            if let Some(batch) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+                loop {
+                    use crate::rlpx::based::BatchSealedMessage;
+
+                    match receiver.recv().await {
+                        Some(RLPxMessage::BatchSealed(BatchSealedMessage { batch, .. })) => {
+                            dbg!(&batch);
+                            return Some(batch);
+                        }
+                        // Ignore replies that don't match the expected id (such as late responses)
+                        Some(_) => continue,
+                        None => return None, // Retry request
+                    }
+                }
+            })
+            .await
+            .ok()
+            .flatten()
+            {
+                dbg!(&batch);
+                // penalize peer if the signature is incorrect or the batch is invalid
+                return Some(batch);
+            }
+        }
         None
     }
 

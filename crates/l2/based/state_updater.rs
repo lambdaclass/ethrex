@@ -191,6 +191,10 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
         let mut a = state.is_syncing.lock().await;
         if !*a && !state.blockchain.is_synced() {
             let latest_l1_block = state.eth_client.get_block_number().await?;
+            let latest_batch_committed = state
+                .eth_client
+                .get_last_committed_batch(state.on_chain_proposer_address)
+                .await?;
             let logs = state
                 .eth_client
                 .get_logs(
@@ -208,7 +212,9 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
                         )
                     })?;
                 *a = true;
-                state.sync_manager.sync_to_head(*newest_fcu_head);
+                state
+                    .sync_manager
+                    .sync_to_head(*newest_fcu_head, latest_batch_committed);
                 state.latest_block_fetched = latest_l1_block;
                 *a = false;
                 state.blockchain.set_synced();

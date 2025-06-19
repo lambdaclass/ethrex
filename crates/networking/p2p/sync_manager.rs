@@ -178,7 +178,7 @@ impl SyncManager {
                     sleep(Duration::from_secs(5)).await;
                     continue;
                 }
-                let last_batch_number = {
+                let last_batch_number_value = {
                     let Ok(last_batch_number) = last_batch_number.try_lock() else {
                         error!("Failed to read latest batch number, unable to sync");
                         return;
@@ -201,11 +201,21 @@ impl SyncManager {
                         #[cfg(feature = "l2")]
                         rollup_store.clone(),
                         #[cfg(feature = "l2")]
-                        last_batch_number,
+                        last_batch_number_value,
                         #[cfg(feature = "l2")]
                         new_batch_head,
                     )
                     .await;
+                {
+                    last_batch_number
+                        .try_lock()
+                        .map(|mut last_batch_number| {
+                            *last_batch_number = new_batch_head;
+                        })
+                        .unwrap_or_else(|_| {
+                            error!("Failed to update last batch number after sync");
+                        });
+                }
                 // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)
                 if store
                     .get_header_download_checkpoint()
