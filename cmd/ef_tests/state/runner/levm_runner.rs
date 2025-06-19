@@ -72,6 +72,9 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                     ef_test_report_fork
                         .register_post_state_validation_error_mismatch(reason, *vector);
                 }
+                Err(EFTestRunnerError::FailedToRevertLEVMState(reason)) => {
+                    ef_test_report_fork.register_vm_initialization_failure(reason, *vector);
+                }
                 Err(EFTestRunnerError::Internal(reason)) => {
                     return Err(EFTestRunnerError::Internal(reason));
                 }
@@ -390,6 +393,23 @@ pub async fn ensure_post_state(
                         );
                         return Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(
                             error_reason,
+                        ));
+                    }
+
+                    let levm_account_updates = backends::levm::LEVM::get_state_transitions(db)
+                        .map_err(|_| {
+                            InternalError::Custom(
+                                "Error at LEVM::get_state_transitions in ensure_post_state()"
+                                    .to_owned(),
+                            )
+                        })?;
+                    let vector_post_value = test.post.vector_post_value(vector, *fork);
+
+                    // Compare the post-state root hash with the expected post-state root hash to ensure levm state is correct (was reverted)
+                    if vector_post_value.hash != post_state_root(&levm_account_updates, test).await
+                    {
+                        return Err(EFTestRunnerError::FailedToRevertLEVMState(
+                            "Failed to revert LEVM state".to_string(),
                         ));
                     }
                 }
