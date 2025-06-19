@@ -135,9 +135,14 @@ struct DecodeHelper<'a> {
     index: usize,
 }
 
+const SELECTOR_SIZE: usize = 4;
+
 impl<'a> DecodeHelper<'a> {
     fn new(buf: &'a [u8]) -> Self {
-        DecodeHelper { buf, index: 4 }
+        DecodeHelper {
+            buf,
+            index: SELECTOR_SIZE,
+        }
     }
     fn consume(&mut self, n: usize) -> Result<&'a [u8], CalldataDecodeError> {
         let data = self
@@ -191,6 +196,11 @@ impl DataType {
                     if c.is_ascii_digit() {
                         n.insert(0, c);
                     } else {
+                        if c != '[' {
+                            return Err(CalldataDecodeError::ParseError(format!(
+                                "expected ] but found {c}"
+                            )));
+                        }
                         break;
                     }
                 }
