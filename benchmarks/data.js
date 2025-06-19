@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750372389959,
+  "lastUpdate": 1750375744345,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -329,6 +329,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 227001233154,
             "range": "± 888735919",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "leanrafa@gmail.com",
+            "name": "Leandro Ferrigno",
+            "username": "lferrigno"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0a7f3fd0a48151e6c4f21df437213bc1d7f4ff5f",
+          "message": "docs(core): add roadmap to README.md (#3249)\n\nAdd roadmap",
+          "timestamp": "2025-06-19T22:27:21Z",
+          "tree_id": "dee9e82473e3181e285124d85550ea7f8a6e6179",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0a7f3fd0a48151e6c4f21df437213bc1d7f4ff5f"
+        },
+        "date": 1750375736724,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 224324640504,
+            "range": "± 910253094",
             "unit": "ns/iter"
           }
         ]
