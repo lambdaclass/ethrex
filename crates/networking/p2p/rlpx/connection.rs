@@ -559,13 +559,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     }
                     match eth.version {
                         68 => {
-                            let response =
-                                Message::Receipts(Box::new(Receipts68::new(id, receipts)));
+                            let response = Message::Receipts68(Receipts68::new(id, receipts));
                             self.send(response).await?;
                         }
                         69 => {
-                            let response =
-                                Message::Receipts(Box::new(Receipts69::new(id, receipts)));
+                            let response = Message::Receipts69(Receipts69::new(id, receipts));
                             self.send(response).await?
                         }
                         _ => {}
@@ -642,7 +640,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             | message @ Message::TrieNodes(_)
             | message @ Message::BlockBodies(_)
             | message @ Message::BlockHeaders(_)
-            | message @ Message::Receipts(_) => sender.send(message).await?,
+            | message @ Message::Receipts68(_) => sender.send(message).await?,
+            message @ Message::Receipts69(_) => sender.send(message).await?,
             // TODO: Add new message types and handlers as they are implemented
             message => return Err(RLPxError::MessageNotHandled(format!("{message}"))),
         };

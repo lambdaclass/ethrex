@@ -12,8 +12,6 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
-pub const RECEIPTS_CODE: u8 = 0x10;
-
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getreceipts-0x0f
 #[derive(Debug)]
 pub(crate) struct GetReceipts {
@@ -27,15 +25,6 @@ impl GetReceipts {
     pub fn new(id: u64, block_hashes: Vec<BlockHash>) -> Self {
         Self { block_hashes, id }
     }
-}
-
-pub trait Receipts: Debug {
-    fn id(&self) -> u64;
-    fn receipts(&self) -> Vec<Vec<Receipt>>;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError>;
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError>
-    where
-        Self: Sized;
 }
 
 impl RLPxMessage for GetReceipts {
@@ -75,14 +64,8 @@ impl Receipts68 {
     }
 }
 
-impl Receipts for Receipts68 {
-    fn id(&self) -> u64 {
-        self.id
-    }
-
-    fn receipts(&self) -> Vec<Vec<Receipt>> {
-        self.receipts.clone()
-    }
+impl RLPxMessage for Receipts68 {
+    const CODE: u8 = 0x10;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
@@ -128,14 +111,8 @@ impl Receipts69 {
     }
 }
 
-impl Receipts for Receipts69 {
-    fn id(&self) -> u64 {
-        self.id
-    }
-
-    fn receipts(&self) -> Vec<Vec<Receipt>> {
-        self.receipts.clone()
-    }
+impl RLPxMessage for Receipts69 {
+    const CODE: u8 = 0x10;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
@@ -162,7 +139,7 @@ impl Receipts for Receipts69 {
 #[cfg(test)]
 mod tests {
     use crate::rlpx::{
-        eth::receipts::{GetReceipts, Receipts, Receipts68, Receipts69},
+        eth::receipts::{GetReceipts, Receipts68, Receipts69},
         message::RLPxMessage,
     };
     use ethrex_common::types::{BlockHash, Receipt, TxType};

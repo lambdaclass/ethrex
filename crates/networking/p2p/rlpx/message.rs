@@ -2,7 +2,7 @@ use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
-use crate::rlpx::eth::receipts::{self, Receipts, Receipts68, Receipts69};
+use crate::rlpx::eth::receipts::{Receipts68, Receipts69};
 use crate::rlpx::eth::status::{self, Status68Message, Status69Message};
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
@@ -54,7 +54,8 @@ pub(crate) enum Message {
     GetPooledTransactions(GetPooledTransactions),
     PooledTransactions(PooledTransactions),
     GetReceipts(GetReceipts),
-    Receipts(Box<dyn Receipts + Sync + Send>),
+    Receipts68(Receipts68),
+    Receipts69(Receipts69),
     BlockRangeUpdate(BlockRangeUpdate),
     // snap capability
     // https://github.com/ethereum/devp2p/blob/master/caps/snap.md
@@ -88,7 +89,8 @@ impl Message {
             Message::GetPooledTransactions(_) => MessageProtocol::ETH,
             Message::PooledTransactions(_) => MessageProtocol::ETH,
             Message::GetReceipts(_) => MessageProtocol::ETH,
-            Message::Receipts(_) => MessageProtocol::ETH,
+            Message::Receipts68(_) => MessageProtocol::ETH,
+            Message::Receipts69(_) => MessageProtocol::ETH,
             Message::BlockRangeUpdate(_) => MessageProtocol::ETH,
 
             // snap capability
@@ -122,7 +124,8 @@ impl Message {
             Message::GetPooledTransactions(_) => GetPooledTransactions::CODE,
             Message::PooledTransactions(_) => PooledTransactions::CODE,
             Message::GetReceipts(_) => GetReceipts::CODE,
-            Message::Receipts(_) => receipts::RECEIPTS_CODE,
+            Message::Receipts68(_) => Receipts68::CODE,
+            Message::Receipts69(_) => Receipts69::CODE,
             Message::BlockRangeUpdate(_) => BlockRangeUpdate::CODE,
 
             // snap capability
@@ -229,9 +232,9 @@ impl Message {
                     PooledTransactions::decode(data)?,
                 )),
                 GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
-                receipts::RECEIPTS_CODE => match eth_capability.version {
-                    68 => Ok(Message::Receipts(Box::new(Receipts68::decode(data)?))),
-                    69 => Ok(Message::Receipts(Box::new(Receipts69::decode(data)?))),
+                Receipts68::CODE => match eth_capability.version {
+                    68 => Ok(Message::Receipts68(Receipts68::decode(data)?)),
+                    69 => Ok(Message::Receipts69(Receipts69::decode(data)?)),
                     _ => Err(RLPDecodeError::IncompatibleProtocol),
                 },
                 BlockRangeUpdate::CODE => match eth_capability.version {
@@ -300,12 +303,20 @@ impl Message {
             Message::GetPooledTransactions(msg) => msg.encode(buf),
             Message::PooledTransactions(msg) => msg.encode(buf),
             Message::GetReceipts(msg) => msg.encode(buf),
-            Message::Receipts(msg) => {
+            Message::Receipts68(msg) => {
                 let eth_capability = eth_capability
                     .as_ref()
                     .ok_or(RLPEncodeError::IncompatibleProtocol)?;
                 match eth_capability.version {
                     68 => msg.encode(buf),
+                    _ => Err(RLPEncodeError::IncompatibleProtocol),
+                }
+            }
+            Message::Receipts69(msg) => {
+                let eth_capability = eth_capability
+                    .as_ref()
+                    .ok_or(RLPEncodeError::IncompatibleProtocol)?;
+                match eth_capability.version {
                     69 => msg.encode(buf),
                     _ => Err(RLPEncodeError::IncompatibleProtocol),
                 }
@@ -348,7 +359,8 @@ impl Display for Message {
             Message::Transactions(_) => "eth:TransactionsMessage".fmt(f),
             Message::GetBlockBodies(_) => "eth:GetBlockBodies".fmt(f),
             Message::GetReceipts(_) => "eth:GetReceipts".fmt(f),
-            Message::Receipts(_) => "eth:Receipts".fmt(f),
+            Message::Receipts68(_) => "eth:Receipts".fmt(f),
+            Message::Receipts69(_) => "eth:Receipts".fmt(f),
             Message::BlockRangeUpdate(_) => "eth:BlockRangeUpdate".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
             Message::AccountRange(_) => "snap:AccountRange".fmt(f),
