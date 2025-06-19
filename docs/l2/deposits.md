@@ -49,7 +49,30 @@ Back on L1:
 3. The bridge removes them from `pendingDepositLogs`, asserting the included privileged transactions exist and are included in order.
 <!-- TODO: do we require privileged transactions to be included in order inside each batch? -->
 
-<!-- TODO: add diagram -->
+```mermaid
+---
+title: User makes an ETH deposit
+---
+sequenceDiagram
+    box rgb(33,66,99) L1
+        actor L1Alice as Alice
+        participant CommonBridge
+        participant OnChainProposer
+    end
+
+    actor Sequencer
+
+    box rgb(139, 63, 63) L2
+        actor L2Alice as Alice
+    end
+
+    L1Alice->>CommonBridge: sends 42 ETH
+    CommonBridge->>CommonBridge: pendingDepositLogs.push(txHash)
+    CommonBridge->>CommonBridge: emit DepositInitiated
+
+    CommonBridge-->>Sequencer: receives event
+    Sequencer-->>L2Alice: deposits 42 ETH
+```
 
 ## ERC20 deposits through the native bridge
 
