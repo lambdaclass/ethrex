@@ -33,7 +33,7 @@ use ethrex_common::{
     H256, H512,
     types::{MempoolTransaction, Transaction},
 };
-use ethrex_storage::Store;
+use ethrex_storage::{Store, error::StoreError};
 use futures::SinkExt;
 use k256::{PublicKey, SecretKey, ecdsa::SigningKey};
 use rand::random;
@@ -431,8 +431,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             .iter()
             .any(|cap| self.capabilities.contains(cap))
         {
-            let filter =
-                |tx: &Transaction| -> bool { !self.broadcasted_txs.contains(&tx.compute_hash()) };
+            let filter = |tx: &Transaction| -> bool {
+                !self
+                    .broadcasted_txs
+                    .contains(&tx.compute_hash().unwrap_or_default())
+            };
             let txs: Vec<MempoolTransaction> = self
                 .blockchain
                 .mempool
@@ -448,7 +451,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     ))
                     .await?;
                     // Possible improvement: the mempool already knows the hash but the filter function does not return it
-                    self.broadcasted_txs.insert((*tx).compute_hash());
+                    self.broadcasted_txs.insert(
+                        (*tx).compute_hash().map_err(|err| {
+                            return RLPxError::StoreError(StoreError::CursorError(err));
+                        })?,
+                    );
                 }
                 log_peer_debug(
                     &self.node,
