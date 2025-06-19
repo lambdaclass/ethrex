@@ -572,7 +572,11 @@ async fn test_n_withdraws(
     let mut proofs = vec![];
     for (i, tx) in withdraw_txs.clone().into_iter().enumerate() {
         println!("Getting withdrawal proof {}/{n}", i + 1);
-        let withdrawal_proof = proposer_client.wait_for_withdrawal_proof(tx, 1000).await?;
+        let message_proof = proposer_client.wait_for_message_proof(tx, 1000).await?;
+        let withdrawal_proof = message_proof
+            .into_iter()
+            .next()
+            .expect("no l1messages in withdrawal");
         proofs.push(withdrawal_proof);
     }
 
