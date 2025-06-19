@@ -306,9 +306,10 @@ impl StoreEngine for Store {
                 for update in account_updates.iter() {
                     if update.removed || update.info.is_some() {
                         let key = AccountAddress(update.address);
-                        // Guard implies if `None` then the account is removed, so
-                        // the semantics are correct.
-                        let value = update.info.clone().map(EncodableAccountInfo);
+
+                        let value = (!update.removed)
+                            .then_some(update.info.clone().map(EncodableAccountInfo))
+                            .flatten();
                         Self::replace_value_or_delete(&mut cursor, key, value)?;
                     }
 
