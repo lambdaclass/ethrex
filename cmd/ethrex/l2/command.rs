@@ -353,6 +353,7 @@ impl Command {
                                 storage_updates: accounts_updates,
                                 blocks: vec![],
                                 receipts: vec![],
+                                code_updates: vec![],
                             };
 
                             store.store_block_updates(pseudo_update_batch).await.expect("Error storing trie updates");
@@ -416,7 +417,7 @@ impl Command {
 
                             // Store batch info in L2 storage
                             rollup_store
-                                .store_batch(batch)
+                                .seal_batch(batch)
                                 .await
                                 .expect("Error storing batch");
                         }

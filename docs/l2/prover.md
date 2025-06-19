@@ -1,30 +1,4 @@
-# ethrex L2 Prover
-
-## Table of Contents
-
-- [ethrex L2 Prover](#ethrex-l2-prover)
-  - [Table of Contents](#table-of-contents)
-  - [Intro](#intro)
-  - [Workflow](#workflow)
-  - [How](#how)
-    - [L1 block proving](#l1-block-proving)
-    - [Dev Mode](#dev-mode)
-      - [Run the whole system with the prover - In one Machine](#run-the-whole-system-with-the-prover---in-one-machine)
-    - [GPU mode](#gpu-mode)
-      - [Run the whole system with a GPU Prover](#run-the-whole-system-with-a-gpu-prover)
-  - [Configuration](#configuration)
-  - [How it works](#how-it-works)
-    - [Program inputs](#program-inputs)
-      - [Execution witness](#execution-witness)
-    - [Blocks execution program](#blocks-execution-program)
-      - [Prelude 1: state trie basics](#prelude-1-state-trie-basics)
-      - [Prelude 2: deposits, withdrawals and state diffs](#prelude-2-deposits-withdrawals-and-state-diffs)
-      - [Step 1: initial state validation](#step-1-initial-state-validation)
-      - [Step 2: blocks execution](#step-2-blocks-execution)
-      - [Step 3: final state validation](#step-3-final-state-validation)
-      - [Step 4: deposit hash calculation](#step-4-deposit-hash-calculation)
-      - [Step 5: withdrawals Merkle root calculation](#step-5-withdrawals-merkle-root-calculation)
-      - [Step 6: state diff calculation and commitment](#step-6-state-diff-calculation-and-commitment)
+# Ethrex L2 prover
 
 > [!NOTE]
 > The shipping/deploying process and the `Prover` itself are under development.
@@ -135,28 +109,30 @@ Two servers are required: one for the `Prover` and another for the `sequencer`. 
 2. `ProofCoordinator`/`sequencer` &rarr; this server just needs rust installed.
    1. `cd ethrex/crates/l2`
    2. Create a `.env` file with the following content:
-   ```env
-   // Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
-   ETHREX_DEPLOYER_L1_PRIVATE_KEY=<private_key>
-   // Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
-   ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY=<private_key>
-   // Should be the same as ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
-   ETHREX_COMMITTER_L1_PRIVATE_KEY=<private_key>
-   // Should be different from ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
-   ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=<private_key>
-   // Used to handle TCP communication with other servers from any network interface.
-   ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS=0.0.0.0
-   // Set to true to randomize the salt.
-   ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
-   // Check if the contract is deployed in your preferred network or set to `true` to deploy it.
-   ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true
-   // Check the if the contract is present on your preferred network.
-   ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>
-   // It can be deployed. Check the if the contract is present on your preferred network.
-   ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=<address>
-   // Set to any L1 endpoint.
-   ETHREX_ETH_RPC_URL=<url>
-   ```
+
+      ```env
+      // Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
+      ETHREX_DEPLOYER_L1_PRIVATE_KEY=<private_key>
+      // Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
+      ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY=<private_key>
+      // Should be the same as ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
+      ETHREX_COMMITTER_L1_PRIVATE_KEY=<private_key>
+      // Should be different from ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
+      ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=<private_key>
+      // Used to handle TCP communication with other servers from any network interface.
+      ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS=0.0.0.0
+      // Set to true to randomize the salt.
+      ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
+      // Check if the contract is deployed in your preferred network or set to `true` to deploy it.
+      ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true
+      // Check the if the contract is present on your preferred network.
+      ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>
+      // It can be deployed. Check the if the contract is present on your preferred network.
+      ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=<address>
+      // Set to any L1 endpoint.
+      ETHREX_ETH_RPC_URL=<url>
+      ```
+
    3. `source .env`
 
 > [!NOTE]
@@ -241,7 +217,7 @@ If a value is removed during block execution (meaning it existed initially but n
 
 Here, only **leaf 1** is part of the execution witness, so we lack the proof (and thus the node data) for **leaf 2**. After removing **leaf 1**, **branch 1** becomes redundant. During trie restructuring, it's replaced by **leaf 3**, whose path is the path of **leaf 2** concatenated with a prefix nibble (`k`) representing the choice taken at the original **branch 1**, and keeping **leaf 2**'s value.
 
-```
+```text
 branch1 = {c_1, c_2, ..., c_k, ..., c_16} # Only c_k = hash(leaf2) is non-empty
 leaf2 = {value, path}
 leaf3 = {value, concat(k, path)} # New leaf replacing branch1 and leaf2

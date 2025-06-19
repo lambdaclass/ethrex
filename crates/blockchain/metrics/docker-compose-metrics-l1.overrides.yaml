@@ -1,0 +1,33 @@
+# L1 monitoring override: ethrex + lighthouse + ethereum-metrics-exporter
+# Usage: docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up
+services:
+  ethereum-metrics-exporter:
+    image: samcm/ethereum-metrics-exporter:latest
+    command:
+      - --execution-url=http://host.docker.internal:8545
+      - --execution-modules="eth","net","web3","txpool"
+      - --consensus-url=http://host.docker.internal:5053
+      - --metrics-port=9093
+    ports:
+      - "9093:9093"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - prometheus
+
+  prometheus:
+    volumes:
+      - ./provisioning/prometheus/prometheus_l1_sync_docker.yaml:/etc/prometheus/prometheus.yaml
+    ports:
+      - "9091:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./provisioning/grafana_provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./provisioning/grafana_provisioning/dashboards:/etc/grafana/provisioning/dashboards
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin

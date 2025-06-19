@@ -12,17 +12,18 @@ use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
-use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::block_execution_witness::ExecutionWitnessResult;
 use ethrex_common::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use ethrex_common::types::{
     AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction,
-    Receipt, Transaction, compute_receipts_root, validate_block_header,
+    Receipt, Transaction, WrappedEIP4844Transaction, compute_receipts_root, validate_block_header,
     validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
+use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
+use ethrex_metrics::metrics;
 use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
@@ -33,6 +34,9 @@ use std::sync::{Arc, Mutex};
 use std::{ops::Div, time::Instant};
 
 use vm::StoreVmDatabase;
+
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
@@ -340,6 +344,7 @@ impl Blockchain {
         let new_state_root = apply_updates_list.state_trie_hash;
         let state_updates = apply_updates_list.state_updates;
         let accounts_updates = apply_updates_list.storage_updates;
+        let code_updates = apply_updates_list.code_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
@@ -349,6 +354,7 @@ impl Blockchain {
             storage_updates: accounts_updates,
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
+            code_updates,
         };
 
         self.storage
@@ -379,6 +385,12 @@ impl Blockchain {
             let storage_fraction = (storage_time * 100_f64 / interval).round() as u64;
             let execution_time_per_gigagas = (execution_time / as_gigas).round() as u64;
             let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
+            metrics!(
+                let _ = METRICS_BLOCKS.set_block_number(block.header.number);
+                METRICS_BLOCKS.set_latest_gas_used(block.header.gas_used as f64);
+                METRICS_BLOCKS.set_latest_block_gas_limit(block.header.gas_limit as f64);
+                METRICS_BLOCKS.set_latest_gigagas(throughput);
+            );
             let base_log = format!(
                 "[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {:.0} ms. #Txs: {}.",
                 throughput,
@@ -482,6 +494,9 @@ impl Blockchain {
             .last()
             .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
 
+        let last_block_number = last_block.header.number;
+        let last_block_gas_limit = last_block.header.gas_limit;
+
         // Apply the account updates over all blocks and compute the new state root
         let account_updates_list = self
             .storage
@@ -493,6 +508,7 @@ impl Blockchain {
         let new_state_root = account_updates_list.state_trie_hash;
         let state_updates = account_updates_list.state_updates;
         let accounts_updates = account_updates_list.storage_updates;
+        let code_updates = account_updates_list.code_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
@@ -502,6 +518,7 @@ impl Blockchain {
             storage_updates: accounts_updates,
             blocks,
             receipts: all_receipts,
+            code_updates,
         };
 
         self.storage
@@ -509,16 +526,29 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?;
 
-        let elapsed_total = interval.elapsed().as_millis();
+        let elapsed_seconds = interval.elapsed().as_millis() / 1000;
         let mut throughput = 0.0;
-        if elapsed_total != 0 && total_gas_used != 0 {
+        if elapsed_seconds != 0 && total_gas_used != 0 {
             let as_gigas = (total_gas_used as f64).div(10_f64.powf(9_f64));
-            throughput = (as_gigas) / (elapsed_total as f64) * 1000_f64;
+            throughput = (as_gigas) / (elapsed_seconds as f64);
         }
 
+        metrics!(
+            let _ = METRICS_BLOCKS.set_block_number(last_block_number);
+            METRICS_BLOCKS.set_latest_block_gas_limit(last_block_gas_limit as f64);
+            // Set the latest gas used as the average gas used per block in the batch
+            METRICS_BLOCKS.set_latest_gas_used(total_gas_used as f64 / blocks_len as f64);
+            METRICS_BLOCKS.set_latest_gigagas(throughput);
+        );
+
         info!(
-            "[METRICS] Executed and stored: Range: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
-            blocks_len, transactions_count, total_gas_used, throughput
+            "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
+            blocks_len,
+            last_block_number,
+            last_block_gas_limit,
+            transactions_count,
+            total_gas_used,
+            throughput
         );
 
         Ok(())
@@ -536,7 +566,7 @@ impl Blockchain {
         blobs_bundle.validate(&transaction)?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
-        let sender = transaction.sender();
+        let sender = transaction.sender()?;
 
         // Validate transaction
         self.validate_transaction(&transaction, sender).await?;
@@ -558,7 +588,7 @@ impl Blockchain {
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
-        let sender = transaction.sender();
+        let sender = transaction.sender()?;
         // Validate transaction
         self.validate_transaction(&transaction, sender).await?;
 
@@ -710,6 +740,39 @@ impl Blockchain {
     /// The node should accept incoming p2p transactions if this method returns true
     pub fn is_synced(&self) -> bool {
         self.is_synced.load(Ordering::Relaxed)
+    }
+
+    pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
+        let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
+            return Err(StoreError::Custom(format!(
+                "Hash {} not found in the mempool",
+                hash
+            )));
+        };
+        let result = match tx {
+            Transaction::LegacyTransaction(itx) => P2PTransaction::LegacyTransaction(itx),
+            Transaction::EIP2930Transaction(itx) => P2PTransaction::EIP2930Transaction(itx),
+            Transaction::EIP1559Transaction(itx) => P2PTransaction::EIP1559Transaction(itx),
+            Transaction::EIP4844Transaction(itx) => {
+                let Some(bundle) = self.mempool.get_blobs_bundle(*hash)? else {
+                    return Err(StoreError::Custom(format!(
+                        "Blob transaction present without its bundle: hash {}",
+                        hash
+                    )));
+                };
+
+                P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
+                    tx: itx,
+                    blobs_bundle: bundle,
+                })
+            }
+            Transaction::EIP7702Transaction(itx) => P2PTransaction::EIP7702Transaction(itx),
+            Transaction::PrivilegedL2Transaction(itx) => {
+                P2PTransaction::PrivilegedL2Transaction(itx)
+            }
+        };
+
+        Ok(result)
     }
 }
 
