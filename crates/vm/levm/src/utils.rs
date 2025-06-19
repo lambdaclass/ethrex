@@ -484,7 +484,7 @@ impl<'a> VM<'a> {
         intrinsic_gas = intrinsic_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
 
         // Create Cost
-        if self.is_create() {
+        if self.is_create()? {
             // https://eips.ethereum.org/EIPS/eip-2#specification
             intrinsic_gas = intrinsic_gas
                 .checked_add(CREATE_BASE_COST)
@@ -550,7 +550,7 @@ impl<'a> VM<'a> {
     /// Calculates the minimum gas to be consumed in the transaction.
     pub fn get_min_gas_used(&self) -> Result<u64, VMError> {
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
-        let calldata = if self.is_create() {
+        let calldata = if self.is_create()? {
             &self.current_call_frame()?.bytecode
         } else {
             &self.current_call_frame()?.calldata
@@ -625,18 +625,20 @@ impl<'a> VM<'a> {
             created_accounts: HashSet::new(),
             refunded_gas: 0,
             transient_storage: HashMap::new(),
+            logs: Vec::new(),
         };
 
         Ok(())
     }
 
     /// Gets transaction callee, calculating create address if it's a "Create" transaction.
-    pub fn get_tx_callee(&mut self) -> Result<Address, VMError> {
+    /// Bool indicates whether it is a `create` transaction or not.
+    pub fn get_tx_callee(&mut self) -> Result<(Address, bool), VMError> {
         match self.tx.to() {
             TxKind::Call(address_to) => {
                 self.substate.accessed_addresses.insert(address_to);
 
-                Ok(address_to)
+                Ok((address_to, false))
             }
 
             TxKind::Create => {
@@ -647,7 +649,7 @@ impl<'a> VM<'a> {
                 self.substate.accessed_addresses.insert(created_address);
                 self.substate.created_accounts.insert(created_address);
 
-                Ok(created_address)
+                Ok((created_address, true))
             }
         }
     }
