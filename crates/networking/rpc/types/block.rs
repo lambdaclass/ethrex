@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcBlock {
-    pub hash: H256,
+    hash: H256,
     #[serde(with = "serde_utils::u64::hex_str")]
     size: u64,
     #[serde(flatten)]
@@ -30,7 +30,7 @@ pub enum BlockBodyWrapper {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FullBlockBody {
     pub transactions: Vec<RpcTransaction>,
-    pub uncles: Vec<H256>,
+    pub uncles: Vec<BlockHeader>,
     #[serde(default)]
     pub withdrawals: Vec<Withdrawal>,
 }
@@ -39,7 +39,7 @@ pub struct FullBlockBody {
 pub struct OnlyHashesBlockBody {
     // Only tx hashes
     pub transactions: Vec<H256>,
-    pub uncles: Vec<H256>,
+    pub uncles: Vec<BlockHeader>,
     pub withdrawals: Vec<Withdrawal>,
 }
 
@@ -58,7 +58,7 @@ impl RpcBlock {
         } else {
             BlockBodyWrapper::OnlyHashes(OnlyHashesBlockBody {
                 transactions: body.transactions.iter().map(|t| t.compute_hash()).collect(),
-                uncles: body.ommers.iter().map(|ommer| ommer.hash()).collect(),
+                uncles: body.ommers,
                 withdrawals: body.withdrawals.unwrap_or_default(),
             })
         };
@@ -89,12 +89,11 @@ impl FullBlockBody {
         }
         Ok(FullBlockBody {
             transactions,
-            uncles: body.ommers.iter().map(|ommer| ommer.hash()).collect(),
+            uncles: body.ommers,
             withdrawals: body.withdrawals.unwrap_or_default(),
         })
     }
 }
-
 #[cfg(test)]
 mod test {
 

@@ -6050,7 +6050,6 @@ dependencies = [
  "futures",
  "hex",
  "keccak-hash",
- "reqwest 0.12.20",
  "secp256k1",
  "tokio",
 ]
