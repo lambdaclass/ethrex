@@ -5,7 +5,7 @@ use crate::nibbles::Nibbles;
 use crate::node_hash::NodeHash;
 use crate::{TrieDB, error::TrieError};
 
-use super::{BranchNode, Node, NodeRef, InsertAction};
+use super::{BranchNode, InsertAction, Node, NodeRef};
 
 /// Extension Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's prefix and a its child node hash, doesn't store any value

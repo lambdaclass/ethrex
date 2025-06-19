@@ -2,7 +2,7 @@ use ethrex_rlp::structs::Encoder;
 
 use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
 
-use super::{ExtensionNode, LeafNode, Node, NodeRef, InsertAction};
+use super::{ExtensionNode, InsertAction, LeafNode, Node, NodeRef};
 
 /// Branch Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's value and the hash of its children nodes
@@ -85,7 +85,7 @@ impl BranchNode {
                 (choice_ref, InsertAction::Value(value)) if !choice_ref.is_valid() => {
                     let new_leaf = LeafNode::new(path, value);
                     *choice_ref = Node::from(new_leaf).into();
-                },
+                }
                 (choice_ref, InsertAction::Update(on_update)) if !choice_ref.is_valid() => {
                     let value = on_update(None)?;
                     let new_leaf = LeafNode::new(path, value);
@@ -98,7 +98,7 @@ impl BranchNode {
                         .ok_or(TrieError::InconsistentTree)?;
 
                     *choice_ref = child_node.insert(db, path, value)?.into();
-                },
+                }
                 // Update existing child and then update it
                 (choice_ref, value @ InsertAction::Update(_)) => {
                     let child_node = choice_ref

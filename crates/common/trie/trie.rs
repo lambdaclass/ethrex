@@ -136,7 +136,11 @@ impl Trie {
             self.root
                 .get_node(self.db.as_ref())?
                 .ok_or(TrieError::InconsistentTree)?
-                .insert(self.db.as_ref(), path, InsertAction::Update(Box::new(on_update)))?
+                .insert(
+                    self.db.as_ref(),
+                    path,
+                    InsertAction::Update(Box::new(on_update)),
+                )?
                 .into()
         } else {
             // If the trie is empty, just add a leaf.

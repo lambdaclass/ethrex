@@ -114,11 +114,14 @@ impl PartialEq for NodeRef {
     }
 }
 
+/// What to do when inserting.
+///
+/// Update is used to avoid more db acceses when doing a get -> (modify) -> insert flow,
 pub enum InsertAction<'func> {
     Value(ValueRLP),
     Hash(NodeHash),
-    /// Input = previous value if exists, returns the new value.
-    Update(Box<dyn FnOnce(Option<ValueRLP>) -> Result<ValueRLP, TrieError> + 'func>)
+    /// Given the previous value (if any) return the new one to be inserted.
+    Update(Box<dyn FnOnce(Option<ValueRLP>) -> Result<ValueRLP, TrieError> + 'func>),
 }
 
 impl From<ValueRLP> for InsertAction<'_> {
@@ -176,6 +179,9 @@ impl Node {
     }
 
     /// Inserts a value into the subtrie originating from this node and returns the new root of the subtrie
+    ///
+    /// If value is of type `InsertAction::Update`, the provided function is called
+    /// with the previous value if any, inserting the newly returned value.
     pub fn insert<'func>(
         self,
         db: &dyn TrieDB,
