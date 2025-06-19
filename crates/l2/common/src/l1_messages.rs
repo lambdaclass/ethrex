@@ -58,7 +58,7 @@ pub fn get_block_l1_message_hashes(
 
 pub fn get_block_l1_messages(txs: &[Transaction], receipts: &[Receipt]) -> Vec<L1Message> {
     static L1MESSAGE_EVENT_SELECTOR: LazyLock<H256> =
-        LazyLock::new(|| keccak("L1Message(address,bytes)".as_bytes()));
+        LazyLock::new(|| keccak("L1Message(address,bytes32)".as_bytes()));
 
     receipts
         .iter()
