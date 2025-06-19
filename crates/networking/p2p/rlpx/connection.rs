@@ -552,12 +552,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 self.send(Message::BlockBodies(response)).await?;
             }
             Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
-                let mut receipts = Vec::new();
-                for hash in block_hashes.iter() {
-                    receipts.push(self.storage.get_receipts_for_block(hash)?);
-                }
-                if let Some(eth_capability) = self.negotiated_eth_capability.as_ref() {
-                    match eth_capability.version {
+                if let Some(eth) = &self.negotiated_eth_capability {
+                    let mut receipts = Vec::new();
+                    for hash in block_hashes.iter() {
+                        receipts.push(self.storage.get_receipts_for_block(hash)?);
+                    }
+                    match eth.version {
                         68 => {
                             let response =
                                 Message::Receipts(Box::new(Receipts68::new(id, receipts)));
