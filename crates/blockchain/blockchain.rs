@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{Level, event, info, span};
+use ::tracing::{Instrument, Level, event, info, info_span, span};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -509,19 +509,14 @@ impl Blockchain {
         let last_block_number = last_block.header.number;
         let last_block_gas_limit = last_block.header.gas_limit;
 
-        #[cfg(feature = "metrics")]
-        let account_updates_span = span!(Level::INFO, "account_updates").entered();
-
         // Apply the account updates over all blocks and compute the new state root
         let account_updates_list = self
             .storage
             .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
+            .instrument(info_span!("account_updates"))
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
-
-        #[cfg(feature = "metrics")]
-        account_updates_span.exit();
 
         let new_state_root = account_updates_list.state_trie_hash;
         let state_updates = account_updates_list.state_updates;
@@ -530,9 +525,6 @@ impl Blockchain {
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
-
-        #[cfg(feature = "metrics")]
-        let update_storage_span = span!(Level::INFO, "update_storage").entered();
 
         let update_batch = UpdateBatch {
             account_updates: state_updates,
@@ -544,11 +536,9 @@ impl Blockchain {
 
         self.storage
             .store_block_updates(update_batch)
+            .instrument(info_span!("update_storage"))
             .await
             .map_err(|e| (e.into(), None))?;
-
-        #[cfg(feature = "metrics")]
-        update_storage_span.exit();
 
         let elapsed_seconds = interval.elapsed().as_millis() / 1000;
         let mut throughput = 0.0;

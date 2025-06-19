@@ -29,6 +29,8 @@ use std::{
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
+#[cfg(feature = "metrics")]
+use tracing_subscriber::fmt;
 use tracing_subscriber::{
     EnvFilter, FmtSubscriber, Registry, filter::Directive, layer::SubscriberExt,
     util::SubscriberInitExt,
@@ -46,10 +48,25 @@ pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy();
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(log_filter)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
+    #[cfg(feature = "metrics")]
+    let profiling_layer = FunctionProfilingLayer::default();
+
+    #[cfg(feature = "metrics")]
+    let subscriber = Registry::default()
+        .with(log_filter)
+        .with(profiling_layer)
+        .with(fmt::layer())
+        .init();
+
+    #[cfg(not(feature = "metrics"))]
+    {
+        let subscriber = FmtSubscriber::builder()
+            .with_env_filter(log_filter)
+            .finish();
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("setting default subscriber failed");
+    }
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
@@ -62,13 +79,8 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
         opts.metrics_addr.clone(),
         opts.metrics_port.clone(),
     );
+
     tracker.spawn(metrics_api);
-
-    let profiling_layer = FunctionProfilingLayer::default();
-
-    tracing_subscriber::registry()
-        .with(profiling_layer) // static Layer
-        .init();
 }
 
 /// Opens a New or Pre-exsisting Store and loads the initial state provided by the network
