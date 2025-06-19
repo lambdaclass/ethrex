@@ -1,0 +1,43 @@
+name: Publish Ethrex docs to https://docs.ethrex.xyz/
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+  pull_request:
+    paths:
+      - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: '0.4.51'
+
+      - name: Install mdbook-alerts
+        run: cargo install mdbook-alerts
+
+      - run: mdbook build
+
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v4
+        if: ${{ github.ref == 'refs/heads/main' }}
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: book/html
+          destination_dir: .     # root of gh-pages
+          keep_files: true       # do not erase flamegraphs/ or benchmarks/
+          cname: docs.ethrex.xyz # always commit the CNAME file
