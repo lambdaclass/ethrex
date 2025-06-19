@@ -718,39 +718,7 @@ impl Blockchain {
 
         // Check the nonce of pendings TXs in the mempool from the same sender
         // If it exists check if the new tx has higher fees
-        let tx_to_replace_hash = if let Some(tx_in_pool) =
-            self.mempool
-                .contains_sender_nonce(sender, nonce, tx.compute_hash())?
-        {
-            // EIP-1559 values
-            let old_tx_max_fee_per_gas = tx_in_pool.max_fee_per_gas().unwrap_or_default();
-            let old_tx_max_priority_fee_per_gas = tx_in_pool.max_priority_fee().unwrap_or_default();
-            let new_tx_max_fee_per_gas = tx.max_fee_per_gas().unwrap_or_default();
-            let new_tx_max_priority_fee_per_gas = tx.max_priority_fee().unwrap_or_default();
-            // Legacy tx values
-            let old_tx_gas_price = tx_in_pool.gas_price();
-            let new_tx_gas_price = tx.gas_price();
-            // EIP-4844 values
-            let old_tx_max_fee_per_blob = tx_in_pool.max_fee_per_blob_gas();
-            let new_tx_max_fee_per_blob = tx.max_fee_per_blob_gas();
-
-            let eip4844_higher_fees = match (old_tx_max_fee_per_blob, new_tx_max_fee_per_blob) {
-                (Some(old), Some(new)) => new > old,
-                _ => true, // We are marking it as always true if the tx is not eip-4844
-            };
-
-            let eip1559_higher_fees = new_tx_max_fee_per_gas > old_tx_max_fee_per_gas
-                && new_tx_max_priority_fee_per_gas > old_tx_max_priority_fee_per_gas;
-            let legacy_higher_fees = new_tx_gas_price > old_tx_gas_price;
-
-            if eip4844_higher_fees && (eip1559_higher_fees || legacy_higher_fees) {
-                Some(tx_in_pool.compute_hash())
-            } else {
-                return Err(MempoolError::NonceTooLow);
-            }
-        } else {
-            None
-        };
+        let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
 
         if let Some(chain_id) = tx.chain_id() {
             if chain_id != config.chain_id {
