@@ -4,6 +4,7 @@ use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides, eth::WrappedTransaction},
 };
+use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::StoreRollup;
 use keccak_hash::keccak;
 use rand::Rng;
@@ -137,4 +138,23 @@ pub fn resolve_aligned_network(network: &str) -> Network {
         "mainnet" => Network::Mainnet,
         _ => Network::Devnet, // TODO: Implement custom networks
     }
+}
+
+pub async fn node_is_up_to_date<E>(
+    eth_client: &EthClient,
+    on_chain_proposer_address: Address,
+    rollup_storage: &StoreRollup,
+) -> Result<bool, E>
+where
+    E: From<EthClientError> + From<StoreError>,
+{
+    let last_committed_batch_number = eth_client
+        .get_last_committed_batch(on_chain_proposer_address)
+        .await?;
+
+    let is_up_to_date = rollup_storage
+        .contains_batch(&last_committed_batch_number)
+        .await?;
+
+    Ok(is_up_to_date)
 }

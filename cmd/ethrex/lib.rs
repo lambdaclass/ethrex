@@ -1,6 +1,6 @@
+pub mod cli;
 pub mod initializers;
 pub mod utils;
-pub mod cli;
 
 #[cfg(feature = "l2")]
 pub mod l2;
