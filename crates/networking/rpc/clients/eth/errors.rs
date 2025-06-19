@@ -9,7 +9,7 @@ pub enum EthClientError {
     #[error("eth_gasPrice request error: {0}")]
     GetGasPriceError(#[from] GetGasPriceError),
     #[error("eth_estimateGas request error: {0}")]
-    EstimateGasError(#[from] EstimateGasError),
+    EstimateGasPriceError(#[from] EstimateGasPriceError),
     #[error("eth_sendRawTransaction request error: {0}")]
     SendRawTransactionError(#[from] SendRawTransactionError),
     #[error("eth_call request error: {0}")]
@@ -67,7 +67,7 @@ pub enum GetGasPriceError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum EstimateGasError {
+pub enum EstimateGasPriceError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("{0}")]
