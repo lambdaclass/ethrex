@@ -71,7 +71,11 @@ sequenceDiagram
     CommonBridge->>CommonBridge: emit DepositInitiated
 
     CommonBridge-->>Sequencer: receives event
-    Sequencer-->>L2Alice: deposits 42 ETH
+    Sequencer->>L2Alice: mints 42 ETH
+
+    Sequencer->>OnChainProposer: publishes batch
+    OnChainProposer->>CommonBridge: consumes pending deposits
+    CommonBridge-->>CommonBridge: pendingDepositLogs.pop()
 ```
 
 ## ERC20 deposits through the native bridge
@@ -144,5 +148,9 @@ sequenceDiagram
     L2Token->>CommonBridgeL2: returns address of L1Token
 
     CommonBridgeL2->>L2Token: calls mint
-    L2Token-->>L2Alice: deposits 42 newly-<br>minted tokens
+    L2Token-->>L2Alice: mints 42 tokens
+
+    Sequencer->>OnChainProposer: publishes batch
+    OnChainProposer->>CommonBridge: consumes pending deposits
+    CommonBridge-->>CommonBridge: pendingDepositLogs.pop()
 ```
