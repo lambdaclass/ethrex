@@ -285,9 +285,7 @@ pub fn merkle_proof(data: Vec<H256>, mut index: usize) -> Option<Vec<H256>> {
 
     let mut proof = vec![];
     let mut current = data.clone();
-    let mut first = true;
-    while current.len() > 1 || first {
-        first = false;
+    while current.len() > 1 {
         proof.push(*current.get(index ^ 1).or(current.get(index))?);
         index /= 2;
         current = current

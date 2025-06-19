@@ -5,6 +5,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./interfaces/ICommonBridge.sol";
 import "./interfaces/IOnChainProposer.sol";
 
@@ -48,6 +49,18 @@ contract CommonBridge is
     /// @notice Address of the bridge on the L2
     /// @dev It's used to validate withdrawals
     address public constant L2_BRIDGE_ADDRESS = address(0xffff);
+
+    /// @notice How much of each L1 token was deposited to each L2 token.
+    /// @dev Stored as L1 -> L2 -> amount
+    /// @dev Prevents L2 tokens from faking their L1 address and stealing tokens
+    mapping (address => mapping (address => uint256)) public depositsERC20;
+
+    /// @notice Function of the L2 bridge to call for minting ERC20 tokens
+    /// @dev Selector of the mintERC20 function in the CommonBridgeL2 contract
+    bytes4 public constant L2_MINTERC20_SELECTOR = 0x79204fe0;
+
+    /// @notice Type of asset being operated.
+    enum AssetType { ETH, ERC20 }
 
     modifier onlyOnChainProposer() {
         require(
@@ -137,6 +150,39 @@ contract CommonBridge is
         _deposit(depositValues);
     }
 
+    function depositERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external {
+        require(amount > 0, "CommonBridge: amount to deposit is zero");
+        require(IERC20(tokenL1).transferFrom(msg.sender, address(this), amount), "CommonBridge: transferFrom failed");
+
+        depositsERC20[tokenL1][tokenL2] += amount;
+        bytes memory callData = bytes.concat(L2_MINTERC20_SELECTOR, abi.encode(tokenL1, tokenL2, destination, amount));
+        uint256 gasLimit = 21000 * 10;
+        
+        bytes32 l2MintTxHash = keccak256(
+            bytes.concat(
+                bytes20(L2_BRIDGE_ADDRESS),
+                bytes32(0),
+                bytes32(depositId),
+                bytes20(L2_BRIDGE_ADDRESS),
+                bytes20(L2_BRIDGE_ADDRESS),
+                bytes32(gasLimit),
+                bytes32(keccak256(callData))
+            )
+        );
+        pendingDepositLogs.push(l2MintTxHash);
+        emit DepositInitiated(
+            0,
+            L2_BRIDGE_ADDRESS,
+            depositId,
+            L2_BRIDGE_ADDRESS,
+            L2_BRIDGE_ADDRESS,
+            gasLimit,
+            callData,
+            l2MintTxHash
+        );
+        depositId += 1;
+    }
+
     /// @inheritdoc ICommonBridge
     function getPendingDepositLogsVersionedHash(
         uint16 number
@@ -209,6 +255,57 @@ contract CommonBridge is
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) public nonReentrant {
+        bytes32 msgHash = keccak256(abi.encodePacked(AssetType.ETH, msg.sender, claimedAmount));
+        require(
+            _claimWithdrawProof(
+                l2WithdrawalTxHash,
+                msgHash,
+                withdrawalBatchNumber,
+                withdrawalLogIndex,
+                withdrawalProof
+            ),
+            "CommonBridge: invalid withdrawal proof"
+        );
+
+        (bool success, ) = payable(msg.sender).call{value: claimedAmount}("");
+
+        require(success, "CommonBridge: failed to send the claimed amount");
+    }
+
+    /// @inheritdoc ICommonBridge
+    function claimWithdrawalERC20(
+        bytes32 l2WithdrawalTxHash,
+        address tokenL1,
+        address tokenL2,
+        uint256 claimedAmount,
+        uint256 withdrawalBatchNumber,
+        uint256 withdrawalLogIndex,
+        bytes32[] calldata withdrawalProof
+    ) public nonReentrant {
+        require(depositsERC20[tokenL1][tokenL2] >= claimedAmount, "CommonBridge: trying to withdraw more tokens than were deposited");
+        depositsERC20[tokenL1][tokenL2] -= claimedAmount;
+        bytes32 msgHash = keccak256(abi.encodePacked(AssetType.ERC20, tokenL1, tokenL2, msg.sender, claimedAmount));
+        require(
+            _claimWithdrawProof(
+                l2WithdrawalTxHash,
+                msgHash,
+                withdrawalBatchNumber,
+                withdrawalLogIndex,
+                withdrawalProof
+            ),
+            "CommonBridge: invalid withdrawal proof"
+        );
+        require(IERC20(tokenL1).transfer(msg.sender, claimedAmount), "CommonBridge: transfer failed");
+    }
+
+    /// @dev msgHash must be derived using msg.sender to prevent malicious claims
+    function _claimWithdrawProof(
+        bytes32 l2WithdrawalTxHash,
+        bytes32 msgHash,
+        uint256 withdrawalBatchNumber,
+        uint256 withdrawalLogIndex,
+        bytes32[] calldata withdrawalProof
+    ) internal returns (bool) {
         bytes32 withdrawalId = keccak256(abi.encodePacked(withdrawalBatchNumber, withdrawalLogIndex));
         require(
             batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber] != bytes32(0),
@@ -223,34 +320,24 @@ contract CommonBridge is
             claimedWithdrawals[withdrawalId] == false,
             "CommonBridge: the withdrawal was already claimed"
         );
-        require(
-            _verifyWithdrawProof(
-                l2WithdrawalTxHash,
-                claimedAmount,
-                withdrawalBatchNumber,
-                withdrawalLogIndex,
-                withdrawalProof
-            ),
-            "CommonBridge: invalid withdrawal proof"
-        );
-
-        (bool success, ) = payable(msg.sender).call{value: claimedAmount}("");
-
-        require(success, "CommonBridge: failed to send the claimed amount");
-
         claimedWithdrawals[withdrawalId] = true;
-
-        emit WithdrawalClaimed(withdrawalId, msg.sender, claimedAmount);
+        emit WithdrawalClaimed(withdrawalId);
+        return _verifyWithdrawProof(
+            l2WithdrawalTxHash,
+            msgHash,
+            withdrawalBatchNumber,
+            withdrawalLogIndex,
+            withdrawalProof
+        );
     }
 
     function _verifyWithdrawProof(
         bytes32 l2WithdrawalTxHash,
-        uint256 claimedAmount,
+        bytes32 msgHash,
         uint256 withdrawalBatchNumber,
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) internal view returns (bool) {
-        bytes32 msgHash = keccak256(abi.encodePacked(msg.sender, claimedAmount));
         bytes32 withdrawalLeaf = keccak256(
             abi.encodePacked(l2WithdrawalTxHash, L2_BRIDGE_ADDRESS, msgHash)
         );
