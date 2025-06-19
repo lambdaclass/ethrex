@@ -38,8 +38,12 @@ Read more about our engineering philosophy [here](https://blog.lambdaclass.com/l
 ## Documentation
 
 We have markdown documentation under [`docs/`](./docs/), rendered using mdbook.
-You can render and serve it locally by running `mdbook serve --open`, after installing it [as explained in their documentation](https://rust-lang.github.io/mdBook/guide/installation.html), with `cargo install mdbook`.
-We also use the [`alerts` preprocessor](https://github.com/lambdalisue/rs-mdbook-alerts) for custom markdown syntax, and you need to install it with `cargo install mdbook-alerts`.
+You can render and serve it locally by running `make docs-serve`, after installing it [as explained in their documentation](https://rust-lang.github.io/mdBook/guide/installation.html), or with `cargo install mdbook`.
+We also use some `mdbook` preprocessors and backends for additional features, which can be installed running `make docs-deps`, or manually:
+
+- [`mdbook-alerts` preprocessor](https://github.com/lambdalisue/rs-mdbook-alerts) for custom markdown syntax. Needs to be installed with `cargo install mdbook-alerts`.
+- [`mdbook-mermaid` preprocessor](https://github.com/badboy/mdbook-mermaid) for mermaid diagrams. Needs to be installed with `cargo install mdbook-mermaid`.
+- [`mdbook-linkcheck` backend](https://github.com/Michael-F-Bryan/mdbook-linkcheck) that checks for broken links. This one is optional, and can be installed with `cargo install mdbook-linkcheck`.
 
 # ethrex L1
 
