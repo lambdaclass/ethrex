@@ -432,26 +432,22 @@ impl StoreEngine for Store {
     }
     async fn store_account_storage_logs(
         &self,
-        account_storage_logs: Vec<(BlockNumHash, AccountAddress, H256, U256, U256)>,
+        account_storage_logs: Vec<(BlockNumHash, AccountStorageLogEntry)>,
     ) -> Result<(), StoreError> {
-        let inner = || -> Result<(), _> {
-            let tx = self.db.begin_readwrite()?;
-            let mut cursor = tx.cursor::<AccountsStorageWriteLog>()?;
-            for (blk, addr, slot, old_value, new_value) in account_storage_logs {
-                let address = addr.0;
-                cursor.upsert(
-                    blk,
-                    AccountStorageLogEntry {
-                        address,
-                        slot,
-                        old_value,
-                        new_value,
-                    },
-                )?;
-            }
-            tx.commit()
-        };
-        inner().map_err(StoreError::LibmdbxError)
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        let mut cursor = tx
+            .cursor::<AccountsStorageWriteLog>()
+            .map_err(StoreError::LibmdbxError)?;
+
+        account_storage_logs
+            .into_iter()
+            .try_for_each(|(blk, value)| cursor.upsert(blk, value))
+            .map_err(StoreError::LibmdbxError)?;
+
+        tx.commit().map_err(StoreError::LibmdbxError)
     }
 
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {

@@ -3,7 +3,10 @@ use crate::{
     api::StoreEngine,
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
-    store_db::codec::{account_address::AccountAddress, block_num_hash::BlockNumHash},
+    store_db::codec::{
+        account_address::AccountAddress, account_storage_log_entry::AccountStorageLogEntry,
+        block_num_hash::BlockNumHash,
+    },
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -97,7 +100,7 @@ impl StoreEngine for Store {
     }
     async fn store_account_storage_logs(
         &self,
-        _account_storage_logs: Vec<(BlockNumHash, AccountAddress, H256, U256, U256)>,
+        _account_storage_logs: Vec<(BlockNumHash, AccountStorageLogEntry)>,
     ) -> Result<(), StoreError> {
         todo!()
     }

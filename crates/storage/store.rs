@@ -8,6 +8,7 @@ use crate::store_db::libmdbx::Store as LibmdbxStore;
 use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
 
+use crate::store_db::codec::account_storage_log_entry::AccountStorageLogEntry;
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::H160;
 use ethrex_common::constants::EMPTY_TRIE_HASH;
@@ -194,7 +195,7 @@ impl Store {
     fn build_account_storage_logs<'a>(
         &self,
         account_updates_per_block: impl Iterator<Item = (&'a Block, &'a [AccountUpdate])>,
-    ) -> Result<Vec<(BlockNumHash, AccountAddress, H256, U256, U256)>, StoreError> {
+    ) -> Result<Vec<(BlockNumHash, AccountStorageLogEntry)>, StoreError> {
         let mut accounts_storage_log = Vec::new();
         let mut previous_account_storage = HashMap::<(H160, H256), U256>::new();
 
@@ -214,10 +215,12 @@ impl Store {
                     previous_account_storage.insert((address, *slot), *new_value);
                     accounts_storage_log.push((
                         block_numhash,
-                        address.into(),
-                        *slot,
-                        old_value,
-                        *new_value,
+                        AccountStorageLogEntry {
+                            address,
+                            slot: *slot,
+                            old_value,
+                            new_value: *new_value,
+                        },
                     ));
                 }
             }
