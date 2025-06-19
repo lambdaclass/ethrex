@@ -683,7 +683,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             let status = match eth.version {
                 68 => Message::Status68(Status68Message::new(&self.storage, &eth).await?),
                 69 => Message::Status69(Status69Message::new(&self.storage, &eth).await?),
-                _ => return Ok(()),
+                _ => return Err(RLPxError::IncompatibleProtocol),
             };
             log_peer_debug(&self.node, "Sending status");
             self.send(status).await?;
