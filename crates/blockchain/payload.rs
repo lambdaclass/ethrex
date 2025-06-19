@@ -7,13 +7,12 @@ use std::{
 
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
-    constants::GAS_PER_BLOB,
+    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, MempoolTransaction, Receipt,
-        Transaction, Withdrawal, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
-        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
-        compute_withdrawals_root,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, bloom_from_logs,
+        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
+        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
@@ -535,6 +534,15 @@ impl Blockchain {
         context.payload.header.requests_hash = context.requests_hash;
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
         context.account_updates = account_updates;
+
+        let mut logs = vec![];
+        for receipt in context.receipts.iter().cloned() {
+            for log in receipt.logs {
+                logs.push(log);
+            }
+        }
+
+        context.payload.header.logs_bloom = bloom_from_logs(&logs);
         Ok(())
     }
 }
