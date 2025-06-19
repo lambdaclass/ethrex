@@ -107,6 +107,7 @@ pub async fn start_l2(
     });
     let _ = BlockProducer::spawn(
         store.clone(),
+        rollup_store.clone(),
         blockchain.clone(),
         cfg.clone(),
         shared_state.clone(),

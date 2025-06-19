@@ -23,7 +23,6 @@ use tracing::{debug, error, info};
 use crate::{
     BlockProducerConfig, SequencerConfig,
     based::sequencer_state::{SequencerState, SequencerStatus},
-    sequencer::execution_cache::ExecutionCache,
 };
 
 use super::errors::BlockProducerError;
