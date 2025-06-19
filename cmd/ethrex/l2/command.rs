@@ -355,7 +355,7 @@ impl Command {
                             };
 
                             let account_updates: Vec<_> = account_updates.values().cloned().collect();
-                            store.store_block_updates(pseudo_update_batch, &account_updates).await.expect("Error storing trie updates");
+                            store.store_block_updates(pseudo_update_batch, &[&account_updates]).await.expect("Error storing trie updates");
 
                             new_trie = store.open_state_trie(new_state_root).expect("Error opening new state trie");
 
