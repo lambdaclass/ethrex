@@ -288,4 +288,9 @@ impl Store {
     pub async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
         self.engine.set_lastest_sent_batch_proof(batch_number).await
     }
+
+    /// Reverts to a previous batch, discarding operations in them
+    pub async fn revert_to_batch(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.engine.revert_to_batch(batch_number).await
+    }
 }

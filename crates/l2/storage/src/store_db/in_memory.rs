@@ -199,6 +199,25 @@ impl StoreEngineRollup for Store {
         self.inner()?.lastest_sent_batch_proof = batch_number;
         Ok(())
     }
+
+    async fn revert_to_batch(&self, batch_number: u64) -> Result<(), StoreError> {
+        let mut store = self.inner()?;
+        store
+            .batches_by_block
+            .retain(|_, batch| *batch <= batch_number);
+        store
+            .withdrawal_hashes_by_batch
+            .retain(|batch, _| *batch <= batch_number);
+        store
+            .block_numbers_by_batch
+            .retain(|batch, _| *batch <= batch_number);
+        store
+            .deposit_logs_hashes
+            .retain(|batch, _| *batch <= batch_number);
+        store.state_roots.retain(|batch, _| *batch <= batch_number);
+        store.blobs.retain(|batch, _| *batch <= batch_number);
+        Ok(())
+    }
 }
 
 impl Debug for Store {

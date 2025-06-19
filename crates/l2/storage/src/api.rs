@@ -99,4 +99,6 @@ pub trait StoreEngineRollup: Debug + Send + Sync + RefUnwindSafe {
     async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError>;
 
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError>;
+
+    async fn revert_to_batch(&self, batch_number: u64) -> Result<(), StoreError>;
 }
