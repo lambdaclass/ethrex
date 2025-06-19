@@ -2,6 +2,8 @@ use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
+use crate::rlpx::based::GetBatchSealedMessage;
+
 use super::based::{BatchSealedMessage, NewBlockMessage};
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::{GetReceipts, Receipts};
@@ -63,6 +65,7 @@ pub(crate) enum Message {
     // based capability
     NewBlock(NewBlockMessage),
     BatchSealed(BatchSealedMessage),
+    GetBatchSealed(GetBatchSealedMessage),
 }
 
 impl Message {
@@ -103,6 +106,7 @@ impl Message {
             // based capability
             Message::NewBlock(_) => BASED_CAPABILITY_OFFSET + NewBlockMessage::CODE,
             Message::BatchSealed(_) => BASED_CAPABILITY_OFFSET + BatchSealedMessage::CODE,
+            Message::GetBatchSealed(_) => BASED_CAPABILITY_OFFSET + GetBatchSealedMessage::CODE,
         }
     }
     pub fn decode(msg_id: u8, data: &[u8]) -> Result<Message, RLPDecodeError> {
@@ -169,6 +173,11 @@ impl Message {
                 BatchSealedMessage::CODE => {
                     return Ok(Message::BatchSealed(BatchSealedMessage::decode(data)?));
                 }
+                GetBatchSealedMessage::CODE => {
+                    return Ok(Message::GetBatchSealed(GetBatchSealedMessage::decode(
+                        data,
+                    )?));
+                }
                 _ => return Err(RLPDecodeError::MalformedData),
             }
         }
@@ -203,6 +212,7 @@ impl Message {
             Message::TrieNodes(msg) => msg.encode(buf),
             Message::NewBlock(msg) => msg.encode(buf),
             Message::BatchSealed(msg) => msg.encode(buf),
+            Message::GetBatchSealed(msg) => msg.encode(buf),
         }
     }
 }
@@ -236,6 +246,7 @@ impl Display for Message {
             Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
             Message::NewBlock(_) => "based:NewBlock".fmt(f),
             Message::BatchSealed(_) => "based:BatchSealed".fmt(f),
+            Message::GetBatchSealed(_) => "based:GetBatchSealed".fmt(f),
         }
     }
 }

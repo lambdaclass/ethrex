@@ -3788,6 +3788,7 @@ dependencies = [
  "ethrex-l2-common",
  "ethrex-levm",
  "ethrex-metrics",
+ "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-sdk",

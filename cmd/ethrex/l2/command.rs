@@ -15,7 +15,7 @@ use ethrex_common::{
 };
 use ethrex_l2::SequencerConfig;
 use ethrex_l2_common::state_diff::StateDiff;
-use ethrex_p2p::network::peer_table;
+use ethrex_p2p::{network::peer_table, peer_handler::PeerHandler, sync_manager::SyncManager};
 use ethrex_rpc::{
     EthClient,
     clients::{beacon::BeaconClient, eth::BlockByNumber},
@@ -160,11 +160,23 @@ impl Command {
                     info!("P2P is disabled");
                 }
 
+                let peer_handler = PeerHandler::new(peer_table.clone());
+                let sync_manager = SyncManager::new(
+                    peer_handler,
+                    ethrex_p2p::sync::SyncMode::Full,
+                    cancel_token.clone(),
+                    blockchain.clone(),
+                    store.clone(),
+                    #[cfg(feature = "l2")]
+                    rollup_store.clone(),
+                );
+
                 let l2_sequencer = ethrex_l2::start_l2(
                     store,
                     rollup_store,
-                    blockchain,
+                    blockchain.clone(),
                     l2_sequencer_cfg,
+                    sync_manager.await,
                     #[cfg(feature = "metrics")]
                     format!(
                         "http://{}:{}",
@@ -174,7 +186,6 @@ impl Command {
                 .into_future();
 
                 tracker.spawn(l2_sequencer);
-
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {
                         info!("Server shut down started...");

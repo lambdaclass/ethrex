@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use crate::based::sequencer_state::SequencerStatus;
-use crate::{BlockFetcher, SequencerConfig, StateUpdater};
+use crate::{SequencerConfig, StateUpdater};
 use crate::{based::sequencer_state::SequencerState, utils::prover::proving_systems::ProverType};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
+use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use execution_cache::ExecutionCache;
@@ -37,6 +38,7 @@ pub async fn start_l2(
     rollup_store: StoreRollup,
     blockchain: Arc<Blockchain>,
     cfg: SequencerConfig,
+    sync_manager: SyncManager,
     #[cfg(feature = "metrics")] l2_url: String,
 ) {
     let initial_status = if cfg.based.based {
@@ -134,23 +136,24 @@ pub async fn start_l2(
             blockchain.clone(),
             store.clone(),
             rollup_store.clone(),
+            sync_manager,
         )
         .await
         .inspect_err(|err| {
             error!("Error starting State Updater: {err}");
         });
 
-        let _ = BlockFetcher::spawn(
-            &cfg,
-            store.clone(),
-            rollup_store.clone(),
-            blockchain.clone(),
-            shared_state.clone(),
-        )
-        .await
-        .inspect_err(|err| {
-            error!("Error starting Block Fetcher: {err}");
-        });
+        // let _ = BlockFetcher::spawn(
+        //     &cfg,
+        //     store.clone(),
+        //     rollup_store.clone(),
+        //     blockchain.clone(),
+        //     shared_state.clone(),
+        // )
+        // .await
+        // .inspect_err(|err| {
+        //     error!("Error starting Block Fetcher: {err}");
+        // });
     }
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer(cfg, rollup_store, l2_url));
