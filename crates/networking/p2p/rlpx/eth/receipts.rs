@@ -197,9 +197,9 @@ mod tests {
     fn receipts68_not_empty_message() {
         let receipts = vec![vec![
             Receipt::new(TxType::EIP7702, true, 210000, vec![]),
-            Receipt::new(TxType::EIP7702, true, 210001, vec![]),
-            Receipt::new(TxType::EIP7702, true, 210002, vec![]),
-            Receipt::new(TxType::EIP7702, true, 210003, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
+            Receipt::new(TxType::EIP7702, true, 210000, vec![]),
         ]];
         let id = 255;
         let receipts68 = Receipts68::new(id, receipts.clone());
