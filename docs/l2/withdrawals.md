@@ -24,7 +24,38 @@ On L1:
 3. The bridge asserts the proof is valid.
 4. The bridge sends the locked funds specified in the `L1Message` to the user.
 
-<!-- TODO: add diagram -->
+```mermaid
+---
+title: User makes an ETH withdrawal
+---
+sequenceDiagram
+    box rgb(139, 63, 63) L2
+        actor L2Alice as Alice
+        participant CommonBridgeL2
+        participant L1Messenger
+    end
+
+    actor Sequencer
+
+    box rgb(33,66,99) L1
+        participant OnChainProposer
+        participant CommonBridge
+        actor L1Alice as Alice
+    end
+
+    L2Alice->>CommonBridgeL2: withdraws 42 ETH
+    CommonBridgeL2->>L1Messenger: calls sendMessageToL1
+    L1Messenger->>L1Messenger: emits L1Message event
+
+    L1Messenger-->>Sequencer: receives event
+
+    Sequencer->>OnChainProposer: publishes batch
+    OnChainProposer->>CommonBridge: publishes L1 message root
+
+    L1Alice->>CommonBridge: submits withdrawal proof
+    CommonBridge-->>CommonBridge: asserts proof is valid
+    CommonBridge->>L1Alice: sends 42 ETH
+```
 
 ## ERC20 withdrawals through the native bridge
 
