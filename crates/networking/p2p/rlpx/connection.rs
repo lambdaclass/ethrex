@@ -675,37 +675,41 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
     async fn init_peer_conn(&mut self) -> Result<(), RLPxError> {
         // Sending eth Status if peer supports it
-        let Some(eth) = self.negotiated_eth_capability.clone() else {
-            return Ok(());
-        };
-        let status = match eth.version {
-            68 => Message::Status(Box::new(Status68Message::new(&self.storage, &eth).await?)),
-            69 => Message::Status(Box::new(Status69Message::new(&self.storage, &eth).await?)),
-            _ => return Ok(()),
-        };
-        log_peer_debug(&self.node, "Sending status");
-        self.send(status).await?;
-        // The next immediate message in the ETH protocol is the
-        // status, reference here:
-        // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
-        let msg = match self.receive().await {
-            Some(msg) => msg?,
-            None => return Err(RLPxError::Disconnected()),
-        };
-        match msg {
-            Message::Status(msg_data) => {
-                log_peer_debug(&self.node, "Received Status");
-                backend::validate_status(msg_data, &self.storage, &eth).await?;
-                Ok(())
+        if let Some(eth) = self.negotiated_eth_capability.clone() {
+            let status = match eth.version {
+                68 => Message::Status(Box::new(Status68Message::new(&self.storage, &eth).await?)),
+                69 => Message::Status(Box::new(Status69Message::new(&self.storage, &eth).await?)),
+                _ => return Ok(()),
+            };
+            log_peer_debug(&self.node, "Sending status");
+            self.send(status).await?;
+            // The next immediate message in the ETH protocol is the
+            // status, reference here:
+            // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
+            let msg = match self.receive().await {
+                Some(msg) => msg?,
+                None => return Err(RLPxError::Disconnected()),
+            };
+            match msg {
+                Message::Status(msg_data) => {
+                    log_peer_debug(&self.node, "Received Status");
+                    backend::validate_status(msg_data, &self.storage, &eth).await?
+                }
+                Message::Disconnect(disconnect) => {
+                    return Err(RLPxError::HandshakeError(format!(
+                        "Peer disconnected due to: {}",
+                        disconnect.reason()
+                    )));
+                }
+                _ => {
+                    return Err(RLPxError::HandshakeError(
+                        "Expected a Status message".to_string(),
+                    ));
+                }
             }
-            Message::Disconnect(disconnect) => Err(RLPxError::HandshakeError(format!(
-                "Peer disconnected due to: {}",
-                disconnect.reason()
-            ))),
-            _ => Err(RLPxError::HandshakeError(
-                "Expected a Status message".to_string(),
-            )),
         }
+
+        Ok(())
     }
 
     async fn send(&mut self, message: Message) -> Result<(), RLPxError> {
