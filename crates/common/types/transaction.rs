@@ -276,16 +276,19 @@ impl From<TxType> for u8 {
 }
 
 pub trait Signable {
-    fn sign(&self, private_key: &SecretKey) -> Self
+    /// Both sign and sign_in_place return error when the payload hash calculated that has to
+    /// be signed is not exactly 32 bytes long. Currently it's an unreachable error
+    /// since the payload is hashed with the keccak algorithm which produces a 32 byte hash.
+    fn sign(&self, private_key: &SecretKey) -> Result<Self, secp256k1::Error>
     where
         Self: Sized,
         Self: Clone,
     {
         let mut signable = self.clone();
-        signable.sign_inplace(private_key);
-        signable
+        signable.sign_inplace(private_key)?;
+        Ok(signable)
     }
-    fn sign_inplace(&mut self, private_key: &SecretKey);
+    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error>;
 }
 
 impl Transaction {
@@ -880,21 +883,21 @@ impl RLPDecode for PrivilegedL2Transaction {
 }
 
 impl Signable for Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) {
+    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
         match self {
             Transaction::LegacyTransaction(tx) => tx.sign_inplace(private_key),
             Transaction::EIP2930Transaction(tx) => tx.sign_inplace(private_key),
             Transaction::EIP1559Transaction(tx) => tx.sign_inplace(private_key),
             Transaction::EIP4844Transaction(tx) => tx.sign_inplace(private_key),
             Transaction::EIP7702Transaction(tx) => tx.sign_inplace(private_key),
-            Transaction::PrivilegedL2Transaction(_) => (), // Privileged Transactions are not signed
+            Transaction::PrivilegedL2Transaction(_) => Ok(()), // Privileged Transactions are not signed
         }
     }
 }
 
 impl Signable for LegacyTransaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) {
-        let data = Message::from_digest_slice(&keccak(self.encode_payload_to_vec()).0).unwrap();
+    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
+        let data = Message::from_digest_slice(&keccak(self.encode_payload_to_vec()).0)?;
 
         let (recovery_id, signature) = secp256k1::SECP256K1
             .sign_ecdsa_recoverable(&data, private_key)
@@ -908,11 +911,12 @@ impl Signable for LegacyTransaction {
         self.r = U256::from_big_endian(&r);
         self.s = U256::from_big_endian(&s);
         self.v = U256::from(recovery_id.to_i32());
+        Ok(())
     }
 }
 
 impl Signable for EIP1559Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) {
+    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
         let mut payload = vec![TxType::EIP1559 as u8];
         payload.append(self.encode_payload_to_vec().as_mut());
         sing_inplace(
@@ -921,12 +925,12 @@ impl Signable for EIP1559Transaction {
             &mut self.signature_r,
             &mut self.signature_s,
             &mut self.signature_y_parity,
-        );
+        )
     }
 }
 
 impl Signable for EIP2930Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) {
+    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
         let mut payload = vec![TxType::EIP2930 as u8];
         payload.append(self.encode_payload_to_vec().as_mut());
         sing_inplace(
@@ -935,12 +939,12 @@ impl Signable for EIP2930Transaction {
             &mut self.signature_r,
             &mut self.signature_s,
             &mut self.signature_y_parity,
-        );
+        )
     }
 }
 
 impl Signable for EIP4844Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) {
+    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
         let mut payload = vec![TxType::EIP4844 as u8];
         payload.append(self.encode_payload_to_vec().as_mut());
         sing_inplace(
@@ -949,12 +953,12 @@ impl Signable for EIP4844Transaction {
             &mut self.signature_r,
             &mut self.signature_s,
             &mut self.signature_y_parity,
-        );
+        )
     }
 }
 
 impl Signable for EIP7702Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) {
+    fn sign_inplace(&mut self, private_key: &SecretKey) -> Result<(), secp256k1::Error> {
         let mut payload = vec![TxType::EIP7702 as u8];
         payload.append(self.encode_payload_to_vec().as_mut());
         sing_inplace(
@@ -963,7 +967,7 @@ impl Signable for EIP7702Transaction {
             &mut self.signature_r,
             &mut self.signature_s,
             &mut self.signature_y_parity,
-        );
+        )
     }
 }
 
@@ -973,8 +977,8 @@ fn sing_inplace(
     signature_r: &mut U256,
     signature_s: &mut U256,
     signature_y_parity: &mut bool,
-) {
-    let data = Message::from_digest_slice(&keccak(payload).0).unwrap();
+) -> Result<(), secp256k1::Error> {
+    let data = Message::from_digest_slice(&keccak(payload).0)?;
 
     let (recovery_id, signature) = secp256k1::SECP256K1
         .sign_ecdsa_recoverable(&data, private_key)
@@ -990,10 +994,11 @@ fn sing_inplace(
     *signature_r = U256::from_big_endian(&r);
     *signature_s = U256::from_big_endian(&s);
     *signature_y_parity = parity;
+    Ok(())
 }
 
 impl Transaction {
-    pub fn sender(&self) -> Address {
+    pub fn sender(&self) -> Result<Address, secp256k1::Error> {
         match self {
             Transaction::LegacyTransaction(tx) => {
                 let signature_y_parity = match self.chain_id() {
@@ -1106,7 +1111,7 @@ impl Transaction {
                     &Bytes::from(buf),
                 )
             }
-            Transaction::PrivilegedL2Transaction(tx) => tx.from,
+            Transaction::PrivilegedL2Transaction(tx) => Ok(tx.from),
         }
     }
 
@@ -1306,30 +1311,28 @@ impl Transaction {
     }
 }
 
-fn recover_address(
+pub fn recover_address(
     signature_r: &U256,
     signature_s: &U256,
     signature_y_parity: bool,
     message: &Bytes,
-) -> Address {
+) -> Result<Address, secp256k1::Error> {
     // Create signature
     let signature_bytes = [signature_r.to_big_endian(), signature_s.to_big_endian()].concat();
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
         &signature_bytes,
-        RecoveryId::from_i32(signature_y_parity as i32).unwrap(), // cannot fail
-    )
-    .unwrap();
+        RecoveryId::from_i32(signature_y_parity as i32)?, // cannot fail
+    )?;
     // Hash message
     let msg_digest: [u8; 32] = Keccak256::new_with_prefix(message.as_ref())
         .finalize()
         .into();
     // Recover public key
-    let public = secp256k1::SECP256K1
-        .recover_ecdsa(&Message::from_digest(msg_digest), &signature)
-        .unwrap();
+    let public =
+        secp256k1::SECP256K1.recover_ecdsa(&Message::from_digest(msg_digest), &signature)?;
     // Hash public key to obtain address
     let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
-    Address::from_slice(&hash[12..])
+    Ok(Address::from_slice(&hash[12..]))
 }
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
@@ -1503,6 +1506,29 @@ mod canonic_encoding {
             let mut buf = Vec::new();
             self.encode_canonical(&mut buf);
             buf
+        }
+
+        pub fn compute_hash(&self) -> H256 {
+            match self {
+                P2PTransaction::LegacyTransaction(t) => {
+                    Transaction::LegacyTransaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP2930Transaction(t) => {
+                    Transaction::EIP2930Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP1559Transaction(t) => {
+                    Transaction::EIP1559Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP4844TransactionWithBlobs(t) => {
+                    Transaction::EIP4844Transaction(t.tx.clone()).compute_hash()
+                }
+                P2PTransaction::EIP7702Transaction(t) => {
+                    Transaction::EIP7702Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::PrivilegedL2Transaction(t) => {
+                    Transaction::PrivilegedL2Transaction(t.clone()).compute_hash()
+                }
+            }
         }
     }
 }
