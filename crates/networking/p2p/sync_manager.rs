@@ -19,7 +19,7 @@ use crate::{
 };
 
 /// Abstraction to interact with the active sync process without disturbing it
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SyncManager {
     /// This is also held by the Syncer and allows tracking it's latest syncmode
     /// It is a READ_ONLY value, as modifications will disrupt the current active sync progress

@@ -284,7 +284,7 @@ contract OnChainProposer is
             withdrawalsLogsMerkleRoot,
             lastBlockHash
         );
-        emit BatchCommitted(batchNumber, newStateRoot);
+        emit BatchCommitted(batchNumber, newStateRoot, lastBlockHash);
 
         lastCommittedBatch = batchNumber;
         ISequencerRegistry(SEQUENCER_REGISTRY).pushSequencer(

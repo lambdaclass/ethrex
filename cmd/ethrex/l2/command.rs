@@ -9,13 +9,14 @@ use crate::{
     utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
 use clap::Subcommand;
+use core::sync;
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
 };
 use ethrex_l2::SequencerConfig;
 use ethrex_l2_common::state_diff::StateDiff;
-use ethrex_p2p::network::peer_table;
+use ethrex_p2p::{network::peer_table, peer_handler::PeerHandler, sync_manager::SyncManager};
 use ethrex_rpc::{
     EthClient,
     clients::{beacon::BeaconClient, eth::BlockByNumber},
@@ -25,7 +26,7 @@ use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use ethrex_vm::EvmEngine;
 use eyre::OptionExt;
 use itertools::Itertools;
-use keccak_hash::keccak;
+use keccak_hash::{H256, keccak};
 use reqwest::Url;
 use std::{
     fs::{create_dir_all, read_dir},
@@ -160,11 +161,21 @@ impl Command {
                     info!("P2P is disabled");
                 }
 
+                let peer_handler = PeerHandler::new(peer_table.clone());
+                let sync_manager = SyncManager::new(
+                    peer_handler,
+                    ethrex_p2p::sync::SyncMode::Full,
+                    cancel_token.clone(),
+                    blockchain.clone(),
+                    store.clone(),
+                );
+
                 let l2_sequencer = ethrex_l2::start_l2(
                     store,
                     rollup_store,
-                    blockchain,
+                    blockchain.clone(),
                     l2_sequencer_cfg,
+                    sync_manager.await,
                     #[cfg(feature = "metrics")]
                     format!(
                         "http://{}:{}",
@@ -174,7 +185,6 @@ impl Command {
                 .into_future();
 
                 tracker.spawn(l2_sequencer);
-
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {
                         info!("Server shut down started...");

@@ -1,12 +1,15 @@
 use std::{sync::Arc, time::Duration};
 
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
-use ethrex_common::{Address, types::Block};
+use ethrex_common::{Address, U256, types::Block};
 use ethrex_l2_sdk::calldata::encode_calldata;
+use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
+use keccak_hash::keccak;
 use spawned_concurrency::{CallResponse, CastResponse, GenServer, GenServerError, send_after};
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -45,6 +48,9 @@ pub struct StateUpdaterState {
     check_interval_ms: u64,
     sequencer_state: SequencerState,
     blockchain: Arc<Blockchain>,
+    sync_manager: SyncManager,
+    is_syncing: Arc<Mutex<bool>>,
+    latest_block_fetched: U256,
 }
 
 impl StateUpdaterState {
@@ -54,6 +60,7 @@ impl StateUpdaterState {
         blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
+        sync_manager: SyncManager,
     ) -> Result<Self, StateUpdaterError> {
         Ok(Self {
             on_chain_proposer_address: sequencer_cfg.l1_committer.on_chain_proposer_address,
@@ -67,6 +74,9 @@ impl StateUpdaterState {
             check_interval_ms: sequencer_cfg.based.state_updater.check_interval_ms,
             sequencer_state,
             blockchain,
+            sync_manager,
+            is_syncing: Arc::new(Mutex::new(false)),
+            latest_block_fetched: U256::zero(),
         })
     }
 }
@@ -90,6 +100,7 @@ impl StateUpdater {
         blockchain: Arc<Blockchain>,
         store: Store,
         rollup_store: StoreRollup,
+        sync_manager: SyncManager,
     ) -> Result<(), StateUpdaterError> {
         let state = StateUpdaterState::new(
             sequencer_cfg,
@@ -97,6 +108,7 @@ impl StateUpdater {
             blockchain,
             store,
             rollup_store,
+            sync_manager,
         )?;
         let mut state_updater = StateUpdater::start(state);
         state_updater
@@ -175,6 +187,43 @@ pub async fn update_state(state: &mut StateUpdaterState) -> Result<(), StateUpda
         node_is_up_to_date,
         lead_sequencer == state.sequencer_address,
     );
+    if let SequencerStatus::Syncing = current_state {
+        let mut a = state.is_syncing.lock().await;
+        if !*a && !state.blockchain.is_synced() {
+            let latest_l1_block = state.eth_client.get_block_number().await?;
+            let logs = state
+                .eth_client
+                .get_logs(
+                    state.latest_block_fetched,
+                    latest_l1_block,
+                    state.on_chain_proposer_address,
+                    keccak(b"BatchCommitted(uint256,bytes32,bytes32)"),
+                )
+                .await?;
+            if let Some(last_committed_batch_log) = logs.last() {
+                let newest_fcu_head =
+                    last_committed_batch_log.log.topics.get(3).ok_or_else(|| {
+                        StateUpdaterError::InternalError(
+                            "BatchCommitted log does not contain enough topics".to_string(),
+                        )
+                    })?;
+                *a = true;
+                state.sync_manager.sync_to_head(*newest_fcu_head);
+                state.latest_block_fetched = latest_l1_block;
+                *a = false;
+                state.blockchain.set_synced();
+            } else {
+                warn!("No new BatchCommitted logs found, continuing to sync.");
+            }
+        }
+        if !state.blockchain.is_synced() {
+            let head_number = state.eth_client.get_block_number().await?;
+            let latest_block = state.store.get_latest_block_number().await?;
+            if head_number == U256::from(latest_block) {
+                state.blockchain.set_synced();
+            }
+        }
+    }
 
     if current_state != new_status {
         info!("State transition: {:?} -> {:?}", current_state, new_status);
@@ -235,6 +284,7 @@ fn determine_new_status(
             if is_lead_sequencer && *current_state == SequencerStatus::Syncing {
                 warn!("Node is not up to date but is the lead sequencer, continue syncing.");
             }
+            info!("Node is not up to date, syncing...");
             SequencerStatus::Syncing
         }
     }
