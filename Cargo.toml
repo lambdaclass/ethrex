@@ -1,7 +1,5 @@
 [workspace]
 members = [
-  "tooling/ef_tests/blockchain",
-  "tooling/ef_tests/state",
   "cmd/ethrex",
   "cmd/ethrex_replay",
   "crates/blockchain",
