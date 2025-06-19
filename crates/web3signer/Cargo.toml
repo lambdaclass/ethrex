@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 reqwest.workspace = true
+url.workspace = true
 hex.workspace = true
 secp256k1.workspace = true
 bytes.workspace = true
