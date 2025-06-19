@@ -3,11 +3,10 @@ use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
 use crate::rlpx::eth::receipts::{Receipts68, Receipts69};
-use crate::rlpx::eth::status::{self, Status68Message, Status69Message};
+use crate::rlpx::eth::status::{Status68Message, Status69Message};
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
 use super::eth::receipts::GetReceipts;
-use super::eth::status::StatusMessage;
 use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
 };
@@ -44,7 +43,8 @@ pub(crate) enum Message {
     Pong(PongMessage),
     // eth capability
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md
-    Status(Box<dyn StatusMessage + Sync + Send>),
+    Status68(Status68Message),
+    Status69(Status69Message),
     GetBlockHeaders(GetBlockHeaders),
     BlockHeaders(BlockHeaders),
     Transactions(Transactions),
@@ -79,7 +79,8 @@ impl Message {
             Message::Pong(_) => MessageProtocol::P2P,
 
             // eth capability
-            Message::Status(_) => MessageProtocol::ETH,
+            Message::Status68(_) => MessageProtocol::ETH,
+            Message::Status69(_) => MessageProtocol::ETH,
             Message::Transactions(_) => MessageProtocol::ETH,
             Message::GetBlockHeaders(_) => MessageProtocol::ETH,
             Message::BlockHeaders(_) => MessageProtocol::ETH,
@@ -114,7 +115,8 @@ impl Message {
             Message::Pong(_) => PongMessage::CODE,
 
             // eth capability
-            Message::Status(_) => status::CODE,
+            Message::Status68(_) => Status68Message::CODE,
+            Message::Status69(_) => Status69Message::CODE,
             Message::Transactions(_) => Transactions::CODE,
             Message::GetBlockHeaders(_) => GetBlockHeaders::CODE,
             Message::BlockHeaders(_) => BlockHeaders::CODE,
@@ -210,9 +212,9 @@ impl Message {
 
         if eth_msg_id < eth_capability.length() {
             return match eth_msg_id {
-                status::CODE => match eth_capability.version {
-                    68 => Ok(Message::Status(Box::new(Status68Message::decode(data)?))),
-                    69 => Ok(Message::Status(Box::new(Status69Message::decode(data)?))),
+                Status68Message::CODE => match eth_capability.version {
+                    68 => Ok(Message::Status68(Status68Message::decode(data)?)),
+                    69 => Ok(Message::Status69(Status69Message::decode(data)?)),
                     _ => Err(RLPDecodeError::IncompatibleProtocol),
                 },
                 Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
@@ -283,15 +285,22 @@ impl Message {
             Message::Disconnect(msg) => msg.encode(buf),
             Message::Ping(msg) => msg.encode(buf),
             Message::Pong(msg) => msg.encode(buf),
-            Message::Status(msg) => {
-                if let Some(eth_capability) = eth_capability {
-                    match eth_capability.version {
-                        68 => msg.encode(buf),
-                        69 => msg.encode(buf),
-                        _ => Err(RLPEncodeError::IncompatibleProtocol),
-                    }
-                } else {
-                    Err(RLPEncodeError::IncompatibleProtocol)
+            Message::Status68(msg) => {
+                let eth_capability = eth_capability
+                    .as_ref()
+                    .ok_or(RLPEncodeError::IncompatibleProtocol)?;
+                match eth_capability.version {
+                    68 => msg.encode(buf),
+                    _ => Err(RLPEncodeError::IncompatibleProtocol),
+                }
+            }
+            Message::Status69(msg) => {
+                let eth_capability = eth_capability
+                    .as_ref()
+                    .ok_or(RLPEncodeError::IncompatibleProtocol)?;
+                match eth_capability.version {
+                    69 => msg.encode(buf),
+                    _ => Err(RLPEncodeError::IncompatibleProtocol),
                 }
             }
             Message::Transactions(msg) => msg.encode(buf),
@@ -349,7 +358,8 @@ impl Display for Message {
             Message::Disconnect(_) => "p2p:Disconnect".fmt(f),
             Message::Ping(_) => "p2p:Ping".fmt(f),
             Message::Pong(_) => "p2p:Pong".fmt(f),
-            Message::Status(_) => "eth:Status".fmt(f),
+            Message::Status68(_) => "eth:Status".fmt(f),
+            Message::Status69(_) => "eth:Status".fmt(f),
             Message::GetBlockHeaders(_) => "eth:getBlockHeaders".fmt(f),
             Message::BlockHeaders(_) => "eth:BlockHeaders".fmt(f),
             Message::BlockBodies(_) => "eth:BlockBodies".fmt(f),

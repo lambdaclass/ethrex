@@ -1,9 +1,7 @@
 use ethrex_common::types::ForkId;
 use ethrex_storage::Store;
 
-use crate::rlpx::{error::RLPxError, p2p::Capability};
-
-use super::status::StatusMessage;
+use crate::rlpx::{error::RLPxError, eth::status::StatusMessage, p2p::Capability};
 
 pub async fn validate_status(
     msg_data: Box<dyn StatusMessage + Send>,

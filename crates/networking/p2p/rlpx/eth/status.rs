@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+use crate::rlpx::message::RLPxMessage;
 use crate::rlpx::utils::{snappy_compress, snappy_decompress};
 use crate::rlpx::{error::RLPxError, p2p::Capability};
 use bytes::BufMut;
@@ -11,18 +12,11 @@ use ethrex_rlp::{
 };
 use ethrex_storage::Store;
 
-pub const CODE: u8 = 0x00;
-
-pub trait StatusMessage: Debug {
+pub trait StatusMessage {
     fn eth_version(&self) -> u8;
     fn network_id(&self) -> u64;
     fn genesis(&self) -> BlockHash;
     fn fork_id(&self) -> ForkId;
-
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError>;
-    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError>
-    where
-        Self: Sized;
 }
 
 #[derive(Debug)]
@@ -35,15 +29,19 @@ pub struct Status68Message {
     pub(crate) latest_block_hash: BlockHash,
 }
 
-#[derive(Debug)]
-pub struct Status69Message {
-    pub(crate) eth_version: u8,
-    pub(crate) network_id: u64,
-    pub(crate) genesis: BlockHash,
-    pub(crate) fork_id: ForkId,
-    pub(crate) earliest_block: u64,
-    pub(crate) latest_block: u64,
-    pub(crate) latest_block_hash: BlockHash,
+impl StatusMessage for Status68Message {
+    fn eth_version(&self) -> u8 {
+        self.eth_version
+    }
+    fn network_id(&self) -> u64 {
+        self.network_id
+    }
+    fn genesis(&self) -> BlockHash {
+        self.genesis
+    }
+    fn fork_id(&self) -> ForkId {
+        self.fork_id.clone()
+    }
 }
 
 impl Status68Message {
@@ -82,6 +80,32 @@ impl Status68Message {
     }
 }
 
+#[derive(Debug)]
+pub struct Status69Message {
+    pub(crate) eth_version: u8,
+    pub(crate) network_id: u64,
+    pub(crate) genesis: BlockHash,
+    pub(crate) fork_id: ForkId,
+    pub(crate) earliest_block: u64,
+    pub(crate) latest_block: u64,
+    pub(crate) latest_block_hash: BlockHash,
+}
+
+impl StatusMessage for Status69Message {
+    fn eth_version(&self) -> u8 {
+        self.eth_version
+    }
+    fn network_id(&self) -> u64 {
+        self.network_id
+    }
+    fn genesis(&self) -> BlockHash {
+        self.genesis
+    }
+    fn fork_id(&self) -> ForkId {
+        self.fork_id.clone()
+    }
+}
+
 impl Status69Message {
     pub async fn new(storage: &Store, eth: &Capability) -> Result<Self, RLPxError> {
         let chain_config = storage.get_chain_config()?;
@@ -117,19 +141,8 @@ impl Status69Message {
     }
 }
 
-impl StatusMessage for Status68Message {
-    fn eth_version(&self) -> u8 {
-        self.eth_version
-    }
-    fn network_id(&self) -> u64 {
-        self.network_id
-    }
-    fn genesis(&self) -> BlockHash {
-        self.genesis
-    }
-    fn fork_id(&self) -> ForkId {
-        self.fork_id.clone()
-    }
+impl RLPxMessage for Status68Message {
+    const CODE: u8 = 0x00;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
@@ -176,19 +189,8 @@ impl StatusMessage for Status68Message {
     }
 }
 
-impl StatusMessage for Status69Message {
-    fn eth_version(&self) -> u8 {
-        self.eth_version
-    }
-    fn network_id(&self) -> u64 {
-        self.network_id
-    }
-    fn genesis(&self) -> BlockHash {
-        self.genesis
-    }
-    fn fork_id(&self) -> ForkId {
-        self.fork_id.clone()
-    }
+impl RLPxMessage for Status69Message {
+    const CODE: u8 = 0x00;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];

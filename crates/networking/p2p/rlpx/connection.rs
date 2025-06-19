@@ -511,9 +511,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::Pong(_) => {
                 // We ignore received Pong messages
             }
-            Message::Status(msg_data) => {
+            Message::Status68(msg_data) => {
                 if let Some(eth) = &self.negotiated_eth_capability {
-                    backend::validate_status(msg_data, &self.storage, eth).await?
+                    backend::validate_status(Box::new(msg_data), &self.storage, eth).await?
+                };
+            }
+            Message::Status69(msg_data) => {
+                if let Some(eth) = &self.negotiated_eth_capability {
+                    backend::validate_status(Box::new(msg_data), &self.storage, eth).await?
                 };
             }
             Message::GetAccountRange(req) => {
@@ -676,8 +681,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Sending eth Status if peer supports it
         if let Some(eth) = self.negotiated_eth_capability.clone() {
             let status = match eth.version {
-                68 => Message::Status(Box::new(Status68Message::new(&self.storage, &eth).await?)),
-                69 => Message::Status(Box::new(Status69Message::new(&self.storage, &eth).await?)),
+                68 => Message::Status68(Status68Message::new(&self.storage, &eth).await?),
+                69 => Message::Status69(Status69Message::new(&self.storage, &eth).await?),
                 _ => return Ok(()),
             };
             log_peer_debug(&self.node, "Sending status");
@@ -690,9 +695,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 None => return Err(RLPxError::Disconnected()),
             };
             match msg {
-                Message::Status(msg_data) => {
+                Message::Status68(msg_data) => {
                     log_peer_debug(&self.node, "Received Status");
-                    backend::validate_status(msg_data, &self.storage, &eth).await?
+                    backend::validate_status(Box::new(msg_data), &self.storage, &eth).await?
+                }
+                Message::Status69(msg_data) => {
+                    log_peer_debug(&self.node, "Received Status");
+                    backend::validate_status(Box::new(msg_data), &self.storage, &eth).await?
                 }
                 Message::Disconnect(disconnect) => {
                     return Err(RLPxError::HandshakeError(format!(
