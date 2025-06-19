@@ -270,57 +270,65 @@ impl StoreEngine for Store {
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
-            // FIXME: this should be dependent on the current snapshot being reachable from this chain
-            let mut cursor = tx
-                .cursor::<FlatAccountInfo>()
-                .map_err(StoreError::LibmdbxError)?;
-            let mut storage_cursor = tx
-                .cursor::<FlatAccountStorage>()
-                .map_err(StoreError::LibmdbxError)?;
-            for update in account_updates.iter() {
-                let key = AccountAddress(update.address);
-                if update.removed {
-                    if cursor
-                        .seek_exact(key)
-                        .map_err(StoreError::LibmdbxError)?
-                        .is_some()
-                    {
-                        cursor.delete_current().map_err(StoreError::LibmdbxError)?;
+            let Some(first_block) = update_batch.blocks.first() else {
+                return Ok(());
+            };
+            let meta = tx
+                .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})
+                .map_err(StoreError::LibmdbxError)?
+                .unwrap_or_default();
+            if meta == (first_block.header.number, first_block.header.hash()).into() {
+                let mut cursor = tx
+                    .cursor::<FlatAccountInfo>()
+                    .map_err(StoreError::LibmdbxError)?;
+                let mut storage_cursor = tx
+                    .cursor::<FlatAccountStorage>()
+                    .map_err(StoreError::LibmdbxError)?;
+                for update in account_updates.iter() {
+                    let key = AccountAddress(update.address);
+                    if update.removed {
+                        if cursor
+                            .seek_exact(key)
+                            .map_err(StoreError::LibmdbxError)?
+                            .is_some()
+                        {
+                            cursor.delete_current().map_err(StoreError::LibmdbxError)?;
+                        }
+                    } else if let Some(info_update) = &update.info {
+                        let value = (
+                            info_update.code_hash,
+                            info_update.balance,
+                            info_update.nonce,
+                        )
+                            .into();
+                        cursor
+                            .upsert(key, value)
+                            .map_err(StoreError::LibmdbxError)?;
                     }
-                } else if let Some(info_update) = &update.info {
-                    let value = (
-                        info_update.code_hash,
-                        info_update.balance,
-                        info_update.nonce,
-                    )
-                        .into();
-                    cursor
-                        .upsert(key, value)
-                        .map_err(StoreError::LibmdbxError)?;
-                }
 
-                for (slot, value) in update.added_storage.iter() {
-                    let key = (update.address.into(), (*slot).into());
-                    if !value.is_zero() {
-                        storage_cursor
-                            .upsert(key, (*value).into())
-                            .map_err(StoreError::LibmdbxError)?;
-                    } else if let Some(_current_data) = storage_cursor
-                        .seek_exact(key)
-                        .map_err(StoreError::LibmdbxError)?
-                    {
-                        storage_cursor
-                            .delete_current()
-                            .map_err(StoreError::LibmdbxError)?;
+                    for (slot, value) in update.added_storage.iter() {
+                        let key = (update.address.into(), (*slot).into());
+                        if !value.is_zero() {
+                            storage_cursor
+                                .upsert(key, (*value).into())
+                                .map_err(StoreError::LibmdbxError)?;
+                        } else if let Some(_current_data) = storage_cursor
+                            .seek_exact(key)
+                            .map_err(StoreError::LibmdbxError)?
+                        {
+                            storage_cursor
+                                .delete_current()
+                                .map_err(StoreError::LibmdbxError)?;
+                        }
                     }
                 }
-            }
-            if let Some(block) = update_batch.blocks.iter().max_by_key(|b| b.header.number) {
-                tx.upsert::<FlatTablesBlockMetadata>(
-                    FlatTablesBlockMetadataKey {},
-                    (block.header.number, block.header.hash()).into(),
-                )
-                .map_err(StoreError::LibmdbxError)?;
+                if let Some(block) = update_batch.blocks.iter().max_by_key(|b| b.header.number) {
+                    tx.upsert::<FlatTablesBlockMetadata>(
+                        FlatTablesBlockMetadataKey {},
+                        (block.header.number, block.header.hash()).into(),
+                    )
+                    .map_err(StoreError::LibmdbxError)?;
+                }
             }
 
             // for each block in the update batch, we iterate over the account updates (by index)
