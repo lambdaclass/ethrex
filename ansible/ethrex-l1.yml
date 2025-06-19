@@ -114,11 +114,23 @@
         enabled: true
         daemon_reload: true
 
+    - name: Compile Ethrex
+      command: cargo build --release --features metrics,libmdbx
+      args:
+        chdir: "{{ ethrex_dir }}"
+
     - name: Install Ethrex L1
       template:
         src: services/ethrex-l1.service.j2
         dest: /home/{{ ansible_user }}/.config/systemd/user/ethrex-l1.service
       vars:
-        # envvars to pass to the L1 template systemd service
+        network: "hoodi"
+        evm: "{{ lookup('env', 'EVM') }}"
+        bootnodes: "{{ lookup('env', 'BOOTNODES') }}"
     
-    #- name: Start Ethrex L1
+    - name: Start Ethrex L1
+      systemd:
+        name: ethrex-l1
+        state: started
+        enabled: true
+        daemon_reload: true

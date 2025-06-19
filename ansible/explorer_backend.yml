@@ -103,21 +103,21 @@
           mix phx.digest
         chdir: "{{ explorer_dir }}"
       vars:
-        DATABASE_URL: "ecto://user+password@database_ip:port/database" #TODO: change this
-        SECRET_KEY_BASE: "{{ lookup('pipe', 'mix phx.gen.secret') }}"
-        ETHEREUM_JSONRPC_VARIANT: "geth"
-        ETHEREUM_JSONRPC_HTTP_URL: "http://localhost:8545"
-        API_V2_ENABLED: true
-        PORT: 3001
-        COIN: "ETH"
-        COIN_NAME: "ETH"
-        DISPLAY_TOKEN_ICONS: true
-        MIX_ENV: "prod"
-        MICROSERVICE_SC_VERIFIER_ENABLED: true
-        MICROSERVICE_SC_VERIFIER_URL: "http://localhost:8082/"
-        POOL_SIZE: 25
-        POOL_SIZE_API: 25
-        DISABLE_WEBAPP: true
+        DATABASE_URL: "{{ lookup('env', 'DATABASE_URL') }}"
+        SECRET_KEY_BASE: "{{ lookup('pipe', 'mix phx.gen.secret') }}" # Generate SECRET_KEY_BASE at runtime.
+        ETHEREUM_JSONRPC_VARIANT: "{{ lookup('env', 'ETHEREUM_JSONRPC_VARIANT') }}"
+        ETHEREUM_JSONRPC_HTTP_URL: "{{ lookup('env', 'ETHEREUM_JSONRPC_HTTP_URL') }}"
+        API_V2_ENABLED: "{{ lookup('env', 'API_V2_ENABLED') }}"
+        PORT: "{{ lookup('env', 'PORT') }}"
+        COIN: "{{ lookup('env', 'COIN') }}"
+        COIN_NAME: "{{ lookup('env', 'COIN_NAME') }}"
+        DISPLAY_TOKEN_ICONS: "{{ lookup('env', 'DISPLAY_TOKEN_ICONS') }}"
+        MIX_ENV: "{{ lookup('env', 'MIX_ENV') }}"
+        MICROSERVICE_SC_VERIFIER_ENABLED: "{{ lookup('env', 'MICROSERVICE_SC_VERIFIER_ENABLED') }}"
+        MICROSERVICE_SC_VERIFIER_URL: "{{ lookup('env', 'MICROSERVICE_SC_VERIFIER_URL') }}"
+        POOL_SIZE: "{{ lookup('env', 'POOL_SIZE') }}"
+        POOL_SIZE_API: "{{ lookup('env', 'POOL_SIZE_API') }}"
+        DISABLE_WEBAPP: "{{ lookup('env', 'DISABLE_WEBAPP') }}"
 
     - name: Install Explorer service
       template:

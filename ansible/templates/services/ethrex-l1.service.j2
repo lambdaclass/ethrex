@@ -3,25 +3,22 @@ Description=Ethrex L2
 After=network.target
 
 [Service]
-ExecStart={{ ethrex_dir }}/target/release/ethrex l2 init \
-          --network {{ ethrex_dir }}/genesis.json \
-          --http.port 1729 \
-          --http.addr 0.0.0.0 \
-          --metrics \
-          --metrics.port 3702 \
-          --evm levm \
-          --datadir ethrex_l2 \
-          --l1.bridge-address {{ common_bridge_address }} \
-          --l1.on-chain-proposer-address {{ on_chain_proposer_address }} \
-          --committer.l1-private-key {{ committer_pk }} \
-          --proof-coordinator.l1-private-key {{ proof_sender_pk }} \
-          --proof-coordinator.addr 127.0.0.1 \
-          --block-producer.coinbase-address {{ coinbase_address }} \
-          --validium \
-          --eth.maximum-allowed-max-fee-per-gas 10000000000000 \
-          --eth.maximum-allowed-max-fee-per-blob-gas 10000000000000 \
-          --committer.commit-time 3600000 \
-          --eth.rpc-url {{ eth_testnet_rpc }} https://sepolia.infura.io/v3/{{ infura_api_key }}
+Environment="DATA_PATH=/home/{{ ansible_user }}/.local/share"
+Environment="RUST_LOG=3"
+
+ExecStart={{ ethrex_dir }}/target/release/ethrex l1 init \
+            --http.addr 0.0.0.0 \
+            --http.port 8545 \
+            --authrpc.port 8551 \
+            --p2p.port 30303\
+            --metrics \
+            --metrics.port 3701 \
+            --discovery.port 30303 \
+            --network {{ network }} \
+            --datadir "{{ network }}_data/ethrex/{{ evm }}" \
+            --authrpc.jwtsecret $DATA_PATH/{{ network }}_data/jwt.hex \
+            --bootnodes {{ bootnodes }} \
+            --evm {{ evm }}
 
 Restart=on-failure
 

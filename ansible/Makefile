@@ -25,12 +25,35 @@ database:
 	ansible-playbook -i inventory.ini database.yml
 
 ethrex-l1:
-	ANSIBLE_ENVVAR=$(ENVVAR) ansible-playbook -i inventory.ini ethrex-l1.yml
+	EVM=$(EVM)
+	BOOTNODES=$(BOOTNODES)
+	ansible-playbook -i inventory.ini ethrex-l1.yml
 
 ethrex-l2:
+	COMMON_BRIDGE_ADDRESS=$(COMMON_BRIDGE_ADDRESS)
+	ON_CHAIN_PROPOSER_ADDRESS=$(ON_CHAIN_PROPOSER_ADDRESS)
+	COMMITTER_PK=$(COMMITTER_PK)
+	PROOF_SENDER_PK=$(PROOF_SENDER_PK)
+	COINBASE_ADDRESS=$(COINBASE_ADDRESS)
+	ETH_TESTNET_RPC=$(TESTNET_RPC)
+	INFURA_API_KEY=$(INFURA_API_KEY)
 	ansible-playbook -i inventory.ini ethrex-l2.yml
 
 explorer_backend:
+	DATABASE_URL=$(DATABASE_URL) # ecto://user:pass@127.0.0.1:5432/db
+	ETHEREUM_JSONRPC_VARIANT=geth
+	ETHEREUM_JSONRPC_HTTP_URL=http://localhost:8545
+	API_V2_ENABLED=true
+	PORT=3001
+	COIN=ETH
+	COIN_NAME=ETH
+	DISPLAY_TOKEN_ICONS=true
+	MIX_ENV=prod
+	MICROSERVICE_SC_VERIFIER_ENABLED=true
+	MICROSERVICE_SC_VERIFIER_URL=http://localhost:8082/
+	POOL_SIZE=25
+	POOL_SIZE_API=25
+	DISABLE_WEBAPP=true
 	ansible-playbook -i inventory.ini explorer_backend.yml
 
 explorer_fontend:

@@ -2,7 +2,6 @@
   hosts: l2
   vars:
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
-    eth_testnet_rpc: "http://eth-testnet-rpc:8545"
 
   tasks:
     - name: Check if rustup is installed
@@ -49,6 +48,7 @@
         committer_pk: "{{ lookup('env', 'COMMITTER_PK') }}"
         proof_sender_pk: "{{ lookup('env', 'PROOF_SENDER_PK') }}"
         coinbase_address: "{{ lookup('env', 'COINBASE_ADDRESS') }}"
+        eth_testnet_rpc: "{{ lookup('env', 'TESTNET_RPC') }}"
         infura_api_key: "{{ lookup('env', 'INFURA_API_KEY') }}"
 
     - name: Start Ethrex L2
