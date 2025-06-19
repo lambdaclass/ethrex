@@ -114,18 +114,20 @@ impl PartialEq for NodeRef {
     }
 }
 
-pub enum ValueOrHash {
+pub enum InsertAction {
     Value(ValueRLP),
     Hash(NodeHash),
+    /// Input = previous value if exists, returns the new value.
+    Update(Box<dyn FnOnce(Option<ValueRLP>) -> Result<ValueRLP, TrieError>>)
 }
 
-impl From<ValueRLP> for ValueOrHash {
+impl From<ValueRLP> for InsertAction {
     fn from(value: ValueRLP) -> Self {
         Self::Value(value)
     }
 }
 
-impl From<NodeHash> for ValueOrHash {
+impl From<NodeHash> for InsertAction {
     fn from(value: NodeHash) -> Self {
         Self::Hash(value)
     }
@@ -178,7 +180,7 @@ impl Node {
         self,
         db: &dyn TrieDB,
         path: Nibbles,
-        value: impl Into<ValueOrHash>,
+        value: impl Into<InsertAction>,
     ) -> Result<Node, TrieError> {
         match self {
             Node::Branch(n) => n.insert(db, path, value.into()),

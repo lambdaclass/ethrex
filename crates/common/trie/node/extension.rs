@@ -5,7 +5,7 @@ use crate::nibbles::Nibbles;
 use crate::node_hash::NodeHash;
 use crate::{TrieDB, error::TrieError};
 
-use super::{BranchNode, Node, NodeRef, ValueOrHash};
+use super::{BranchNode, Node, NodeRef, InsertAction};
 
 /// Extension Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's prefix and a its child node hash, doesn't store any value
@@ -42,7 +42,7 @@ impl ExtensionNode {
         mut self,
         db: &dyn TrieDB,
         path: Nibbles,
-        value: ValueOrHash,
+        value: InsertAction,
     ) -> Result<Node, TrieError> {
         /* Possible flow paths:
             * Prefix fully matches path

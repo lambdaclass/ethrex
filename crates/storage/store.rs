@@ -414,7 +414,7 @@ impl Store {
                     ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
                 }
 
-                Ok(Some(account_state.encode_to_vec()))
+                Ok(account_state.encode_to_vec())
             })?;
         }
 

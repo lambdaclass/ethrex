@@ -15,6 +15,8 @@ use sha3::{Digest, Keccak256};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use crate::node::InsertAction;
+
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
@@ -123,56 +125,24 @@ impl Trie {
     /// Update an RLP-encoded value into the trie.
     ///
     /// If on_get returns None, no insert will be done.
-    pub fn update<T>(&mut self, path: PathRLP, on_get: T) -> Result<(), TrieError>
+    pub fn update<F>(&mut self, path: PathRLP, on_update: F) -> Result<(), TrieError>
     where
-        T: FnOnce(Option<ValueRLP>) -> Result<Option<ValueRLP>, TrieError>,
+        F: FnOnce(Option<ValueRLP>) -> Result<ValueRLP, TrieError> + 'static,
     {
         let path = Nibbles::from_bytes(&path);
 
-        if !self.root.is_valid() {
+        self.root = if self.root.is_valid() {
+            // If the trie is not empty, call the root node's insertion logic.
+            self.root
+                .get_node(self.db.as_ref())?
+                .ok_or(TrieError::InconsistentTree)?
+                .insert(self.db.as_ref(), path, InsertAction::Update(Box::new(on_update)))?
+                .into()
+        } else {
             // If the trie is empty, just add a leaf.
-            let new_value = on_get(None)?;
-
-            if let Some(value) = new_value {
-                self.root = Node::from(LeafNode::new(path, value)).into();
-            }
-
-            return Ok(());
-        }
-
-        let mut insert_node = None;
-        // First, get the previous value saving the node we got it from.
-        let prev = match self.root {
-            NodeRef::Node(ref node, _) => {
-                let value = node.get(self.db.as_ref(), path.clone())?;
-                insert_node = Some(node.clone());
-                value
-            }
-            NodeRef::Hash(hash) if hash.is_valid() => {
-                let node = Arc::new(
-                    Node::decode(&self.db.get(hash)?.ok_or(TrieError::InconsistentTree)?)
-                        .map_err(TrieError::RLPDecode)?,
-                );
-
-                let value = node.get(self.db.as_ref(), path.clone())?;
-                insert_node = Some(node);
-
-                value
-            }
-            _ => None,
+            Node::from(LeafNode::new(path, on_update(None)?)).into()
         };
 
-        let new_value = on_get(prev)?;
-        if let Some(value) = new_value {
-            if let Some(insert_node) = insert_node {
-                self.root = (*insert_node)
-                    .clone()
-                    .insert(self.db(), path, value)?
-                    .into();
-            } else {
-                self.root = Node::from(LeafNode::new(path, value)).into();
-            }
-        }
         Ok(())
     }
 
@@ -740,7 +710,7 @@ mod test {
         trie.update(vec![16], |prev| {
             assert_eq!(prev, Some(vec![0]));
 
-            Ok(Some(vec![1]))
+            Ok(vec![1])
         })
         .unwrap();
 
@@ -750,22 +720,12 @@ mod test {
         trie.update(vec![17], |prev| {
             assert_eq!(prev, None);
 
-            Ok(Some(vec![1]))
+            Ok(vec![1])
         })
         .unwrap();
 
         let item = trie.get(&vec![17]).unwrap();
         assert_eq!(item, Some(vec![1]));
-
-        trie.update(vec![18], |prev| {
-            assert_eq!(prev, None);
-
-            Ok(None)
-        })
-        .unwrap();
-
-        let item = trie.get(&vec![18]).unwrap();
-        assert_eq!(item, None);
     }
 
     #[test]

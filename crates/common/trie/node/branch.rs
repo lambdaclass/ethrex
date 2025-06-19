@@ -2,7 +2,7 @@ use ethrex_rlp::structs::Encoder;
 
 use crate::{TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles, node_hash::NodeHash};
 
-use super::{ExtensionNode, LeafNode, Node, NodeRef, ValueOrHash};
+use super::{ExtensionNode, LeafNode, Node, NodeRef, InsertAction};
 
 /// Branch Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's value and the hash of its children nodes
@@ -75,27 +75,39 @@ impl BranchNode {
         mut self,
         db: &dyn TrieDB,
         mut path: Nibbles,
-        value: ValueOrHash,
+        value: InsertAction,
     ) -> Result<Node, TrieError> {
         // If path is at the end, insert or replace its own value.
         // Otherwise, check the corresponding choice and insert or delegate accordingly.
         if let Some(choice) = path.next_choice() {
             match (&mut self.choices[choice], value) {
                 // Create new child (leaf node)
-                (choice_ref, ValueOrHash::Value(value)) if !choice_ref.is_valid() => {
+                (choice_ref, InsertAction::Value(value)) if !choice_ref.is_valid() => {
+                    let new_leaf = LeafNode::new(path, value);
+                    *choice_ref = Node::from(new_leaf).into();
+                },
+                (choice_ref, InsertAction::Update(on_update)) if !choice_ref.is_valid() => {
+                    let value = on_update(None)?;
                     let new_leaf = LeafNode::new(path, value);
                     *choice_ref = Node::from(new_leaf).into();
                 }
                 // Insert into existing child and then update it
-                (choice_ref, ValueOrHash::Value(value)) => {
+                (choice_ref, InsertAction::Value(value)) => {
                     let child_node = choice_ref
                         .get_node(db)?
                         .ok_or(TrieError::InconsistentTree)?;
 
                     *choice_ref = child_node.insert(db, path, value)?.into();
+                },
+                // Update existing child and then update it
+                (choice_ref, value @ InsertAction::Update(_)) => {
+                    let child_node = choice_ref
+                        .get_node(db)?
+                        .ok_or(TrieError::InconsistentTree)?;
+                    *choice_ref = child_node.insert(db, path, value)?.into();
                 }
                 // Insert external node hash if there are no overrides.
-                (choice_ref, value @ ValueOrHash::Hash(hash)) => {
+                (choice_ref, value @ InsertAction::Hash(hash)) => {
                     if !choice_ref.is_valid() {
                         *choice_ref = hash.into();
                     } else if path.is_empty() {
@@ -111,7 +123,7 @@ impl BranchNode {
                     }
                 }
             }
-        } else if let ValueOrHash::Value(value) = value {
+        } else if let InsertAction::Value(value) = value {
             // Insert into self
             self.update(value);
         } else {
