@@ -60,7 +60,7 @@ jobs:
           name: "L1 block proving benchmark"
           tool: "customBiggerIsBetter"
           output-file-path: cmd/ethrex_replay/bench_latest.json
-          benchmark-data-dir-path: "."
+          benchmark-data-dir-path: "benchmarks"
           # Access token to deploy GitHub Pages branch
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # Push and deploy GitHub pages branch automatically
