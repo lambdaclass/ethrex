@@ -248,20 +248,71 @@ impl Mempool {
         sender: Address,
         nonce: u64,
         received_hash: H256,
-    ) -> Result<bool, MempoolError> {
+    ) -> Result<Option<MempoolTransaction>, MempoolError> {
         let pooled_transactions = self
             .transaction_pool
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
-        let count = pooled_transactions
+        let mut txs = pooled_transactions
             .iter()
-            .filter(|(hash, tx)| {
-                tx.sender() == sender && tx.nonce() == nonce && *hash != &received_hash
+            .filter_map(|(hash, tx)| {
+                if tx.sender() == sender && tx.nonce() == nonce && *hash != received_hash {
+                    Some(tx.clone())
+                } else {
+                    None
+                }
             })
-            .count();
+            .collect::<Vec<_>>();
 
-        Ok(count > 0)
+        Ok(txs.pop())
+    }
+
+    pub fn find_tx_to_replace(
+        &self,
+        sender: Address,
+        nonce: u64,
+        tx: &Transaction,
+    ) -> Result<Option<H256>, MempoolError> {
+        let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.compute_hash())? else {
+            return Ok(None);
+        };
+
+        let is_a_replacement_tx = {
+            // EIP-1559 values
+            let old_tx_max_fee_per_gas = tx_in_pool.max_fee_per_gas().unwrap_or_default();
+            let old_tx_max_priority_fee_per_gas = tx_in_pool.max_priority_fee().unwrap_or_default();
+            let new_tx_max_fee_per_gas = tx.max_fee_per_gas().unwrap_or_default();
+            let new_tx_max_priority_fee_per_gas = tx.max_priority_fee().unwrap_or_default();
+
+            // Legacy tx values
+            let old_tx_gas_price = tx_in_pool.gas_price();
+            let new_tx_gas_price = tx.gas_price();
+
+            // EIP-4844 values
+            let old_tx_max_fee_per_blob = tx_in_pool.max_fee_per_blob_gas();
+            let new_tx_max_fee_per_blob = tx.max_fee_per_blob_gas();
+
+            let eip4844_higher_fees = if let (Some(old_blob_fee), Some(new_blob_fee)) =
+                (old_tx_max_fee_per_blob, new_tx_max_fee_per_blob)
+            {
+                new_blob_fee > old_blob_fee
+            } else {
+                true // We are marking it as always true if the tx is not eip-4844
+            };
+
+            let eip1559_higher_fees = new_tx_max_fee_per_gas > old_tx_max_fee_per_gas
+                && new_tx_max_priority_fee_per_gas > old_tx_max_priority_fee_per_gas;
+            let legacy_higher_fees = new_tx_gas_price > old_tx_gas_price;
+
+            eip4844_higher_fees && (eip1559_higher_fees || legacy_higher_fees)
+        };
+
+        if !is_a_replacement_tx {
+            return Err(MempoolError::NonceTooLow);
+        }
+
+        Ok(Some(tx_in_pool.compute_hash()))
     }
 }
 
