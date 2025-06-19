@@ -145,6 +145,7 @@ jobs:
           rustup default nightly
           git clone https://github.com/lambdaclass/rex.git
           cd rex
+          git checkout 1634d3bdd1b15d52cefb37cdc3127cf6667ce9d9
           make cli
           echo "rex install successfully at $(which rex)"
 
