@@ -31,7 +31,6 @@ pub enum BlockBodyWrapper {
 pub struct FullBlockBody {
     pub transactions: Vec<RpcTransaction>,
     pub uncles: Vec<BlockHeader>,
-    #[serde(default)]
     pub withdrawals: Vec<Withdrawal>,
 }
 
