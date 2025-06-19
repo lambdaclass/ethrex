@@ -107,7 +107,7 @@ Our proof of equivalence implementation follows Method 1 [here](https://notes.et
   - The commitment's hash is equal to the versioned hash for that blob.
   - The evaluation is correct.
 
-## How does L1<->L2 communication work?
+## L1<->L2 communication
 
 To communicate between L1 and L2, we use two mechanisms called *Privileged transactions*, and *L1 messages*.
 In this section we talk a bit about them, first going through the more specific use cases for *Deposits* and *Withdrawals*.
