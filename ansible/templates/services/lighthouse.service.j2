@@ -1,0 +1,14 @@
+[Unit]
+Description=Lighthouse Holesky
+After=network-online.target
+
+[Service]
+Restart=on-failure
+ExecStart=lighthouse 
+
+
+ExecReload=/bin/kill -HUP
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=default.target

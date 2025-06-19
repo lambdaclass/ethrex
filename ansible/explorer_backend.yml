@@ -72,19 +72,17 @@
         dest: /tmp/
         remote_src: yes
 
-    - name: Move Node Exporter
+    - name: Move NodeJS
       copy:
         remote_src: true
-        src: "{{ item.src }}"
-        dest: "{{ item.dest }}"
+        src: "/tmp/nodejs-{{ nodejs_version }}/bin/"
+        dest: "/usr/local/bin/"
         mode: '0755'
-      with_items:
-        - { src: "/tmp/nodejs-{{ nodejs_version }}/bin/", dest: "/usr/local/bin/" }
 
-    - name: Install Erlang
+    - name: Install Erlang and Elixir
       apt:
         name:
-          - erlang
+          - erlang-esl
           - elixir
         state: latest
 
@@ -94,8 +92,41 @@
         dest: "{{ explorer_dir }}"
         version: stable
 
-    - name: Install Explorer service
+    - name: Compile Explorer
+      shell:
+        cmd: |
+          mix do deps.get, local.rebar --force, deps.compile
+          mix compile
+          mix do ecto.create, ecto.migrate
+          cd apps/block_scout_web/assets; npm install && node_modules/webpack/bin/webpack.js --mode production; cd -
+          cd apps/explorer && npm install; cd -
+          mix phx.digest
+        chdir: "{{ explorer_dir }}"
       vars:
-        # add envvars to install 
+        DATABASE_URL: "ecto://user+password@database_ip:port/database" #TODO: change this
+        SECRET_KEY_BASE: "{{ lookup('pipe', 'mix phx.gen.secret') }}"
+        ETHEREUM_JSONRPC_VARIANT: "geth"
+        ETHEREUM_JSONRPC_HTTP_URL: "http://localhost:8545"
+        API_V2_ENABLED: true
+        PORT: 3001
+        COIN: "ETH"
+        COIN_NAME: "ETH"
+        DISPLAY_TOKEN_ICONS: true
+        MIX_ENV: "prod"
+        MICROSERVICE_SC_VERIFIER_ENABLED: true
+        MICROSERVICE_SC_VERIFIER_URL: "http://localhost:8082/"
+        POOL_SIZE: 25
+        POOL_SIZE_API: 25
+        DISABLE_WEBAPP: true
+
+    - name: Install Explorer service
+      template:
+        src: services/explorer-backend.service.j2
+        dest: "/home/{{ ansible_user }}/.config/systemd/user/explorer-backend.service"
 
     - name: Start Explorer
+      systemd:
+        name: explorer-backend
+        state: started
+        enabled: true
+        daemon_reload: true

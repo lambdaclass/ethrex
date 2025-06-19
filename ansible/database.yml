@@ -1,5 +1,6 @@
 - name: Database Setup
   hosts: database
+  become: true
 
   tasks:
     - name: Add PostgreSQL GPG key
@@ -24,4 +25,4 @@
       systemd:
         name: postgresql
         state: started
-        enabled: yes
+        enabled: true

@@ -24,4 +24,3 @@
         dest: "{{ item.dest }}"
       with_items:
         - { src: "", dest: "" }
-      

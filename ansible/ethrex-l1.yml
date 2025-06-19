@@ -1,13 +1,11 @@
 - name: Ethrex L1 Setup
-  hosts: ethrex_l1
+  hosts: l1
   vars:
     ethrex_dir: "/home/{{ ansible_user }}/ethrex"
+    ethereum_metrics_exporter_version: "0.27.4"
+    lighthouse_version: "7.0.1"
 
   tasks:
-    - name: Update apt cache
-      apt:
-        update_cache: yes
-
     - name: Install Clang and related tools
       apt:
         name:
@@ -19,6 +17,7 @@
           - git
           - pkg-config
         state: present
+        update_cache: yes
 
     - name: Check if rustup is installed
       stat:
@@ -41,6 +40,44 @@
         repo: "https://github.com/lambdaclass/ethrex.git"
         dest: "{{ ethrex_dir }}"
         version: main
+
+    - name: Ensure user systemd directory exists
+      file:
+        path: "/home/{{ ansible_user }}/.config/systemd/user"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
+
+    - name: Download Lighthouse
+      get_url:
+        url: https://github.com/sigp/lighthouse/releases/download/v{{ lighthouse_version }}/lighthouse-v{{ lighthouse_version }}-{{ ansible_architecture }}-unknown-linux-gnu.tar.gz
+        dest: "/tmp/lighthouse-{{ lighthouse_version }}.tar.gz"
+        mode: '0644'
+
+    - name: Extract Lighthouse
+      unarchive:
+        src: "/tmp/lighthouse-{{ lighthouse_version }}"
+        dest: "/tmp/"
+        remote_src: true
+
+    - name: Move Lighthouse
+      copy:
+        remote_src: true
+        src: "/tmp/lighthouse-{{ lighthouse_version }}/lighthouse"
+        dest: "/usr/local/bin/lighthouse"
+
+    - name: Create Lighthouse service
+      template:
+        src: services/lighthouse.service.j2
+        dest: "/home/{{ ansible_user }}/.config/systemd/user/lighthouse.service"
+
+    - name: Start Lighthouse
+      systemd:
+        name: lighthouse
+        state: started
+        enabled: true
+        daemon_reload: true
 
     - name: Get architecture
       set_fact:
@@ -65,13 +102,17 @@
         dest: "/usr/local/bin/ethereum_metrics_exporter"
         mode: '0755'
 
-    - name: Ensure user systemd directory exists
-      file:
-        path: "/home/{{ ansible_user }}/.config/systemd/user"
-        state: directory
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
-        mode: '0700'
+    - name: Create Ethereum Metrics Exporter service
+      template:
+        src: services/ethereum-metrics-exporter.service.j2
+        dest: "/home/{{ ansible_user }}/.config/systemd/user/ethereum-metrics-exporter.service"
+
+    - name: Start Ethereum Metrics Exporter
+      systemd:
+        name: ethereum-metrics-exporter
+        state: started
+        enabled: true
+        daemon_reload: true
 
     - name: Install Ethrex L1
       template:
@@ -80,6 +121,4 @@
       vars:
         # envvars to pass to the L1 template systemd service
     
-    - name: Start Lighthouse
-    
-    - name: Start Ethrex L1
+    #- name: Start Ethrex L1
