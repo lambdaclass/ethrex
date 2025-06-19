@@ -82,6 +82,7 @@ impl RpcHandler for GetL1MessageProof {
 
         let mut proofs = vec![];
         for (index, message_hash) in batch_message_hashes.iter().enumerate() {
+            println!("idx{index} has {message_hash:x} looking for {tx_message_hashes:?}");
             if !tx_message_hashes.contains(message_hash) {
                 continue;
             }
