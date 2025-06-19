@@ -490,7 +490,7 @@
         {
           "disableTextWrap": false,
           "editorMode": "builder",
-          "expr": "gigagas{job=\"el-1-ethrex-lighthouse\"}",
+          "expr": "gigagas{job=\"$job\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
           "legendFormat": "Gigagas/s",

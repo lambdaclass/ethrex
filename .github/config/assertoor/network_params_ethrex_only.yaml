@@ -8,8 +8,26 @@ participants:
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v7.0.1
     ethereum_metrics_exporter_enabled: true
+    el_extra_labels: {
+      "evm": "levm"
+    }
     validator_count: 32
-    count: 3
+    count: 1
+  - el_type: ethrex
+    el_extra_params: [
+      "--metrics",
+      "--metrics.port=9001",
+      "--evm revm"
+    ]
+    el_image: ethrex-latest
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.0.1
+    ethereum_metrics_exporter_enabled: true
+    el_extra_labels: {
+      "evm": "revm"
+    }
+    validator_count: 32
+    count: 1
   - el_type: reth
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v7.0.1
