@@ -5,6 +5,8 @@ use crate::{
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
+use ethrex_metrics::metrics_profiling::{self, FunctionProfilingLayer};
+
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{P2PContext, public_key_from_signing_key},
@@ -27,7 +29,10 @@ use std::{
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
-use tracing_subscriber::{EnvFilter, FmtSubscriber, filter::Directive};
+use tracing_subscriber::{
+    EnvFilter, FmtSubscriber, Registry, filter::Directive, layer::SubscriberExt,
+    util::SubscriberInitExt,
+};
 
 #[cfg(feature = "l2")]
 use crate::l2::L2Options;
@@ -58,6 +63,12 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
         opts.metrics_port.clone(),
     );
     tracker.spawn(metrics_api);
+
+    let profiling_layer = FunctionProfilingLayer::default();
+
+    tracing_subscriber::registry()
+        .with(profiling_layer) // static Layer
+        .init();
 }
 
 /// Opens a New or Pre-exsisting Store and loads the initial state provided by the network

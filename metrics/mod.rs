@@ -1,11 +1,12 @@
-#[cfg(feature = "api")]
+pub mod metrics_profiling;
+
 pub mod api;
-#[cfg(any(feature = "api", feature = "l2", feature = "metrics"))]
+
 pub mod metrics_blocks;
-#[cfg(any(feature = "api", feature = "l2"))]
-pub mod metrics_l2;
-#[cfg(any(feature = "api", feature = "transactions"))]
+
 pub mod metrics_transactions;
+
+pub mod metrics_l2;
 
 /// A macro to conditionally enable metrics-related code.
 ///

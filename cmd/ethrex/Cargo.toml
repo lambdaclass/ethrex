@@ -44,7 +44,7 @@ itertools = "0.14.0"
 cfg-if = "1.0.0"
 
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
-ethrex-metrics = { path = "../../crates/blockchain/metrics" }
+ethrex-metrics = { path = "../../metrics" }
 
 [[bin]]
 name = "ethrex"

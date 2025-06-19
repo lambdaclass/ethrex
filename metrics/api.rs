@@ -1,0 +1,37 @@
+use axum::{routing::get, Router};
+
+#[cfg(feature = "l2")]
+use crate::metrics_l2::METRICS_L2;
+
+use crate::{
+    metrics_blocks::METRICS_BLOCKS, metrics_profiling::gather_profiling_metrics,
+    metrics_transactions::METRICS_TX, MetricsApiError,
+};
+
+pub async fn start_prometheus_metrics_api(
+    address: String,
+    port: String,
+) -> Result<(), MetricsApiError> {
+    let app = Router::new()
+        .route("/metrics", get(get_metrics))
+        .route("/health", get("Service Up"));
+
+    // Start the axum app
+    let listener = tokio::net::TcpListener::bind(&format!("{address}:{port}")).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
+#[allow(unused_mut)]
+async fn get_metrics() -> String {
+    let mut ret_string = match gather_profiling_metrics() {
+        Ok(string) => string,
+        Err(_) => {
+            tracing::error!("Failed to register METRICS_PROFILING");
+            String::new()
+        }
+    };
+
+    ret_string
+}
