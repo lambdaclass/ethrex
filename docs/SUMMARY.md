@@ -21,6 +21,7 @@
     - [Withdrawing assets](./l2/guides/withdrawing.md)
   - [General overview](./l2/overview.md)
     - [State diffs](./l2/state_diffs.md)
+    - [Deposits](./l2/deposits.md)
     - [Withdrawals](./l2/withdrawals.md)
   - [Smart contracts](./l2/contracts.md)
     - [OnChainOperator]()
