@@ -6,7 +6,7 @@ use ethrex_common::{
     H256,
 };
 use ethrex_storage::Store;
-use futures::SinkExt;
+use futures::{stream::SplitSink, SinkExt as _, Stream};
 use k256::{ecdsa::SigningKey, PublicKey};
 use rand::random;
 use spawned_concurrency::tasks::{
@@ -77,7 +77,7 @@ pub struct Receiver {
 #[derive(Clone)]
 pub struct Established {
     pub(crate) signer: SigningKey,
-    pub(crate) framed: Arc<Mutex<Framed<TcpStream, RLPxCodec>>>,
+    pub(crate) sink: Arc<Mutex<SplitSink<Framed<TcpStream, RLPxCodec>, Message>>>,
     pub(crate) node: Node,
     pub(crate) storage: Store,
     pub(crate) blockchain: Arc<Blockchain>,
@@ -192,7 +192,7 @@ impl GenServer for RLPxConnection {
         handle: &GenServerHandle<Self>,
         mut state: Self::State,
     ) -> Result<Self::State, Self::Error> {
-        let mut established_state = handshake::perform(state.0).await?;
+        let (mut established_state, mut stream) = handshake::perform(state.0).await?;
         log_peer_debug(&established_state.node, "Starting RLPx connection");
         if let Err(reason) = post_handshake_checks(established_state.table.clone()).await {
             connection_failed(
@@ -204,7 +204,7 @@ impl GenServer for RLPxConnection {
             return Err(RLPxError::Disconnected());
         }
 
-        if let Err(e) = exchange_hello_messages(&mut established_state).await {
+        if let Err(e) = exchange_hello_messages(&mut established_state, &mut stream).await {
             connection_failed(&mut established_state, "Hello messages exchange failed", e).await;
             return Err(RLPxError::Disconnected());
         } else {
@@ -228,7 +228,7 @@ impl GenServer for RLPxConnection {
                     established_state.inbound,
                 );
             }
-            init_peer_conn(&mut established_state).await?;
+            init_peer_conn(&mut established_state, &mut stream).await?;
             log_peer_debug(&established_state.node, "Peer connection initialized.");
 
             // Send transactions transaction hashes from mempool at connection start
@@ -244,11 +244,7 @@ impl GenServer for RLPxConnection {
             // TODO this should be replaced with spawned_concurrency::tasks::send_interval once it is properly implemented.
             send_after(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
 
-            spawn_listener(
-                handle.clone(),
-                &established_state.node,
-                &established_state.framed,
-            );
+            spawn_listener(handle.clone(), &established_state.node, stream);
 
             spawn_broadcast_listener(handle.clone(), &mut established_state);
 
@@ -262,17 +258,17 @@ impl GenServer for RLPxConnection {
         &mut self,
         _message: Self::CallMsg,
         _handle: &RLPxConnectionHandle,
-        _state: &mut Self::State,
-    ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(Ok(OutMessage::Done))
+        state: Self::State,
+    ) -> CallResponse<Self> {
+        CallResponse::Reply(state, Ok(OutMessage::Done))
     }
 
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
         handle: &RLPxConnectionHandle,
-        state: &mut Self::State,
-    ) -> CastResponse {
+        mut state: Self::State,
+    ) -> CastResponse<Self> {
         if let InnerState::Established(mut established_state) = state.0.clone() {
             match message {
                 // TODO: handle all these "let _"
@@ -298,7 +294,6 @@ impl GenServer for RLPxConnection {
                 }
                 Self::CastMsg::SendNewPooledTxHashes => {
                     let _ = send_new_pooled_tx_hashes(&mut established_state).await;
-                    log_peer_debug(&established_state.node, "SendNewPooledTxHashes sent");
                     // TODO this should be removed when spawned_concurrency::tasks::send_interval is implemented.
                     send_after(
                         TX_BROADCAST_INTERVAL,
@@ -316,11 +311,11 @@ impl GenServer for RLPxConnection {
             }
             // Update the state
             state.0 = InnerState::Established(established_state);
-            CastResponse::NoReply
+            CastResponse::NoReply(state)
         } else {
             // Received a Cast message but connection is not ready. Log an error but keep the connection alive.
             error!("Connection not yet established");
-            CastResponse::NoReply
+            CastResponse::NoReply(state)
         }
     }
 }
@@ -366,7 +361,10 @@ async fn send_new_pooled_tx_hashes(state: &mut Established) -> Result<(), RLPxEr
     Ok(())
 }
 
-async fn init_peer_conn(state: &mut Established) -> Result<(), RLPxError> {
+async fn init_peer_conn<S>(state: &mut Established, stream: &mut S) -> Result<(), RLPxError>
+where
+    S: Unpin + Stream<Item = Result<Message, RLPxError>>,
+{
     // Sending eth Status if peer supports it
     if let Some(eth) = state.negotiated_eth_capability.clone() {
         let status = backend::get_status(&state.storage, eth.version).await?;
@@ -375,7 +373,7 @@ async fn init_peer_conn(state: &mut Established) -> Result<(), RLPxError> {
         // The next immediate message in the ETH protocol is the
         // status, reference here:
         // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
-        let msg = match receive(state).await {
+        let msg = match receive(stream).await {
             Some(msg) => msg?,
             None => return Err(RLPxError::Disconnected()),
         };
@@ -453,7 +451,7 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: RLP
         }
     }
 
-    let _ = state.framed.lock().await.close().await;
+    let _ = state.sink.lock().await.close().await;
 }
 
 fn match_disconnect_reason(error: &RLPxError) -> Option<DisconnectReason> {
@@ -466,7 +464,13 @@ fn match_disconnect_reason(error: &RLPxError) -> Option<DisconnectReason> {
     }
 }
 
-async fn exchange_hello_messages(state: &mut Established) -> Result<(), RLPxError> {
+async fn exchange_hello_messages<S>(
+    state: &mut Established,
+    stream: &mut S,
+) -> Result<(), RLPxError>
+where
+    S: Unpin + Stream<Item = Result<Message, RLPxError>>,
+{
     let supported_capabilities: Vec<Capability> = [
         &SUPPORTED_ETH_CAPABILITIES[..],
         &SUPPORTED_SNAP_CAPABILITIES[..],
@@ -482,7 +486,7 @@ async fn exchange_hello_messages(state: &mut Established) -> Result<(), RLPxErro
     send(state, hello_msg).await?;
 
     // Receive Hello message
-    let msg = match receive(state).await {
+    let msg = match receive(stream).await {
         Some(msg) => msg?,
         None => return Err(RLPxError::Disconnected()),
     };
@@ -547,7 +551,7 @@ async fn exchange_hello_messages(state: &mut Established) -> Result<(), RLPxErro
 }
 
 async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError> {
-    state.framed.lock().await.send(message).await
+    state.sink.lock().await.send(message).await
 }
 
 /// Reads from the frame until a frame is available.
@@ -561,33 +565,31 @@ async fn send(state: &mut Established, message: Message) -> Result<(), RLPxError
 /// while sending pings and you should not assume a disconnection.
 ///
 /// See [`Framed::new`] for more details.
-async fn receive(state: &mut Established) -> Option<Result<Message, RLPxError>> {
-    state.framed.lock().await.next().await
+async fn receive<S>(stream: &mut S) -> Option<Result<Message, RLPxError>>
+where
+    S: Unpin + Stream<Item = Result<Message, RLPxError>>,
+{
+    stream.next().await
 }
 
-fn spawn_listener(
-    mut conn: RLPxConnectionHandle,
-    node: &Node,
-    framed: &Arc<Mutex<Framed<TcpStream, RLPxCodec>>>,
-) {
+fn spawn_listener<S>(mut conn: RLPxConnectionHandle, node: &Node, mut stream: S)
+where
+    S: Unpin + Send + Stream<Item = Result<Message, RLPxError>> + 'static,
+{
     let node = node.clone();
-    let framed = framed.clone();
     spawned_rt::tasks::spawn(async move {
         loop {
-            match framed.lock().await.next().await {
+            match stream.next().await {
                 Some(message) => match message {
                     Ok(message) => {
-                        log_peer_debug(&node, &format!("Received message {}", message));
                         let _ = conn.cast(CastMessage::PeerMessage(message)).await;
-                        return Ok(());
                     }
                     Err(e) => {
                         log_peer_debug(&node, &format!("Received RLPX Error in msg {}", e));
-                        return Err(e);
                     }
                 },
                 None => todo!(),
-            }
+            };
         }
     });
 }

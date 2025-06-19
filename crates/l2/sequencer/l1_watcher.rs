@@ -100,26 +100,26 @@ impl GenServer for L1Watcher {
         &mut self,
         _message: Self::CallMsg,
         _handle: &GenServerHandle<Self>,
-        _state: &mut Self::State,
+        state: Self::State,
     ) -> CallResponse<Self::OutMsg> {
-        CallResponse::Reply(OutMessage::Done)
+        CallResponse::Reply(state, OutMessage::Done)
     }
 
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
         handle: &GenServerHandle<Self>,
-        state: &mut Self::State,
-    ) -> CastResponse {
+        state: Self::State,
+    ) -> CastResponse<Self> {
         match message {
             Self::InMsg::Watch => {
                 let check_interval = random_duration(state.check_interval);
                 send_after(check_interval, handle.clone(), Self::InMsg::Watch);
-                match get_logs(state).await {
+                match get_logs(&mut state).await {
                     Ok(logs) => {
                         // We may not have a deposit nor a withdrawal, that means no events -> no logs.
                         if !logs.is_empty() {
-                            if let Err(err) = process_logs(state, logs).await {
+                            if let Err(err) = process_logs(&state, logs).await {
                                 error!("L1 Watcher Error: {}", err)
                             };
                         };
@@ -127,7 +127,7 @@ impl GenServer for L1Watcher {
                     Err(err) => error!("L1 Watcher Error: {}", err),
                 };
 
-                CastResponse::NoReply
+                CastResponse::NoReply(state)
             }
         }
     }

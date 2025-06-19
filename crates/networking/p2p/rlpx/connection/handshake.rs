@@ -19,6 +19,7 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
+use futures::{stream::SplitStream, StreamExt};
 use k256::{
     ecdsa::{self, RecoveryId, SigningKey, VerifyingKey},
     elliptic_curve::sec1::ToEncodedPoint,
@@ -28,6 +29,7 @@ use rand::Rng;
 use sha3::{Digest, Keccak256};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    net::TcpStream,
     sync::Mutex,
 };
 use tokio_util::codec::Framed;
@@ -56,8 +58,10 @@ pub(crate) struct LocalState {
     pub(crate) init_message: Vec<u8>,
 }
 
-pub(crate) async fn perform(state: InnerState) -> Result<Established, RLPxError> {
-    match state {
+pub(crate) async fn perform(
+    state: InnerState,
+) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), RLPxError> {
+    let (context, node, framed, inbound) = match state {
         InnerState::Initiator(Initiator {
             context,
             node,
@@ -76,22 +80,7 @@ pub(crate) async fn perform(state: InnerState) -> Result<Established, RLPxError>
                 Keccak256::digest([remote_state.nonce.0, local_state.nonce.0].concat()).into();
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces);
             log_peer_debug(&node, "Completed handshake as initiator!");
-            Ok(Established {
-                signer: context.signer.clone(),
-                framed: Arc::new(Mutex::new(Framed::new(stream, codec))),
-                node: node.clone(),
-                storage: context.storage.clone(),
-                blockchain: context.blockchain.clone(),
-                capabilities: vec![],
-                negotiated_eth_capability: None,
-                negotiated_snap_capability: None,
-                broadcasted_txs: HashSet::new(),
-                client_version: context.client_version.clone(),
-                connection_broadcast_send: context.broadcast.clone(),
-                table: context.table.clone(),
-                backend_channel: None,
-                inbound: false,
-            })
+            (context, node, Framed::new(stream, codec), false)
         }
         InnerState::Receiver(Receiver {
             context,
@@ -116,27 +105,33 @@ pub(crate) async fn perform(state: InnerState) -> Result<Established, RLPxError>
                 peer_addr.port(),
                 remote_state.public_key,
             );
-            Ok(Established {
-                signer: context.signer.clone(),
-                framed: Arc::new(Mutex::new(Framed::new(stream, codec))),
-                node: node,
-                storage: context.storage.clone(),
-                blockchain: context.blockchain.clone(),
-                capabilities: vec![],
-                negotiated_eth_capability: None,
-                negotiated_snap_capability: None,
-                broadcasted_txs: HashSet::new(),
-                client_version: context.client_version.clone(),
-                connection_broadcast_send: context.broadcast.clone(),
-                table: context.table.clone(),
-                backend_channel: None,
-                inbound: true,
-            })
+            log_peer_debug(&node, "Completed handshake as receiver!");
+            (context, node, Framed::new(stream, codec), true)
         }
         InnerState::Established(_) => {
             return Err(RLPxError::StateError("Already established".to_string()))
         }
-    }
+    };
+    let (sink, stream) = framed.split();
+    Ok((
+        Established {
+            signer: context.signer.clone(),
+            sink: Arc::new(Mutex::new(sink)),
+            node: node.clone(),
+            storage: context.storage.clone(),
+            blockchain: context.blockchain.clone(),
+            capabilities: vec![],
+            negotiated_eth_capability: None,
+            negotiated_snap_capability: None,
+            broadcasted_txs: HashSet::new(),
+            client_version: context.client_version.clone(),
+            connection_broadcast_send: context.broadcast.clone(),
+            table: context.table.clone(),
+            backend_channel: None,
+            inbound,
+        },
+        stream,
+    ))
 }
 
 async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
