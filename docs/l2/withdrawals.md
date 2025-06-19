@@ -37,6 +37,7 @@ On L2:
 3. The bridge calls `sendMessageToL1(bytes32 data)` on the `L1Messenger` contract, with `data` being:
 
     ```solidity
+    // ETH_ADDRESS is an arbitrary and unreachable address
     bytes32 data = keccak256(abi.encodePacked(l1Token, _token, _receiverOnL1, _value))
     ```
 
