@@ -12,7 +12,7 @@ use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
     sequencer::errors::ProofVerifierError,
     utils::prover::{
-        proving_systems::ProverType,
+        proving_systems::{BatchProof, ProverType},
         save_state::{StateFileType, batch_number_has_all_needed_proofs, read_proof},
     },
 };
@@ -84,29 +84,31 @@ impl L1ProofVerifier {
         }
     }
 
-    // TODO: verify all already aggregated proofs in one tx
     async fn main_logic(&self) -> Result<(), ProofVerifierError> {
-        let batch_to_verify = 1 + self
+        let first_batch_to_verify = 1 + self
             .eth_client
             .get_last_verified_batch(self.on_chain_proposer_address)
             .await?;
 
-        if !batch_number_has_all_needed_proofs(batch_to_verify, &[ProverType::Aligned])
+        if !batch_number_has_all_needed_proofs(first_batch_to_verify, &[ProverType::Aligned])
             .is_ok_and(|has_all_proofs| has_all_proofs)
         {
-            info!("Missing proofs for batch {batch_to_verify}, skipping verification");
+            info!("Missing proofs for batch {first_batch_to_verify}, skipping verification");
             return Ok(());
         }
 
-        match self.verify_proof_aggregation(batch_to_verify).await? {
+        match self
+            .verify_proofs_aggregation(first_batch_to_verify)
+            .await?
+        {
             Some(verify_tx_hash) => {
                 info!(
-                    "Batch {batch_to_verify} verified in AlignedProofAggregatorService, with transaction hash {verify_tx_hash:#x}"
+                    "Batch {first_batch_to_verify} verified in AlignedProofAggregatorService, with transaction hash {verify_tx_hash:#x}"
                 );
             }
             None => {
                 info!(
-                    "Batch {batch_to_verify} has not yet been aggregated by Aligned. Waiting for {} seconds",
+                    "Batch {first_batch_to_verify} has not yet been aggregated by Aligned. Waiting for {} seconds",
                     self.proof_verify_interval_ms / 1000
                 );
             }
@@ -114,18 +116,104 @@ impl L1ProofVerifier {
         Ok(())
     }
 
-    async fn verify_proof_aggregation(
+    async fn verify_proofs_aggregation(
         &self,
-        batch_number: u64,
+        first_batch_number: u64,
     ) -> Result<Option<H256>, ProofVerifierError> {
-        let proof = read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?;
-        let public_inputs = proof.public_values();
+        let proofs = self.get_available_proofs(first_batch_number)?;
+        let aggregated_proofs = self.get_aggregated_proofs(proofs).await?;
 
-        let verification_data = AggregationModeVerificationData::SP1 {
-            vk: self.sp1_vk,
-            public_inputs: public_inputs.clone(),
+        match aggregated_proofs.len() {
+            0 => return Ok(None),
+            1 => info!("Sending verify tx for batch {first_batch_number}"),
+            n => info!(
+                "Sending verify tx for batches {first_batch_number} to {}",
+                first_batch_number + n as u64 - 1
+            ),
         };
 
+        let mut public_inputs_vec = Vec::new();
+        let mut merkle_paths = Vec::new();
+
+        for (public_inputs, merkle_path) in aggregated_proofs {
+            let merkle_path = merkle_path
+                .iter()
+                .map(|x| Value::FixedBytes(bytes::Bytes::from_owner(*x)))
+                .collect();
+            public_inputs_vec.push(Value::Bytes(public_inputs.into()));
+            merkle_paths.push(Value::Array(merkle_path));
+        }
+
+        let calldata_values = [
+            Value::Uint(U256::from(first_batch_number)),
+            Value::Array(public_inputs_vec),
+            Value::Array(merkle_paths),
+        ];
+
+        let calldata = encode_calldata(ALIGNED_VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
+
+        let verify_tx_hash = send_verify_tx(
+            calldata,
+            &self.eth_client,
+            self.on_chain_proposer_address,
+            self.l1_address,
+            &self.l1_private_key,
+        )
+        .await?;
+
+        Ok(Some(verify_tx_hash))
+    }
+
+    /// Returns all available proofs starting from `batch_number`
+    fn get_available_proofs(
+        &self,
+        mut batch_number: u64,
+    ) -> Result<Vec<(u64, BatchProof)>, ProofVerifierError> {
+        let mut proofs = Vec::new();
+        loop {
+            if !batch_number_has_all_needed_proofs(batch_number, &[ProverType::Aligned])
+                .is_ok_and(|has_all_proofs| has_all_proofs)
+            {
+                return Ok(proofs);
+            }
+            proofs.push((
+                batch_number,
+                read_proof(batch_number, StateFileType::BatchProof(ProverType::Aligned))?,
+            ));
+            batch_number += 1;
+        }
+    }
+
+    async fn get_aggregated_proofs(
+        &self,
+        proofs: Vec<(u64, BatchProof)>,
+    ) -> Result<Vec<(Vec<u8>, Vec<[u8; 32]>)>, ProofVerifierError> {
+        let mut aggregated_proofs = Vec::new();
+        for (batch_number, proof) in proofs {
+            let public_inputs = proof.public_values();
+
+            let verification_data = AggregationModeVerificationData::SP1 {
+                vk: self.sp1_vk,
+                public_inputs: public_inputs.clone(),
+            };
+            let commitment = H256(verification_data.commitment());
+
+            if let Some((merkle_root, merkle_path)) =
+                self.check_proof_verification(verification_data).await?
+            {
+                info!(
+                    "Proof for batch {batch_number} aggregated by Aligned with commitment {commitment:#x} and Merkle root {merkle_root:#x}"
+                );
+                aggregated_proofs.push((public_inputs, merkle_path));
+            }
+        }
+        Ok(aggregated_proofs)
+    }
+
+    async fn check_proof_verification(
+        &self,
+        verification_data: AggregationModeVerificationData,
+    ) -> Result<Option<(H256, Vec<[u8; 32]>)>, ProofVerifierError> {
         let rpc_url = self.eth_client.urls.first().ok_or_else(|| {
             ProofVerifierError::InternalError("No Ethereum RPC URL configured".to_owned())
         })?;
@@ -156,35 +244,8 @@ impl L1ProofVerifier {
             }
         };
 
-        let commitment = H256(verification_data.commitment());
         let merkle_root = H256(merkle_root);
 
-        info!(
-            "Proof for batch {batch_number} aggregated by Aligned with commitment {commitment:#x} and Merkle root {merkle_root:#x}"
-        );
-
-        let merkle_path = merkle_path
-            .iter()
-            .map(|x| Value::FixedBytes(bytes::Bytes::from_owner(*x)))
-            .collect();
-
-        let calldata_values = [
-            Value::Uint(U256::from(batch_number)),
-            Value::Bytes(public_inputs.into()),
-            Value::Array(merkle_path),
-        ];
-
-        let calldata = encode_calldata(ALIGNED_VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
-
-        let verify_tx_hash = send_verify_tx(
-            calldata,
-            &self.eth_client,
-            self.on_chain_proposer_address,
-            self.l1_address,
-            &self.l1_private_key,
-        )
-        .await?;
-
-        Ok(Some(verify_tx_hash))
+        Ok(Some((merkle_root, merkle_path)))
     }
 }
