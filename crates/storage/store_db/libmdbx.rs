@@ -550,16 +550,16 @@ impl StoreEngine for Store {
             let current_snapshot_meta = tx
                 .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
                 .unwrap_or_default();
-            let mut canonical_cursor = tx.cursor::<CanonicalBlockHashes>()?;
             let mut state_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
             let mut storage_log_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
             let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
             let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
             let mut key = current_snapshot_meta;
-            // TODO(PLT): query the current block for flat storage/accounts and
-            // start applying from there
 
-            for key_value in canonical_cursor.walk(Some(current_snapshot_meta.0 + 1)) {
+            for key_value in tx
+                .cursor::<CanonicalBlockHashes>()?
+                .walk(Some(current_snapshot_meta.0 + 1))
+            {
                 let (block_num, block_hash_rlp) = key_value?;
                 let block_hash = block_hash_rlp.to()?;
                 key = (block_num, block_hash).into();
