@@ -69,10 +69,14 @@ impl RLPxMessage for Receipts68 {
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
-        let mut receipts_with_bloom = vec![];
-        for r in &self.receipts {
-            receipts_with_bloom.push(vec![ReceiptWithBloom::from(&r[0])]);
-        }
+
+        // Map nested Receipts to ReceiptWithBloom
+        let receipts_with_bloom: Vec<Vec<ReceiptWithBloom>> = self
+            .receipts
+            .iter()
+            .map(|receipt_list| receipt_list.iter().map(|receipt| receipt.into()).collect())
+            .collect();
+
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
             .encode_field(&receipts_with_bloom)
@@ -90,10 +94,11 @@ impl RLPxMessage for Receipts68 {
         let (receipts_with_bloom, _): (Vec<Vec<ReceiptWithBloom>>, _) =
             decoder.decode_field("receipts")?;
 
-        let mut receipts = vec![];
-        for r in receipts_with_bloom {
-            receipts.push(vec![Receipt::from(&r[0])]);
-        }
+        // Map nested ReceiptWithBloom to Receipts
+        let receipts: Vec<Vec<Receipt>> = receipts_with_bloom
+            .iter()
+            .map(|receipt_list| receipt_list.iter().map(|receipt| receipt.into()).collect())
+            .collect();
 
         Ok(Self::new(id, receipts))
     }
