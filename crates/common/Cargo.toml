@@ -41,3 +41,6 @@ web3sign = ["dep:web3signer"]
 
 [lib]
 path = "./common.rs"
+
+[lints.clippy] 
+unwrap_used = "deny"

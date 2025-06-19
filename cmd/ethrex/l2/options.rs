@@ -498,7 +498,7 @@ pub struct ProofCoordinatorOptions {
     pub proof_send_interval_ms: u64,
     #[arg(
         long = "proof-coordinator.dev-mode",
-        default_value = "true",
+        default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_PROOF_COORDINATOR_DEV_MODE",
         help_heading = "Proof coordinator options"
@@ -518,7 +518,7 @@ impl Default for ProofCoordinatorOptions {
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             listen_port: 3900,
             proof_send_interval_ms: 5000,
-            dev_mode: true,
+            dev_mode: false,
             proof_coordinator_tdx_private_key:
                 "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
                     .parse()

@@ -970,7 +970,7 @@ fn parse_signature(signature: Signature) -> (U256, U256, bool) {
 }
 
 impl Transaction {
-    pub fn sender(&self) -> Address {
+    pub fn sender(&self) -> Result<Address, secp256k1::Error> {
         match self {
             Transaction::LegacyTransaction(tx) => {
                 let signature_y_parity = match self.chain_id() {
@@ -1083,7 +1083,7 @@ impl Transaction {
                     &Bytes::from(buf),
                 )
             }
-            Transaction::PrivilegedL2Transaction(tx) => tx.from,
+            Transaction::PrivilegedL2Transaction(tx) => Ok(tx.from),
         }
     }
 
@@ -1288,25 +1288,23 @@ pub fn recover_address(
     signature_s: &U256,
     signature_y_parity: bool,
     message: &Bytes,
-) -> Address {
+) -> Result<Address, secp256k1::Error> {
     // Create signature
     let signature_bytes = [signature_r.to_big_endian(), signature_s.to_big_endian()].concat();
     let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
         &signature_bytes,
-        RecoveryId::from_i32(signature_y_parity as i32).unwrap(), // cannot fail
-    )
-    .unwrap();
+        RecoveryId::from_i32(signature_y_parity as i32)?, // cannot fail
+    )?;
     // Hash message
     let msg_digest: [u8; 32] = Keccak256::new_with_prefix(message.as_ref())
         .finalize()
         .into();
     // Recover public key
-    let public = secp256k1::SECP256K1
-        .recover_ecdsa(&Message::from_digest(msg_digest), &signature)
-        .unwrap();
+    let public =
+        secp256k1::SECP256K1.recover_ecdsa(&Message::from_digest(msg_digest), &signature)?;
     // Hash public key to obtain address
     let hash = Keccak256::new_with_prefix(&public.serialize_uncompressed()[1..]).finalize();
-    Address::from_slice(&hash[12..])
+    Ok(Address::from_slice(&hash[12..]))
 }
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
@@ -1480,6 +1478,29 @@ mod canonic_encoding {
             let mut buf = Vec::new();
             self.encode_canonical(&mut buf);
             buf
+        }
+
+        pub fn compute_hash(&self) -> H256 {
+            match self {
+                P2PTransaction::LegacyTransaction(t) => {
+                    Transaction::LegacyTransaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP2930Transaction(t) => {
+                    Transaction::EIP2930Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP1559Transaction(t) => {
+                    Transaction::EIP1559Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::EIP4844TransactionWithBlobs(t) => {
+                    Transaction::EIP4844Transaction(t.tx.clone()).compute_hash()
+                }
+                P2PTransaction::EIP7702Transaction(t) => {
+                    Transaction::EIP7702Transaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::PrivilegedL2Transaction(t) => {
+                    Transaction::PrivilegedL2Transaction(t.clone()).compute_hash()
+                }
+            }
         }
     }
 }

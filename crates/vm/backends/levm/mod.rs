@@ -50,7 +50,9 @@ impl LEVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for (tx, tx_sender) in block.body.get_transactions_with_sender() {
+        for (tx, tx_sender) in block.body.get_transactions_with_sender().map_err(|error| {
+            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+        })? {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db)?;
 
             cumulative_gas_used += report.gas_used;
@@ -237,7 +239,9 @@ impl LEVM {
             };
 
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-            let removed = new_state_account.is_empty();
+            // If the account was already empty then this is not an update
+            let was_empty = initial_state_account.is_empty();
+            let removed = new_state_account.is_empty() && !was_empty;
 
             if !removed && !acc_info_updated && !storage_updated {
                 // Account hasn't been updated

@@ -6,7 +6,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
-use redb::{AccessGuard, Database, Key, TableDefinition, Value};
+use redb::{AccessGuard, Database, Key, ReadableTable, TableDefinition, Value, WriteTransaction};
 
 use crate::{
     api::StoreEngineRollup,
@@ -300,4 +300,34 @@ impl StoreEngineRollup for RedBStoreRollup {
     async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
         self.write(LAST_SENT_BATCH_PROOF, 0, batch_number).await
     }
+
+    async fn revert_to_batch(&self, batch_number: u64) -> Result<(), StoreError> {
+        let Some(kept_blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
+            return Ok(());
+        };
+        let last_kept_block = *kept_blocks.iter().max().unwrap_or(&0);
+        let txn = self.db.begin_write().map_err(Box::new)?;
+        delete_starting_at(&txn, BATCHES_BY_BLOCK_NUMBER_TABLE, last_kept_block + 1)?;
+        delete_starting_at(&txn, WITHDRAWALS_BY_BATCH, batch_number + 1)?;
+        delete_starting_at(&txn, BLOCK_NUMBERS_BY_BATCH, batch_number + 1)?;
+        delete_starting_at(&txn, DEPOSIT_LOGS_HASHES, batch_number + 1)?;
+        delete_starting_at(&txn, STATE_ROOTS, batch_number + 1)?;
+        delete_starting_at(&txn, BLOB_BUNDLES, batch_number + 1)?;
+        txn.commit()?;
+        Ok(())
+    }
+}
+
+/// Deletes keys above key, assuming they are contiguous
+fn delete_starting_at<V: redb::Value>(
+    txn: &WriteTransaction,
+    table: TableDefinition<u64, V>,
+    mut key: u64,
+) -> Result<(), StoreError> {
+    let mut table = txn.open_table(table)?;
+    while table.get(key)?.is_some() {
+        table.remove(key)?;
+        key += 1;
+    }
+    Ok(())
 }
