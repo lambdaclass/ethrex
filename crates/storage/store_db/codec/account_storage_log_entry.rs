@@ -6,7 +6,12 @@ use libmdbx::orm::{Decodable, Encodable};
 const SIZE_OF_ACCOUNT_STORAGE_LOG_ENTRY: usize = 116;
 
 #[derive(Default)]
-pub struct AccountStorageLogEntry(pub H160, pub H256, pub U256, pub U256);
+pub struct AccountStorageLogEntry {
+    pub address: H160,
+    pub slot: H256,
+    pub old_value: U256,
+    pub new_value: U256,
+}
 
 // implemente Encode and Decode for StorageStateWriteLogVal
 #[cfg(feature = "libmdbx")]
@@ -15,10 +20,10 @@ impl Encodable for AccountStorageLogEntry {
 
     fn encode(self) -> Self::Encoded {
         let mut encoded: Self::Encoded = std::array::from_fn(|_| 0);
-        encoded[0..20].copy_from_slice(&self.0.0);
-        encoded[20..52].copy_from_slice(&self.1.0);
-        encoded[52..84].copy_from_slice(&self.2.to_big_endian());
-        encoded[84..116].copy_from_slice(&self.3.to_big_endian());
+        encoded[0..20].copy_from_slice(&self.address.0);
+        encoded[20..52].copy_from_slice(&self.slot.0);
+        encoded[52..84].copy_from_slice(&self.old_value.to_big_endian());
+        encoded[84..116].copy_from_slice(&self.new_value.to_big_endian());
         encoded
     }
 }
@@ -32,10 +37,15 @@ impl Decodable for AccountStorageLogEntry {
                 "Invalid length for StorageStateWriteLogEntry: {len} (expected {SIZE_OF_ACCOUNT_STORAGE_LOG_ENTRY})"
             );
         }
-        let addr = H160::from_slice(&b[0..20]);
+        let address = H160::from_slice(&b[0..20]);
         let slot = H256::from_slice(&b[20..52]);
         let old_value = U256::from_big_endian(&b[52..84]);
         let new_value = U256::from_big_endian(&b[84..116]);
-        Ok(Self(addr, slot, old_value, new_value))
+        Ok(Self {
+            address,
+            slot,
+            old_value,
+            new_value,
+        })
     }
 }

@@ -438,9 +438,15 @@ impl StoreEngine for Store {
             let tx = self.db.begin_readwrite()?;
             let mut cursor = tx.cursor::<AccountsStorageWriteLog>()?;
             for (blk, addr, slot, old_value, new_value) in account_storage_logs {
+                let address = addr.0;
                 cursor.upsert(
                     blk,
-                    AccountStorageLogEntry(addr.0, slot, old_value, new_value),
+                    AccountStorageLogEntry {
+                        address,
+                        slot,
+                        old_value,
+                        new_value,
+                    },
                 )?;
             }
             tx.commit()
@@ -494,9 +500,9 @@ impl StoreEngine for Store {
                     if read_key_num_hash != key {
                         break;
                     }
-                    let old_value = log_entry.2;
-                    let slot = log_entry.1;
-                    let addr = log_entry.0;
+                    let old_value = log_entry.old_value;
+                    let slot = log_entry.slot;
+                    let addr = log_entry.address;
                     let storage_key = (addr.into(), slot.into());
                     let value_aux = (!old_value.is_zero()).then_some(old_value.into());
                     Self::replace_value_or_delete(
@@ -572,9 +578,9 @@ impl StoreEngine for Store {
                         break;
                     }
 
-                    let new_value = log_entry.3;
-                    let slot = log_entry.1;
-                    let addr = log_entry.0;
+                    let new_value = log_entry.new_value;
+                    let slot = log_entry.slot;
+                    let addr = log_entry.address;
                     let storage_key = (addr.into(), slot.into());
                     let storage_value = (!new_value.is_zero()).then_some(new_value.into());
                     Self::replace_value_or_delete(
