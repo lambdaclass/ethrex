@@ -81,4 +81,40 @@ On L1:
 3. The bridge asserts the proof is valid and that the locked tokens mapping contains enough balance for the L1 and L2 token pair to cover the transfer.
 4. The bridge transfers the locked tokens specified in the `L1Message` to the user and discounts the transferred amount from the L1 and L2 token pair in the mapping.
 
-<!-- TODO: add diagram -->
+```mermaid
+---
+title: User makes an ERC20 withdrawal
+---
+sequenceDiagram
+    box rgb(139, 63, 63) L2
+        actor L2Alice as Alice
+        participant L2Token
+        participant CommonBridgeL2
+        participant L1Messenger
+    end
+
+    actor Sequencer
+
+    box rgb(33,66,99) L1
+        participant OnChainProposer
+        participant CommonBridge
+        participant L1Token
+        actor L1Alice as Alice
+    end
+
+    L2Alice->>L2Token: approves token transfer
+    L2Alice->>CommonBridgeL2: withdraws 42 of L2Token
+    CommonBridgeL2->>L2Token: transfers tokens to self
+    L2Token-->>CommonBridgeL2: sends 42 tokens
+    CommonBridgeL2->>L1Messenger: calls sendMessageToL1
+    L1Messenger->>L1Messenger: emits L1Message event
+
+    L1Messenger-->>Sequencer: receives event
+
+    Sequencer->>OnChainProposer: publishes batch
+    OnChainProposer->>CommonBridge: publishes L1 message root
+
+    L1Alice->>CommonBridge: submits withdrawal proof
+    CommonBridge->>L1Token: transfers tokens
+    L1Token-->>L1Alice: sends 42 tokens
+```
