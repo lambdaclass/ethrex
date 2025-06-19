@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750276849568,
+  "lastUpdate": 1750314522258,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -16304,6 +16304,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.00837685220627326,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "78594e8dbf56342a3b62bf6d00f6c2c6f79b0722",
+          "message": "feat(l1): track new pooled transaction hashes (#3158)\n\n**Motivation**\n\nWe weren't keeping track of the received NewPooledTransationHashes\nmessages, we were just propagating the incoming msg without validating\nthem.\n<!-- Why does this pull request exist? What are its goals? -->\n\nThe PR fixes the following hivetests:\n- BlobViolations\nThis test sends some invalid blob tx announcements and expects the node\nto disconnect.\n\n- TestBlobTxWithoutSidecar\nThis test checks that a blob transaction first advertised/transmitted\nwithout blobs will result in the sending peer being disconnected, and\nthe full transaction should be successfully retrieved from another peer.\n\n- TestBlobTxWithMismatchedSidecar\nThis test checks that a blob transaction first advertised/transmitted\nwithout blobs, whose commitment don't correspond to the\nblob_versioned_hashes in the transaction, will result in the sending\npeer being disconnected, and the full transaction should be successfully\nretrieved from another peer.\n\n\n### Sequence diagram of TestBlobTxWithoutSidecar &\nTestBlobTxWithMismatchedSidecar\n```mermaid\nsequenceDiagram\n    participant Node\n    participant BadPeer\n    participant GoodPeer\n\n    %% Setup: Forkchoice Update\n    Node->>Node: sendForkchoiceUpdated()\n\n    %% Stage 1: Bad Peer announces transaction\n    BadPeer->>Node: NewPooledTransactionHashesMsg<br>(badTx Hash, BlobTxType, Size)\n    Node->>BadPeer: GetPooledTransactionsPacket<br>(Request badTx)\n    Note right of BadPeer: stage1.Done()\n\n    %% Stage 2: Good Peer announces transaction\n    Note right of GoodPeer: stage1.Wait()\n    GoodPeer->>Node: NewPooledTransactionHashesMsg<br>(tx Hash, BlobTxType, Size)\n    Note right of GoodPeer: stage2.Done()\n\n    %% Stage 3: Bad Peer sends invalid transaction and is disconnected\n    Note right of BadPeer: stage2.Wait()\n    BadPeer->>Node: PooledTransactionsMsg<br>(badTx, RequestId)\n    Node->>BadPeer: Disconnect\n    Note right of BadPeer: stage3.Done()\n\n    %% Good Peer sends correct transaction\n    Note right of GoodPeer: stage3.Wait()\n    Node->>GoodPeer: GetPooledTransactionsPacket<br>(Request tx)\n    GoodPeer->>Node: PooledTransactionsMsg<br>(tx, RequestId)\n    Note right of GoodPeer: No Disconnect<br>close(errc)\n\n    %% Synchronization Points\n    Note over BadPeer,GoodPeer: stage1: Bad Peer announces<br>stage2: Good Peer announces<br>stage3: Bad Peer disconnected\n```\nYou can check the tests code\n[here](https://github.com/ethereum/go-ethereum/blob/72d92698a474059f3a73798c6312699c1f210497/cmd/devp2p/internal/ethtest/suite.go#L917)\n\n**Description**\nA new field `requested_pooled_txs` was added to the RLPxConnection\nstruct. In that struct, the request_id and the requested hashed are\nstored to check later, when the response is received. By doing these, we\ncan assure that the received Pooled Transactions match the expected\nincome.\n\nSome new error types were added.\n\nThe fn `get_p2p_transaction` was moved to RLPxConnection.\n\nCan be tested using:\n```bash\nmake run-hive SIMULATION=devp2p TEST_PATTERN='eth/blob' HIVE_BRANCH=mecha/update-devp2p-testfiles SIM_LOG_LEVEL=4\n```\n\nThe tests can't be activated in the CI yet. We need to update the Hive\nfork first. [PR](https://github.com/lambdaclass/hive/pull/35)\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses: \n#1781 \n#3122\n#3123 \n#1416",
+          "timestamp": "2025-06-18T15:40:15Z",
+          "tree_id": "0b615c89c0ced7768a2bf94faaf16c9cd27b8abe",
+          "url": "https://github.com/lambdaclass/ethrex/commit/78594e8dbf56342a3b62bf6d00f6c2c6f79b0722"
+        },
+        "date": 1750314512474,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.008435149357601713,
             "unit": "Mgas/s"
           }
         ]
