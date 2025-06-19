@@ -10,11 +10,11 @@ pub struct AccountInfoLogEntry {
     pub previous_info: AccountInfo,
 }
 
-const SIZE_OF_ACCOUNT_INFO_LOG_ENTRY: usize = std::mem::size_of::<AccountInfoLogEntry>();
+const SIZE_OF_ACCOUNT_INFO_LOG_ENTRY: usize = 164;
 
 #[cfg(feature = "libmdbx")]
 impl Encodable for AccountInfoLogEntry {
-    type Encoded = [u8; std::mem::size_of::<Self>()];
+    type Encoded = [u8; SIZE_OF_ACCOUNT_INFO_LOG_ENTRY];
     fn encode(self) -> Self::Encoded {
         let mut encoded: Self::Encoded = std::array::from_fn(|_| 0);
         encoded[0..20].copy_from_slice(&self.address.0);

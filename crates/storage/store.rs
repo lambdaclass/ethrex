@@ -148,8 +148,13 @@ impl Store {
         for (block, account_updates) in account_updates_per_block {
             let block_numhash: BlockNumHash = (block.header.number, block.header.hash()).into();
             for account_update in account_updates {
-                let Some(new_info) = &account_update.info else {
-                    continue;
+                let new_info = if account_update.removed {
+                    AccountInfo::default()
+                } else {
+                    let Some(new_info) = &account_update.info else {
+                        continue;
+                    };
+                    new_info.clone()
                 };
                 let address = account_update.address;
                 let old_info = match previous_account_info.get(&address) {
