@@ -46,49 +46,22 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: rm -rf crates/l2/.env
 
-      - name: Build prover
+      - name: Build binaries
         # if: ${{ always() && github.event_name == 'merge_group' }}
-        run: |
-          cd crates/l2
-          make build-prover
+        working-directory: crates/l2
+        run: make build G=true
 
-      - name: Build test
+      - name: Run tests
         # if: ${{ always() && github.event_name == 'merge_group' }}
-        run: |
-          cargo test l2 --no-run --release
+        working-directory: crates/l2
+        run: make test
 
-      - name: Start L1 & Deploy contracts
-        # if: ${{ always() && github.event_name == 'merge_group' }}
-        run: |
-          cd crates/l2
-          touch .env
-          CI_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_DEPLOYER_DEPLOY_RICH=true \
-          ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true \
-          docker compose -f docker-compose-l2.yaml up contract_deployer
-
-      - name: Start Sequencer
-        # if: ${{ always() && github.event_name == 'merge_group' }}
-        run: |
-          cd crates/l2
-          CI_ETHREX_WORKDIR=/usr/local/bin \
-          ETHREX_PROPOSER_BLOCK_TIME=12000 \
-          ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
-          docker compose -f docker-compose-l2.yaml up ethrex_l2 --detach
-
-      - name: Run test
-        # if: ${{ always() && github.event_name == 'merge_group' }}
-        run: |
-          cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover &
-          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
-          killall ethrex_prover -s SIGINT
-
-      - name: Destroy Docker containers
+      - name: Destroy Docker containers and clean up
         if: always()
+        working-directory: crates/l2
         run: |
-          cd crates/l2
-          docker compose -f docker-compose-l2.yaml down -t 0
+          make down
+          make clean
 
       - name: Ensure admin permissions in _work
         if: always()
