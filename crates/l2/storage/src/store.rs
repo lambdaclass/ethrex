@@ -309,4 +309,9 @@ impl Store {
             .store_account_updates_by_block_number(block_number, account_updates)
             .await
     }
+
+    /// Reverts to a previous batch, discarding operations in them
+    pub async fn revert_to_batch(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.engine.revert_to_batch(batch_number).await
+    }
 }

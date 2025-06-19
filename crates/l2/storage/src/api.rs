@@ -110,4 +110,5 @@ pub trait StoreEngineRollup: Debug + Send + Sync + RefUnwindSafe {
         block_number: BlockNumber,
         account_updates: Vec<AccountUpdate>,
     ) -> Result<(), StoreError>;
+    async fn revert_to_batch(&self, batch_number: u64) -> Result<(), StoreError>;
 }
