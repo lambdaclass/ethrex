@@ -37,6 +37,53 @@ Off-chain:
 
 On L2:
 
+1. The privileged transaction increases the account balance of the recipient by the deposit amount.
+2. Additionally, a call to the sender address is executed, which immediately halts in case the sender is an EOA.
+
+<!-- TODO: what happens if the call reverts? -->
+
+Back on L1:
+
+1. A sequencer commits a batch on L1 including the privileged transaction.
+2. The `OnChainProposer` notifies the bridge of the consumed privileged transactions.
+3. The bridge removes them from `pendingDepositLogs`, asserting the included privileged transactions exist and are included in order.
+<!-- TODO: do we require privileged transactions to be included in order inside each batch? -->
+
+<!-- TODO: add diagram -->
+
+## ERC20 deposits through the native bridge
+
+This section explains step by step how native ERC20 deposits work.
+
+On L1:
+
+1. The user gives the `CommonBridge` allowance via an `approve` call to the L1 token contract.
+2. The user calls `depositERC20` on the bridge, specifying the L1 and L2 token addresses, the amount to deposit, along with the intended L2 recipient.
+3. The bridge locks the specified L1 token amount in the bridge, updating the mapping with the amount locked for the L1 and L2 token pair. This ensures that L2 token withdrawals don't consume L1 tokens that weren't deposited into that L2 token.
+   - TODO: we should consider moving this book-keeping logic to the L2 bridge.
+4. The bridge emits a `DepositInitiated` event:
+
+    ```solidity
+    emit DepositInitiated(
+        0,            // amount (unused)
+        0xffff,       // to (the L2 bridge)
+        depositId,
+        0,            // recipient of the ETH deposit (unused)
+        0xffff,       // sender in L2 (the L2 bridge)
+        gasLimit,     // gas limit
+        data,         // calldata
+        l2MintTxHash
+    );
+    ```
+
+On L2:
+
+1. The privileged transaction performs a call to `mintERC20` on the `L2CommonBridge` from the L2 bridge's address, specifying the address of the L1 and L2 tokens, along with the amount and recipient.
+2. The bridge calls `mint` on the L2 token, minting the specified amount of tokens and sending them to the L2 recipient.
+3. If the call reverts, the L2 bridge automatically initiates a withdrawal.
+
+Back on L1:
+
 1. A sequencer commits a batch on L1 including the privileged transaction.
 2. The `OnChainProposer` notifies the bridge of the consumed privileged transactions.
 3. The bridge removes them from `pendingDepositLogs`, asserting the included privileged transactions exist and are included in order.
