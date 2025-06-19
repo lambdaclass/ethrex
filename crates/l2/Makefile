@@ -1,3 +1,4 @@
+crates/l2/Makefile
 .PHONY: help init down clean restart init-local-l1 init-l1 down-local-l1 \
 		restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 \
 		init-l2-no-metrics down-l2 restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test \
@@ -131,7 +132,7 @@ DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADD
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat .env | xargs); \
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_sql,metrics" -- \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "l2,rollup_storage_libmdbx,metrics" -- \
 	l2 init \
 	--watcher.block-delay 0 \
 	--network ${L2_GENESIS_FILE_PATH} \
