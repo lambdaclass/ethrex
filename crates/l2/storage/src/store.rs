@@ -279,6 +279,44 @@ impl Store {
         self.engine.contains_batch(batch_number).await
     }
 
+    /// Stores the sequencer signature for a given block hash.
+    pub async fn store_signature_by_block(
+        &self,
+        block_hash: H256,
+        signature: [u8; 68],
+    ) -> Result<(), StoreError> {
+        self.engine
+            .store_signature_by_block(block_hash, signature)
+            .await
+    }
+
+    /// Returns the sequencer signature for a given block hash.
+    pub async fn get_signature_by_block(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<[u8; 68]>, StoreError> {
+        self.engine.get_signature_by_block(block_hash).await
+    }
+
+    /// Stores the sequencer signature for a given batch number.
+    pub async fn store_signature_by_batch(
+        &self,
+        batch_number: u64,
+        signature: [u8; 68],
+    ) -> Result<(), StoreError> {
+        self.engine
+            .store_signature_by_batch(batch_number, signature)
+            .await
+    }
+
+    /// Returns the sequencer signature for a given batch number.
+    pub async fn get_signature_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<[u8; 68]>, StoreError> {
+        self.engine.get_signature_by_batch(batch_number).await
+    }
+
     /// Returns the lastest sent batch proof
     pub async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
         self.engine.get_lastest_sent_batch_proof().await

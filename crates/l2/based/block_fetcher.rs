@@ -149,7 +149,7 @@ impl GenServer for BlockFetcher {
         _tx: &spawned_rt::mpsc::Sender<spawned_concurrency::GenServerInMsg<Self>>,
         state: &mut Self::State,
     ) -> spawned_concurrency::CastResponse {
-        if let SequencerStatus::Following = state.sequencer_state.status().await {
+        if let SequencerStatus::Syncing = state.sequencer_state.status().await {
             let _ = fetch(state).await.inspect_err(|err| {
                 error!("Block Fetcher Error: {err}");
             });

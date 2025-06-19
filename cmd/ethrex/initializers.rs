@@ -17,6 +17,7 @@ use ethrex_vm::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
+use secp256k1::SecretKey;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
@@ -174,6 +175,9 @@ pub async fn init_network(
     store: Store,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
+    based: bool,
+    #[cfg(feature = "l2")] store_rollup: StoreRollup,
+    committer_key: Option<SecretKey>,
 ) {
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -193,6 +197,10 @@ pub async fn init_network(
         store,
         blockchain,
         get_client_version(),
+        based,
+        #[cfg(feature = "l2")]
+        store_rollup,
+        committer_key,
     );
 
     context.set_fork_id().await.expect("Set fork id");
