@@ -26,3 +26,7 @@ path = "src/compile.rs"
 [[bin]]
 name = "benchmark"
 path = "src/benchmark.rs"
+
+[[bin]]
+name = "quickrun"
+path = "src/quick_run.rs"
