@@ -71,14 +71,16 @@ impl RLPDecode for BranchNode {
         let (choices, decoder) = decoder.decode_field::<Vec<NodeHash>>("choices")?;
         let choices = choices
             .into_iter()
-            .map(|hash| match hash {
-                NodeHash::Hashed(hash) => NodeRef::Hash(hash),
-                NodeHash::Inline((data, len)) => NodeRef::Node(
-                    Arc::new(Node::decode_raw(&data[..len as usize]).unwrap()),
-                    OnceLock::new(),
-                ),
+            .map(|hash| {
+                Result::<_, RLPDecodeError>::Ok(match hash {
+                    NodeHash::Hashed(hash) => NodeRef::Hash(hash),
+                    NodeHash::Inline((data, len)) => NodeRef::Node(
+                        Arc::new(Node::decode_raw(&data[..len as usize])?),
+                        OnceLock::new(),
+                    ),
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
         let choices = choices
             .try_into()
             .map_err(|_| RLPDecodeError::Custom(CHOICES_LEN_ERROR_MSG.to_string()))?;

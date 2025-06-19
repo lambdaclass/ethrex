@@ -97,7 +97,7 @@ impl BranchNode {
                 // Insert external node hash if there are no overrides.
                 (choice_ref, value @ ValueOrHash::Hash(hash)) => {
                     if !choice_ref.is_valid() {
-                        *choice_ref = hash.into();
+                        *choice_ref = hash.try_into()?;
                     } else if path.is_empty() {
                         return Err(TrieError::Verify(
                             "attempt to override proof node with external hash".to_string(),
@@ -160,7 +160,7 @@ impl BranchNode {
                     self.choices[choice_index] = child_node.into();
                 } else {
                     // Remove child hash if the child subtrie was removed in the process
-                    self.choices[choice_index] = NodeHash::default().into();
+                    self.choices[choice_index] = NodeHash::default().try_into()?;
                 }
                 old_value
             } else {
@@ -281,8 +281,8 @@ mod test {
         let node = BranchNode::new({
             let mut choices = BranchNode::EMPTY_CHOICES;
 
-            choices[2] = NodeHash::Hashed(H256([2; 32])).into();
-            choices[5] = NodeHash::Hashed(H256([5; 32])).into();
+            choices[2] = NodeHash::Hashed(H256([2; 32])).try_into().unwrap();
+            choices[5] = NodeHash::Hashed(H256([5; 32])).try_into().unwrap();
 
             choices
         });
@@ -292,10 +292,10 @@ mod test {
             [
                 Default::default(),
                 Default::default(),
-                NodeHash::Hashed(H256([2; 32])).into(),
+                NodeHash::Hashed(H256([2; 32])).try_into().unwrap(),
                 Default::default(),
                 Default::default(),
-                NodeHash::Hashed(H256([5; 32])).into(),
+                NodeHash::Hashed(H256([5; 32])).try_into().unwrap(),
                 Default::default(),
                 Default::default(),
                 Default::default(),

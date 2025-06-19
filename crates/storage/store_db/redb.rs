@@ -894,7 +894,7 @@ impl StoreEngine for RedBStore {
         storage_root: ethrex_common::H256,
     ) -> Result<ethrex_trie::Trie, StoreError> {
         let db = Box::new(RedBMultiTableTrieDB::new(self.db.clone(), hashed_address.0));
-        Ok(Trie::open(db, storage_root))
+        Ok(Trie::open(db, storage_root)?)
     }
 
     fn open_state_trie(
@@ -902,7 +902,7 @@ impl StoreEngine for RedBStore {
         state_root: ethrex_common::H256,
     ) -> Result<ethrex_trie::Trie, StoreError> {
         let db = Box::new(RedBTrie::new(self.db.clone()));
-        Ok(Trie::open(db, state_root))
+        Ok(Trie::open(db, state_root)?)
     }
 
     async fn set_canonical_block(

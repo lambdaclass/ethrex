@@ -449,7 +449,7 @@ impl Store {
                                 H256::from_slice(&hashed_address),
                                 account_state.storage_root,
                             )?;
-                            vacant.insert(TrieLogger::open_trie(trie))
+                            vacant.insert(TrieLogger::open_trie(trie)?)
                         }
                     };
 

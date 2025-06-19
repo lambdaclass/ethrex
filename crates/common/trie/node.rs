@@ -2,10 +2,7 @@ mod branch;
 mod extension;
 mod leaf;
 
-use std::{
-    array,
-    sync::{Arc, OnceLock},
-};
+use std::sync::{Arc, OnceLock};
 
 pub use branch::BranchNode;
 use ethrex_rlp::{
@@ -100,18 +97,20 @@ impl From<Node> for NodeRef {
     }
 }
 
-impl From<NodeHash> for NodeRef {
-    fn from(value: NodeHash) -> Self {
-        match value {
+impl TryFrom<NodeHash> for NodeRef {
+    type Error = RLPDecodeError;
+
+    fn try_from(value: NodeHash) -> Result<Self, Self::Error> {
+        Ok(match value {
             NodeHash::Hashed(hash) => Self::Hash(hash),
             NodeHash::Inline((data, len)) => match len {
                 0 => Self::Hash(H256::zero()),
                 _ => Self::Node(
-                    Arc::new(Node::decode_raw(&data[..len as usize]).unwrap()),
+                    Arc::new(Node::decode_raw(&data[..len as usize])?),
                     OnceLock::new(),
                 ),
             },
-        }
+        })
     }
 }
 
@@ -265,14 +264,31 @@ impl Node {
                     // Decode as Extension
                     ExtensionNode {
                         prefix: path,
-                        child: decode_child(&rlp_items[1]).into(),
+                        child: decode_child(&rlp_items[1]).try_into()?,
                     }
                     .into()
                 }
             }
             // Branch Node
             17 => {
-                let choices = array::from_fn(|i| decode_child(&rlp_items[i]).into());
+                let choices = [
+                    decode_child(&rlp_items[0]).try_into()?,
+                    decode_child(&rlp_items[1]).try_into()?,
+                    decode_child(&rlp_items[2]).try_into()?,
+                    decode_child(&rlp_items[3]).try_into()?,
+                    decode_child(&rlp_items[4]).try_into()?,
+                    decode_child(&rlp_items[5]).try_into()?,
+                    decode_child(&rlp_items[6]).try_into()?,
+                    decode_child(&rlp_items[7]).try_into()?,
+                    decode_child(&rlp_items[8]).try_into()?,
+                    decode_child(&rlp_items[9]).try_into()?,
+                    decode_child(&rlp_items[10]).try_into()?,
+                    decode_child(&rlp_items[11]).try_into()?,
+                    decode_child(&rlp_items[12]).try_into()?,
+                    decode_child(&rlp_items[13]).try_into()?,
+                    decode_child(&rlp_items[14]).try_into()?,
+                    decode_child(&rlp_items[15]).try_into()?,
+                ];
                 let (value, _) = decode_bytes(&rlp_items[16])?;
                 BranchNode {
                     choices,

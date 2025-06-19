@@ -28,6 +28,7 @@ pub use self::error::TrieError;
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::error::RLPDecodeError;
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -71,13 +72,13 @@ impl Trie {
     }
 
     /// Creates a trie from an already-initialized DB and sets root as the root node of the trie
-    pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
-        Self {
+    pub fn open(db: Box<dyn TrieDB>, root: H256) -> Result<Self, RLPDecodeError> {
+        Ok(Self {
             db,
             root: (root != *EMPTY_TRIE_HASH)
-                .then_some(NodeHash::from(root).into())
+                .then_some(NodeHash::from(root).try_into()?)
                 .unwrap_or_default(),
-        }
+        })
     }
 
     /// Return a reference to the internal database.
@@ -470,7 +471,7 @@ impl ProofTrie {
                 .insert(self.0.db.as_ref(), partial_path, external_ref)?
                 .into()
         } else {
-            external_ref.into()
+            external_ref.try_into()?
         };
 
         Ok(())

@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 
 use crate::{Node, Trie, TrieDB, TrieError};
 use ethereum_types::H256;
@@ -21,7 +21,7 @@ impl TrieLogger {
         Ok(lock.clone())
     }
 
-    pub fn open_trie(trie: Trie) -> (TrieWitness, Trie) {
+    pub fn open_trie(trie: Trie) -> Result<(TrieWitness, Trie), RLPDecodeError> {
         let root = trie.hash_no_commit();
         let db = trie.db;
         let witness = Arc::new(Mutex::new(HashSet::new()));
@@ -29,7 +29,7 @@ impl TrieLogger {
             inner_db: db,
             witness: witness.clone(),
         };
-        (witness, Trie::open(Box::new(logger), root))
+        Ok((witness, Trie::open(Box::new(logger), root)?))
     }
 }
 
