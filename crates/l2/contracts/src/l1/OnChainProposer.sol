@@ -353,7 +353,6 @@ contract OnChainProposer is
     function verifyBatchAligned(
         uint256 batchNumber,
         bytes calldata alignedPublicInputs,
-        bytes32 alignedProgramVKey,
         bytes32[] calldata alignedMerkleProof
     ) external override onlySequencer {
         require(
@@ -375,7 +374,7 @@ contract OnChainProposer is
         bytes memory callData = abi.encodeWithSignature(
             "verifyProofInclusion(bytes32[],bytes32,bytes)",
             alignedMerkleProof,
-            alignedProgramVKey,
+            SP1_VERIFICATION_KEY,
             alignedPublicInputs
         );
         (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR

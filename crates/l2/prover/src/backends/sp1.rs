@@ -97,7 +97,6 @@ pub fn to_batch_proof(
         BatchProof::ProofBytes(ProofBytes {
             proof: bincode::serialize(&proof.proof)?,
             public_values: proof.proof.public_values.to_vec(),
-            vk: proof.vk.hash_bytes().into(),
         })
     } else {
         BatchProof::ProofCalldata(to_calldata(proof))
