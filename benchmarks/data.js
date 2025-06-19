@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750285236601,
+  "lastUpdate": 1750345049734,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -89,6 +89,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 224179628110,
             "range": "± 271461380",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "18153834+klaus993@users.noreply.github.com",
+            "name": "Klaus @ LambdaClass",
+            "username": "klaus993"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "02fda58b1e8ee0a7014ba43956c9cd846953c4fb",
+          "message": "ci(l1,l2): fix GitHub Pages deployments (#3222)\n\n**Motivation**\n\nFix for #3217\n\n**Description**\n\nFixes lack of permissions for mdbook workflow, and new path to publish\nL1 block proving benchmark",
+          "timestamp": "2025-06-19T13:57:23Z",
+          "tree_id": "3d602ecb1c7539d9c52e1f10728d21da6ed5a778",
+          "url": "https://github.com/lambdaclass/ethrex/commit/02fda58b1e8ee0a7014ba43956c9cd846953c4fb"
+        },
+        "date": 1750345042436,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 222026345384,
+            "range": "± 424203482",
             "unit": "ns/iter"
           }
         ]
