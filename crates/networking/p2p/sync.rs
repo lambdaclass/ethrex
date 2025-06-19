@@ -15,6 +15,8 @@ use ethrex_common::{
 };
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{EngineType, STATE_TRIE_SEGMENTS, Store, error::StoreError};
+#[cfg(feature = "l2")]
+use ethrex_storage_rollup::StoreRollup;
 use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
@@ -130,13 +132,34 @@ impl Syncer {
     /// If the sync fails, no error will be returned but a warning will be emitted
     /// [WARNING] Sync is done optimistically, so headers and bodies may be stored even if their data has not been fully synced if the sync is aborted halfway
     /// [WARNING] Sync is currenlty simplified and will not download bodies + receipts previous to the pivot during snap sync
-    pub async fn start_sync(&mut self, current_head: H256, sync_head: H256, store: Store) {
+    pub async fn start_sync(
+        &mut self,
+        current_head: H256,
+        sync_head: H256,
+        store: Store,
+        #[cfg(feature = "l2")] rollup_store: StoreRollup,
+        #[cfg(feature = "l2")] current_batch_number: u64,
+        #[cfg(feature = "l2")] new_batch_head: u64,
+    ) {
         info!(
             "Syncing from current head {:?} to sync_head {:?}",
             current_head, sync_head
         );
         let start_time = Instant::now();
-        match self.sync_cycle(current_head, sync_head, store).await {
+        match self
+            .sync_cycle(
+                current_head,
+                sync_head,
+                store,
+                #[cfg(feature = "l2")]
+                rollup_store,
+                #[cfg(feature = "l2")]
+                current_batch_number,
+                #[cfg(feature = "l2")]
+                new_batch_head,
+            )
+            .await
+        {
             Ok(()) => {
                 info!(
                     "Sync cycle finished, time elapsed: {} secs",
@@ -156,6 +179,9 @@ impl Syncer {
         mut current_head: H256,
         sync_head: H256,
         store: Store,
+        #[cfg(feature = "l2")] rollup_store: StoreRollup,
+        #[cfg(feature = "l2")] current_batch_number: u64,
+        #[cfg(feature = "l2")] new_batch_head: u64,
     ) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         let mut sync_mode = if self.snap_enabled.load(Ordering::Relaxed) {
@@ -301,6 +327,18 @@ impl Syncer {
             if sync_head_found {
                 break;
             };
+        }
+        #[cfg(feature = "l2")]
+        {
+            for batch_number in current_batch_number..=new_batch_head {
+                let Some(batch) = self.peers.request_batch(batch_number).await else {
+                    warn!("Sync failed to find target block header, aborting");
+                    return Ok(());
+                };
+                // Store the batch number in the rollup store
+                rollup_store.seal_batch(batch).await?;
+                info!("Sealed batch number {batch_number}");
+            }
         }
         match sync_mode {
             SyncMode::Snap => {

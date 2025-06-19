@@ -9,7 +9,6 @@ use crate::{
     utils::{NodeConfigFile, set_datadir, store_node_config_file},
 };
 use clap::Subcommand;
-use core::sync;
 use ethrex_common::{
     Address, U256,
     types::{BYTES_PER_BLOB, BlobsBundle, BlockHeader, batch::Batch, bytes_from_blob},
@@ -26,7 +25,7 @@ use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use ethrex_vm::EvmEngine;
 use eyre::OptionExt;
 use itertools::Itertools;
-use keccak_hash::{H256, keccak};
+use keccak_hash::keccak;
 use reqwest::Url;
 use std::{
     fs::{create_dir_all, read_dir},
@@ -168,6 +167,8 @@ impl Command {
                     cancel_token.clone(),
                     blockchain.clone(),
                     store.clone(),
+                    #[cfg(feature = "l2")]
+                    rollup_store.clone(),
                 );
 
                 let l2_sequencer = ethrex_l2::start_l2(

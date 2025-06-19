@@ -1,6 +1,8 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use bytes::Bytes;
+#[cfg(feature = "l2")]
+use ethrex_common::types::batch::Batch;
 use ethrex_common::{
     H256, U256,
     types::{AccountState, Block, BlockBody, BlockHeader, Receipt, validate_block_body},
@@ -168,6 +170,11 @@ impl PeerHandler {
             warn!("[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}...");
             self.record_peer_failure(peer_id).await;
         }
+        None
+    }
+
+    #[cfg(feature = "l2")]
+    pub async fn request_batch(&self, _batch_number: u64) -> Option<Batch> {
         None
     }
 

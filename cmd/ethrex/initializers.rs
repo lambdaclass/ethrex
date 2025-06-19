@@ -137,6 +137,8 @@ pub async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
+        #[cfg(feature = "l2")]
+        rollup_store.clone(),
     )
     .await;
 
