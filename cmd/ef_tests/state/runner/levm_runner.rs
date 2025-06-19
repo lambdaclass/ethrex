@@ -395,7 +395,23 @@ pub async fn ensure_post_state(
                             error_reason,
                         ));
                     }
-                    ensure_levm_state_was_reverted(cache, test)?;
+
+                    let levm_account_updates = backends::levm::LEVM::get_state_transitions(db)
+                        .map_err(|_| {
+                            InternalError::Custom(
+                                "Error at LEVM::get_state_transitions in ensure_post_state()"
+                                    .to_owned(),
+                            )
+                        })?;
+                    let vector_post_value = test.post.vector_post_value(vector, *fork);
+
+                    // Compare the post-state root hash with the expected post-state root hash to ensure levm state is correct (was reverted)
+                    if vector_post_value.hash != post_state_root(&levm_account_updates, test).await
+                    {
+                        return Err(EFTestRunnerError::FailedToRevertLEVMState(
+                            "Failed to revert LEVM state".to_string(),
+                        ));
+                    }
                 }
                 // Execution result was unsuccessful but no exception was expected.
                 None => {
@@ -415,51 +431,6 @@ pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -
         .unwrap()
         .unwrap();
     ret_account_updates_batch.state_trie_hash
-}
-
-pub fn ensure_levm_state_was_reverted(
-    mut cache: cache::CacheDB,
-    test: &EFTest,
-) -> Result<(), EFTestRunnerError> {
-    for (address, pre_value) in &test.pre.0 {
-        if let Some(account) = cache::get_account_mut(&mut cache, &address) {
-            ensure_reverted_state_condition(
-                account.info.balance == pre_value.balance,
-                format!(
-                    "Failed to restore balance: cache balance: {} should equal pre state balance: {}",
-                    account.info.balance, pre_value.balance
-                ),
-            )?;
-            ensure_reverted_state_condition(
-                account.info.nonce == pre_value.nonce,
-                format!(
-                    "Failed to restore nonce: cache nonce: {} should equal pre state nonce: {}",
-                    account.info.nonce, pre_value.nonce
-                ),
-            )?;
-            ensure_reverted_state_condition(
-                account.info.code_hash.as_bytes() == pre_value.code,
-                format!(
-                    "Failed to restore code hash: cache code hash: {} should equal pre state code hash: {:?}",
-                    account.info.code_hash, pre_value.code
-                ),
-            )?;
-
-            for (k, v) in &pre_value.storage {
-                ensure_reverted_state_condition(
-                    account.storage.contains_key(&H256::from_uint(k))
-                        && account.storage.get(&H256::from_uint(k)) == Some(v),
-                    format!("Failed to restore storage"),
-                )?;
-            }
-        } else {
-            return Err(EFTestRunnerError::FailedToRevertLEVMState(format!(
-                "Failed to restore cache: Account address {address} is not in cache. Cache addresses are: {:?}",
-                cache.keys()
-            )));
-        }
-    }
-    Ok(())
 }
 
 fn ensure_reverted_state_condition(
