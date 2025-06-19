@@ -123,8 +123,8 @@ fn recover_address_for_sk(sk: &SecretKey) -> Address {
         s: U256::one(),
         gas: 21000,
     });
-    tx.sign_inplace(sk);
-    tx.sender()
+    tx.sign_inplace(sk).expect("Unreachable error: Digest to sign should be correct size since it's calculated with the keccak algorithm");
+    tx.sender().expect("Failed to recover sender's address")
 }
 
 async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
@@ -182,7 +182,7 @@ async fn fill_mempool(b: &Blockchain, accounts: Vec<SecretKey>) {
                 to: TxKind::Call(H160::random()),
                 ..Default::default()
             });
-            tx.sign_inplace(&sk);
+            tx.sign_inplace(&sk).expect("Unreachable error: Digest to sign should be correct size since it's calculated with the keccak algorithm");
             txs.push(tx);
         }
     }
