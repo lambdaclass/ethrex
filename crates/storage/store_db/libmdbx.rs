@@ -478,10 +478,7 @@ impl StoreEngine for Store {
                     }
                     let old_info = log_entry.previous_info;
                     let addr = log_entry.address;
-                    if !(old_info.balance.is_zero()
-                        && old_info.code_hash.is_zero()
-                        && old_info.nonce == 0)
-                    {
+                    if old_info != AccountInfo::default() {
                         flat_info_cursor
                             .upsert(addr.into(), EncodableAccountInfo(old_info))
                             .map_err(StoreError::LibmdbxError)?;
@@ -572,10 +569,7 @@ impl StoreEngine for Store {
                     }
 
                     let new_info = log_entry.info;
-                    if !(new_info.balance.is_zero()
-                        && new_info.code_hash.is_zero()
-                        && new_info.nonce == 0)
-                    {
+                    if new_info != AccountInfo::default() {
                         flat_info_cursor
                             .upsert(log_entry.address.into(), EncodableAccountInfo(new_info))
                             .map_err(StoreError::LibmdbxError)?;
