@@ -1,5 +1,6 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
+use crate::store_db::codec::{account_address::AccountAddress, block_num_hash::BlockNumHash};
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
@@ -7,14 +8,14 @@ use crate::store_db::libmdbx::Store as LibmdbxStore;
 use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
 
+use crate::store_db::codec::account_storage_log_entry::AccountStorageLogEntry;
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::{
-    constants::EMPTY_TRIE_HASH,
-    types::{
-        AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-        BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt, Transaction,
-        code_hash, payload::PayloadBundle,
-    },
+use ethrex_common::H160;
+use ethrex_common::constants::EMPTY_TRIE_HASH;
+use ethrex_common::types::{
+    AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+    BlockNumber, ChainConfig, ForkId, Genesis, GenesisAccount, Index, Receipt, Transaction,
+    code_hash, payload::PayloadBundle,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -47,6 +48,7 @@ pub enum EngineType {
     RedB,
 }
 
+#[derive(Default)]
 pub struct UpdateBatch {
     /// Nodes to be added to the state trie
     pub account_updates: Vec<TrieNode>,
@@ -70,8 +72,37 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
-    pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        self.engine.apply_updates(update_batch).await
+    pub async fn store_block_updates(
+        &self,
+        update_batch: UpdateBatch,
+        account_updates: &[&[AccountUpdate]],
+    ) -> Result<(), StoreError> {
+        let account_info_logs = self.build_account_info_logs(
+            update_batch
+                .blocks
+                .iter()
+                .zip(account_updates.iter().copied()),
+        )?;
+        self.engine
+            .store_account_info_logs(account_info_logs)
+            .await?;
+        let account_storage_logs = self.build_account_storage_logs(
+            update_batch
+                .blocks
+                .iter()
+                .zip(account_updates.iter().copied()),
+        )?;
+        self.engine
+            .store_account_storage_logs(account_storage_logs)
+            .await?;
+        let account_updates: Vec<_> = account_updates
+            .iter()
+            .flat_map(|u| u.iter())
+            .cloned()
+            .collect();
+        self.engine
+            .apply_updates(update_batch, &account_updates)
+            .await
     }
 
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
@@ -106,6 +137,95 @@ impl Store {
         let store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
+    }
+
+    fn build_account_info_logs<'a>(
+        &self,
+        account_updates_per_block: impl Iterator<Item = (&'a Block, &'a [AccountUpdate])>,
+    ) -> Result<Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>, StoreError> {
+        let mut accounts_info_log = Vec::new();
+        let mut previous_account_info = HashMap::<H160, AccountInfo>::new();
+
+        for (block, account_updates) in account_updates_per_block {
+            let block_numhash: BlockNumHash = (block.header.number, block.header.hash()).into();
+            for account_update in account_updates {
+                let new_info = if account_update.removed {
+                    AccountInfo::default()
+                } else {
+                    let Some(new_info) = &account_update.info else {
+                        continue;
+                    };
+                    new_info.clone()
+                };
+                let address = account_update.address;
+                let old_info = match previous_account_info.get(&address) {
+                    Some(info) => info.clone(),
+                    None => self
+                        .engine
+                        .get_current_account_info(address)?
+                        .unwrap_or_default(),
+                };
+                // NOTE: this might also be useful as preparation for the snapshot
+                previous_account_info.insert(address, new_info.clone());
+                accounts_info_log.push((block_numhash, address.into(), old_info, new_info.clone()));
+            }
+        }
+        Ok(accounts_info_log)
+    }
+
+    // SNAPSHOT RECONSTRUCTION STRATEGY
+    // 1. From the number of the first new_canonical_block and the canonical
+    //    chain table, extract the list of (block_number, block_hash) we need
+    //    to invalidate
+    // 2. From the last block in that list, iterate backwards the log restoring
+    //    the previous values
+    // 3. From the first block in the new canonical chain to the last, apply
+    //    the log for those blocks
+    // 4. Commit the transaction
+    //
+    // This function assumes that `new_canonical_blocks` is sorted by block number.
+    pub async fn reconstruct_snapshots_for_new_canonical_chain(
+        &self,
+        head: H256,
+    ) -> Result<(), StoreError> {
+        self.engine.undo_writes_until_canonical().await?;
+        self.engine.replay_writes_until_head(head).await
+    }
+
+    fn build_account_storage_logs<'a>(
+        &self,
+        account_updates_per_block: impl Iterator<Item = (&'a Block, &'a [AccountUpdate])>,
+    ) -> Result<Vec<(BlockNumHash, AccountStorageLogEntry)>, StoreError> {
+        let mut accounts_storage_log = Vec::new();
+        let mut previous_account_storage = HashMap::<(H160, H256), U256>::new();
+
+        for (block, account_updates) in account_updates_per_block {
+            let block_numhash: BlockNumHash = (block.header.number, block.hash()).into();
+            for account_update in account_updates {
+                let address = account_update.address;
+                for (slot, new_value) in account_update.added_storage.iter() {
+                    let old_value = match previous_account_storage.get(&(address, *slot)) {
+                        Some(value) => *value,
+                        None => self
+                            .engine
+                            .get_current_storage(address, *slot)?
+                            .unwrap_or_default(),
+                    };
+                    // NOTE: this might also be useful as preparation for the snapshot
+                    previous_account_storage.insert((address, *slot), *new_value);
+                    accounts_storage_log.push((
+                        block_numhash,
+                        AccountStorageLogEntry {
+                            address,
+                            slot: *slot,
+                            old_value,
+                            new_value: *new_value,
+                        },
+                    ));
+                }
+            }
+        }
+        Ok(accounts_storage_log)
     }
 
     pub async fn get_account_info(
@@ -413,6 +533,7 @@ impl Store {
             }
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
+
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
         Ok(AccountUpdatesList {
@@ -516,6 +637,35 @@ impl Store {
         genesis_state_trie.hash().map_err(StoreError::Trie)
     }
 
+    pub async fn setup_genesis_flat_account_storage(
+        &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
+        genesis_accounts: &[(H160, H256, U256)],
+    ) -> Result<(), StoreError> {
+        self.engine
+            .setup_genesis_flat_account_storage(
+                genesis_block_number,
+                genesis_block_hash,
+                genesis_accounts,
+            )
+            .await
+    }
+    pub async fn setup_genesis_flat_account_info(
+        &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
+        genesis_accounts: &[(H160, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError> {
+        self.engine
+            .setup_genesis_flat_account_info(
+                genesis_block_number,
+                genesis_block_hash,
+                genesis_accounts,
+            )
+            .await
+    }
+
     pub async fn add_receipt(
         &self,
         block_hash: BlockHash,
@@ -553,6 +703,25 @@ impl Store {
         self.engine.mark_chain_as_canonical(blocks).await
     }
 
+    pub fn get_current_storage(
+        &self,
+        address: Address,
+        key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        self.engine.get_current_storage(address, key)
+    }
+
+    pub fn get_current_account_info(
+        &self,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, StoreError> {
+        self.engine.get_current_account_info(address)
+    }
+
+    pub fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.engine.get_block_for_current_snapshot()
+    }
+
     pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
         info!("Storing initial state from genesis");
 
@@ -571,6 +740,36 @@ impl Store {
             }
         }
         // Store genesis accounts
+        // Start with the snapshot because the trie consumes the struct
+        // FIXME: should probably just use a reference to the structure to avoid the noise here
+        let flat_storage: Vec<_> = genesis
+            .alloc
+            .iter()
+            .flat_map(|(addr, account)| {
+                account
+                    .storage
+                    .iter()
+                    .map(|(key, value)| (*addr, H256(key.to_big_endian()), *value))
+            })
+            .collect();
+        self.setup_genesis_flat_account_storage(genesis_block_number, genesis_hash, &flat_storage)
+            .await?;
+        let flat_info: Vec<_> = genesis
+            .alloc
+            .iter()
+            .map(|(addr, account)| {
+                let code_hash: [u8; 32] = Keccak256::digest(&account.code).into();
+                (
+                    *addr,
+                    account.nonce,
+                    account.balance,
+                    H256::from(code_hash),
+                    false,
+                )
+            })
+            .collect();
+        self.setup_genesis_flat_account_info(genesis_block_number, genesis_hash, &flat_info)
+            .await?;
         // TODO: Should we use this root instead of computing it before the block hash check?
         let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);

@@ -1,3 +1,11 @@
+use super::codec::{
+    account_address::AccountAddress, account_info_log_entry::AccountInfoLogEntry,
+    account_storage_key_bytes::AccountStorageKeyBytes,
+    account_storage_log_entry::AccountStorageLogEntry,
+    account_storage_value_bytes::AccountStorageValueBytes, block_num_hash::BlockNumHash,
+    encodable_account_info::EncodableAccountInfo,
+    flat_tables_block_metadata_key::FlatTablesBlockMetadataKey,
+};
 use crate::UpdateBatch;
 use crate::api::StoreEngine;
 use crate::error::StoreError;
@@ -13,9 +21,10 @@ use crate::trie_db::utils::node_hash_to_fixed_size;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
+use ethrex_common::Address;
 use ethrex_common::types::{
-    AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
-    Receipt, Transaction, payload::PayloadBundle,
+    AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
+    BlockNumber, ChainConfig, Index, Receipt, Transaction, payload::PayloadBundle,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -32,6 +41,122 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
+
+// Define tables
+table!(
+    /// The canonical block hash for each block number. It represents the canonical chain.
+    ( CanonicalBlockHashes ) BlockNumber => BlockHashRLP
+);
+
+table!(
+    /// Block hash to number table.
+    ( BlockNumbers ) BlockHashRLP => BlockNumber
+);
+
+table!(
+    /// Block headers table.
+    ( Headers ) BlockHashRLP => BlockHeaderRLP
+);
+table!(
+    /// Block bodies table.
+    ( Bodies ) BlockHashRLP => BlockBodyRLP
+);
+table!(
+    /// Account codes table.
+    ( AccountCodes ) AccountCodeHashRLP => AccountCodeRLP
+);
+
+// TODO: maybe the log tables could save 64 bytes per
+// entry by storing the address in the value instead
+dupsort!(
+    /// Account codes table.
+    ( AccountsStateWriteLog ) BlockNumHash => AccountInfoLogEntry
+);
+
+dupsort!(
+    /// Storage write log table.
+    ( AccountsStorageWriteLog ) BlockNumHash => AccountStorageLogEntry
+);
+
+dupsort!(
+    /// Receipts table.
+    ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+);
+
+dupsort!(
+    /// Table containing all storage trie's nodes
+    /// Each node is stored by hashed account address and node hash in order to keep different storage trie's nodes separate
+    ( StorageTriesNodes ) ([u8;32], [u8;33])[[u8;32]] => Vec<u8>
+);
+
+dupsort!(
+    /// Transaction locations table.
+    ( TransactionLocations ) TransactionHashRLP => Rlp<(BlockNumber, BlockHash, Index)>
+);
+
+table!(
+    /// Stores chain data, each value is unique and stored as its rlp encoding
+    /// See [ChainDataIndex] for available chain values
+    ( ChainData ) ChainDataIndex => Vec<u8>
+);
+
+table!(
+    /// Stores snap state, each value is unique and stored as its rlp encoding
+    /// See [SnapStateIndex] for available values
+    ( SnapState ) SnapStateIndex => Vec<u8>
+);
+
+// Trie storages
+
+table!(
+    /// state trie nodes
+    ( StateTrieNodes ) NodeHash => Vec<u8>
+);
+
+// Local Blocks
+
+table!(
+    /// payload id to payload table
+    ( Payloads ) u64 => PayloadBundleRLP
+);
+
+table!(
+    /// Stores blocks that are pending validation.
+    ( PendingBlocks ) BlockHashRLP => BlockRLP
+);
+
+table!(
+    /// State Snapshot used by an ongoing sync process
+    ( StateSnapShot ) AccountHashRLP => AccountStateRLP
+);
+
+dupsort!(
+    /// Storage Snapshot used by an ongoing sync process
+    ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
+);
+
+table!(
+    /// Storage trie paths in need of healing stored by hashed address
+    ( StorageHealPaths ) AccountHashRLP => TriePathsRLP
+);
+
+table!(
+    /// Stores invalid ancestors
+    ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
+);
+
+table!(
+    /// Tracks the (BlockNumber, BlockHash, ParentHash) corresponding to the current FlatAccountStorage and FlatAccountInfo
+    ( FlatTablesBlockMetadata ) FlatTablesBlockMetadataKey => BlockNumHash
+);
+table!(
+    /// Account storage as a flat mapping from (AccountAddress, Slot) to (Value)
+    ( FlatAccountStorage ) (AccountAddress, AccountStorageKeyBytes) [AccountAddress] => AccountStorageValueBytes
+);
+table!(
+    /// Account state as a flat mapping from (AccountAddress) to (State)
+    ( FlatAccountInfo ) AccountAddress => EncodableAccountInfo
+);
 
 pub struct Store {
     db: Arc<Database>,
@@ -54,6 +179,34 @@ impl Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    // Helper method to write into a libmdbx table in batch
+    fn replace_value_or_delete<T: Table>(
+        flat_storage_cursor: &mut libmdbx::orm::Cursor<'_, libmdbx::RW, T>,
+        key: T::Key,
+        value: Option<T::Value>,
+    ) -> Result<(), StoreError>
+    where
+        <T as libmdbx::orm::Table>::Key: libmdbx::orm::Decodable,
+    {
+        match value {
+            Some(v) => flat_storage_cursor
+                .upsert(key, v)
+                .map_err(StoreError::LibmdbxError),
+            None => {
+                if let Some(_current_data) = flat_storage_cursor
+                    .seek_exact(key)
+                    .map_err(StoreError::LibmdbxError)?
+                {
+                    flat_storage_cursor
+                        .delete_current()
+                        .map_err(StoreError::LibmdbxError)
+                } else {
+                    Ok(())
+                }
+            }
+        }
     }
 
     // Helper method to write into a libmdbx table in batch
@@ -95,11 +248,11 @@ impl Store {
             let mut res = Vec::new();
             let txn = db.begin_read().map_err(StoreError::LibmdbxError)?;
             for key in keys {
-                let val = txn.get::<T>(key).map_err(StoreError::LibmdbxError)?;
-                match val {
-                    Some(val) => res.push(val),
-                    None => Err(StoreError::ReadError)?,
-                }
+                let val = txn
+                    .get::<T>(key)
+                    .map_err(StoreError::LibmdbxError)?
+                    .ok_or(StoreError::ReadError)?;
+                res.push(val);
             }
             Ok(res)
         })
@@ -126,11 +279,57 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+    async fn apply_updates(
+        &self,
+        update_batch: UpdateBatch,
+        account_updates: &[AccountUpdate],
+    ) -> Result<(), StoreError> {
         let db = self.db.clone();
+        let account_updates = account_updates.to_vec();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
+            let Some(first_block) = update_batch.blocks.first() else {
+                return Ok(());
+            };
+            let meta = tx
+                .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})
+                .map_err(StoreError::LibmdbxError)?
+                .unwrap_or_default();
+            if meta == (first_block.header.number, first_block.header.hash()).into() {
+                let mut cursor = tx
+                    .cursor::<FlatAccountInfo>()
+                    .map_err(StoreError::LibmdbxError)?;
+                let mut storage_cursor = tx
+                    .cursor::<FlatAccountStorage>()
+                    .map_err(StoreError::LibmdbxError)?;
+                for update in account_updates.iter() {
+                    if update.removed || update.info.is_some() {
+                        let key = AccountAddress(update.address);
+
+                        let value = (!update.removed)
+                            .then_some(update.info.clone().map(EncodableAccountInfo))
+                            .flatten();
+                        Self::replace_value_or_delete(&mut cursor, key, value)?;
+                    }
+
+                    for (slot, value) in update.added_storage.iter() {
+                        let key = (update.address.into(), (*slot).into());
+                        let value = (!value.is_zero()).then_some((*value).into());
+                        Self::replace_value_or_delete(&mut storage_cursor, key, value)?;
+                    }
+                }
+                if let Some(block) = update_batch.blocks.iter().max_by_key(|b| b.header.number) {
+                    tx.upsert::<FlatTablesBlockMetadata>(
+                        FlatTablesBlockMetadataKey {},
+                        (block.header.number, block.header.hash()).into(),
+                    )
+                    .map_err(StoreError::LibmdbxError)?;
+                }
+            }
+
+            // for each block in the update batch, we iterate over the account updates (by index)
+            // we store account info changes in the table StateWriteBatch
             // store account updates
             for (node_hash, node_data) in update_batch.account_updates {
                 tx.upsert::<StateTrieNodes>(node_hash, node_data)
@@ -181,8 +380,9 @@ impl StoreEngine for Store {
                     .map_err(StoreError::LibmdbxError)?;
             }
             for (block_hash, receipts) in update_batch.receipts {
+                let mut key_values = vec![];
                 // store receipts
-                let mut key_values: Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)> = vec![];
+
                 for mut entries in
                     receipts
                         .into_iter()
@@ -207,6 +407,195 @@ impl StoreEngine for Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    async fn store_account_info_logs(
+        &self,
+        account_info_logs: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
+    ) -> Result<(), StoreError> {
+        let inner = || -> Result<(), _> {
+            let tx = self.db.begin_readwrite()?;
+            let mut cursor = tx.cursor::<AccountsStateWriteLog>()?;
+            for (blk, addr, old_info, new_info) in account_info_logs {
+                cursor.upsert(
+                    blk,
+                    AccountInfoLogEntry {
+                        address: addr.0,
+                        info: new_info,
+                        previous_info: old_info,
+                    },
+                )?;
+            }
+            tx.commit()
+        };
+        inner().map_err(StoreError::LibmdbxError)
+    }
+    async fn store_account_storage_logs(
+        &self,
+        account_storage_logs: Vec<(BlockNumHash, AccountStorageLogEntry)>,
+    ) -> Result<(), StoreError> {
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        let mut cursor = tx
+            .cursor::<AccountsStorageWriteLog>()
+            .map_err(StoreError::LibmdbxError)?;
+
+        account_storage_logs
+            .into_iter()
+            .try_for_each(|(blk, value)| cursor.upsert(blk, value))
+            .map_err(StoreError::LibmdbxError)?;
+
+        tx.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
+        let inner = || -> Result<_, _> {
+            let tx = self.db.begin_readwrite()?;
+            let Some(old_snapshot_meta) =
+                tx.get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
+            else {
+                return Ok(()); // No snapshot to revert
+            };
+
+            let mut block_headers_cursor = tx.cursor::<Headers>()?;
+            let mut canonical_cursor = tx.cursor::<CanonicalBlockHashes>()?;
+            let mut state_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
+            let mut storage_log_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
+            let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
+            let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
+
+            let mut block_num = old_snapshot_meta.0;
+            let mut canonical_hash = canonical_cursor
+                .seek_exact(block_num)?
+                .map(|(_, hash)| hash.to())
+                .transpose()?
+                .unwrap_or_default();
+            let mut snapshot_hash = old_snapshot_meta.1;
+            let mut key = old_snapshot_meta;
+
+            while canonical_hash != snapshot_hash {
+                let mut found_state_log = state_log_cursor.seek_exact(key)?;
+                let mut found_storage_log = storage_log_cursor.seek_exact(key)?;
+                // loop over log_entries, take log_value and restore it in the flat tables
+                while let Some((read_key_num_hash, log_entry)) = found_state_log {
+                    if read_key_num_hash != key {
+                        break;
+                    }
+                    let old_info = log_entry.previous_info;
+                    let addr = log_entry.address.into();
+                    let info = (old_info != AccountInfo::default())
+                        .then_some(EncodableAccountInfo(old_info));
+                    Self::replace_value_or_delete(&mut flat_info_cursor, addr, info)?;
+
+                    found_state_log = state_log_cursor.next()?;
+                }
+
+                while let Some((read_key_num_hash, log_entry)) = found_storage_log {
+                    if read_key_num_hash != key {
+                        break;
+                    }
+                    let old_value = log_entry.old_value;
+                    let slot = log_entry.slot;
+                    let addr = log_entry.address;
+                    let storage_key = (addr.into(), slot.into());
+                    let value_aux = (!old_value.is_zero()).then_some(old_value.into());
+                    Self::replace_value_or_delete(
+                        &mut flat_storage_cursor,
+                        storage_key,
+                        value_aux,
+                    )?;
+
+                    found_storage_log = storage_log_cursor.next()?;
+                }
+
+                // Update the cursors
+                canonical_hash = canonical_cursor
+                    .seek_exact(block_num - 1)?
+                    .map(|(_, hash)| hash.to())
+                    .transpose()?
+                    .unwrap_or_default();
+                snapshot_hash = block_headers_cursor
+                    .seek_exact(snapshot_hash.into())?
+                    .map(|(_, header)| header.to())
+                    .transpose()?
+                    .unwrap_or_default()
+                    .parent_hash;
+                block_num -= 1;
+                key = (block_num, snapshot_hash).into();
+            }
+            tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, key)?;
+            tx.commit()
+        };
+
+        inner().map_err(StoreError::LibmdbxError)
+    }
+    // NOTE: assumes current flat representation corresponds to a block
+    // in the canonical chain.
+    async fn replay_writes_until_head(&self, head: H256) -> Result<(), StoreError> {
+        let inner = || -> Result<_, _> {
+            let tx = self.db.begin_readwrite()?;
+            let current_snapshot_meta = tx
+                .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})?
+                .unwrap_or_default();
+            let mut state_log_cursor = tx.cursor::<AccountsStateWriteLog>()?;
+            let mut storage_log_cursor = tx.cursor::<AccountsStorageWriteLog>()?;
+            let mut flat_info_cursor = tx.cursor::<FlatAccountInfo>()?;
+            let mut flat_storage_cursor = tx.cursor::<FlatAccountStorage>()?;
+            let mut key = current_snapshot_meta;
+
+            for key_value in tx
+                .cursor::<CanonicalBlockHashes>()?
+                .walk(Some(current_snapshot_meta.0 + 1))
+            {
+                let (block_num, block_hash_rlp) = key_value?;
+                let block_hash = block_hash_rlp.to()?;
+                key = (block_num, block_hash).into();
+                let mut found_state_log = state_log_cursor.seek_exact(key)?;
+                let mut found_storage_log = storage_log_cursor.seek_exact(key)?;
+                // loop over log_entries, take log_value and restore it in the flat tables
+                while let Some((read_key_num_hash, log_entry)) = found_state_log {
+                    if read_key_num_hash != key {
+                        break;
+                    }
+
+                    let new_info = log_entry.info;
+                    let key = log_entry.address.into();
+                    let value_aux = (new_info != AccountInfo::default())
+                        .then_some(EncodableAccountInfo(new_info));
+                    Self::replace_value_or_delete(&mut flat_info_cursor, key, value_aux)?;
+
+                    found_state_log = state_log_cursor.next()?;
+                }
+
+                while let Some((read_key_num_hash, log_entry)) = found_storage_log {
+                    if read_key_num_hash != key {
+                        break;
+                    }
+
+                    let new_value = log_entry.new_value;
+                    let slot = log_entry.slot;
+                    let addr = log_entry.address;
+                    let storage_key = (addr.into(), slot.into());
+                    let storage_value = (!new_value.is_zero()).then_some(new_value.into());
+                    Self::replace_value_or_delete(
+                        &mut flat_storage_cursor,
+                        storage_key,
+                        storage_value,
+                    )?;
+
+                    found_storage_log = storage_log_cursor.next()?;
+                }
+                if head == key.1 {
+                    break;
+                }
+            }
+            tx.upsert::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {}, key)?;
+            tx.commit()
+        };
+
+        inner().map_err(StoreError::LibmdbxError)
     }
 
     async fn add_block_header(
@@ -1106,6 +1495,109 @@ impl StoreEngine for Store {
         self.write::<InvalidAncestors>(bad_block.into(), latest_valid.into())
             .await
     }
+
+    async fn setup_genesis_flat_account_storage(
+        &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
+        genesis_accounts: &[(Address, H256, U256)],
+    ) -> Result<(), StoreError> {
+        // tracing::info!("called update_flat_storage");
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        let mut cursor = tx
+            .cursor::<FlatAccountStorage>()
+            .map_err(StoreError::LibmdbxError)?;
+        for (addr, slot, value) in genesis_accounts.iter().cloned() {
+            let key = (addr.into(), slot.into());
+            if !value.is_zero() {
+                cursor
+                    .upsert(key, value.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            } else if cursor
+                .seek_exact(key)
+                .map_err(StoreError::LibmdbxError)?
+                .is_some()
+            {
+                cursor.delete_current().map_err(StoreError::LibmdbxError)?;
+            }
+        }
+        tx.upsert::<FlatTablesBlockMetadata>(
+            FlatTablesBlockMetadataKey {},
+            (genesis_block_number, genesis_block_hash).into(),
+        )
+        .map_err(StoreError::LibmdbxError)?;
+        tx.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    async fn setup_genesis_flat_account_info(
+        &self,
+        genesis_block_number: u64,
+        genesis_block_hash: H256,
+        genesis_accounts: &[(Address, u64, U256, H256, bool)],
+    ) -> Result<(), StoreError> {
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        let mut cursor = tx
+            .cursor::<FlatAccountInfo>()
+            .map_err(StoreError::LibmdbxError)?;
+        for (addr, nonce, balance, code_hash, removed) in genesis_accounts.iter().cloned() {
+            let key = addr.into();
+            if removed {
+                if cursor
+                    .seek_exact(key)
+                    .map_err(StoreError::LibmdbxError)?
+                    .is_some()
+                {
+                    cursor.delete_current().map_err(StoreError::LibmdbxError)?;
+                }
+            } else {
+                cursor
+                    .upsert(key, (code_hash, balance, nonce).into())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+        }
+        tx.upsert::<FlatTablesBlockMetadata>(
+            FlatTablesBlockMetadataKey {},
+            (genesis_block_number, genesis_block_hash).into(),
+        )
+        .map_err(StoreError::LibmdbxError)?;
+        tx.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    fn get_block_for_current_snapshot(&self) -> Result<Option<BlockHash>, StoreError> {
+        Ok(self
+            .db
+            .begin_read()
+            .map_err(StoreError::LibmdbxError)?
+            .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})
+            .map_err(StoreError::LibmdbxError)?
+            .map(|v| v.1))
+    }
+    fn get_current_storage(&self, address: Address, key: H256) -> Result<Option<U256>, StoreError> {
+        // tracing::info!("called get_current_storage");
+        let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let res = tx
+            .get::<FlatAccountStorage>((address.into(), key.into()))
+            .map_err(StoreError::LibmdbxError)?;
+        Ok(res.map(Into::into))
+    }
+
+    fn get_current_account_info(
+        &self,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, StoreError> {
+        // tracing::info!("called get_current_account_info");
+        let tx = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let res = tx
+            .get::<FlatAccountInfo>(address.into())
+            .map_err(StoreError::LibmdbxError)?;
+        Ok(res.map(|i| i.0))
+    }
 }
 
 impl Debug for Store {
@@ -1113,8 +1605,6 @@ impl Debug for Store {
         f.debug_struct("Libmdbx Store").finish()
     }
 }
-
-// Define tables
 
 /// For `dupsort` tables, multiple values can be stored under the same key.
 /// To maintain an explicit order, each value is assigned an `index`.
@@ -1227,153 +1717,6 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
     }
 }
 
-table!(
-    /// The canonical block hash for each block number. It represents the canonical chain.
-    ( CanonicalBlockHashes ) BlockNumber => BlockHashRLP
-);
-
-table!(
-    /// Block hash to number table.
-    ( BlockNumbers ) BlockHashRLP => BlockNumber
-);
-
-table!(
-    /// Block headers table.
-    ( Headers ) BlockHashRLP => BlockHeaderRLP
-);
-table!(
-    /// Block bodies table.
-    ( Bodies ) BlockHashRLP => BlockBodyRLP
-);
-table!(
-    /// Account codes table.
-    ( AccountCodes ) AccountCodeHashRLP => AccountCodeRLP
-);
-
-dupsort!(
-    /// Receipts table.
-    ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
-);
-
-dupsort!(
-    /// Table containing all storage trie's nodes
-    /// Each node is stored by hashed account address and node hash in order to keep different storage trie's nodes separate
-    ( StorageTriesNodes ) ([u8;32], [u8;33])[[u8;32]] => Vec<u8>
-);
-
-dupsort!(
-    /// Transaction locations table.
-    ( TransactionLocations ) TransactionHashRLP => Rlp<(BlockNumber, BlockHash, Index)>
-);
-
-table!(
-    /// Stores chain data, each value is unique and stored as its rlp encoding
-    /// See [ChainDataIndex] for available chain values
-    ( ChainData ) ChainDataIndex => Vec<u8>
-);
-
-table!(
-    /// Stores snap state, each value is unique and stored as its rlp encoding
-    /// See [SnapStateIndex] for available values
-    ( SnapState ) SnapStateIndex => Vec<u8>
-);
-
-// Trie storages
-
-table!(
-    /// state trie nodes
-    ( StateTrieNodes ) NodeHash => Vec<u8>
-);
-
-// Local Blocks
-
-table!(
-    /// payload id to payload table
-    ( Payloads ) u64 => PayloadBundleRLP
-);
-
-table!(
-    /// Stores blocks that are pending validation.
-    ( PendingBlocks ) BlockHashRLP => BlockRLP
-);
-
-table!(
-    /// State Snapshot used by an ongoing sync process
-    ( StateSnapShot ) AccountHashRLP => AccountStateRLP
-);
-
-dupsort!(
-    /// Storage Snapshot used by an ongoing sync process
-    ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
-);
-
-table!(
-    /// Storage trie paths in need of healing stored by hashed address
-    ( StorageHealPaths ) AccountHashRLP => TriePathsRLP
-);
-
-table!(
-    /// Stores invalid ancestors
-    ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
-);
-
-// Storage values are stored as bytes instead of using their rlp encoding
-// As they are stored in a dupsort table, they need to have a fixed size, and encoding them doesn't preserve their size
-pub struct AccountStorageKeyBytes(pub [u8; 32]);
-pub struct AccountStorageValueBytes(pub [u8; 32]);
-
-impl Encodable for AccountStorageKeyBytes {
-    type Encoded = [u8; 32];
-
-    fn encode(self) -> Self::Encoded {
-        self.0
-    }
-}
-
-impl Decodable for AccountStorageKeyBytes {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        Ok(AccountStorageKeyBytes(b.try_into()?))
-    }
-}
-
-impl Encodable for AccountStorageValueBytes {
-    type Encoded = [u8; 32];
-
-    fn encode(self) -> Self::Encoded {
-        self.0
-    }
-}
-
-impl Decodable for AccountStorageValueBytes {
-    fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        Ok(AccountStorageValueBytes(b.try_into()?))
-    }
-}
-
-impl From<H256> for AccountStorageKeyBytes {
-    fn from(value: H256) -> Self {
-        AccountStorageKeyBytes(value.0)
-    }
-}
-
-impl From<U256> for AccountStorageValueBytes {
-    fn from(value: U256) -> Self {
-        AccountStorageValueBytes(value.to_big_endian())
-    }
-}
-
-impl From<AccountStorageKeyBytes> for H256 {
-    fn from(value: AccountStorageKeyBytes) -> Self {
-        H256(value.0)
-    }
-}
-
-impl From<AccountStorageValueBytes> for U256 {
-    fn from(value: AccountStorageValueBytes) -> Self {
-        U256::from_big_endian(&value.0)
-    }
-}
-
 impl Encodable for ChainDataIndex {
     type Encoded = [u8; 4];
 
@@ -1421,6 +1764,11 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> anyhow::Result<Database> {
         table_info!(StorageSnapShot),
         table_info!(StorageHealPaths),
         table_info!(InvalidAncestors),
+        table_info!(FlatTablesBlockMetadata),
+        table_info!(FlatAccountStorage),
+        table_info!(FlatAccountInfo),
+        table_info!(AccountsStorageWriteLog),
+        table_info!(AccountsStateWriteLog),
     ]
     .into_iter()
     .collect();
