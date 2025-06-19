@@ -558,16 +558,7 @@ impl StoreEngine for Store {
             let mut key = current_snapshot_meta;
             // TODO(PLT): query the current block for flat storage/accounts and
             // start applying from there
-            debug_assert_eq!(
-                canonical_cursor
-                    .seek_exact(current_snapshot_meta.0)
-                    .unwrap()
-                    .unwrap()
-                    .1
-                    .to()
-                    .unwrap(),
-                current_snapshot_meta.1
-            );
+
             for key_value in canonical_cursor.walk(Some(current_snapshot_meta.0 + 1)) {
                 let (block_num, block_hash_rlp) = key_value?;
                 let block_hash = block_hash_rlp.to()?;
