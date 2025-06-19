@@ -1057,6 +1057,14 @@ impl EthClient {
             .await
     }
 
+    pub async fn get_sp1_vk(
+        &self,
+        on_chain_proposer_address: Address,
+    ) -> Result<[u8; 32], EthClientError> {
+        self._call_bytes32_variable(b"SP1_VERIFICATION_KEY()", on_chain_proposer_address)
+            .await
+    }
+
     pub async fn get_last_fetched_l1_block(
         &self,
         common_bridge_address: Address,
@@ -1165,6 +1173,31 @@ impl EthClient {
         let value = Address::from_str(hex_str)
             .map_err(|_| EthClientError::Custom("Failed to convert from_str()".to_owned()))?;
         Ok(value)
+    }
+
+    async fn _call_bytes32_variable(
+        &self,
+        selector: &[u8],
+        contract_address: Address,
+    ) -> Result<[u8; 32], EthClientError> {
+        let hex_string = self._generic_call(selector, contract_address).await?;
+
+        let hex = hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
+            "Couldn't strip '0x' prefix from hex string".to_owned(),
+        ))?;
+
+        let bytes = hex::decode(hex)
+            .map_err(|e| EthClientError::Custom(format!("Failed to decode hex string: {}", e)))?;
+
+        if bytes.len() != 32 {
+            return Err(EthClientError::Custom(
+                "Expected 32 bytes for bytes32 value".to_owned(),
+            ));
+        }
+
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        Ok(arr)
     }
 
     pub async fn wait_for_transaction_receipt(
