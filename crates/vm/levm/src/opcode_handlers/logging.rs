@@ -49,7 +49,7 @@ impl<'a> VM<'a> {
 
         self.tracer.log(&log)?;
 
-        self.current_call_frame_mut()?.logs.push(log);
+        self.substate.logs.push(log);
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }

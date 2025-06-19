@@ -1,5 +1,5 @@
 use crate::{
-    errors::{ExecutionReport, InternalError, TxResult, VMError},
+    errors::{ContextResult, InternalError, TxResult, VMError},
     vm::VM,
 };
 use bytes::Bytes;
@@ -96,10 +96,10 @@ impl LevmCallTracer {
         Ok(())
     }
 
-    /// Exits trace call using the ExecutionReport.
-    pub fn exit_report(
+    /// Exits trace call using the ContextResult.
+    pub fn exit_context(
         &mut self,
-        report: &ExecutionReport,
+        ctx_result: &ContextResult,
         is_top_call: bool,
     ) -> Result<(), InternalError> {
         if !self.active {
@@ -113,11 +113,11 @@ impl LevmCallTracer {
             // After finishing transaction execution clear all logs of callframes that reverted.
             clear_reverted_logs(self.current_callframe_mut()?);
         }
-        let (gas_used, output) = (report.gas_used, report.output.clone());
+        let (gas_used, output) = (ctx_result.gas_used, ctx_result.output.clone());
 
-        let (error, revert_reason) = match report.result {
+        let (error, revert_reason) = match ctx_result.result {
             TxResult::Revert(ref err) => {
-                let reason = String::from_utf8(report.output.to_vec()).ok();
+                let reason = String::from_utf8(ctx_result.output.to_vec()).ok();
                 (Some(err.to_string()), reason)
             }
             _ => (None, None),

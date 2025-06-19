@@ -1,6 +1,6 @@
 use crate::{
     call_frame::CallFrameBackup,
-    errors::{ExecutionReport, VMError},
+    errors::{ContextResult, VMError},
     hooks::hook::Hook,
     vm::VM,
 };
@@ -21,7 +21,7 @@ impl Hook for BackupHook {
     fn finalize_execution(
         &mut self,
         vm: &mut VM<'_>,
-        _report: &mut ExecutionReport,
+        _ctx_result: &mut ContextResult,
     ) -> Result<(), VMError> {
         // We want to restore to the initial state, this includes saving the changes made by the prepare execution
         // and the changes made by the execution itself.
