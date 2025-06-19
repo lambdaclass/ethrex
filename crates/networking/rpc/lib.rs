@@ -1,5 +1,5 @@
 mod admin;
-pub mod authentication;
+mod authentication;
 mod engine;
 mod eth;
 #[cfg(feature = "l2")]

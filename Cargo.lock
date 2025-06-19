@@ -869,7 +869,7 @@ dependencies = [
 name = "archive_sync"
 version = "0.1.0"
 dependencies = [
- "clap 4.5.39",
+ "clap 4.5.40",
  "clap_complete",
  "ethrex",
  "ethrex-common",
@@ -880,7 +880,7 @@ dependencies = [
  "hex",
  "keccak-hash",
  "lazy_static",
- "reqwest 0.12.19",
+ "reqwest 0.12.20",
  "serde",
  "serde_json",
  "tokio",
@@ -6050,7 +6050,7 @@ dependencies = [
  "futures",
  "hex",
  "keccak-hash",
- "reqwest 0.12.19",
+ "reqwest 0.12.20",
  "secp256k1",
  "tokio",
 ]
