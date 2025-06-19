@@ -12,8 +12,6 @@ use crate::store_db::codec::{account_address::AccountAddress, block_num_hash::Bl
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
-// FIXME: these definitions should come from elsewhere
-
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
 #[async_trait::async_trait]

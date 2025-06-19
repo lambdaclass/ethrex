@@ -1,6 +1,6 @@
 # Quickstart guide
 
-This document covers how the code in the node is organized by looking at different end to end flows. If we start too high level we’ll need to start at consensus, and if we start too low level, we’ll need to start at the EVM. Let’s start somewhere in the middle: importing blocks.
+This document covers how the code in the node is organized by looking at different end to end flows. If we start too high level we'll need to start at consensus, and if we start too low level, we'll need to start at the EVM. Let's start somewhere in the middle: importing blocks.
 
 ## Importing blocks
 
