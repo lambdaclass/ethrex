@@ -183,7 +183,6 @@ impl Store {
 
     // Helper method to write into a libmdbx table in batch
     fn replace_value_or_delete<T: Table>(
-        &self,
         flat_storage_cursor: &mut libmdbx::orm::Cursor<'_, libmdbx::RW, T>,
         key: T::Key,
         value: Option<T::Value>,
@@ -305,41 +304,18 @@ impl StoreEngine for Store {
                     .cursor::<FlatAccountStorage>()
                     .map_err(StoreError::LibmdbxError)?;
                 for update in account_updates.iter() {
-                    let key = AccountAddress(update.address);
-                    if update.removed {
-                        if cursor
-                            .seek_exact(key)
-                            .map_err(StoreError::LibmdbxError)?
-                            .is_some()
-                        {
-                            cursor.delete_current().map_err(StoreError::LibmdbxError)?;
-                        }
-                    } else if let Some(info_update) = &update.info {
-                        let value = (
-                            info_update.code_hash,
-                            info_update.balance,
-                            info_update.nonce,
-                        )
-                            .into();
-                        cursor
-                            .upsert(key, value)
-                            .map_err(StoreError::LibmdbxError)?;
+                    if update.removed || update.info.is_some() {
+                        let key = AccountAddress(update.address);
+                        // Guard implies if `None` then the account is removed, so
+                        // the semantics are correct.
+                        let value = update.info.clone().map(EncodableAccountInfo);
+                        Self::replace_value_or_delete(&mut cursor, key, value)?;
                     }
 
                     for (slot, value) in update.added_storage.iter() {
                         let key = (update.address.into(), (*slot).into());
-                        if !value.is_zero() {
-                            storage_cursor
-                                .upsert(key, (*value).into())
-                                .map_err(StoreError::LibmdbxError)?;
-                        } else if let Some(_current_data) = storage_cursor
-                            .seek_exact(key)
-                            .map_err(StoreError::LibmdbxError)?
-                        {
-                            storage_cursor
-                                .delete_current()
-                                .map_err(StoreError::LibmdbxError)?;
-                        }
+                        let value = (!value.is_zero()).then_some((*value).into());
+                        Self::replace_value_or_delete(&mut storage_cursor, key, value)?;
                     }
                 }
                 if let Some(block) = update_batch.blocks.iter().max_by_key(|b| b.header.number) {
@@ -505,19 +481,10 @@ impl StoreEngine for Store {
                         break;
                     }
                     let old_info = log_entry.previous_info;
-                    let addr = log_entry.address;
-                    if old_info != AccountInfo::default() {
-                        flat_info_cursor
-                            .upsert(addr.into(), EncodableAccountInfo(old_info))
-                            .map_err(StoreError::LibmdbxError)?;
-                    } else if let Some(_current_info) = flat_info_cursor
-                        .seek_exact(addr.into())
-                        .map_err(StoreError::LibmdbxError)?
-                    {
-                        flat_info_cursor
-                            .delete_current()
-                            .map_err(StoreError::LibmdbxError)?
-                    }
+                    let addr = log_entry.address.into();
+                    let info = (old_info != AccountInfo::default())
+                        .then_some(EncodableAccountInfo(old_info));
+                    Self::replace_value_or_delete(&mut flat_info_cursor, addr, info)?;
 
                     found_state_log = state_log_cursor.next()?;
                 }
@@ -531,7 +498,11 @@ impl StoreEngine for Store {
                     let addr = log_entry.0;
                     let storage_key = (addr.into(), slot.into());
                     let value_aux = (!old_value.is_zero()).then_some(old_value.into());
-                    self.replace_value_or_delete(&mut flat_storage_cursor, storage_key, value_aux)?;
+                    Self::replace_value_or_delete(
+                        &mut flat_storage_cursor,
+                        storage_key,
+                        value_aux,
+                    )?;
 
                     found_storage_log = storage_log_cursor.next()?;
                 }
@@ -590,7 +561,7 @@ impl StoreEngine for Store {
                     let key = log_entry.address.into();
                     let value_aux = (new_info != AccountInfo::default())
                         .then_some(EncodableAccountInfo(new_info));
-                    self.replace_value_or_delete(&mut flat_info_cursor, key, value_aux)?;
+                    Self::replace_value_or_delete(&mut flat_info_cursor, key, value_aux)?;
 
                     found_state_log = state_log_cursor.next()?;
                 }
@@ -604,18 +575,12 @@ impl StoreEngine for Store {
                     let slot = log_entry.1;
                     let addr = log_entry.0;
                     let storage_key = (addr.into(), slot.into());
-                    if !new_value.is_zero() {
-                        flat_storage_cursor
-                            .upsert(storage_key, new_value.into())
-                            .map_err(StoreError::LibmdbxError)?;
-                    } else if let Some(_current_data) = flat_storage_cursor
-                        .seek_exact(storage_key)
-                        .map_err(StoreError::LibmdbxError)?
-                    {
-                        flat_storage_cursor
-                            .delete_current()
-                            .map_err(StoreError::LibmdbxError)?;
-                    }
+                    let storage_value = (!new_value.is_zero()).then_some(new_value.into());
+                    Self::replace_value_or_delete(
+                        &mut flat_storage_cursor,
+                        storage_key,
+                        storage_value,
+                    )?;
 
                     found_storage_log = storage_log_cursor.next()?;
                 }
