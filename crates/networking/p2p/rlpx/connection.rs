@@ -571,7 +571,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                             let response = Message::Receipts69(Receipts69::new(id, receipts));
                             self.send(response).await?
                         }
-                        _ => {}
+                        _ => return Err(RLPxError::IncompatibleProtocol),
                     };
                 }
             }
