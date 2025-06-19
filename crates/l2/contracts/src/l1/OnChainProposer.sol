@@ -254,9 +254,15 @@ contract OnChainProposer is
         // Blob is published in the (EIP-4844) transaction that calls this function.
         bytes32 blobVersionedHash = blobhash(0);
         if (VALIDIUM) {
-            require(blobVersionedHash == 0, "L2 running as validium but blob was published");
+            require(
+                blobVersionedHash == 0,
+                "L2 running as validium but blob was published"
+            );
         } else {
-            require(blobVersionedHash != 0, "L2 running as rollup but blob was not published");
+            require(
+                blobVersionedHash != 0,
+                "L2 running as rollup but blob was not published"
+            );
         }
 
         batchCommitments[batchNumber] = BatchCommitmentInfo(
@@ -351,58 +357,72 @@ contract OnChainProposer is
 
     /// @inheritdoc IOnChainProposer
     function verifyBatchAligned(
-        uint256 batchNumber,
-        bytes calldata alignedPublicInputs,
-        bytes32[] calldata alignedMerkleProof
+        uint256 firstBatchNumber,
+        bytes[] calldata alignedPublicInputsList,
+        bytes32[][] calldata alignedMerkleProofsList
     ) external override onlySequencer {
         require(
             ALIGNEDPROOFAGGREGATOR != DEV_MODE,
             "OnChainProposer: ALIGNEDPROOFAGGREGATOR is not set"
         );
         require(
-            batchNumber == lastVerifiedBatch + 1,
-            "OnChainProposer: batch already verified"
+            alignedPublicInputsList.length == alignedMerkleProofsList.length,
+            "OnChainProposer: input/proof array length mismatch"
         );
         require(
-            batchCommitments[batchNumber].newStateRoot != bytes32(0),
-            "OnChainProposer: cannot verify an uncommitted batch"
+            firstBatchNumber == lastVerifiedBatch + 1,
+            "OnChainProposer: incorrect firstBatchNumber"
         );
 
-        // If the verification fails, it will revert.
-        _verifyPublicData(batchNumber, alignedPublicInputs[8:]);
+        uint256 batchNumber = firstBatchNumber;
 
-        bytes memory callData = abi.encodeWithSignature(
-            "verifyProofInclusion(bytes32[],bytes32,bytes)",
-            alignedMerkleProof,
-            SP1_VERIFICATION_KEY,
-            alignedPublicInputs
-        );
-        (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
-            .staticcall(callData);
-        require(
-            callResult,
-            "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
-        );
-        bool proofVerified = abi.decode(response, (bool));
-        require(
-            proofVerified,
-            "OnChainProposer: Aligned proof verification failed"
-        );
+        for (uint256 i = 0; i < alignedPublicInputsList.length; i++) {
+            require(
+                batchCommitments[batchNumber].newStateRoot != bytes32(0),
+                "OnChainProposer: cannot verify an uncommitted batch"
+            );
 
-        lastVerifiedBatch = batchNumber;
+            // Verify public data for the batch
+            _verifyPublicData(batchNumber, alignedPublicInputsList[i][8:]);
 
-        // The first 2 bytes are the number of deposits.
-        uint16 deposits_amount = uint16(
-            bytes2(
-                batchCommitments[batchNumber].processedDepositLogsRollingHash
-            )
-        );
-        if (deposits_amount > 0) {
-            ICommonBridge(BRIDGE).removePendingDepositLogs(deposits_amount);
+            bytes memory callData = abi.encodeWithSignature(
+                "verifyProofInclusion(bytes32[],bytes32,bytes)",
+                alignedMerkleProofsList[i],
+                SP1_VERIFICATION_KEY,
+                alignedPublicInputsList[i]
+            );
+            (bool callResult, bytes memory response) = ALIGNEDPROOFAGGREGATOR
+                .staticcall(callData);
+            require(
+                callResult,
+                "OnChainProposer: call to ALIGNEDPROOFAGGREGATOR failed"
+            );
+
+            bool proofVerified = abi.decode(response, (bool));
+            require(
+                proofVerified,
+                "OnChainProposer: Aligned proof verification failed"
+            );
+
+            // The first 2 bytes are the number of deposits.
+            uint16 deposits_amount = uint16(
+                bytes2(
+                    batchCommitments[batchNumber]
+                        .processedDepositLogsRollingHash
+                )
+            );
+            if (deposits_amount > 0) {
+                ICommonBridge(BRIDGE).removePendingDepositLogs(deposits_amount);
+            }
+
+            // Remove previous batch commitment
+            delete batchCommitments[batchNumber - 1];
+
+            batchNumber++;
         }
 
-        // Remove previous batch commitment as it is no longer needed.
-        delete batchCommitments[batchNumber - 1];
+        // Update last verified batch
+        lastVerifiedBatch = batchNumber - 1;
 
         emit BatchVerified(lastVerifiedBatch);
     }
