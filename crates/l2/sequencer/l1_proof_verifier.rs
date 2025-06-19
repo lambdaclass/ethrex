@@ -45,7 +45,7 @@ struct L1ProofVerifier {
     on_chain_proposer_address: Address,
     proof_verify_interval_ms: u64,
     network: Network,
-    sp1_vk: Vec<u8>,
+    sp1_vk: [u8; 32],
 }
 
 impl L1ProofVerifier {
@@ -56,14 +56,17 @@ impl L1ProofVerifier {
         aligned_cfg: &AlignedConfig,
     ) -> Result<Self, ProofVerifierError> {
         let eth_client = EthClient::new_with_multiple_urls(eth_cfg.rpc_url.clone())?;
-        let sp1_vk_file = std::fs::read(aligned_cfg.aligned_sp1_vk_path.clone()).unwrap();
+        let sp1_vk_file: [u8; 32] = std::fs::read(aligned_cfg.aligned_sp1_vk_path.clone())
+            .unwrap()
+            .try_into()
+            .unwrap();
+
         let sp1_vk = eth_client
             .get_sp1_vk(committer_cfg.on_chain_proposer_address)
             .await?;
 
         assert_eq!(
-            sp1_vk,
-            sp1_vk_file.try_into().unwrap(),
+            sp1_vk, sp1_vk_file,
             "SP1 verification key does not match the one on-chain"
         );
 
@@ -128,9 +131,7 @@ impl L1ProofVerifier {
         let public_inputs = proof.public_values();
 
         let verification_data = AggregationModeVerificationData::SP1 {
-            vk: self.sp1_vk.clone().try_into().map_err(|e| {
-                ProofVerifierError::DecodingError(format!("Failed to decode vk: {e:?}"))
-            })?,
+            vk: self.sp1_vk,
             public_inputs: public_inputs.clone(),
         };
 
