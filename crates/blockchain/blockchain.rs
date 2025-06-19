@@ -569,7 +569,9 @@ impl Blockchain {
         let sender = transaction.sender()?;
 
         // Validate transaction
-        self.validate_transaction(&transaction, sender).await?;
+        if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
+            self.remove_transaction_from_pool(&tx_to_replace)?;
+        }
 
         // Add transaction and blobs bundle to storage
         let hash = transaction.compute_hash();
@@ -590,7 +592,9 @@ impl Blockchain {
         }
         let sender = transaction.sender()?;
         // Validate transaction
-        self.validate_transaction(&transaction, sender).await?;
+        if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
+            self.remove_transaction_from_pool(&tx_to_replace)?;
+        }
 
         let hash = transaction.compute_hash();
 
@@ -637,16 +641,16 @@ impl Blockchain {
     5. Ensure the transactor is able to add a new transaction. The number of transactions sent by an account may be limited by a certain configured value
 
     */
-
+    /// Returns the hash of the transaction to replace in case the nonce already exists
     pub async fn validate_transaction(
         &self,
         tx: &Transaction,
         sender: Address,
-    ) -> Result<(), MempoolError> {
+    ) -> Result<Option<H256>, MempoolError> {
         let nonce = tx.nonce();
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
-            return Ok(());
+            return Ok(None);
         }
 
         let header_no = self.storage.get_latest_block_number().await?;
@@ -713,12 +717,39 @@ impl Blockchain {
         }
 
         // Check the nonce of pendings TXs in the mempool from the same sender
-        if self
+        // If it exists check if the new tx has higher fees
+        let tx_to_replace_hash = self
             .mempool
             .contains_sender_nonce(sender, nonce, tx.compute_hash())?
-        {
-            return Err(MempoolError::InvalidNonce);
-        }
+            .and_then(|tx_in_pool| {
+                // EIP-1559 values
+                let old_tx_max_fee_per_gas = tx_in_pool.max_fee_per_gas().unwrap_or_default();
+                let old_tx_max_priority_fee_per_gas =
+                    tx_in_pool.max_priority_fee().unwrap_or_default();
+                let new_tx_max_fee_per_gas = tx.max_fee_per_gas().unwrap_or_default();
+                let new_tx_max_priority_fee_per_gas = tx.max_priority_fee().unwrap_or_default();
+                // Legacy tx values
+                let old_tx_gas_price = tx_in_pool.gas_price();
+                let new_tx_gas_price = tx.gas_price();
+                // EIP-4844 values
+                let old_tx_max_fee_per_blob = tx_in_pool.max_fee_per_blob_gas();
+                let new_tx_max_fee_per_blob = tx.max_fee_per_blob_gas();
+
+                let eip4844_higher_fees = match (old_tx_max_fee_per_blob, new_tx_max_fee_per_blob) {
+                    (Some(old), Some(new)) => new > old,
+                    _ => true,
+                };
+
+                let eip1559_higher_fees = new_tx_max_fee_per_gas > old_tx_max_fee_per_gas
+                    && new_tx_max_priority_fee_per_gas > old_tx_max_priority_fee_per_gas;
+                let legacy_higher_fees = new_tx_gas_price > old_tx_gas_price;
+
+                if eip4844_higher_fees && (eip1559_higher_fees || legacy_higher_fees) {
+                    Some(tx_in_pool.compute_hash())
+                } else {
+                    None
+                }
+            });
 
         if let Some(chain_id) = tx.chain_id() {
             if chain_id != config.chain_id {
@@ -726,7 +757,7 @@ impl Blockchain {
             }
         }
 
-        Ok(())
+        Ok(tx_to_replace_hash)
     }
 
     /// Marks the node's chain as up to date with the current chain

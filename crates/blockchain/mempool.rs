@@ -248,20 +248,24 @@ impl Mempool {
         sender: Address,
         nonce: u64,
         received_hash: H256,
-    ) -> Result<bool, MempoolError> {
+    ) -> Result<Option<MempoolTransaction>, MempoolError> {
         let pooled_transactions = self
             .transaction_pool
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
-        let count = pooled_transactions
+        let mut txs = pooled_transactions
             .iter()
-            .filter(|(hash, tx)| {
-                tx.sender() == sender && tx.nonce() == nonce && *hash != &received_hash
+            .filter_map(|(hash, tx)| {
+                if tx.sender() == sender && tx.nonce() == nonce && *hash != received_hash {
+                    Some(tx.clone())
+                } else {
+                    None
+                }
             })
-            .count();
+            .collect::<Vec<_>>();
 
-        Ok(count > 0)
+        Ok(txs.pop())
     }
 }
 
