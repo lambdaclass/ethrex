@@ -2,7 +2,7 @@ use crate::{
     EVMConfig,
     call_frame::CallFrameBackup,
     constants::*,
-    db::{cache, gen_db::GeneralizedDatabase},
+    db::gen_db::GeneralizedDatabase,
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
         self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
@@ -130,7 +130,7 @@ pub fn restore_cache_state(
     callframe_backup: CallFrameBackup,
 ) -> Result<(), VMError> {
     for (address, account) in callframe_backup.original_accounts_info {
-        if let Some(current_account) = cache::get_account_mut(&mut db.cache, &address) {
+        if let Some(current_account) = db.cache.get_mut(&address) {
             current_account.info = account.info;
             current_account.code = account.code;
         }
@@ -140,7 +140,9 @@ pub fn restore_cache_state(
         // This call to `get_account_mut` should never return None, because we are looking up accounts
         // that had their storage modified, which means they should be in the cache. That's why
         // we return an internal error in case we haven't found it.
-        let account = cache::get_account_mut(&mut db.cache, &address)
+        let account = db
+            .cache
+            .get_mut(&address)
             .ok_or(InternalError::AccountNotFound)?;
 
         for (key, value) in storage {
