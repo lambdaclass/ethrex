@@ -42,7 +42,7 @@ serde_with = "3.11.0"
 spawned-concurrency = { git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.0-alpha" }
 spawned-rt = { git = "https://github.com/lambdaclass/spawned.git", tag = "v0.1.0-alpha" }
 lazy_static.workspace = true
-aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "124eba82524bd95d1419ace19f8d959c492ffee0" }
+aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", tag="v0.16.1" }
 ethers = "2.0"
 cfg-if.workspace = true
 
