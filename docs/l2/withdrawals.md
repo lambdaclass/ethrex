@@ -1,24 +1,120 @@
 # Withdrawals
 
-This document contains a detailed explanation of the changes needed to handle withdrawals and the withdrawal flow.
+This document contains a detailed explanation of how asset withdrawals work.
 
-A new `Withdraw` type of transaction on L2 is introduced, where users send a certain amount of `eth` (or the native token in a custom token setup) with it. This money is then burned on the L2 and the operator sends a `WithdrawLog` to L1, so the user can then send a transaction to claim the withdrawal associated to that log and receive their funds from the Common bridge.
+## Native ETH withdrawals
 
-In more detail, the full changes/additions are:
+This section explains step by step how native ETH withdrawals work.
 
-- A `Withdraw` transaction type is introduced, comprised of the regular fields in an EIP-1559 transaction.
-- On every block, each `Withdraw` transaction will burn (i.e. deduct from the sender) the value attached to it.
-- The sequencer will then collect all `Withdraw` transactions from the blocks included in the batch, will generate a `WithdrawLog` for each, will build a merkle tree from them and calculate the corresponding root, which we call `WithdrawLogsRoot`. The `WithdrawLog` contains the following fields:
-  - `to`: the address in L1 that is allowed to claim the funds (this is decided by the user as part of a withdraw transaction). This comes from the regular `to` field on the Withdraw transaction (i.e. we are reusing that field with a slightly different meaning; what it means here is "the address that can claim the funds on L1").
-  - `amount`: the amount of money withdrawn (i.e. the `msg.value` of the transaction).
-  - `tx_hash`: the transaction hash in the L2 block it was included in. This will be important for claiming the withdrawal as it will require a merkle proof to be provided along with the index on the tree.
-- As part of the L1 `commit` transaction, the sequencer will send the list of all `WithdrawLog`s on the EIP 4844 blob (i.e. as a section of the state diffs) and the `WithdrawLogsRoot` as calldata as part of the public input to the proof. The contract will then:
-  - Verify that the withdraw logs passed on the blob are the correct ones (this is done as part of the proof of equivalence protocol explained below).
-  - Store the `WithdrawLogsRoot` on a mapping `(batchNumber -> LogsRoot)`
-- For users to complete their withdraw process and receive funds on the L1, they need to call a `claimWithdraw(l2WithdrawalTxHash, claimedAmount, withdrawalBatchNumber, withdrawalLogIndex)` function on the common bridge, where `merkleProof` is an inclusion proof of the withdraw log to the root of the merkle tree the contract has stored. The contract will then do the following:
-  - Check that the `batchNumber` corresponds to a committed and verified batch.
-  - Check that this withdrawal has not been already claimed.
-  - Retrieve the `withdrawLogsRoot` from the given `batchNumber`.
-  - Verify the merkle proof given by the user, passing the proof, the root, and the `tx_hash`.
-  - If any check above failed, revert. If all checks passed, send the appropriate funds to the user, then set the `withdrawLog` as claimed.
-  - After the withdrawal is sent, we mark it as claimed so it cannot be claimed twice.
+On L2:
+
+1. The user sends a transaction calling `withdraw(address _receiverOnL1)` on the `CommonBridgeL2` contract.
+2. The bridge calls `sendMessageToL1(bytes32 data)` on the `L1Messenger` contract, with `data` being:
+
+    ```solidity
+    bytes32 data = keccak256(abi.encodePacked(ETH_ADDRESS, ETH_ADDRESS, _receiverOnL1, msg.value))
+    ```
+
+3. `L1Messenger` emits an `L1Message` event, with the address of the L2 bridge contract and `data` as topics.
+
+On L1:
+
+1. A sequencer commits the batch on L1, publishing the `L1Message` with `publishWithdrawals` on the L1 `CommonBridge`.
+2. The user submits a withdrawal proof when calling `claimWithdrawal` on the L1 `CommonBridge`.
+3. The bridge asserts the proof is valid.
+4. The bridge sends the locked funds specified in the `L1Message` to the user.
+
+```mermaid
+---
+title: User makes an ETH withdrawal
+---
+sequenceDiagram
+    box rgb(139, 63, 63) L2
+        actor L2Alice as Alice
+        participant CommonBridgeL2
+        participant L1Messenger
+    end
+
+    actor Sequencer
+
+    box rgb(33,66,99) L1
+        participant OnChainProposer
+        participant CommonBridge
+        actor L1Alice as Alice
+    end
+
+    L2Alice->>CommonBridgeL2: withdraws 42 ETH
+    CommonBridgeL2->>L1Messenger: calls sendMessageToL1
+    L1Messenger->>L1Messenger: emits L1Message event
+
+    L1Messenger-->>Sequencer: receives event
+
+    Sequencer->>OnChainProposer: publishes batch
+    OnChainProposer->>CommonBridge: publishes L1 message root
+
+    L1Alice->>CommonBridge: submits withdrawal proof
+    CommonBridge-->>CommonBridge: asserts proof is valid
+    CommonBridge->>L1Alice: sends 42 ETH
+```
+
+## ERC20 withdrawals through the native bridge
+
+This section explains step by step how native ERC20 withdrawals work.
+
+On L2:
+
+1. The user sends a transaction calling `withdrawERC20(address _token, address _receiverOnL1, uint256 _value)` on the `CommonBridgeL2` contract.
+2. The bridge fetches the address of the L1 token by calling `l1Address()` on the L2 token contract.
+3. The bridge calls `sendMessageToL1(bytes32 data)` on the `L1Messenger` contract, with `data` being:
+
+    ```solidity
+    // ETH_ADDRESS is an arbitrary and unreachable address
+    bytes32 data = keccak256(abi.encodePacked(l1Token, _token, _receiverOnL1, _value))
+    ```
+
+4. `L1Messenger` emits an `L1Message` event, with the address of the L2 bridge contract and `data` as topics.
+
+On L1:
+
+1. A sequencer commits the batch on L1, publishing the `L1Message` with `publishWithdrawals` on the L1 `CommonBridge`.
+2. The user submits a withdrawal proof when calling `claimWithdrawalERC20` on the L1 `CommonBridge`.
+3. The bridge asserts the proof is valid and that the locked tokens mapping contains enough balance for the L1 and L2 token pair to cover the transfer.
+4. The bridge transfers the locked tokens specified in the `L1Message` to the user and discounts the transferred amount from the L1 and L2 token pair in the mapping.
+
+```mermaid
+---
+title: User makes an ERC20 withdrawal
+---
+sequenceDiagram
+    box rgb(139, 63, 63) L2
+        actor L2Alice as Alice
+        participant L2Token
+        participant CommonBridgeL2
+        participant L1Messenger
+    end
+
+    actor Sequencer
+
+    box rgb(33,66,99) L1
+        participant OnChainProposer
+        participant CommonBridge
+        participant L1Token
+        actor L1Alice as Alice
+    end
+
+    L2Alice->>L2Token: approves token transfer
+    L2Alice->>CommonBridgeL2: withdraws 42 of L2Token
+    CommonBridgeL2->>L2Token: transfers tokens to self
+    L2Token-->>CommonBridgeL2: sends 42 tokens
+    CommonBridgeL2->>L1Messenger: calls sendMessageToL1
+    L1Messenger->>L1Messenger: emits L1Message event
+
+    L1Messenger-->>Sequencer: receives event
+
+    Sequencer->>OnChainProposer: publishes batch
+    OnChainProposer->>CommonBridge: publishes L1 message root
+
+    L1Alice->>CommonBridge: submits withdrawal proof
+    CommonBridge->>L1Token: transfers tokens
+    L1Token-->>L1Alice: sends 42 tokens
+```
