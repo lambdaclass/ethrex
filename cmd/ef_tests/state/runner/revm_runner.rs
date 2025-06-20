@@ -113,6 +113,11 @@ pub async fn re_run_failed_ef_test(
                 EFTestRunnerError::Internal(reason) => {
                     return Err(EFTestRunnerError::Internal(reason.to_owned()));
                 }
+                EFTestRunnerError::TestsFailed => {
+                    unreachable!(
+                        "An EFTestRunnerError::TestsFailed can't happen at this point. This error is only thrown in run_ef_tests under the summary flag"
+                    )
+                }
             }
         }
     }
@@ -499,6 +504,11 @@ pub async fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunn
                     return Err(EFTestRunnerError::Internal(InternalError::Custom(
                         "This case should not happen".to_owned(),
                     )));
+                }
+                Err(EFTestRunnerError::TestsFailed) => {
+                    unreachable!(
+                        "An EFTestRunnerError::TestsFailed can't happen at this point. This error is only thrown in run_ef_tests under the summary flag"
+                    )
                 }
             }
         }
