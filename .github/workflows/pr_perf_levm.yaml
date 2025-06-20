@@ -47,7 +47,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pr-result
-          path: target/benchmark
+          path: target/release/benchmark
 
   benchmark-main:
     name: Benchmark for Main
@@ -85,7 +85,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: main-result
-          path: target/benchmark
+          path: target/release/benchmark
 
   combine-results:
     name: Combine Benchmark Results
