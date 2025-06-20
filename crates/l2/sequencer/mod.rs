@@ -7,7 +7,6 @@ use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use execution_cache::ExecutionCache;
 use l1_committer::L1Committer;
 use l1_proof_sender::L1ProofSender;
 use l1_watcher::L1Watcher;
@@ -24,8 +23,6 @@ mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
-
-pub mod execution_cache;
 
 pub mod configs;
 pub mod errors;
@@ -48,8 +45,6 @@ pub async fn start_l2(
     info!("Starting Sequencer in {initial_status} mode");
 
     let shared_state = SequencerState::from(initial_status);
-
-    let execution_cache = Arc::new(ExecutionCache::default());
 
     let Ok(needed_proof_types) = get_needed_proof_types(
         cfg.proof_coordinator.dev_mode,
@@ -81,7 +76,6 @@ pub async fn start_l2(
     let _ = L1Committer::spawn(
         store.clone(),
         rollup_store.clone(),
-        execution_cache.clone(),
         cfg.clone(),
         shared_state.clone(),
     )
@@ -113,8 +107,8 @@ pub async fn start_l2(
     });
     let _ = BlockProducer::spawn(
         store.clone(),
+        rollup_store.clone(),
         blockchain.clone(),
-        execution_cache.clone(),
         cfg.clone(),
         shared_state.clone(),
     )
