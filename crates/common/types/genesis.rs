@@ -65,9 +65,19 @@ impl TryFrom<&Path> for Genesis {
         let genesis_file = std::fs::File::open(genesis_file_path)?;
         let genesis_reader = BufReader::new(genesis_file);
         let genesis: Genesis = serde_json::from_reader(genesis_reader)?;
-        if genesis.config.merge_netsplit_block != Some(0) {
+
+        // Try to derive if the genesis file is PoS
+        // Different genesis files have different configurations
+        // TODO: Remove once we have a way to run PoW chains, i.e Snap Sync
+        if genesis.config.terminal_total_difficulty != Some(0)
+            && genesis.config.merge_netsplit_block != Some(0)
+            && genesis.config.shanghai_time != Some(0)
+            && genesis.config.cancun_time != Some(0)
+            && genesis.config.prague_time != Some(0)
+        {
             return Err(GenesisError::InvalidFork());
         }
+
         Ok(genesis)
     }
 }
