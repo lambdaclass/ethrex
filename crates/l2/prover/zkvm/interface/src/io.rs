@@ -52,8 +52,8 @@ pub struct ProgramOutput {
     /// final state trie root hash
     pub final_state_hash: H256,
     #[cfg(feature = "l2")]
-    /// merkle root of all withdrawals in a batch
-    pub withdrawals_merkle_root: H256,
+    /// merkle root of all messages in a batch
+    pub l1messages_merkle_root: H256,
     #[cfg(feature = "l2")]
     /// hash of all the deposit logs made in a batch
     pub deposit_logs_hash: H256,
@@ -70,7 +70,7 @@ impl ProgramOutput {
             self.initial_state_hash.to_fixed_bytes(),
             self.final_state_hash.to_fixed_bytes(),
             #[cfg(feature = "l2")]
-            self.withdrawals_merkle_root.to_fixed_bytes(),
+            self.l1messages_merkle_root.to_fixed_bytes(),
             #[cfg(feature = "l2")]
             self.deposit_logs_hash.to_fixed_bytes(),
             #[cfg(feature = "l2")]
