@@ -78,6 +78,11 @@ jobs:
         run: |
           cargo test l2 --no-run --release
 
+      # for some reason the "Start L1 & Deploy contracts" step does not build the ethrex_dev image, used
+      # for the L1. This does not happen on the rest of the jobs. Maybe it has to do with the "larger_runners".
+      - name: Build L1 docker image
+        run: docker build -t ethrex_dev:latest -f crates/blockchain/dev/Dockerfile .
+
       - name: Start L1 & Deploy contracts
         run: |
           cd crates/l2
