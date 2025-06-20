@@ -427,12 +427,12 @@ mod test {
         let leaf_node_a = LeafNode::new(Nibbles::from_hex(vec![0, 16]), vec![0x12, 0x34]);
         let leaf_node_b = LeafNode::new(Nibbles::from_hex(vec![0, 16]), vec![0x56, 0x78]);
         let mut choices = BranchNode::EMPTY_CHOICES;
-        choices[0] = leaf_node_a.compute_hash().into();
-        choices[1] = leaf_node_b.compute_hash().into();
+        choices[0] = leaf_node_a.compute_hash().try_into().unwrap();
+        choices[1] = leaf_node_b.compute_hash().try_into().unwrap();
         let branch_node = BranchNode::new(choices);
         let node = ExtensionNode::new(
             Nibbles::from_hex(vec![0, 0]),
-            branch_node.compute_hash().into(),
+            branch_node.compute_hash().try_into().unwrap(),
         );
 
         assert_eq!(
@@ -465,12 +465,12 @@ mod test {
             vec![0x34, 0x56, 0x78, 0x9A, 0xBC],
         );
         let mut choices = BranchNode::EMPTY_CHOICES;
-        choices[0] = leaf_node_a.compute_hash().into();
-        choices[1] = leaf_node_b.compute_hash().into();
+        choices[0] = leaf_node_a.compute_hash().try_into().unwrap();
+        choices[1] = leaf_node_b.compute_hash().try_into().unwrap();
         let branch_node = BranchNode::new(choices);
         let node = ExtensionNode::new(
             Nibbles::from_hex(vec![0, 0]),
-            branch_node.compute_hash().into(),
+            branch_node.compute_hash().try_into().unwrap(),
         );
 
         assert_eq!(

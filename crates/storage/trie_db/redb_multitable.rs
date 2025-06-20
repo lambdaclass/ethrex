@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use redb::{Database, MultimapTableDefinition};
 
-use ethrex_trie::{NodeHash, TrieDB, TrieError};
+use ethrex_trie::{TrieDB, TrieError};
 
-use super::utils::node_hash_to_fixed_size;
+use ethrex_common::H256;
 
-const STORAGE_TRIE_NODES_TABLE: MultimapTableDefinition<([u8; 32], [u8; 33]), &[u8]> =
+const STORAGE_TRIE_NODES_TABLE: MultimapTableDefinition<([u8; 32], [u8; 32]), &[u8]> =
     MultimapTableDefinition::new("StorageTrieNodes");
 
 /// RedB implementation for the TrieDB trait for a dupsort table with a fixed primary key.
@@ -24,7 +24,7 @@ impl RedBMultiTableTrieDB {
 }
 
 impl TrieDB for RedBMultiTableTrieDB {
-    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: H256) -> Result<Option<Vec<u8>>, TrieError> {
         let read_txn = self
             .db
             .begin_read()
@@ -34,7 +34,7 @@ impl TrieDB for RedBMultiTableTrieDB {
             .map_err(|e| TrieError::DbError(e.into()))?;
 
         let values = table
-            .get((self.fixed_key, node_hash_to_fixed_size(key)))
+            .get((self.fixed_key, key.0))
             .map_err(|e| TrieError::DbError(e.into()))?;
 
         let mut ret = vec![];
@@ -56,7 +56,7 @@ impl TrieDB for RedBMultiTableTrieDB {
         }
     }
 
-    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(H256, Vec<u8>)>) -> Result<(), TrieError> {
         let write_txn = self
             .db
             .begin_write()
@@ -67,7 +67,7 @@ impl TrieDB for RedBMultiTableTrieDB {
                 .map_err(|e| TrieError::DbError(e.into()))?;
             for (key, value) in key_values {
                 table
-                    .insert((self.fixed_key, node_hash_to_fixed_size(key)), &*value)
+                    .insert((self.fixed_key, key.0), &*value)
                     .map_err(|e| TrieError::DbError(e.into()))?;
             }
         }

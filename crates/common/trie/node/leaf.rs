@@ -60,7 +60,7 @@ impl LeafNode {
                     ValueOrHash::Value(value) => {
                         Node::from(LeafNode::new(path.offset(match_index + 1), value)).into()
                     }
-                    ValueOrHash::Hash(hash) => hash.into(),
+                    ValueOrHash::Hash(hash) => hash.try_into()?,
                 };
                 BranchNode::new_with_value(choices, self.value)
             } else if new_leaf_choice_idx == 16 {
@@ -84,7 +84,7 @@ impl LeafNode {
                     ValueOrHash::Value(value) => {
                         Node::from(LeafNode::new(path.offset(match_index + 1), value)).into()
                     }
-                    ValueOrHash::Hash(hash) => hash.into(),
+                    ValueOrHash::Hash(hash) => hash.try_into()?,
                 };
                 choices[self_choice_idx] = Node::from(self).into();
                 BranchNode::new(choices)

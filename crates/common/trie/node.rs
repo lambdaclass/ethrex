@@ -2,10 +2,7 @@ mod branch;
 mod extension;
 mod leaf;
 
-use std::{
-    array,
-    sync::{Arc, OnceLock},
-};
+use std::sync::{Arc, OnceLock};
 
 pub use branch::BranchNode;
 use ethrex_rlp::{
@@ -20,6 +17,7 @@ pub use leaf::LeafNode;
 use crate::{TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
+use ethereum_types::H256;
 
 /// A reference to a node.
 #[derive(Clone, Debug)]
@@ -27,21 +25,18 @@ pub enum NodeRef {
     /// The node is embedded within the reference.
     Node(Arc<Node>, OnceLock<NodeHash>),
     /// The node is in the database, referenced by its hash.
-    Hash(NodeHash),
+    Hash(H256),
 }
 
 impl NodeRef {
     pub const fn const_default() -> Self {
-        Self::Hash(NodeHash::const_default())
+        Self::Hash(H256([0; 32]))
     }
 
     pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
         match *self {
             NodeRef::Node(ref node, _) => Ok(Some(node.as_ref().clone())),
-            NodeRef::Hash(NodeHash::Inline((data, len))) => {
-                Ok(Some(Node::decode_raw(&data[..len as usize])?))
-            }
-            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
+            NodeRef::Hash(hash) => db
                 .get(hash)?
                 .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
                 .transpose(),
@@ -51,16 +46,16 @@ impl NodeRef {
     pub fn is_valid(&self) -> bool {
         match self {
             NodeRef::Node(_, _) => true,
-            NodeRef::Hash(hash) => hash.is_valid(),
+            NodeRef::Hash(hash) => !hash.is_zero(),
         }
     }
 
-    pub fn commit(&mut self, acc: &mut Vec<(NodeHash, Vec<u8>)>) -> NodeHash {
-        match *self {
-            NodeRef::Node(ref mut node, ref mut hash) => {
-                match Arc::make_mut(node) {
+    pub fn commit(&self, acc: &mut Vec<(H256, Vec<u8>)>) -> NodeHash {
+        match self {
+            Self::Node(node, _) => {
+                match node.as_ref() {
                     Node::Branch(node) => {
-                        for node in &mut node.choices {
+                        for node in &node.choices {
                             node.commit(acc);
                         }
                     }
@@ -70,22 +65,22 @@ impl NodeRef {
                     Node::Leaf(_) => {}
                 }
 
-                let hash = hash.get_or_init(|| node.compute_hash());
-                acc.push((*hash, node.encode_to_vec()));
-
-                let hash = *hash;
-                *self = hash.into();
+                let hash = self.compute_hash();
+                let encoded = node.encode_to_vec();
+                if let NodeHash::Hashed(hash) = hash {
+                    acc.push((hash, encoded));
+                }
 
                 hash
             }
-            NodeRef::Hash(hash) => hash,
+            Self::Hash(hash) => NodeHash::Hashed(*hash),
         }
     }
 
     pub fn compute_hash(&self) -> NodeHash {
         match self {
-            NodeRef::Node(node, hash) => *hash.get_or_init(|| node.compute_hash()),
-            NodeRef::Hash(hash) => *hash,
+            Self::Node(node, hash_lock) => *hash_lock.get_or_init(|| node.compute_hash()),
+            Self::Hash(hash) => NodeHash::Hashed(*hash),
         }
     }
 }
@@ -102,9 +97,20 @@ impl From<Node> for NodeRef {
     }
 }
 
-impl From<NodeHash> for NodeRef {
-    fn from(value: NodeHash) -> Self {
-        Self::Hash(value)
+impl TryFrom<NodeHash> for NodeRef {
+    type Error = RLPDecodeError;
+
+    fn try_from(value: NodeHash) -> Result<Self, Self::Error> {
+        Ok(match value {
+            NodeHash::Hashed(hash) => Self::Hash(hash),
+            NodeHash::Inline((data, len)) => match len {
+                0 => Self::Hash(H256::zero()),
+                _ => Self::Node(
+                    Arc::new(Node::decode_raw(&data[..len as usize])?),
+                    OnceLock::new(),
+                ),
+            },
+        })
     }
 }
 
@@ -258,14 +264,31 @@ impl Node {
                     // Decode as Extension
                     ExtensionNode {
                         prefix: path,
-                        child: decode_child(&rlp_items[1]).into(),
+                        child: decode_child(&rlp_items[1]).try_into()?,
                     }
                     .into()
                 }
             }
             // Branch Node
             17 => {
-                let choices = array::from_fn(|i| decode_child(&rlp_items[i]).into());
+                let choices = [
+                    decode_child(&rlp_items[0]).try_into()?,
+                    decode_child(&rlp_items[1]).try_into()?,
+                    decode_child(&rlp_items[2]).try_into()?,
+                    decode_child(&rlp_items[3]).try_into()?,
+                    decode_child(&rlp_items[4]).try_into()?,
+                    decode_child(&rlp_items[5]).try_into()?,
+                    decode_child(&rlp_items[6]).try_into()?,
+                    decode_child(&rlp_items[7]).try_into()?,
+                    decode_child(&rlp_items[8]).try_into()?,
+                    decode_child(&rlp_items[9]).try_into()?,
+                    decode_child(&rlp_items[10]).try_into()?,
+                    decode_child(&rlp_items[11]).try_into()?,
+                    decode_child(&rlp_items[12]).try_into()?,
+                    decode_child(&rlp_items[13]).try_into()?,
+                    decode_child(&rlp_items[14]).try_into()?,
+                    decode_child(&rlp_items[15]).try_into()?,
+                ];
                 let (value, _) = decode_bytes(&rlp_items[16])?;
                 BranchNode {
                     choices,

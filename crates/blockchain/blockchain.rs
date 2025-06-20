@@ -153,7 +153,8 @@ impl Blockchain {
             .state_trie(first_block_header.parent_hash)
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
-        let (state_trie_witness, mut trie) = TrieLogger::open_trie(trie);
+        let (state_trie_witness, mut trie) =
+            TrieLogger::open_trie(trie).map_err(|e| ChainError::StoreError(e.into()))?;
 
         // Store the root node in case the block is empty and the witness does not record any nodes
         let root_node = trie.root_node().map_err(|_| {
@@ -214,7 +215,8 @@ impl Blockchain {
                     if let Ok(Some(storage_trie)) = self.storage.storage_trie(parent_hash, *account)
                     {
                         let (storage_trie_witness, storage_trie) =
-                            TrieLogger::open_trie(storage_trie);
+                            TrieLogger::open_trie(storage_trie)
+                                .map_err(|e| ChainError::StoreError(e.into()))?;
                         // Access all the keys
                         for storage_key in keys {
                             let hashed_key = hash_key(storage_key);
