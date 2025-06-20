@@ -54,10 +54,10 @@ define run_benchmark_ci
 	@printf "%s\n" "levm_$(1)"
 	@target/release/benchmark levm $(1) 1 $($(3))
 	hyperfine -w 5 -r 10 -N --export-markdown $(1).md \
-		-n "revm_$(1)_main" "main/benchmark revm $(1) $($(2)) $($(3))" \
-		-n "revm_$(1)_pr" "pr/benchmark revm $(1) $($(2)) $($(3))" \
-		-n "levm_$(1)_main" "main/benchmark levm $(1) $($(2)) $($(3))" \
-		-n "levm_$(1)_pr" "pr/benchmark levm $(1) $($(2)) $($(3))"
+		-n "revm_$(1)_main" "../../../main/benchmark revm $(1) $($(2)) $($(3))" \
+		-n "revm_$(1)_pr" "../../../pr/benchmark revm $(1) $($(2)) $($(3))" \
+		-n "levm_$(1)_main" "../../../main/benchmark levm $(1) $($(2)) $($(3))" \
+		-n "levm_$(1)_pr" "../../../pr/benchmark levm $(1) $($(2)) $($(3))"
 	@echo
 endef
 

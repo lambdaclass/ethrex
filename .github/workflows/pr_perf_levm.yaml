@@ -90,6 +90,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [benchmark-pr, benchmark-main]
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Download PR results
         uses: actions/download-artifact@v4
         with:
@@ -123,7 +125,7 @@ jobs:
             cat ERC20Mint.md || echo "No results";
             echo "#### Benchmark Results: ERC20 - Approval";
             cat ERC20Approval.md || echo "No results";
-          } > result.md
+          } > ../../../result.md
 
       - name: Find comment
         continue-on-error: true
