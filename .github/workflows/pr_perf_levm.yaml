@@ -41,7 +41,7 @@ jobs:
       - name: Build main benchmark
         run: |
           cd crates/vm/levm
-          build-revm-comparison
+          make build-revm-comparison
       - name: Upload main benchmark binary
         uses: actions/upload-artifact@v4
         with:
@@ -78,7 +78,7 @@ jobs:
       - name: Build main benchmark
         run: |
           cd crates/vm/levm
-          build-revm-comparison
+          make build-revm-comparison
       - name: Upload main benchmark binary
         uses: actions/upload-artifact@v4
         with:
