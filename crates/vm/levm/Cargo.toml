@@ -25,7 +25,8 @@ ripemd = "0.1.3"
 num-bigint = "0.4.5"
 lambdaworks-math = "0.11.0"
 k256 = { version = "0.13.3", features = ["ecdh"] }
-kzg-rs = "0.2.3"
+kzg-rs = {version = "0.2.6", optional = true }
+c-kzg = { version = "^1.0.3", optional = true }
 bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose-fp-struct", features = [
   "groups",
   "bits",
@@ -40,11 +41,12 @@ colored = "2.1.0"
 spinoff = "0.8.0"
 
 [features]
-default = []
-c-kzg = ["ethrex-common/c-kzg"]
+default = ["kzg-rs"]
+c-kzg = ["dep:c-kzg", "ethrex-common/c-kzg"]
 ethereum_foundation_tests = []
 l2 = []
 debug = []
+kzg-rs = ["dep:kzg-rs"]
 
 [lints.rust]
 unsafe_code = "forbid"

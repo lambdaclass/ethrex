@@ -52,9 +52,9 @@ pub async fn prove(cache: Cache) -> eyre::Result<String> {
         false,
     )
     .map_err(|e| eyre::Error::msg(e.to_string()))?;
-    #[cfg(feature = "sp1")]
+    #[cfg(any(feature = "sp1", feature = "risc0"))]
     return Ok(format!("{out:#?}"));
-    #[cfg(not(feature = "sp1"))]
+    #[cfg(not(all(feature = "sp1", feature = "risc0")))]
     Ok(serde_json::to_string(&out.0)?)
 }
 
