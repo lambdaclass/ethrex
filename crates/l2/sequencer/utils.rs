@@ -1,5 +1,5 @@
 use aligned_sdk::common::types::Network;
-use ethrex_common::{Address, H160, H256};
+use ethrex_common::{Address, H160, H256, types::signer::Signer};
 use ethrex_rpc::{
     EthClient,
     clients::{EthClientError, Overrides, eth::WrappedTransaction},
@@ -8,7 +8,6 @@ use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::StoreRollup;
 use keccak_hash::keccak;
 use rand::Rng;
-use secp256k1::SecretKey;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -39,8 +38,7 @@ pub async fn send_verify_tx(
     encoded_calldata: Vec<u8>,
     eth_client: &EthClient,
     on_chain_proposer_address: Address,
-    l1_address: Address,
-    l1_private_key: &SecretKey,
+    l1_signer: &Signer,
 ) -> Result<H256, EthClientError> {
     let gas_price = eth_client
         .get_gas_price_with_extra(20)
@@ -53,7 +51,7 @@ pub async fn send_verify_tx(
     let verify_tx = eth_client
         .build_eip1559_transaction(
             on_chain_proposer_address,
-            l1_address,
+            l1_signer.address(),
             encoded_calldata.into(),
             Overrides {
                 max_fee_per_gas: Some(gas_price),
@@ -66,7 +64,7 @@ pub async fn send_verify_tx(
     let mut tx = WrappedTransaction::EIP1559(verify_tx);
 
     let verify_tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut tx, l1_private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut tx, l1_signer)
         .await?;
 
     Ok(verify_tx_hash)

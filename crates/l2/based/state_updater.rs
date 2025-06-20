@@ -56,7 +56,7 @@ impl StateUpdaterState {
         Ok(Self {
             on_chain_proposer_address: sequencer_cfg.l1_committer.on_chain_proposer_address,
             sequencer_registry_address: sequencer_cfg.based.state_updater.sequencer_registry,
-            sequencer_address: sequencer_cfg.l1_committer.l1_address,
+            sequencer_address: sequencer_cfg.l1_committer.signer.address(),
             eth_client: Arc::new(EthClient::new_with_multiple_urls(
                 sequencer_cfg.eth.rpc_url.clone(),
             )?),

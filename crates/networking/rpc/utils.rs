@@ -31,6 +31,8 @@ pub enum RpcErr {
     UnknownPayload(String),
     #[cfg(feature = "l2")]
     InvalidEthrexL2Message(String),
+    #[cfg(feature = "l2")]
+    SignerError,
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -135,6 +137,12 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -39000,
                 data: None,
                 message: format!("Invalid Ethex L2 message: {reason}",),
+            },
+            #[cfg(feature = "l2")]
+            RpcErr::SignerError => RpcErrorMetadata {
+                code: -39001,
+                data: None,
+                message: "Failed to sign data".to_string(),
             },
         }
     }
