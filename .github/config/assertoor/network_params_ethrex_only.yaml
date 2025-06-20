@@ -4,7 +4,6 @@ participants:
     cl_image: sigp/lighthouse:v7.0.0-beta.0
     validator_count: 32
     count: 3
-    ethereum_metrics_exporter_enabled: true
 
 network_params:
   # The address of the staking contract address on the Eth1 chain
@@ -13,7 +12,10 @@ network_params:
 
 additional_services:
   - assertoor
-  - dora
+#   - dora
+#   - prometheus_grafana
+# ethereum_metrics_exporter_enabled: true
+# Uncomment the previous lines to enable metrics dashboards and dora explorer, useful for local testing
 
 assertoor_params:
   run_stability_check: false
