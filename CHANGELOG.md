@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-06-20
+
+- Use a lookup table for opcode parsing [#3253](https://github.com/lambdaclass/ethrex/pull/3253)
+
 ### 2025-05-27
 
 - Improved the performance of shift instructions. [2933](https://github.com/lambdaclass/ethrex/pull/2933)
