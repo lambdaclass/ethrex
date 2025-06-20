@@ -167,3 +167,19 @@ test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 
 sort-genesis-files:
 	cd ./tooling/genesis && cargo run
+
+# Using & so make calls this recipe only once per run
+mermaid-init.js mermaid.min.js &:
+	@# Required for mdbook-mermaid to work
+	@mdbook-mermaid install . \
+		|| (echo "mdbook-mermaid invocation failed, remember to install docs dependencies first with \`make docs-deps\`" \
+		&& exit 1)
+
+docs-deps: ## 📦 Install dependencies for generating the documentation
+	cargo install mdbook mdbook-alerts mdbook-mermaid mdbook-linkcheck
+
+docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
+	mdbook build
+
+docs-serve: mermaid-init.js mermaid.min.js ## 📚 Generate and serve the documentation
+	mdbook serve --open
