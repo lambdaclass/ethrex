@@ -7,8 +7,8 @@ use crate::store_db::libmdbx::Store as LibmdbxStoreRollup;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStoreRollup;
 use ethrex_common::{
-    types::{batch::Batch, Blob, BlobsBundle, BlockNumber},
     H256,
+    types::{Blob, BlobsBundle, BlockNumber, batch::Batch},
 };
 use ethrex_storage::error::StoreError;
 use tracing::info;
@@ -58,7 +58,7 @@ impl Store {
 
     pub async fn init(&self) -> Result<(), StoreError> {
         // Stores batch 0 with block 0
-        self.store_batch(Batch {
+        self.seal_batch(Batch {
             number: 0,
             first_block: 0,
             last_block: 0,
@@ -67,7 +67,9 @@ impl Store {
             withdrawal_hashes: Vec::new(),
             blobs_bundle: BlobsBundle::empty(),
         })
-        .await
+        .await?;
+        // Sets the lastest sent batch proof to 0
+        self.set_lastest_sent_batch_proof(0).await
     }
 
     /// Stores the block numbers by a given batch_number
@@ -237,7 +239,7 @@ impl Store {
         }))
     }
 
-    pub async fn store_batch(&self, batch: Batch) -> Result<(), StoreError> {
+    pub async fn seal_batch(&self, batch: Batch) -> Result<(), StoreError> {
         let blocks: Vec<u64> = (batch.first_block..=batch.last_block).collect();
 
         for block_number in blocks.iter() {
@@ -275,5 +277,20 @@ impl Store {
     /// Returns whether the batch with the given number is present.
     pub async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
         self.engine.contains_batch(batch_number).await
+    }
+
+    /// Returns the lastest sent batch proof
+    pub async fn get_lastest_sent_batch_proof(&self) -> Result<u64, StoreError> {
+        self.engine.get_lastest_sent_batch_proof().await
+    }
+
+    /// Sets the lastest sent batch proof
+    pub async fn set_lastest_sent_batch_proof(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.engine.set_lastest_sent_batch_proof(batch_number).await
+    }
+
+    /// Reverts to a previous batch, discarding operations in them
+    pub async fn revert_to_batch(&self, batch_number: u64) -> Result<(), StoreError> {
+        self.engine.revert_to_batch(batch_number).await
     }
 }

@@ -1,3 +1,4 @@
+use aligned_sdk::common::types::Network;
 use ethrex_common::{Address, U256};
 use secp256k1::SecretKey;
 use std::net::IpAddr;
@@ -9,6 +10,8 @@ pub struct SequencerConfig {
     pub eth: EthConfig,
     pub l1_watcher: L1WatcherConfig,
     pub proof_coordinator: ProofCoordinatorConfig,
+    pub based: BasedConfig,
+    pub aligned: AlignedConfig,
 }
 
 // TODO: Move to blockchain/dev
@@ -45,7 +48,6 @@ pub struct L1WatcherConfig {
     pub bridge_address: Address,
     pub check_interval_ms: u64,
     pub max_block_step: U256,
-    pub l2_proposer_private_key: SecretKey,
     pub watcher_block_delay: u64,
 }
 
@@ -57,4 +59,34 @@ pub struct ProofCoordinatorConfig {
     pub listen_port: u16,
     pub proof_send_interval_ms: u64,
     pub dev_mode: bool,
+    pub validium: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct BasedConfig {
+    pub based: bool,
+    pub state_updater: StateUpdaterConfig,
+    pub block_fetcher: BlockFetcherConfig,
+}
+
+#[derive(Clone, Debug)]
+pub struct StateUpdaterConfig {
+    pub sequencer_registry: Address,
+    pub check_interval_ms: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct BlockFetcherConfig {
+    pub fetch_interval_ms: u64,
+    pub fetch_block_step: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct AlignedConfig {
+    pub aligned_mode: bool,
+    pub aligned_verifier_interval_ms: u64,
+    pub beacon_url: String,
+    pub network: Network,
+    pub fee_estimate: String,
+    pub aligned_sp1_elf_path: String,
 }

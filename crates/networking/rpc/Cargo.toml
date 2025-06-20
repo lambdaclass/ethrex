@@ -1,7 +1,7 @@
 [package]
 name = "ethrex-rpc"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -10,7 +10,7 @@ axum.workspace = true
 tower-http = { version = "0.6.2", features = ["cors"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 bytes.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -26,7 +26,7 @@ hex.workspace = true
 axum-extra = { version = "0.10.0", features = ["typed-header"] }
 jsonwebtoken.workspace = true
 rand.workspace = true
-tokio-util.workspace = true
+tokio-util = { workspace = true, features = ["codec"] }
 reqwest.workspace = true
 k256 = { version = "0.13.3", features = ["ecdh"] }
 sha3 = "0.10.8"
@@ -48,3 +48,6 @@ path = "./lib.rs"
 
 [features]
 l2 = ["ethrex-storage-rollup"]
+
+[lints.clippy] 
+unwrap_used = "deny" 

@@ -1,71 +1,8 @@
-use bytes::Bytes;
-use ethrex_common::{serde_utils, H256};
-use ethrex_common::{types::Block, Address, U256};
-use serde::Serialize;
+use ethrex_common::tracing::CallTrace;
+use ethrex_common::types::Block;
 
-use crate::{backends::revm::REVM, Evm, EvmError};
-
-/// Collection of traces of each call frame as defined in geth's `callTracer` output
-/// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
-pub type CallTrace = Vec<Call>;
-
-/// Trace of each call frame as defined in geth's `callTracer` output
-/// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#call-tracer
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Call {
-    /// Type of the Call
-    pub r#type: CallType,
-    /// Address that initiated the call
-    pub from: Address,
-    /// Address that received the call
-    pub to: Address,
-    /// Amount transfered
-    pub value: U256,
-    /// Gas provided for the call
-    #[serde(with = "serde_utils::u64::hex_str")]
-    pub gas: u64,
-    /// Gas used by the call
-    #[serde(with = "serde_utils::u64::hex_str")]
-    pub gas_used: u64,
-    /// Call data
-    #[serde(with = "serde_utils::bytes")]
-    pub input: Bytes,
-    /// Return data
-    #[serde(with = "serde_utils::bytes")]
-    pub output: Bytes,
-    /// Error returned if the call failed
-    pub error: Option<String>,
-    /// Revert reason if the call reverted
-    pub revert_reason: Option<String>,
-    /// List of nested sub-calls
-    pub calls: Vec<Call>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    /// Logs (if enabled)
-    pub logs: Option<Vec<CallLog>>,
-}
-
-#[derive(Serialize, Debug)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum CallType {
-    Call,
-    CallCode,
-    StaticCall,
-    DelegateCall,
-    Create,
-    Create2,
-    SelfDestruct,
-}
-
-#[derive(Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct CallLog {
-    pub address: Address,
-    pub topics: Vec<H256>,
-    #[serde(with = "serde_utils::bytes")]
-    pub data: Bytes,
-    pub position: u64,
-}
+use crate::backends::levm::LEVM;
+use crate::{Evm, EvmError, backends::revm::REVM};
 
 impl Evm {
     /// Runs a single tx with the call tracer and outputs its trace
@@ -79,16 +16,20 @@ impl Evm {
         only_top_call: bool,
         with_log: bool,
     ) -> Result<CallTrace, EvmError> {
+        let tx = block
+            .body
+            .transactions
+            .get(tx_index)
+            .ok_or(EvmError::Custom(
+                "Missing Transaction for Trace".to_string(),
+            ))?;
+
         match self {
             Evm::REVM { state } => {
-                REVM::trace_tx_calls(block, tx_index, state, only_top_call, with_log)
+                REVM::trace_tx_calls(&block.header, tx, state, only_top_call, with_log)
             }
-            Evm::LEVM { db: _ } =>
-            // Tracing is not implemented for levm
-            {
-                Err(EvmError::Custom(
-                    "Transaction Tracing not supported for LEVM".to_string(),
-                ))
+            Evm::LEVM { db } => {
+                LEVM::trace_tx_calls(db, &block.header, tx, only_top_call, with_log)
             }
         }
     }
@@ -104,13 +45,7 @@ impl Evm {
     ) -> Result<(), EvmError> {
         match self {
             Evm::REVM { state } => REVM::rerun_block(block, state, stop_index),
-            Evm::LEVM { db: _ } =>
-            // Tracing is not implemented for levm
-            {
-                Err(EvmError::Custom(
-                    "Block Rerun not supported for LEVM".to_string(),
-                ))
-            }
+            Evm::LEVM { db } => LEVM::rerun_block(db, block, stop_index),
         }
     }
 }

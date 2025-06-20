@@ -1,7 +1,7 @@
 [package]
 name = "ethrex-vm"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 ethrex-common.workspace = true
@@ -30,6 +30,7 @@ lazy_static.workspace = true
 cfg-if.workspace = true
 tracing.workspace = true
 serde.workspace = true
+sha3.workspace = true
 
 bincode = "1"
 dyn-clone = "1.0"
@@ -44,6 +45,7 @@ default = []
 l2 = ["ethrex-levm/l2"]
 c-kzg = ["revm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 blst = ["revm/blst"]
+debug = ["ethrex-levm/debug"]
 
-[lints.clippy] 
- unwrap_used = "deny" 
+[lints.clippy]
+unwrap_used = "deny"

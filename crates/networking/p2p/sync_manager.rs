@@ -1,6 +1,6 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use ethrex_blockchain::Blockchain;
@@ -8,7 +8,7 @@ use ethrex_common::H256;
 use ethrex_storage::Store;
 use tokio::{
     sync::Mutex,
-    time::{sleep, Duration},
+    time::{Duration, sleep},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -70,7 +70,7 @@ impl SyncManager {
             syncer: Arc::new(Mutex::new(Syncer::dummy().await)),
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: Store::new("temp.db", ethrex_storage::EngineType::InMemory)
-                .expect("Failed to create test DB"),
+                .expect("Failed to start Storage Engine"),
         }
     }
 

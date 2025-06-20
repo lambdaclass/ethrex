@@ -10,21 +10,18 @@
 
 use std::{cmp::min, time::Instant};
 
-use ethrex_common::{
-    types::{AccountState, EMPTY_KECCACK_HASH},
-    H256,
-};
+use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
-use ethrex_trie::{Nibbles, Node, NodeHash, EMPTY_TRIE_HASH};
-use tokio::sync::mpsc::{channel, Sender};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeHash};
+use tokio::sync::mpsc::{Sender, channel};
 use tracing::{debug, info};
 
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        bytecode_fetcher, node_missing_children, MAX_CHANNEL_MESSAGES, MAX_PARALLEL_FETCHES,
-        NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION,
+        MAX_CHANNEL_MESSAGES, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE,
+        SHOW_PROGRESS_INTERVAL_DURATION, bytecode_fetcher, node_missing_children,
     },
 };
 

@@ -202,7 +202,7 @@ pub(crate) async fn fetch_logs_with_filter(
                             if !sub_topics.is_empty()
                                 && !sub_topics
                                     .iter()
-                                    .any(|st| st.map_or(true, |t| rpc_log.log.topics[i] == t))
+                                    .any(|st| st.is_none_or(|t| rpc_log.log.topics[i] == t))
                             {
                                 return false;
                             }

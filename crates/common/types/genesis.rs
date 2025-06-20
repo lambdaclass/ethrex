@@ -7,10 +7,10 @@ use sha3::{Digest, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 
 use super::{
-    compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
-    Block, BlockBody, BlockHeader, BlockNumber, DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH,
-    INITIAL_BASE_FEE,
+    AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
+    compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
 };
+use crate::constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH};
 
 #[allow(unused)]
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]

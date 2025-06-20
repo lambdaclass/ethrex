@@ -1,7 +1,7 @@
 [package]
 name = "zkvm-risc0-program"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [workspace]
 
@@ -14,6 +14,7 @@ ethrex-storage = { path = "../../../../../storage", default-features = false }
 ethrex-rlp = { path = "../../../../../common/rlp" }
 ethrex-vm = { path = "../../../../../vm", default-features = false }
 ethrex-blockchain = { path = "../../../../../blockchain", default-features = false }
+ethrex-l2-common = { path = "../../../../common", default-features = false }
 
 # Temporarily pin version because 0.11.1 breaks compilation
 alloy-rpc-types-engine = "=0.11.0"
