@@ -1,12 +1,10 @@
 use ethrex_common::types::ForkId;
 use ethrex_storage::Store;
 
-use crate::rlpx::{error::RLPxError, p2p::Capability};
-
-use super::status::StatusMessage;
+use crate::rlpx::{error::RLPxError, eth::status::StatusMessage, p2p::Capability};
 
 pub async fn validate_status(
-    msg_data: StatusMessage,
+    msg_data: Box<dyn StatusMessage + Send>,
     storage: &Store,
     eth_capability: &Capability,
 ) -> Result<(), RLPxError> {
@@ -29,26 +27,26 @@ pub async fn validate_status(
     );
 
     //Check networkID
-    if msg_data.get_network_id() != chain_config.chain_id {
+    if msg_data.network_id() != chain_config.chain_id {
         return Err(RLPxError::HandshakeError(
             "Network Id does not match".to_string(),
         ));
     }
     //Check Protocol Version
-    if msg_data.get_eth_version() != eth_capability.version {
+    if msg_data.eth_version() != eth_capability.version {
         return Err(RLPxError::HandshakeError(
             "Eth protocol version does not match".to_string(),
         ));
     }
     //Check Genesis
-    if msg_data.get_genesis() != genesis_hash {
+    if msg_data.genesis() != genesis_hash {
         return Err(RLPxError::HandshakeError(
             "Genesis does not match".to_string(),
         ));
     }
     // Check ForkID
     if !fork_id.is_valid(
-        msg_data.get_fork_id(),
+        msg_data.fork_id(),
         latest_block_number,
         latest_block_header.timestamp,
         chain_config,
@@ -63,14 +61,12 @@ pub async fn validate_status(
 #[cfg(test)]
 mod tests {
     use super::validate_status;
-    use crate::rlpx::eth::eth68::status::StatusMessage68;
-    use crate::rlpx::eth::status::StatusMessage;
+    use crate::rlpx::eth::status::Status68Message;
     use crate::rlpx::p2p::Capability;
     use ethrex_common::{
         H256, U256,
         types::{ForkId, Genesis},
     };
-
     use ethrex_storage::{EngineType, Store};
     use std::{fs::File, io::BufReader};
 
@@ -86,6 +82,7 @@ mod tests {
         let reader = BufReader::new(file);
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+
         storage
             .add_initial_state(genesis.clone())
             .await
@@ -97,14 +94,15 @@ mod tests {
         let fork_id = ForkId::new(config, genesis_header, 2707305664, 123);
 
         let eth = Capability::eth(68);
-        let message = StatusMessage::StatusMessage68(StatusMessage68 {
+        let message = Box::new(Status68Message {
             eth_version: eth.version,
             network_id: 3503995874084926,
             total_difficulty,
-            block_hash: H256::random(),
             genesis: genesis_hash,
             fork_id,
+            latest_block_hash: H256::random(),
         });
+
         let result = validate_status(message, &storage, &eth).await;
         assert!(result.is_ok());
     }
