@@ -502,7 +502,7 @@ impl Command {
                     .and_then(|kept_blocks| kept_blocks.iter().max().cloned())
                     .unwrap_or(0);
 
-                let genesis = network.get_genesis();
+                let genesis = network.get_genesis()?;
                 let store = init_store(&data_dir, genesis).await;
 
                 rollup_store.revert_to_batch(batch).await?;
