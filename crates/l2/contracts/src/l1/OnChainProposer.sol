@@ -303,6 +303,9 @@ contract OnChainProposer is
             "OnChainProposer: cannot verify an uncommitted batch"
         );
 
+        // Get public inputs from the commitment
+        bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
+
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             IRiscZeroVerifier(R0VERIFIER).verify(
