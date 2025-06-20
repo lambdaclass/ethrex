@@ -9,6 +9,7 @@ use std::{
     io::{BufReader, Error},
     path::Path,
 };
+use tracing::warn;
 
 use super::{
     AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
@@ -75,7 +76,9 @@ impl TryFrom<&Path> for Genesis {
             && genesis.config.cancun_time != Some(0)
             && genesis.config.prague_time != Some(0)
         {
-            return Err(GenesisError::InvalidFork());
+            // Hive has a minimalistic genesis file, which is not supported
+            // return Err(GenesisError::InvalidFork());
+            warn!("Invalid fork, only post-merge networks are supported.");
         }
 
         Ok(genesis)
