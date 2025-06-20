@@ -30,11 +30,11 @@ impl Stack {
         Ok(())
     }
 
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.stack.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.stack.is_empty()
     }
 
@@ -169,7 +169,7 @@ impl CallFrame {
         Ok(())
     }
 
-    pub fn pc(&self) -> usize {
+    pub const fn pc(&self) -> usize {
         self.pc
     }
 
