@@ -198,8 +198,7 @@ impl<'a> VM<'a> {
             execute_precompile(
                 callframe.code_address,
                 &callframe.calldata,
-                &mut callframe.gas_used,
-                callframe.gas_limit,
+                &mut callframe.gas_remaining,
             )
         };
 
