@@ -40,4 +40,4 @@ spamoor_params:
         throughput: 750
 
 grafana_params:
-  additional_dashboards: ["./ethrex_l1_perf.json", "./reth_overview.json"]
+  additional_dashboards: ["./ethrex_l1_perf.json"]
