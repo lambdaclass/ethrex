@@ -1,6 +1,5 @@
 participants:
   - el_type: ethrex
-    el_image: ethrex-latest
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v7.0.1
     el_extra_labels: {"evm": "levm"}
@@ -8,7 +7,6 @@ participants:
     count: 1
   - el_type: ethrex
     el_extra_params: ["--evm revm"]
-    el_image: ethrex-latest
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v7.0.1
     el_extra_labels: {"evm": "revm"}
