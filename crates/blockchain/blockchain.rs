@@ -7,7 +7,7 @@ mod smoke_test;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::info;
+use ::tracing::{Instrument, Level, event, info, info_span, span};
 use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -23,7 +23,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::{Address, H256, TrieLogger};
-use ethrex_metrics::metrics;
+use ethrex_metrics::{self, metrics};
 use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmEngine};
@@ -437,12 +437,18 @@ impl Blockchain {
         // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
         let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
 
+        #[cfg(feature = "metrics")]
+        let initialize_vm_span = span!(Level::INFO, "initialize_vm").entered();
+
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
             self.storage.clone(),
             first_block_header.parent_hash,
             block_hash_cache,
         );
         let mut vm = Evm::new(self.evm_engine, vm_db);
+
+        #[cfg(feature = "metrics")]
+        initialize_vm_span.exit();
 
         let blocks_len = blocks.len();
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
@@ -467,6 +473,9 @@ impl Blockchain {
                 blocks[i - 1].header.clone()
             };
 
+            #[cfg(feature = "metrics")]
+            let execute_block_span = span!(Level::INFO, "execute_block").entered();
+
             let BlockExecutionResult { receipts, .. } = self
                 .execute_block_from_state(&parent_header, block, &chain_config, &mut vm)
                 .map_err(|err| {
@@ -478,6 +487,9 @@ impl Blockchain {
                         }),
                     )
                 })?;
+
+            #[cfg(feature = "metrics")]
+            execute_block_span.exit();
 
             info!("Processed block {} out of {}", i, blocks.len());
             last_valid_hash = block.hash();
@@ -501,6 +513,7 @@ impl Blockchain {
         let account_updates_list = self
             .storage
             .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
+            .instrument(info_span!("account_updates"))
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
@@ -523,6 +536,7 @@ impl Blockchain {
 
         self.storage
             .store_block_updates(update_batch)
+            .instrument(info_span!("update_storage"))
             .await
             .map_err(|e| (e.into(), None))?;
 
@@ -550,6 +564,8 @@ impl Blockchain {
             total_gas_used,
             throughput
         );
+
+        event!(Level::INFO, "export_metrics");
 
         Ok(())
     }
