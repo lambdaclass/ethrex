@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750420931455,
+  "lastUpdate": 1750435012431,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -419,6 +419,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 223104416433,
             "range": "± 436107233",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "128638963+santiago-MV@users.noreply.github.com",
+            "name": "santiago-MV",
+            "username": "santiago-MV"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "42d3f03305a615885ecd2253f1bd0acd09b7e9f3",
+          "message": "chore(l1): add metrics port to ethrex client (#3237)\n\n**Motivation**\n\nWhen running a localnet with kurtosis the ethrex client wasn't exposing\na metrics port.\n\n**Description**\n\nTo expose the metrics port, the ETHEREUM_PACKAGE_REVISION in the\nMakefile was updated to the latest commit in our fork of\nethereum-package. Additionally, the metrics feature flag was enabled\nwhen building the Docker image (without it, metrics won't work).\nThe ethereum_metrics_exporter_enabled setting was also enabled for all\nparticipants in the ethrex-only localnet.\nWith these changes, we are now able to use metrics with ethrex clients.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3213",
+          "timestamp": "2025-06-20T14:56:01Z",
+          "tree_id": "2bcef87ad0a191fe4c912c8ba2757c2cbee887ba",
+          "url": "https://github.com/lambdaclass/ethrex/commit/42d3f03305a615885ecd2253f1bd0acd09b7e9f3"
+        },
+        "date": 1750435004752,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 226016975051,
+            "range": "± 1167365906",
             "unit": "ns/iter"
           }
         ]
