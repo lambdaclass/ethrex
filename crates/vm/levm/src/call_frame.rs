@@ -30,11 +30,11 @@ impl Stack {
         Ok(())
     }
 
-    pub const fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.stack.len()
     }
 
-    pub const fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.stack.is_empty()
     }
 
