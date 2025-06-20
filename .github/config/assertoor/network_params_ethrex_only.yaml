@@ -10,8 +10,6 @@ network_params:
   deposit_contract_address: "0x4242424242424242424242424242424242424242"
   electra_fork_epoch: 0 # This field won't be needed when ethereum-package is merged
 
-ethereum_metrics_exporter_enabled: true
-
 additional_services:
   - assertoor
   - dora
