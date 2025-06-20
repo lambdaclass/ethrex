@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750413114056,
+  "lastUpdate": 1750420931455,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -389,6 +389,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 224850805252,
             "range": "± 568814025",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "47506558+MegaRedHand@users.noreply.github.com",
+            "name": "Tomás Grüner",
+            "username": "MegaRedHand"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8354c87f8953669c9353e8cdd9349c5c6d707113",
+          "message": "docs(core): add `mdbook-mermaid` dependency (#3250)\n\n**Motivation**\n\nWe want to include diagrams in the mdbook. The easiest way to manage\ndiagrams with `git` is to declare them with `mermaid`.\n\n**Description**\n\nThis PR adds [the `mdbook-mermaid`\npreprocessor](https://github.com/badboy/mdbook-mermaid), which\nautomatically renders the mermaid diagrams in our docs.\n\nAs part of this, it also adds make targets to automatically install\npreprocessors/backends, and to generate the files required by\n`mdbook-mermaid`.\n\n<img width=\"836\" alt=\"example mermaid diagram in the L2 docs\"\nsrc=\"https://github.com/user-attachments/assets/d14d57f4-4c73-4c99-82e3-281f1693ee84\"\n/>",
+          "timestamp": "2025-06-20T11:02:04Z",
+          "tree_id": "81ec6d7511fe34fd1b69bb6a3a24de29a14d7573",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8354c87f8953669c9353e8cdd9349c5c6d707113"
+        },
+        "date": 1750420924372,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 223104416433,
+            "range": "± 436107233",
             "unit": "ns/iter"
           }
         ]
