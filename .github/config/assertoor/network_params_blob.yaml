@@ -14,10 +14,13 @@ network_params:
   # The address of the staking contract address on the Eth1 chain
   deposit_contract_address: "0x4242424242424242424242424242424242424242"
 
+ethereum_metrics_exporter_enabled: true
+
 additional_services:
   - assertoor
   - tx_fuzz
   - dora
+  - prometheus_grafana
 
 network_params:
   electra_fork_epoch: 1

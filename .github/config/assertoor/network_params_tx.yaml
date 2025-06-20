@@ -9,10 +9,13 @@ participants:
     cl_image: sigp/lighthouse:v7.0.0-beta.0
     validator_count: 32
 
+ethereum_metrics_exporter_enabled: true
+
 additional_services:
   - assertoor
   - dora
   - spamoor
+  - prometheus_grafana
 
 spamoor_params:
   spammers:
