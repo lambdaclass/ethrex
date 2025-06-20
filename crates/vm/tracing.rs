@@ -25,6 +25,7 @@ impl Evm {
             ))?;
 
         match self {
+            #[cfg(feature = "revm")]
             Evm::REVM { state } => {
                 REVM::trace_tx_calls(&block.header, tx, state, only_top_call, with_log)
             }
@@ -44,6 +45,7 @@ impl Evm {
         stop_index: Option<usize>,
     ) -> Result<(), EvmError> {
         match self {
+            #[cfg(feature = "revm")]
             Evm::REVM { state } => REVM::rerun_block(block, state, stop_index),
             Evm::LEVM { db } => LEVM::rerun_block(db, block, stop_index),
         }
