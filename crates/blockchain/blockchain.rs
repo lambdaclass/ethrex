@@ -344,6 +344,7 @@ impl Blockchain {
         let new_state_root = apply_updates_list.state_trie_hash;
         let state_updates = apply_updates_list.state_updates;
         let accounts_updates = apply_updates_list.storage_updates;
+        let code_updates = apply_updates_list.code_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
@@ -353,6 +354,7 @@ impl Blockchain {
             storage_updates: accounts_updates,
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
+            code_updates,
         };
 
         self.storage
@@ -506,6 +508,7 @@ impl Blockchain {
         let new_state_root = account_updates_list.state_trie_hash;
         let state_updates = account_updates_list.state_updates;
         let accounts_updates = account_updates_list.storage_updates;
+        let code_updates = account_updates_list.code_updates;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
@@ -515,6 +518,7 @@ impl Blockchain {
             storage_updates: accounts_updates,
             blocks,
             receipts: all_receipts,
+            code_updates,
         };
 
         self.storage
@@ -562,10 +566,12 @@ impl Blockchain {
         blobs_bundle.validate(&transaction)?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
-        let sender = transaction.sender();
+        let sender = transaction.sender()?;
 
         // Validate transaction
-        self.validate_transaction(&transaction, sender).await?;
+        if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
+            self.remove_transaction_from_pool(&tx_to_replace)?;
+        }
 
         // Add transaction and blobs bundle to storage
         let hash = transaction.compute_hash();
@@ -584,9 +590,11 @@ impl Blockchain {
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
-        let sender = transaction.sender();
+        let sender = transaction.sender()?;
         // Validate transaction
-        self.validate_transaction(&transaction, sender).await?;
+        if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
+            self.remove_transaction_from_pool(&tx_to_replace)?;
+        }
 
         let hash = transaction.compute_hash();
 
@@ -633,16 +641,16 @@ impl Blockchain {
     5. Ensure the transactor is able to add a new transaction. The number of transactions sent by an account may be limited by a certain configured value
 
     */
-
+    /// Returns the hash of the transaction to replace in case the nonce already exists
     pub async fn validate_transaction(
         &self,
         tx: &Transaction,
         sender: Address,
-    ) -> Result<(), MempoolError> {
+    ) -> Result<Option<H256>, MempoolError> {
         let nonce = tx.nonce();
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
-            return Ok(());
+            return Ok(None);
         }
 
         let header_no = self.storage.get_latest_block_number().await?;
@@ -709,12 +717,8 @@ impl Blockchain {
         }
 
         // Check the nonce of pendings TXs in the mempool from the same sender
-        if self
-            .mempool
-            .contains_sender_nonce(sender, nonce, tx.compute_hash())?
-        {
-            return Err(MempoolError::InvalidNonce);
-        }
+        // If it exists check if the new tx has higher fees
+        let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
 
         if let Some(chain_id) = tx.chain_id() {
             if chain_id != config.chain_id {
@@ -722,7 +726,7 @@ impl Blockchain {
             }
         }
 
-        Ok(())
+        Ok(tx_to_replace_hash)
     }
 
     /// Marks the node's chain as up to date with the current chain

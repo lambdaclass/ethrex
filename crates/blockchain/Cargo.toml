@@ -10,6 +10,7 @@ ethrex-rlp.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
+secp256k1.workspace = true
 
 thiserror.workspace = true
 sha3.workspace = true

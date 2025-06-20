@@ -6,7 +6,8 @@ use crate::{
         init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
     },
     l2::options::Options,
-    utils::{NodeConfigFile, set_datadir, store_node_config_file},
+    networks::Network,
+    utils::{NodeConfigFile, parse_private_key, set_datadir, store_node_config_file},
 };
 use clap::Subcommand;
 use ethrex_common::{
@@ -15,6 +16,8 @@ use ethrex_common::{
 };
 use ethrex_l2::SequencerConfig;
 use ethrex_l2_common::state_diff::StateDiff;
+use ethrex_l2_sdk::call_contract;
+use ethrex_l2_sdk::calldata::Value;
 use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
     EthClient,
@@ -27,6 +30,7 @@ use eyre::OptionExt;
 use itertools::Itertools;
 use keccak_hash::keccak;
 use reqwest::Url;
+use secp256k1::SecretKey;
 use std::{
     fs::{create_dir_all, read_dir},
     future::IntoFuture,
@@ -78,6 +82,39 @@ pub enum Command {
         store_path: PathBuf,
         #[arg(short = 'c', long, help = "Address of the L2 proposer coinbase")]
         coinbase: Address,
+    },
+    #[command(about = "Reverts unverified batches.")]
+    RevertBatch {
+        #[arg(help = "ID of the batch to revert to")]
+        batch: u64,
+        #[arg(help = "The address of the OnChainProposer contract")]
+        contract_address: Address,
+        #[arg(long, value_parser = parse_private_key, env = "PRIVATE_KEY", help = "The private key of the owner. Assumed to have sequencing permission.")]
+        private_key: Option<SecretKey>,
+        #[arg(
+            long,
+            default_value = "http://localhost:8545",
+            env = "RPC_URL",
+            help = "URL of the L1 RPC"
+        )]
+        rpc_url: Url,
+        #[arg(
+            long = "network",
+            default_value_t = Network::default(),
+            value_name = "GENESIS_FILE_PATH",
+            help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
+            env = "ETHREX_NETWORK",
+            value_parser = clap::value_parser!(Network),
+        )]
+        network: Network,
+        #[arg(
+            long = "datadir",
+            value_name = "DATABASE_DIRECTORY",
+            default_value = DEFAULT_L2_DATADIR,
+            help = "Receives the name of the directory where the Database is located.",
+            env = "ETHREX_DATADIR"
+        )]
+        datadir: String,
     },
 }
 
@@ -353,6 +390,7 @@ impl Command {
                                 storage_updates: accounts_updates,
                                 blocks: vec![],
                                 receipts: vec![],
+                                code_updates: vec![],
                             };
 
                             store.store_block_updates(pseudo_update_batch).await.expect("Error storing trie updates");
@@ -426,6 +464,63 @@ impl Command {
                             "Reconstruction is only supported with the libmdbx feature enabled."
                         ));
                     }
+                }
+            }
+            Command::RevertBatch {
+                batch,
+                contract_address,
+                rpc_url,
+                private_key,
+                datadir,
+                network,
+            } => {
+                let data_dir = set_datadir(&datadir);
+                let rollup_store_dir = data_dir.clone() + "/rollup_store";
+
+                let client = EthClient::new(rpc_url.as_str())?;
+                if let Some(private_key) = private_key {
+                    info!("Pausing OnChainProposer...");
+                    call_contract(&client, &private_key, contract_address, "pause()", vec![])
+                        .await?;
+                    info!("Doing revert on OnChainProposer...");
+                    call_contract(
+                        &client,
+                        &private_key,
+                        contract_address,
+                        "revertBatch(uint256)",
+                        vec![Value::Uint(batch.into())],
+                    )
+                    .await?;
+                } else {
+                    info!("Private key not given, not updating contract.");
+                }
+                info!("Updating store...");
+                let rollup_store = init_rollup_store(&rollup_store_dir).await;
+                let last_kept_block = rollup_store
+                    .get_block_numbers_by_batch(batch)
+                    .await?
+                    .and_then(|kept_blocks| kept_blocks.iter().max().cloned())
+                    .unwrap_or(0);
+
+                let genesis = network.get_genesis();
+                let store = init_store(&data_dir, genesis).await;
+
+                rollup_store.revert_to_batch(batch).await?;
+                store.update_latest_block_number(last_kept_block).await?;
+
+                let mut block_to_delete = last_kept_block + 1;
+                while store
+                    .get_canonical_block_hash(block_to_delete)
+                    .await?
+                    .is_some()
+                {
+                    store.remove_block(block_to_delete).await?;
+                    block_to_delete += 1;
+                }
+                if let Some(private_key) = private_key {
+                    info!("Unpausing OnChainProposer...");
+                    call_contract(&client, &private_key, contract_address, "unpause()", vec![])
+                        .await?;
                 }
             }
         }

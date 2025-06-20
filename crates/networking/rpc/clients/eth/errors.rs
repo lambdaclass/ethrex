@@ -9,7 +9,7 @@ pub enum EthClientError {
     #[error("eth_gasPrice request error: {0}")]
     GetGasPriceError(#[from] GetGasPriceError),
     #[error("eth_estimateGas request error: {0}")]
-    EstimateGasPriceError(#[from] EstimateGasPriceError),
+    EstimateGasError(#[from] EstimateGasError),
     #[error("eth_sendRawTransaction request error: {0}")]
     SendRawTransactionError(#[from] SendRawTransactionError),
     #[error("eth_call request error: {0}")]
@@ -50,6 +50,8 @@ pub enum EthClientError {
     InternalError(String),
     #[error("Parse Url Error. {0}")]
     ParseUrlError(String),
+    #[error("Failed to sign payload: {0}")]
+    FailedToSignPayload(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -65,7 +67,7 @@ pub enum GetGasPriceError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum EstimateGasPriceError {
+pub enum EstimateGasError {
     #[error("{0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("{0}")]
