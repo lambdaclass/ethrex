@@ -1,6 +1,6 @@
 use anyhow::Error;
 use bytes::Bytes;
-use ethrex_common::types::{Block, Genesis};
+use ethrex_common::types::Block;
 use ethrex_rlp::decode::RLPDecode as _;
 use std::{
     fs::File,
@@ -30,11 +30,6 @@ pub fn chain_file(file: File) -> Result<Vec<Block>, Error> {
         buf = rest;
     }
     Ok(blocks)
-}
-
-pub fn genesis_file(file: File) -> Result<Genesis, serde_json::Error> {
-    let genesis_reader = BufReader::new(file);
-    serde_json::from_reader(genesis_reader)
 }
 
 #[cfg(test)]
