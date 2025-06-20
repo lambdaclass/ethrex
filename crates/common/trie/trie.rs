@@ -15,6 +15,8 @@ use sha3::{Digest, Keccak256};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use crate::node::InsertAction;
+
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
@@ -115,6 +117,34 @@ impl Trie {
         } else {
             // If the trie is empty, just add a leaf.
             Node::from(LeafNode::new(path, value)).into()
+        };
+
+        Ok(())
+    }
+
+    /// Update an RLP-encoded value into the trie.
+    ///
+    /// If on_get returns None, no insert will be done.
+    pub fn update<'func, F>(&mut self, path: PathRLP, on_update: F) -> Result<(), TrieError>
+    where
+        F: FnOnce(Option<ValueRLP>) -> Result<ValueRLP, TrieError> + 'func,
+    {
+        let path = Nibbles::from_bytes(&path);
+
+        self.root = if self.root.is_valid() {
+            // If the trie is not empty, call the root node's insertion logic.
+            self.root
+                .get_node(self.db.as_ref())?
+                .ok_or(TrieError::InconsistentTree)?
+                .insert(
+                    self.db.as_ref(),
+                    path,
+                    InsertAction::Update(Box::new(on_update)),
+                )?
+                .into()
+        } else {
+            // If the trie is empty, just add a leaf.
+            Node::from(LeafNode::new(path, on_update(None)?)).into()
         };
 
         Ok(())
@@ -675,6 +705,31 @@ mod test {
         assert_eq!(trie.get(&vec![185, 0]).unwrap(), Some(vec![185, 0]));
         assert_eq!(trie.get(&vec![185]).unwrap(), Some(vec![185]));
         assert!(trie.get(&vec![185, 1]).unwrap().is_none());
+    }
+
+    #[test]
+    fn get_update_a() {
+        let mut trie = Trie::new_temp();
+        trie.insert(vec![16], vec![0]).unwrap();
+        trie.update(vec![16], |prev| {
+            assert_eq!(prev, Some(vec![0]));
+
+            Ok(vec![1])
+        })
+        .unwrap();
+
+        let item = trie.get(&vec![16]).unwrap();
+        assert_eq!(item, Some(vec![1]));
+
+        trie.update(vec![17], |prev| {
+            assert_eq!(prev, None);
+
+            Ok(vec![1])
+        })
+        .unwrap();
+
+        let item = trie.get(&vec![17]).unwrap();
+        assert_eq!(item, Some(vec![1]));
     }
 
     #[test]

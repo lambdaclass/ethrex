@@ -2,7 +2,7 @@ use ethrex_rlp::structs::Encoder;
 
 use crate::{ValueRLP, error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash};
 
-use super::{ExtensionNode, Node, ValueOrHash};
+use super::{ExtensionNode, InsertAction, Node};
 /// Leaf Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's hash, value & path
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -27,7 +27,7 @@ impl LeafNode {
     }
 
     /// Stores the received value and returns the new root of the subtrie previously consisting of self
-    pub fn insert(mut self, path: Nibbles, value: ValueOrHash) -> Result<Node, TrieError> {
+    pub fn insert(mut self, path: Nibbles, value: InsertAction) -> Result<Node, TrieError> {
         /* Possible flow paths:
             Leaf { SelfValue } -> Leaf { Value }
             Leaf { SelfValue } -> Extension { Branch { [Self,...] Value } }
@@ -37,11 +37,14 @@ impl LeafNode {
         // If the path matches the stored path, update the value and return self
         if self.partial == path {
             match value {
-                ValueOrHash::Value(value) => self.value = value,
-                ValueOrHash::Hash(_) => {
+                InsertAction::Value(value) => self.value = value,
+                InsertAction::Hash(_) => {
                     return Err(TrieError::Verify(
                         "attempt to override proof node with external hash".to_string(),
                     ));
+                }
+                InsertAction::Update(on_update) => {
+                    self.value = on_update(Some(std::mem::take(&mut self.value)))?;
                 }
             }
             Ok(self.into())
@@ -57,10 +60,14 @@ impl LeafNode {
                 // Branch { [ Leaf { Value } , ... ], SelfValue}
                 let mut choices = BranchNode::EMPTY_CHOICES;
                 choices[new_leaf_choice_idx] = match value {
-                    ValueOrHash::Value(value) => {
+                    InsertAction::Value(value) => {
                         Node::from(LeafNode::new(path.offset(match_index + 1), value)).into()
                     }
-                    ValueOrHash::Hash(hash) => hash.into(),
+                    InsertAction::Hash(hash) => hash.into(),
+                    InsertAction::Update(on_update) => {
+                        let value = on_update(None)?;
+                        Node::from(LeafNode::new(path.offset(match_index + 1), value)).into()
+                    }
                 };
                 BranchNode::new_with_value(choices, self.value)
             } else if new_leaf_choice_idx == 16 {
@@ -71,8 +78,9 @@ impl LeafNode {
                 BranchNode::new_with_value(
                     choices,
                     match value {
-                        ValueOrHash::Value(value) => value,
-                        ValueOrHash::Hash(_) => todo!("handle override case (error?)"),
+                        InsertAction::Value(value) => value,
+                        InsertAction::Hash(_) => todo!("handle override case (error?)"),
+                        InsertAction::Update(on_update) => on_update(None)?,
                     },
                 )
             } else {
@@ -81,10 +89,14 @@ impl LeafNode {
                 // Branch { [ Leaf { Path, Value }, Self, ... ], None, None}
                 let mut choices = BranchNode::EMPTY_CHOICES;
                 choices[new_leaf_choice_idx] = match value {
-                    ValueOrHash::Value(value) => {
+                    InsertAction::Value(value) => {
                         Node::from(LeafNode::new(path.offset(match_index + 1), value)).into()
                     }
-                    ValueOrHash::Hash(hash) => hash.into(),
+                    InsertAction::Hash(hash) => hash.into(),
+                    InsertAction::Update(on_update) => {
+                        let value = on_update(None)?;
+                        Node::from(LeafNode::new(path.offset(match_index + 1), value)).into()
+                    }
                 };
                 choices[self_choice_idx] = Node::from(self).into();
                 BranchNode::new(choices)

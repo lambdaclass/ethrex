@@ -18,7 +18,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::{Nibbles, NodeHash, Trie, TrieLogger, TrieNode, TrieWitness};
+use ethrex_trie::{Nibbles, NodeHash, Trie, TrieError, TrieLogger, TrieNode, TrieWitness};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
@@ -377,42 +377,55 @@ impl Store {
                 state_trie.remove(hashed_address)?;
                 continue;
             }
-            // Add or update AccountState in the trie
-            // Fetch current state or create a new state to be inserted
-            let mut account_state = match state_trie.get(&hashed_address)? {
-                Some(encoded_state) => AccountState::decode(&encoded_state)?,
-                None => AccountState::default(),
-            };
+
             if let Some(info) = &update.info {
-                account_state.nonce = info.nonce;
-                account_state.balance = info.balance;
-                account_state.code_hash = info.code_hash;
                 // Store updated code in DB
                 if let Some(code) = &update.code {
                     code_updates.push((info.code_hash, code.clone()));
                 }
             }
-            // Store the added storage in the account's storage trie and compute its new root
-            if !update.added_storage.is_empty() {
-                let mut storage_trie = self.engine.open_storage_trie(
-                    H256::from_slice(&hashed_address),
-                    account_state.storage_root,
-                )?;
-                for (storage_key, storage_value) in &update.added_storage {
-                    let hashed_key = hash_key(storage_key);
-                    if storage_value.is_zero() {
-                        storage_trie.remove(hashed_key)?;
-                    } else {
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
-                    }
+
+            // Add or update AccountState in the trie
+            // Fetch current state or create a new state to be inserted
+            state_trie.update(hashed_address.clone(), |encoded_state| {
+                let mut account_state = match encoded_state {
+                    Some(encoded_state) => AccountState::decode(&encoded_state)?,
+                    None => AccountState::default(),
+                };
+
+                if let Some(info) = &update.info {
+                    account_state.nonce = info.nonce;
+                    account_state.balance = info.balance;
+                    account_state.code_hash = info.code_hash;
                 }
-                let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash();
-                account_state.storage_root = storage_hash;
-                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
-            }
-            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+
+                // Store the added storage in the account's storage trie and compute its new root
+                if !update.added_storage.is_empty() {
+                    let mut storage_trie = self
+                        .engine
+                        .open_storage_trie(
+                            H256::from_slice(&hashed_address),
+                            account_state.storage_root,
+                        )
+                        .map_err(|e| TrieError::UpdateError(e.into()))?;
+                    for (storage_key, storage_value) in &update.added_storage {
+                        let hashed_key = hash_key(storage_key);
+                        if storage_value.is_zero() {
+                            storage_trie.remove(hashed_key)?;
+                        } else {
+                            storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        }
+                    }
+                    let (storage_hash, storage_updates) =
+                        storage_trie.collect_changes_since_last_hash();
+                    account_state.storage_root = storage_hash;
+                    ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+                }
+
+                Ok(account_state.encode_to_vec())
+            })?;
         }
+
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
         Ok(AccountUpdatesList {
