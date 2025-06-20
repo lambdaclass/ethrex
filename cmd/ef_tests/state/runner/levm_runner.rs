@@ -80,6 +80,11 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                         "This case should not happen".to_owned(),
                     )));
                 }
+                Err(EFTestRunnerError::TestsFailed) => {
+                    unreachable!(
+                        "An EFTestRunnerError::TestsFailed can't happen at this point. This error is only thrown in run_ef_tests under the summary flag"
+                    )
+                }
             }
         }
         ef_test_report.register_fork_result(*fork, ef_test_report_fork);
