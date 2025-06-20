@@ -524,7 +524,7 @@ impl Blockchain {
         let ret_acount_updates_list = self
             .storage
             .apply_account_updates_batch(&mut self.state_trie.write().await.1, &account_updates)
-            .await?
+            .await?;
 
         let state_root = ret_acount_updates_list.state_trie_hash;
 

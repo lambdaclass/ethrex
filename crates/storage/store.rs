@@ -352,16 +352,14 @@ impl Store {
         &self,
         state_trie: &mut Trie,
         account_updates: &[AccountUpdate],
-    ) -> Result<Option<AccountUpdatesList>, StoreError> {
-        Ok(Some(
-            self.apply_account_updates_from_trie_batch(state_trie, account_updates)
-                .await?,
-        ))
+    ) -> Result<AccountUpdatesList, StoreError> {
+        self.apply_account_updates_from_trie_batch(state_trie, account_updates)
+            .await
     }
 
     pub async fn apply_account_updates_from_trie_batch(
         &self,
-        mut state_trie: Trie,
+        state_trie: &mut Trie,
         account_updates: impl IntoIterator<Item = &AccountUpdate>,
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
@@ -423,7 +421,7 @@ impl Store {
     ///  but also returns the used storage tries with witness recorded
     pub async fn apply_account_updates_from_trie_with_witness(
         &self,
-        state_trie: &mut Trie,
+        mut state_trie: Trie,
         account_updates: &[AccountUpdate],
         mut storage_tries: HashMap<Address, (TrieWitness, Trie)>,
     ) -> Result<(Trie, HashMap<Address, (TrieWitness, Trie)>), StoreError> {
