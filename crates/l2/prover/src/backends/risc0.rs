@@ -69,7 +69,7 @@ pub fn to_batch_proof(
 fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Error> {
     let seal = encode_seal(&receipt)?;
     let image_id = ZKVM_RISC0_PROGRAM_ID;
-    let journal: Vec<u8> = receipt.journal.decode()?;
+    let journal = receipt.journal.bytes;
 
     // convert image_id into bytes
     let image_id = {

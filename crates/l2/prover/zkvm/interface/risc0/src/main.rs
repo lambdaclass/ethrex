@@ -5,5 +5,5 @@ fn main() {
     let input: ProgramInput = env::read();
     let output = execution_program(input).unwrap();
 
-    env::commit(&output.encode());
+    env::commit_slice(&output.encode());
 }
