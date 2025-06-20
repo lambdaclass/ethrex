@@ -15,7 +15,9 @@ ethereum_metrics_exporter_enabled: true
 additional_services:
   - assertoor
   - dora
-  - prometheus_grafana
+#   - prometheus_grafana
+# ethereum_metrics_exporter_enabled: true
+# Uncomment the previous lines to enable metrics dashboards, useful for local testing
 
 assertoor_params:
   run_stability_check: false
