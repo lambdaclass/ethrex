@@ -223,7 +223,10 @@ impl BranchNode {
 
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
-        let mut buf = vec![];
+        // Enough to encode 16 32-byte hashes and a value.
+        // TODO: we may be able to get the size of the value if we knew what if this was an account 
+        // or a storage trie. We assume account state, which is nonce, storage root, code hash and balance.
+        let mut buf = Vec::with_capacity(640);
         let mut encoder = Encoder::new(&mut buf);
         for child in self.choices.iter() {
             match child.compute_hash() {
