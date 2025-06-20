@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -16,7 +16,6 @@ use crate::vm::VM;
 
 use super::CacheDB;
 use super::Database;
-use super::cache;
 
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
@@ -40,11 +39,16 @@ impl GeneralizedDatabase {
     /// Gets account, first checking the cache and then the database
     /// (caching in the second case)
     pub fn get_account(&mut self, address: Address) -> Result<&Account, InternalError> {
-        if !cache::account_is_cached(&self.cache, &address) {
-            let account = self.get_account_from_database(address)?;
-            cache::insert_account(&mut self.cache, address, account);
+        if !self.cache.contains_key(&address) {
+            let account = self.store.get_account(address)?;
+            self.immutable_cache.insert(address, account.clone());
+
+            self.cache.insert(address, account);
         }
-        cache::get_account(&self.cache, &address).ok_or(InternalError::AccountNotFound)
+
+        self.cache
+            .get(&address)
+            .ok_or(InternalError::AccountNotFound)
     }
 
     /// **Accesses to an account's information.**
@@ -60,16 +64,6 @@ impl GeneralizedDatabase {
         let account = self.get_account(address)?;
 
         Ok((account, address_was_cold))
-    }
-
-    /// Gets account from storage, storing in Immutable Cache for efficiency when getting AccountUpdates.
-    pub fn get_account_from_database(
-        &mut self,
-        address: Address,
-    ) -> Result<Account, InternalError> {
-        let account = self.store.get_account(address)?;
-        self.immutable_cache.insert(address, account.clone());
-        Ok(account)
     }
 
     /// Gets storage slot from Database, storing in Immutable Cache for efficiency when getting AccountUpdates.
@@ -133,17 +127,23 @@ impl<'a> VM<'a> {
 
     */
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, InternalError> {
-        if cache::is_account_cached(&self.db.cache, &address) {
-            self.backup_account_info(address)?;
-            cache::get_account_mut(&mut self.db.cache, &address)
-                .ok_or(InternalError::AccountNotFound)
-        } else {
-            let acc = self.db.get_account_from_database(address)?;
-            cache::insert_account(&mut self.db.cache, address, acc);
-            self.backup_account_info(address)?;
-            cache::get_account_mut(&mut self.db.cache, &address)
-                .ok_or(InternalError::AccountNotFound)
-        }
+        let account = match self.db.cache.entry(address) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let account = self.db.store.get_account(address)?;
+                self.db.immutable_cache.insert(address, account.clone());
+
+                entry.insert(account)
+            }
+        };
+
+        self.call_frames
+            .last_mut()
+            .ok_or(InternalError::CallFrame)?
+            .call_frame_backup
+            .backup_account_info(address, account)?;
+
+        Ok(account)
     }
 
     pub fn increase_account_balance(
@@ -213,9 +213,13 @@ impl<'a> VM<'a> {
         address: Address,
         account: Account,
     ) -> Result<(), InternalError> {
-        self.backup_account_info(address)?;
-        let _ = cache::insert_account(&mut self.db.cache, address, account);
+        self.call_frames
+            .last_mut()
+            .ok_or(InternalError::CallFrame)?
+            .call_frame_backup
+            .backup_account_info(address, &account)?;
 
+        self.db.cache.insert(address, account);
         Ok(())
     }
 
@@ -270,7 +274,7 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
     ) -> Result<U256, InternalError> {
-        if let Some(account) = cache::get_account(&self.db.cache, &address) {
+        if let Some(account) = self.db.cache.get(&address) {
             if let Some(value) = account.storage.get(&key) {
                 return Ok(*value);
             }
@@ -317,39 +321,6 @@ impl<'a> VM<'a> {
             .or_insert(HashMap::new());
 
         account_storage_backup.entry(key).or_insert(value);
-
-        Ok(())
-    }
-
-    pub fn backup_account_info(&mut self, address: Address) -> Result<(), InternalError> {
-        if self.call_frames.is_empty() {
-            return Ok(());
-        }
-
-        let is_not_backed_up = !self
-            .current_call_frame_mut()?
-            .call_frame_backup
-            .original_accounts_info
-            .contains_key(&address);
-
-        if is_not_backed_up {
-            let account = cache::get_account(&self.db.cache, &address)
-                .ok_or(InternalError::AccountNotFound)?;
-            let info = account.info.clone();
-            let code = account.code.clone();
-
-            self.current_call_frame_mut()?
-                .call_frame_backup
-                .original_accounts_info
-                .insert(
-                    address,
-                    Account {
-                        info,
-                        code,
-                        storage: HashMap::new(),
-                    },
-                );
-        }
 
         Ok(())
     }
