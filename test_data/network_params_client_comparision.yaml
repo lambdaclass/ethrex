@@ -36,7 +36,6 @@ spamoor_params:
   spammers:
     - scenario: erctx
       config:
-        count: 750
         throughput: 750
 
 grafana_params:
