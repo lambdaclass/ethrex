@@ -42,11 +42,12 @@ jobs:
         run: |
           cd crates/vm/levm
           make build-revm-comparison
+          cd ../../
       - name: Upload main benchmark binary
         uses: actions/upload-artifact@v4
         with:
           name: pr-result
-          path: ../../target/benchmark
+          path: target/benchmark
 
   benchmark-main:
     name: Benchmark for Main
@@ -79,11 +80,12 @@ jobs:
         run: |
           cd crates/vm/levm
           make build-revm-comparison
+          cd ../../
       - name: Upload main benchmark binary
         uses: actions/upload-artifact@v4
         with:
           name: main-result
-          path: ../../target/benchmark
+          path: target/benchmark
 
   combine-results:
     name: Combine Benchmark Results
