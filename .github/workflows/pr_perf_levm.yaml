@@ -28,16 +28,6 @@ jobs:
       - name: Set up cargo cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install hyperfine
-        uses: taiki-e/install-action@v2
-        with:
-          tool: hyperfine@1.16
-
-      - name: Install solc
-        uses: pontem-network/get-solc@master
-        with:
-          version: v0.8.29
-
       - name: Build main benchmark
         run: |
           cd crates/vm/levm
@@ -65,16 +55,6 @@ jobs:
       - name: Set up cargo cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install hyperfine
-        uses: taiki-e/install-action@v2
-        with:
-          tool: hyperfine@1.19
-
-      - name: Install solc
-        uses: pontem-network/get-solc@master
-        with:
-          version: v0.8.29
-
       - name: Build main benchmark
         run: |
           cd crates/vm/levm
@@ -92,6 +72,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install hyperfine
+        uses: taiki-e/install-action@v2
+        with:
+          tool: hyperfine@1.19
+
+      - name: Install solc
+        uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
+
       - name: Download PR results
         uses: actions/download-artifact@v4
         with:
