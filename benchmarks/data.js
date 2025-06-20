@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750435012431,
+  "lastUpdate": 1750442643171,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -449,6 +449,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 226016975051,
             "range": "± 1167365906",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "128638963+santiago-MV@users.noreply.github.com",
+            "name": "santiago-MV",
+            "username": "santiago-MV"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e42990bee8bf6f99cd70049f09ba2ebad750a559",
+          "message": "chore(l1): change error message shown when loading a pre-merge genesis file (#3111)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWhen using a pre-merge genesis.json for importing blocks, which is not\nsupported by ethrex, the error received was `ParentNotFound`, which\ndoesn't explain the real problem.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nBefore merging blocks the genesis.json fork is checked, in case that its\npre Paris return a custom error message.\nFor doing this new checks were added to the `fork()` function.\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #3102\n\n---------\n\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-06-20T17:02:42Z",
+          "tree_id": "1792c8f6ba83245d32a6ec768b3b1ed9ff6cd9c0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e42990bee8bf6f99cd70049f09ba2ebad750a559"
+        },
+        "date": 1750442636166,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 224881683343,
+            "range": "± 350122633",
             "unit": "ns/iter"
           }
         ]
