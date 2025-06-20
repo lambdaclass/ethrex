@@ -1,0 +1,136 @@
+- name: Ethrex L1 Setup
+  hosts: l1
+  vars:
+    ethrex_dir: "/home/{{ ansible_user }}/ethrex"
+    ethereum_metrics_exporter_version: "0.27.4"
+    lighthouse_version: "7.0.1"
+
+  tasks:
+    - name: Install Clang and related tools
+      apt:
+        name:
+          - libclang-dev
+          - clang
+          - tmux
+          - rsync
+          - linux-perf
+          - git
+          - pkg-config
+        state: present
+        update_cache: yes
+
+    - name: Check if rustup is installed
+      stat:
+        path: /home/{{ ansible_user }}/.cargo/bin/rustc
+      register: rustup_check
+
+    - name: Install rustup
+      shell: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      when: not rustup_check.stat.exists
+
+    - name: Add Rust to PATH
+      lineinfile:
+        path: /home/{{ ansible_user }}/.bashrc
+        line: source $HOME/.cargo/env
+        create: yes
+      when: not rustup_check.stat.exists
+
+    - name: Clone Ethrex repository
+      git:
+        repo: "https://github.com/lambdaclass/ethrex.git"
+        dest: "{{ ethrex_dir }}"
+        version: main
+
+    - name: Ensure user systemd directory exists
+      file:
+        path: "/home/{{ ansible_user }}/.config/systemd/user"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
+
+    - name: Download Lighthouse
+      get_url:
+        url: https://github.com/sigp/lighthouse/releases/download/v{{ lighthouse_version }}/lighthouse-v{{ lighthouse_version }}-{{ ansible_architecture }}-unknown-linux-gnu.tar.gz
+        dest: "/tmp/lighthouse-{{ lighthouse_version }}.tar.gz"
+        mode: '0644'
+
+    - name: Extract Lighthouse
+      unarchive:
+        src: "/tmp/lighthouse-{{ lighthouse_version }}"
+        dest: "/tmp/"
+        remote_src: true
+
+    - name: Move Lighthouse
+      copy:
+        remote_src: true
+        src: "/tmp/lighthouse-{{ lighthouse_version }}/lighthouse"
+        dest: "/usr/local/bin/lighthouse"
+
+    - name: Create Lighthouse service
+      template:
+        src: services/lighthouse.service.j2
+        dest: "/home/{{ ansible_user }}/.config/systemd/user/lighthouse.service"
+
+    - name: Start Lighthouse
+      systemd:
+        name: lighthouse
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Get architecture
+      set_fact:
+        architecture: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' if ansible_architecture == 'aarch64' else ansible_architecture }}"
+
+    - name: Download Ethereum Metrics Exporter
+      get_url:
+        url: "https://github.com/ethpandaops/ethereum-metrics-exporter/releases/download/v{{ ethereum_metrics_exporter_version }}/ethereum-metrics-exporter_{{ ethereum_metrics_exporter_version }}.linux_{{ architecture }}.tar.gz "
+        dest: "/tmp/ethereum_metrics_exporter_{{ ethereum_metrics_exporter_version }}.tar.gz"
+        mode: '0644'
+
+    - name: Extract Ethereum Metrics Exporter
+      unarchive:
+        src: "/tmp/ethereum_metrics_exporter_{{ ethereum_metrics_exporter_version }}.tar.gz"
+        dest: /tmp/
+        remote_src: yes
+      
+    - name: Move Ethereum Metrics Exporter
+      copy:
+        remote_src: true
+        src: "/tmp/ethereum_metrics_exporter_{{ ethereum_metrics_exporter_version }}_linux_{{ architecture }}"
+        dest: "/usr/local/bin/ethereum_metrics_exporter"
+        mode: '0755'
+
+    - name: Create Ethereum Metrics Exporter service
+      template:
+        src: services/ethereum-metrics-exporter.service.j2
+        dest: "/home/{{ ansible_user }}/.config/systemd/user/ethereum-metrics-exporter.service"
+
+    - name: Start Ethereum Metrics Exporter
+      systemd:
+        name: ethereum-metrics-exporter
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Compile Ethrex
+      command: cargo build --release --features metrics,libmdbx
+      args:
+        chdir: "{{ ethrex_dir }}"
+
+    - name: Install Ethrex L1
+      template:
+        src: services/ethrex-l1.service.j2
+        dest: /home/{{ ansible_user }}/.config/systemd/user/ethrex-l1.service
+      vars:
+        network: "hoodi"
+        evm: "{{ lookup('env', 'EVM') }}"
+        bootnodes: "{{ lookup('env', 'BOOTNODES') }}"
+    
+    - name: Start Ethrex L1
+      systemd:
+        name: ethrex-l1
+        state: started
+        enabled: true
+        daemon_reload: true
