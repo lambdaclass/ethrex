@@ -29,7 +29,7 @@ The databases are stored in the `~/.local/share/` folder in Linux, and `~/Librar
 
 ## Running a sync
 
-Lighthouse must be running for the sync to work. Aditionally, a jwt has to be provided too. The SYNC_BLOCK_NUM also has to be one a batch ended on for that network and evm. *The sync will not work if not started from a block number like such*, so it's important to check the numebr carefully.
+Lighthouse must be running for the sync to work. Additionally, a jwt has to be provided too. The SYNC_BLOCK_NUM also has to be one a batch ended on for that network and evm. *The sync will not work if not started from a block number like such*, so it's important to check the number carefully.
 
 ## Commands
 
