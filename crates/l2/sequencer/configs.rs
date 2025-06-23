@@ -85,7 +85,7 @@ pub struct BlockFetcherConfig {
 pub struct AlignedConfig {
     pub aligned_mode: bool,
     pub aligned_verifier_interval_ms: u64,
-    pub beacon_url: String,
+    pub beacon_urls: Vec<String>,
     pub network: Network,
     pub fee_estimate: String,
     pub aligned_sp1_elf_path: String,

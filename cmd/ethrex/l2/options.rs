@@ -146,7 +146,7 @@ impl From<SequencerOptions> for SequencerConfig {
             aligned: AlignedConfig {
                 aligned_mode: opts.aligned_opts.aligned,
                 aligned_verifier_interval_ms: opts.aligned_opts.aligned_verifier_interval_ms,
-                beacon_url: opts.aligned_opts.beacon_url.unwrap_or_default(),
+                beacon_urls: opts.aligned_opts.beacon_url.unwrap_or_default(),
                 network: resolve_aligned_network(
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
@@ -448,10 +448,11 @@ pub struct AlignedOptions {
         value_name = "BEACON_URL",
         required_if_eq("aligned", "true"),
         env = "ETHREX_ALIGNED_BEACON_URL",
-        help = "Beacon url to use.",
-        help_heading = "Aligned options"
+        help = "List of beacon urls to use.",
+        help_heading = "Aligned options",
+        num_args = 1..10
     )]
-    pub beacon_url: Option<String>,
+    pub beacon_url: Option<Vec<String>>,
     #[arg(
         long,
         value_name = "ETHREX_ALIGNED_NETWORK",
@@ -488,7 +489,7 @@ impl Default for AlignedOptions {
         Self {
             aligned: false,
             aligned_verifier_interval_ms: 5000,
-            beacon_url: Some("http://127.0.0.1:58801".to_string()),
+            beacon_url: Some(vec!["http://127.0.0.1:58801".to_string()]),
             aligned_network: Some("devnet".to_string()),
             fee_estimate: "instant".to_string(),
             aligned_sp1_elf_path: Some(format!(
