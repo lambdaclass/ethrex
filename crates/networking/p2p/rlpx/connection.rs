@@ -35,7 +35,7 @@ use crate::{
     },
     types::Node,
 };
-use ethrex_blockchain::{error::ChainError, fork_choice::apply_fork_choice, Blockchain};
+use ethrex_blockchain::{Blockchain, error::ChainError, fork_choice::apply_fork_choice};
 use ethrex_common::{
     Address, H256, H512,
     types::{Block, MempoolTransaction, Transaction},
@@ -284,7 +284,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 log_peer_debug(&self.node, "Peer already connected, don't replace it");
             }
             RLPxError::BlockchainError(chain_err) => {
-                log_peer_error(&self.node, &format!("Got chain err, peer will not be discarded: {chain_err}"));
+                log_peer_error(
+                    &self.node,
+                    &format!("Got chain err, peer will not be discarded: {chain_err}"),
+                );
             }
             _ => {
                 let remote_public_key = self.node.public_key;
@@ -954,13 +957,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             apply_fork_choice(&self.storage, block_hash, block_hash, block_hash)
                 .await
                 .map_err(|e| {
-                    RLPxError::BlockchainError(ChainError::Custom(
-                        format!(
-                            "Error adding new block {} with hash {:?}, error: {e}",
-                            block.header.number,
-                            block.hash()
-                        )
-                    ))
+                    RLPxError::BlockchainError(ChainError::Custom(format!(
+                        "Error adding new block {} with hash {:?}, error: {e}",
+                        block.header.number,
+                        block.hash()
+                    )))
                 })?;
             info!(
                 "Added new block {} with hash {:?}",
