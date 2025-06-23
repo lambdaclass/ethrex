@@ -27,8 +27,8 @@ jobs:
         with:
           mdbook-version: '0.4.51'
 
-      - name: Install mdbook-alerts
-        run: cargo install mdbook-alerts
+      - name: Install mdbook dependencies
+        run: make docs-deps
 
       - run: mdbook build
 
