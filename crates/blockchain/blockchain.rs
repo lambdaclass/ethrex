@@ -345,6 +345,14 @@ impl Blockchain {
         let state_updates = apply_updates_list.state_updates;
         let accounts_updates = apply_updates_list.storage_updates;
         let code_updates = apply_updates_list.code_updates;
+        let account_info_log_updates = self
+            .storage
+            .build_account_info_logs(std::iter::once((block, &account_updates.to_vec())))
+            .map_err(ChainError::StoreError)?;
+        let storage_log_updates = self
+            .storage
+            .build_account_storage_logs(std::iter::once((block, &account_updates.to_vec())))
+            .map_err(ChainError::StoreError)?;
 
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
@@ -355,12 +363,11 @@ impl Blockchain {
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
             code_updates,
-            account_info_log_updates: Vec::new(), // TODO: WIP
-            storage_log_updates: Vec::new(),      // TODO: WIP
+            account_info_log_updates,
+            storage_log_updates,
         };
 
         self.storage
-            .clone()
             .store_block_updates(update_batch)
             .await
             .map_err(|e| e.into())
