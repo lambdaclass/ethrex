@@ -558,6 +558,9 @@ impl Store {
 
         let genesis_hash = genesis_block.hash();
 
+        // Set chain config
+        self.set_chain_config(&genesis.config).await?;
+
         if let Some(header) = self.get_block_header(genesis_block_number)? {
             if header.hash() == genesis_hash {
                 info!("Received genesis file matching a previously stored one, nothing to do");
@@ -583,10 +586,7 @@ impl Store {
         self.update_latest_block_number(genesis_block_number)
             .await?;
         self.set_canonical_block(genesis_block_number, genesis_hash)
-            .await?;
-
-        // Set chain config
-        self.set_chain_config(&genesis.config).await
+            .await
     }
 
     pub async fn get_transaction_by_hash(
