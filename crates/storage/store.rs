@@ -76,35 +76,6 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
-    /*
-        account_updates: &[&[AccountUpdate]],
-
-        let account_info_logs = self.build_account_info_logs(
-            update_batch
-                .blocks
-                .iter()
-                .zip(account_updates.iter().copied()),
-        )?;
-        self.engine
-            .store_account_info_logs(account_info_logs)
-            .await?;
-        let account_storage_logs = self.build_account_storage_logs(
-            update_batch
-                .blocks
-                .iter()
-                .zip(account_updates.iter().copied()),
-        )?;
-        self.engine
-            .store_account_storage_logs(account_storage_logs)
-            .await?;
-        let account_updates: Vec<_> = account_updates
-            .iter()
-            .flat_map(|u| u.iter())
-            .cloned()
-            .collect();
-
-    */
-
     pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.engine.apply_updates(update_batch).await
     }

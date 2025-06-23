@@ -319,7 +319,12 @@ impl StoreEngine for Store {
                 .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})
                 .map_err(StoreError::LibmdbxError)?
                 .unwrap_or_default();
-            if meta == (first_block.header.number, first_block.header.hash()).into() {
+            let parent_block = (
+                first_block.header.number - 1,
+                first_block.header.parent_hash,
+            )
+                .into();
+            if meta == parent_block {
                 let mut cursor = tx
                     .cursor::<FlatAccountInfo>()
                     .map_err(StoreError::LibmdbxError)?;
