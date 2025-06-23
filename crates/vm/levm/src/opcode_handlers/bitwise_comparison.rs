@@ -254,6 +254,6 @@ pub fn checked_shift_left(value: U256, shift: U256) -> Result<U256, VMError> {
     Ok(result)
 }
 
-fn u256_from_bool(value: bool) -> U256 {
-    U256::from(u8::from(value))
+const fn u256_from_bool(value: bool) -> U256 {
+    if value { U256::one() } else { U256::zero() }
 }
