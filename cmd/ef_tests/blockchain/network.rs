@@ -78,13 +78,6 @@ pub enum Network {
 impl Network {
     pub fn chain_config(&self) -> &ChainConfig {
         match self {
-            Network::Frontier => panic!("Ethrex doesn't support pre-Merge forks"),
-            Network::Homestead => panic!("Ethrex doesn't support pre-Merge forks"),
-            Network::ConstantinopleFix => panic!("Ethrex doesn't support pre-Merge forks"),
-            Network::Istanbul => panic!("Ethrex doesn't support pre-Merge forks"),
-            Network::Byzantium => panic!("Ethrex doesn't support pre-Merge forks"),
-            Network::London => panic!("Ethrex doesn't support pre-Merge forks"),
-            Network::Berlin => panic!("Ethrex doesn't support pre-Merge forks"),
             Network::Merge => &MERGE_CONFIG,
             Network::MergeToShanghaiAtTime15k => &MERGE_TO_SHANGHAI_AT_15K_CONFIG,
             Network::Shanghai => &SHANGHAI_CONFIG,
@@ -92,6 +85,7 @@ impl Network {
             Network::Cancun => &CANCUN_CONFIG,
             Network::CancunToPragueAtTime15k => &CANCUN_TO_PRAGUE_AT_15K_CONFIG,
             Network::Prague => &PRAGUE_CONFIG,
+            _ => panic!("Ethrex doesn't support pre-Merge forks"),
         }
     }
 }
