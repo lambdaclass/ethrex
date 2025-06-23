@@ -17,6 +17,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.87.0
         with:
+          toolchain: ${{ vars.RUST_VERSION }}
           components: rustfmt, clippy
 
       - name: Set up cargo cache
