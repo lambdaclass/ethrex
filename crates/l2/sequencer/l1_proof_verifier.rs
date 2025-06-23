@@ -23,7 +23,7 @@ use super::{
     utils::{send_verify_tx, sleep_random},
 };
 
-const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatchAligned(uint256,bytes,bytes32[])";
+const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str = "verifyBatchAligned(uint256,bytes[],bytes32[][])";
 
 pub async fn start_l1_proof_verifier(cfg: SequencerConfig) -> Result<(), SequencerError> {
     let l1_proof_verifier = L1ProofVerifier::new(
