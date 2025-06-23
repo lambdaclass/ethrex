@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750442643171,
+  "lastUpdate": 1750682382218,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -479,6 +479,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 224881683343,
             "range": "± 350122633",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d9d68ebb22183f63061f4f7f6c4b5a7f3346bdcb",
+          "message": "fix(l2): fix l2 integration test job (#3258)\n\n**Motivation**\n\nThis was failing on multiple PRs because the ethrex_dev image was not\nbeing built.\n\nThe difference between the failing job and the others (which were\nsucceeding) is the runner (larger_runners). Maybe that has something to\ndo with it.\n\n**Description**\n\n- adds a step to build ethrex_dev explicitly",
+          "timestamp": "2025-06-23T11:36:48Z",
+          "tree_id": "d54e246f6e559560bfb9a249ab85b4058eefd0de",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d9d68ebb22183f63061f4f7f6c4b5a7f3346bdcb"
+        },
+        "date": 1750682374766,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 225424239608,
+            "range": "± 609027739",
             "unit": "ns/iter"
           }
         ]
