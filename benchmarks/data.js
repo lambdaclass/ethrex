@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750710873984,
+  "lastUpdate": 1750714723991,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -629,6 +629,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 220177160866,
             "range": "± 455972797",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "pdeymon@fi.uba.ar",
+            "name": "Pablo Deymonnaz",
+            "username": "pablodeymo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c7564a9b26feafe78212f3e036caa1eed13a0d3",
+          "message": "chore(levm): remove unused remove_account function from CacheDB (#3278)\n\n**Motivation**\n\nRemove unused method.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-06-23T20:39:44Z",
+          "tree_id": "8b7a1d4fc275d8a99a4a607de58d1881f1c0d010",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0c7564a9b26feafe78212f3e036caa1eed13a0d3"
+        },
+        "date": 1750714716475,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 218602871368,
+            "range": "± 342520327",
             "unit": "ns/iter"
           }
         ]
