@@ -24,7 +24,7 @@ fn build_risc0_program() {
         .unwrap();
     let guest_options = GuestOptionsBuilder::default()
         .features(features)
-        //.use_docker(docker_options)
+        .use_docker(docker_options)
         .build()
         .unwrap();
 
