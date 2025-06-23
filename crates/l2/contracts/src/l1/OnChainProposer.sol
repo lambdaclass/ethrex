@@ -509,6 +509,8 @@ contract OnChainProposer is
         }
         
         return publicInputs;
+    }
+    
     /// @inheritdoc IOnChainProposer
     function revertBatch(
         uint256 batchNumber
