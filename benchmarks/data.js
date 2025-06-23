@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1750702110495,
+  "lastUpdate": 1750710873984,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -599,6 +599,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 220033548282,
             "range": "± 429821547",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c7652a1b02e4ebfd149a82c0832a47ebf8837bbd",
+          "message": "docs(l1): improve roadmap. (#3271)\n\n**Motivation**\nImprove write up of the L1 roadmap",
+          "timestamp": "2025-06-23T19:33:58Z",
+          "tree_id": "51a2da2f8a78c54a23d617850ed983b8a3c8900f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c7652a1b02e4ebfd149a82c0832a47ebf8837bbd"
+        },
+        "date": 1750710866381,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 220177160866,
+            "range": "± 455972797",
             "unit": "ns/iter"
           }
         ]
