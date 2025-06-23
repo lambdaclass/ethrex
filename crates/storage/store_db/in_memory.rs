@@ -3,17 +3,13 @@ use crate::{
     api::StoreEngine,
     error::StoreError,
     store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
-    store_db::codec::{
-        account_address::AccountAddress, account_storage_log_entry::AccountStorageLogEntry,
-        block_num_hash::BlockNumHash,
-    },
 };
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::Address;
 use ethrex_common::types::{
-    AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Index, Receipt, payload::PayloadBundle,
+    AccountInfo, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    Index, Receipt, payload::PayloadBundle,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, NodeHash, Trie};
 use std::{
@@ -92,23 +88,7 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn store_account_info_logs(
-        &self,
-        _account_info_logs: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
-    ) -> Result<(), StoreError> {
-        todo!()
-    }
-    async fn store_account_storage_logs(
-        &self,
-        _account_storage_logs: Vec<(BlockNumHash, AccountStorageLogEntry)>,
-    ) -> Result<(), StoreError> {
-        todo!()
-    }
-    async fn apply_updates(
-        &self,
-        update_batch: UpdateBatch,
-        _account_updates: &[AccountUpdate],
-    ) -> Result<(), StoreError> {
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let mut store = self.inner()?;
         {
             // store account updates

@@ -355,11 +355,13 @@ impl Blockchain {
             blocks: vec![block.clone()],
             receipts: vec![(block.hash(), execution_result.receipts)],
             code_updates,
+            account_info_log_updates: Vec::new(), // TODO: WIP
+            storage_log_updates: Vec::new(),      // TODO: WIP
         };
 
         self.storage
             .clone()
-            .store_block_updates(update_batch, &[account_updates])
+            .store_block_updates(update_batch)
             .await
             .map_err(|e| e.into())
     }
@@ -449,6 +451,8 @@ impl Blockchain {
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
 
+        let mut account_updates_acc = Vec::with_capacity(blocks_len);
+
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
             // for the first block, we need to query the store
@@ -484,11 +488,12 @@ impl Blockchain {
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
             all_receipts.push((block.hash(), receipts));
-        }
 
-        let account_updates = vm
-            .get_state_transitions()
-            .map_err(|err| (ChainError::EvmError(err), None))?;
+            let account_updates = vm
+                .get_state_transitions()
+                .map_err(|err| (ChainError::EvmError(err), None))?;
+            account_updates_acc.push(account_updates);
+        }
 
         let last_block = blocks
             .last()
@@ -497,6 +502,11 @@ impl Blockchain {
         let last_block_number = last_block.header.number;
         let last_block_gas_limit = last_block.header.gas_limit;
 
+        let account_updates = account_updates_acc
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
         // Apply the account updates over all blocks and compute the new state root
         let account_updates_list = self
             .storage
@@ -504,6 +514,8 @@ impl Blockchain {
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
+
+        let account_updates_per_block = blocks.iter().zip(account_updates_acc.iter());
 
         let new_state_root = account_updates_list.state_trie_hash;
         let state_updates = account_updates_list.state_updates;
@@ -513,16 +525,29 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
+        // call helper function to build write logs
+        let account_info_log_updates = self
+            .storage
+            .build_account_info_logs(account_updates_per_block.clone())
+            .map_err(|e| (e.into(), None))?;
+
+        let storage_log_updates = self
+            .storage
+            .build_account_storage_logs(account_updates_per_block)
+            .map_err(|e| (e.into(), None))?;
+
         let update_batch = UpdateBatch {
             account_updates: state_updates,
             storage_updates: accounts_updates,
             blocks,
             receipts: all_receipts,
             code_updates,
+            account_info_log_updates,
+            storage_log_updates,
         };
 
         self.storage
-            .store_block_updates(update_batch, &[&account_updates])
+            .store_block_updates(update_batch)
             .await
             .map_err(|e| (e.into(), None))?;
 

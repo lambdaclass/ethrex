@@ -329,11 +329,7 @@ impl StoreEngine for RedBStore {
         todo!();
     }
 
-    async fn apply_updates(
-        &self,
-        update_batch: UpdateBatch,
-        _account_updates: &[AccountUpdate],
-    ) -> Result<(), StoreError> {
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let write_txn = db.begin_write().map_err(Box::new)?;

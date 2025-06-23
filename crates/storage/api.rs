@@ -2,14 +2,12 @@ use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::Address;
 use ethrex_common::types::{
-    AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Index, Receipt, Transaction, payload::PayloadBundle,
+    AccountInfo, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    Index, Receipt, Transaction, payload::PayloadBundle,
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use crate::UpdateBatch;
-use crate::store_db::codec::account_storage_log_entry::AccountStorageLogEntry;
-use crate::store_db::codec::{account_address::AccountAddress, block_num_hash::BlockNumHash};
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
@@ -18,25 +16,11 @@ use ethrex_trie::{Nibbles, Trie};
 #[async_trait::async_trait]
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Store changes in a batch from a vec of blocks
-    async fn apply_updates(
-        &self,
-        update_batch: UpdateBatch,
-        account_updates: &[AccountUpdate],
-    ) -> Result<(), StoreError>;
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError>;
 
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError>;
 
     async fn replay_writes_until_head(&self, head: H256) -> Result<(), StoreError>;
-
-    async fn store_account_info_logs(
-        &self,
-        account_info_logs: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
-    ) -> Result<(), StoreError>;
-
-    async fn store_account_storage_logs(
-        &self,
-        account_storage_logs: Vec<(BlockNumHash, AccountStorageLogEntry)>,
-    ) -> Result<(), StoreError>;
 
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.

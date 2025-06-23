@@ -60,6 +60,10 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Code updates
     pub code_updates: Vec<(H256, Bytes)>,
+
+    /// Updates for the log tables
+    pub account_info_log_updates: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
+    pub storage_log_updates: Vec<(BlockNumHash, AccountStorageLogEntry)>,
 }
 
 type StorageUpdates = Vec<(H256, Vec<(NodeHash, Vec<u8>)>)>;
@@ -72,11 +76,9 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
-    pub async fn store_block_updates(
-        &self,
-        update_batch: UpdateBatch,
+    /*
         account_updates: &[&[AccountUpdate]],
-    ) -> Result<(), StoreError> {
+
         let account_info_logs = self.build_account_info_logs(
             update_batch
                 .blocks
@@ -100,9 +102,11 @@ impl Store {
             .flat_map(|u| u.iter())
             .cloned()
             .collect();
-        self.engine
-            .apply_updates(update_batch, &account_updates)
-            .await
+
+    */
+
+    pub async fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        self.engine.apply_updates(update_batch).await
     }
 
     pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
@@ -139,9 +143,28 @@ impl Store {
         Ok(store)
     }
 
-    fn build_account_info_logs<'a>(
+    // SNAPSHOT RECONSTRUCTION STRATEGY
+    // 1. From the number of the first new_canonical_block and the canonical
+    //    chain table, extract the list of (block_number, block_hash) we need
+    //    to invalidate
+    // 2. From the last block in that list, iterate backwards the log restoring
+    //    the previous values
+    // 3. From the first block in the new canonical chain to the last, apply
+    //    the log for those blocks
+    // 4. Commit the transaction
+    //
+    // This function assumes that `new_canonical_blocks` is sorted by block number.
+    pub async fn reconstruct_snapshots_for_new_canonical_chain(
         &self,
-        account_updates_per_block: impl Iterator<Item = (&'a Block, &'a [AccountUpdate])>,
+        head: H256,
+    ) -> Result<(), StoreError> {
+        self.engine.undo_writes_until_canonical().await?;
+        self.engine.replay_writes_until_head(head).await
+    }
+
+    pub fn build_account_info_logs<'a>(
+        &self,
+        account_updates_per_block: impl Iterator<Item = (&'a Block, &'a Vec<AccountUpdate>)>,
     ) -> Result<Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>, StoreError> {
         let mut accounts_info_log = Vec::new();
         let mut previous_account_info = HashMap::<H160, AccountInfo>::new();
@@ -173,28 +196,9 @@ impl Store {
         Ok(accounts_info_log)
     }
 
-    // SNAPSHOT RECONSTRUCTION STRATEGY
-    // 1. From the number of the first new_canonical_block and the canonical
-    //    chain table, extract the list of (block_number, block_hash) we need
-    //    to invalidate
-    // 2. From the last block in that list, iterate backwards the log restoring
-    //    the previous values
-    // 3. From the first block in the new canonical chain to the last, apply
-    //    the log for those blocks
-    // 4. Commit the transaction
-    //
-    // This function assumes that `new_canonical_blocks` is sorted by block number.
-    pub async fn reconstruct_snapshots_for_new_canonical_chain(
+    pub fn build_account_storage_logs<'a>(
         &self,
-        head: H256,
-    ) -> Result<(), StoreError> {
-        self.engine.undo_writes_until_canonical().await?;
-        self.engine.replay_writes_until_head(head).await
-    }
-
-    fn build_account_storage_logs<'a>(
-        &self,
-        account_updates_per_block: impl Iterator<Item = (&'a Block, &'a [AccountUpdate])>,
+        account_updates_per_block: impl Iterator<Item = (&'a Block, &'a Vec<AccountUpdate>)>,
     ) -> Result<Vec<(BlockNumHash, AccountStorageLogEntry)>, StoreError> {
         let mut accounts_storage_log = Vec::new();
         let mut previous_account_storage = HashMap::<(H160, H256), U256>::new();

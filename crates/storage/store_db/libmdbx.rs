@@ -23,8 +23,8 @@ use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::Address;
 use ethrex_common::types::{
-    AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Index, Receipt, Transaction, payload::PayloadBundle,
+    AccountInfo, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    Index, Receipt, Transaction, payload::PayloadBundle,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -279,19 +279,42 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngine for Store {
-    async fn apply_updates(
-        &self,
-        update_batch: UpdateBatch,
-        account_updates: &[AccountUpdate],
-    ) -> Result<(), StoreError> {
+    async fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.db.clone();
-        let account_updates = account_updates.to_vec();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
             let Some(first_block) = update_batch.blocks.first() else {
                 return Ok(());
             };
+
+            let mut account_info_log_cursor = tx
+                .cursor::<AccountsStateWriteLog>()
+                .map_err(StoreError::LibmdbxError)?;
+            for (blk, addr, old_info, new_info) in
+                update_batch.account_info_log_updates.iter().cloned()
+            {
+                account_info_log_cursor
+                    .upsert(
+                        blk,
+                        AccountInfoLogEntry {
+                            address: addr.0,
+                            info: new_info,
+                            previous_info: old_info,
+                        },
+                    )
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
+            let mut account_storage_logs_cursor = tx
+                .cursor::<AccountsStorageWriteLog>()
+                .map_err(StoreError::LibmdbxError)?;
+            for (blk, entry) in update_batch.storage_log_updates.iter().cloned() {
+                account_storage_logs_cursor
+                    .upsert(blk, entry)
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
             let meta = tx
                 .get::<FlatTablesBlockMetadata>(FlatTablesBlockMetadataKey {})
                 .map_err(StoreError::LibmdbxError)?
@@ -303,21 +326,18 @@ impl StoreEngine for Store {
                 let mut storage_cursor = tx
                     .cursor::<FlatAccountStorage>()
                     .map_err(StoreError::LibmdbxError)?;
-                for update in account_updates.iter() {
-                    if update.removed || update.info.is_some() {
-                        let key = AccountAddress(update.address);
 
-                        let value = (!update.removed)
-                            .then_some(update.info.clone().map(EncodableAccountInfo))
-                            .flatten();
-                        Self::replace_value_or_delete(&mut cursor, key, value)?;
-                    }
-
-                    for (slot, value) in update.added_storage.iter() {
-                        let key = (update.address.into(), (*slot).into());
-                        let value = (!value.is_zero()).then_some((*value).into());
-                        Self::replace_value_or_delete(&mut storage_cursor, key, value)?;
-                    }
+                for (_block_numhash, addr, _old_info, new_info) in
+                    update_batch.account_info_log_updates
+                {
+                    let key = addr;
+                    let value = EncodableAccountInfo(new_info);
+                    Self::replace_value_or_delete(&mut cursor, key, Some(value))?;
+                }
+                for (_block_numhash, entry) in update_batch.storage_log_updates {
+                    let key = (entry.address.into(), entry.slot.into());
+                    let value = (!entry.new_value.is_zero()).then_some(entry.new_value.into());
+                    Self::replace_value_or_delete(&mut storage_cursor, key, value)?;
                 }
                 if let Some(block) = update_batch.blocks.iter().max_by_key(|b| b.header.number) {
                     tx.upsert::<FlatTablesBlockMetadata>(
@@ -407,47 +427,6 @@ impl StoreEngine for Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
-    }
-
-    async fn store_account_info_logs(
-        &self,
-        account_info_logs: Vec<(BlockNumHash, AccountAddress, AccountInfo, AccountInfo)>,
-    ) -> Result<(), StoreError> {
-        let inner = || -> Result<(), _> {
-            let tx = self.db.begin_readwrite()?;
-            let mut cursor = tx.cursor::<AccountsStateWriteLog>()?;
-            for (blk, addr, old_info, new_info) in account_info_logs {
-                cursor.upsert(
-                    blk,
-                    AccountInfoLogEntry {
-                        address: addr.0,
-                        info: new_info,
-                        previous_info: old_info,
-                    },
-                )?;
-            }
-            tx.commit()
-        };
-        inner().map_err(StoreError::LibmdbxError)
-    }
-    async fn store_account_storage_logs(
-        &self,
-        account_storage_logs: Vec<(BlockNumHash, AccountStorageLogEntry)>,
-    ) -> Result<(), StoreError> {
-        let tx = self
-            .db
-            .begin_readwrite()
-            .map_err(StoreError::LibmdbxError)?;
-        let mut cursor = tx
-            .cursor::<AccountsStorageWriteLog>()
-            .map_err(StoreError::LibmdbxError)?;
-
-        account_storage_logs
-            .into_iter()
-            .try_for_each(|(blk, value)| cursor.upsert(blk, value))
-            .map_err(StoreError::LibmdbxError)?;
-
-        tx.commit().map_err(StoreError::LibmdbxError)
     }
 
     async fn undo_writes_until_canonical(&self) -> Result<(), StoreError> {
