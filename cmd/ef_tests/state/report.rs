@@ -548,6 +548,17 @@ impl EFTestReportForkResult {
         );
     }
 
+    pub fn register_post_state_validation_error_state_root_mismatch(
+        &mut self,
+        reason: String,
+        failed_vector: TestVector,
+    ) {
+        self.failed_vectors.insert(
+            failed_vector,
+            EFTestRunnerError::FailedToRevertLEVMState(reason),
+        );
+    }
+
     pub fn register_failed_vector(&mut self, vector: TestVector, error: EFTestRunnerError) {
         self.failed_vectors.insert(vector, error);
     }
