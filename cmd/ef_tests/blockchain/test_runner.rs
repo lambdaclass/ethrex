@@ -52,7 +52,8 @@ pub fn parse_and_execute(
     if failures.is_empty() {
         Ok(())
     } else {
-        Err(failures.join("\n").into())
+        // \n doesn't print new lines on terminal, so this alternative is for making it readable
+        Err(failures.join("     -------     ").into())
     }
 }
 
