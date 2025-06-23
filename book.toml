@@ -13,10 +13,18 @@ edition = "2024"
 # This is to avoid warnings about incomplete links on each alert
 renderers = ["html", "linkcheck"]
 
+# To render Mermaid diagrams
+# https://github.com/badboy/mdbook-mermaid
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
 [output.html]
 git-repository-url = "https://github.com/lambdaclass/ethrex"
 # make sections collapsible, and start with everything collapsed
 fold = { enable = true, level = 0 }
+
+# Required for mdbook-mermaid
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
 
 # Broken-link checker
 # https://github.com/Michael-F-Bryan/mdbook-linkcheck
